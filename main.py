@@ -40,6 +40,14 @@ INPUT_MODE = InputMode.NORMAL
         # for i in self.children:
 
 
+def debug(stdscr):
+    curses.nocbreak()
+    stdscr.keypad(0)
+    curses.echo()
+    curses.endwin()
+    import pdb; pdb.set_trace()
+
+
 class View:
     """Represents the data that should visually populate the window at any one time"""
 
@@ -59,14 +67,12 @@ class View:
         # self.root = Node(is_visible=True, tag=root_xml.tag, text=root_xml.text)
         self.document = self.generate_document(self.root)
 
-    def generate_item(self, node, arr, sublevel=0):
-        spacer = sublevel * "  "
-        sublevel += 1
+    def generate_item(self, node, arr, n_indent=0):
         for child in node:
             # if child.is_visible:
             if not child.attrib.get("_complete"):
-                arr.append(f"{spacer}- {child.attrib['text']}")
-                self.generate_item(child, arr, sublevel)
+                arr.append((n_indent, child.attrib['text']))
+                self.generate_item(child, arr, n_indent+1)
 
     def generate_document(self, root):
         """Generates overall text blob representing entire document in list of list form"""
@@ -79,8 +85,22 @@ class View:
         # stdscr.addstr(0, 0, "Current mode: Typing mode", curses.A_REVERSE)
         i = self.top_offset
         while i < self.height - self.bottom_offset:
-            self.window.addstr(i, 0, self.document[i-1], curses.color_pair(2))
-            i += 1
+            n_indent, text = self.document[i-1]
+            # Need to account for long lines, so iterate over text and increment i
+            margin_spacer = 2
+            bullet = "- "
+            # bullet = ""
+            left_margin = len(margin_spacer*n_indent*" ")
+            line_length = self.width - left_margin
+            text = f"{bullet}{text}"
+            remaining_text = text
+            # TODO fix nested while conditional duplication
+            while len(remaining_text) and i < self.height - self.bottom_offset:
+                self.window.addstr(i, left_margin, remaining_text[:line_length], curses.color_pair(2))
+                remaining_text = remaining_text[line_length:-2]
+                if remaining_text:
+                    remaining_text = bullet.replace("-", " ") + remaining_text
+                i += 1
 
     def refresh_window_size(self):
         raise NotImplementedError
