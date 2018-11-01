@@ -51,10 +51,9 @@ def debug(stdscr):
 class View:
     """Represents the data that should visually populate the window at any one time"""
 
-    def __init__(self, stdscr, top_offset=1, bottom_offset=1, top_ptr=0):
+    def __init__(self, stdscr, top_offset=1, top_ptr=0):
         self.window = stdscr
         self.top_offset = top_offset
-        self.bottom_offset = bottom_offset
 
         self.height = None
         self.width = None
@@ -83,34 +82,38 @@ class View:
     def paint(self):
         """Paint the required items based on current position and window size"""
         # stdscr.addstr(0, 0, "Current mode: Typing mode", curses.A_REVERSE)
-        i = self.top_offset
-        while i < self.height - self.bottom_offset:
-            n_indent, text = self.document[i-1]
-            # Need to account for long lines, so iterate over text and increment i
+        window_line = self.top_offset
+        while window_line < self.height:
+            n_indent, text = self.document[self.top_ptr + window_line - 1]
             margin_spacer = 2
             bullet = "- "
-            # bullet = ""
             left_margin = len(margin_spacer*n_indent*" ")
             line_length = self.width - left_margin
             text = f"{bullet}{text}"
             remaining_text = text
+            # Need to account for long lines, so iterate over text and increment window_line
             # TODO fix nested while conditional duplication
-            while len(remaining_text) and i < self.height - self.bottom_offset:
-                self.window.addstr(i, left_margin, remaining_text[:line_length], curses.color_pair(2))
+            while len(remaining_text) and window_line < self.height:
+                self.window.addstr(window_line, left_margin, remaining_text[:line_length], curses.color_pair(2))
                 remaining_text = remaining_text[line_length:-2]
                 if remaining_text:
                     remaining_text = bullet.replace("-", " ") + remaining_text
-                i += 1
+                window_line += 1
 
-    def refresh_window_size(self):
-        raise NotImplementedError
+    def scroll_up(self):
+        self.top_ptr -= 1
+        self.top_ptr = max(0, self.top_ptr)
+
+    def scroll_down(self):
+        self.top_ptr += 1
+        self.top_ptr = min(len(self.document) - self.height + 1, self.top_ptr)
 
 
 def main(stdscr):
     global INPUT_MODE
     k = 0
     cursor_x = 0
-    cursor_y = 2
+    cursor_y = 1
 
     stdscr.clear()
     stdscr.refresh()
@@ -120,14 +123,20 @@ def main(stdscr):
     curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
 
-    view = View(stdscr)
+    top_offset = 1
+    view = View(stdscr, top_offset=top_offset)
 
     # Loop where k is the last character pressed
     while (k != ord('q')):
 
         # Initialization
         stdscr.erase()
-        view.height, view.width = stdscr.getmaxyx()
+
+        stdscr.addstr(0, 0, f"Current mode: {INPUT_MODE.value} mode", curses.A_REVERSE)
+
+        height, width = stdscr.getmaxyx()
+        view.height = height - top_offset
+        view.width = width
 
         if INPUT_MODE == InputMode.INSERT:
             if k == 27:
@@ -161,11 +170,16 @@ def main(stdscr):
         cursor_x = max(0, cursor_x)
         cursor_x = min(view.width-1, cursor_x)
 
-        cursor_y = max(0, cursor_y)
+        if cursor_y < top_offset:  # < 1 to deal with top margin
+            view.scroll_up()
+        if cursor_y == view.height:
+            view.scroll_down()
+
+        cursor_y = max(top_offset, cursor_y)
         cursor_y = min(view.height-1, cursor_y)
 
         # Rendering some text
-        stdscr.addstr(0, 0, f"Current mode: {INPUT_MODE.value} mode", curses.A_REVERSE)
+        # stdscr.addstr(0, 0, f"Current mode: {INPUT_MODE.value} mode", curses.A_REVERSE)
         # whstr = "Width: {}, Height: {}".format(view.width, view.height)  # TODO remove
         # stdscr.addstr(1, 0, whstr, curses.color_pair(1))  # TODO remove
 
