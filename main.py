@@ -132,8 +132,6 @@ def main(stdscr):
         # Initialization
         stdscr.erase()
 
-        stdscr.addstr(0, 0, f"Current mode: {INPUT_MODE.value} mode", curses.A_REVERSE)
-
         height, width = stdscr.getmaxyx()
         view.height = height - top_offset
         view.width = width
@@ -157,15 +155,15 @@ def main(stdscr):
                 cursor_x = cursor_x + 1
             elif k == ord("h"):
                 cursor_x = cursor_x - 1
-        elif INPUT_MODE == InputMode.INSERT:
-            if k == curses.KEY_DOWN:
-                cursor_y = cursor_y + 1
-            elif k == curses.KEY_UP:
-                cursor_y = cursor_y - 1
-            elif k == curses.KEY_RIGHT:
-                cursor_x = cursor_x + 1
-            elif k == curses.KEY_LEFT:
-                cursor_x = cursor_x - 1
+
+        if k == curses.KEY_DOWN:
+            cursor_y = cursor_y + 1
+        elif k == curses.KEY_UP:
+            cursor_y = cursor_y - 1
+        elif k == curses.KEY_RIGHT:
+            cursor_x = cursor_x + 1
+        elif k == curses.KEY_LEFT:
+            cursor_x = cursor_x - 1
 
         cursor_x = max(0, cursor_x)
         cursor_x = min(view.width-1, cursor_x)
@@ -183,12 +181,12 @@ def main(stdscr):
         # whstr = "Width: {}, Height: {}".format(view.width, view.height)  # TODO remove
         # stdscr.addstr(1, 0, whstr, curses.color_pair(1))  # TODO remove
 
+        stdscr.addstr(0, 0, f"Current mode: {INPUT_MODE.value} mode", curses.A_REVERSE)
+
         view.paint()
 
         # Move cursor
         stdscr.move(cursor_y, cursor_x)
-
-        # stdscr.addstr(0, 0, "Current mode: Typing mode", curses.A_REVERSE)
 
         # Refresh the screen
         stdscr.refresh()
