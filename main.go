@@ -17,8 +17,8 @@ import (
 const Root = "rootPage"
 
 type PageItem struct {
-	key       string
-	dtCreated time.Time
+	Line       string
+	DtCreated time.Time
 }
 
 func loadRootPage() []PageItem {
@@ -66,13 +66,21 @@ func (s *searchString) ProcessKeyPress(r rune) error {
         return errors.New("Esc: exiting...")
     }
     clearScreen()
-    fmt.Printf("%s\r", string(s.Key))
     return nil
 }
 
+func (s *searchString) FetchMatches(page []PageItem) ([]string, error) {
+    res := []string{}
+    for _, p := range page {
+        if IsFuzzyMatch(string(s.Key), p.Line) {
+            res = append(res, p.Line)
+        }
+    }
+    return res, nil // TODO
+}
+
 func main() {
-	//page := loadRootPage()
-	//fmt.Print(page)
+    page := loadRootPage()
 
     //https://godoc.org/golang.org/x/crypto/ssh/terminal
     oldState, err := terminal.MakeRaw(0)
@@ -97,14 +105,21 @@ func main() {
 			log.Println("stdin:", err)
 			break
 		}
-        err2 := s.ProcessKeyPress(r)
-        if err2 != nil {
+        err = s.ProcessKeyPress(r)
+        if err != nil {
 			log.Println("stdin:", err)
 			break
         }
-		//fmt.Printf("read rune %q\r\n", r)
-        //if r == '\x1b' {
-		//    break
-		//}
+
+        matches, err := s.FetchMatches(page)
+        if err != nil {
+			log.Println("stdin:", err)
+			break
+        }
+
+        fmt.Printf("%s\r", string(s.Key))
+        for _, r := range matches {
+            fmt.Printf("%s\n", r)
+        }
 	}
 }
