@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+type PageItem struct {
+	Line      string
+	DtCreated time.Time
+}
+
 type PageRepo interface {
 	LoadRootPage() []PageItem
 	FetchMatches(searchString string) ([]PageItem, error)
