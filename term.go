@@ -46,8 +46,8 @@ func (p *Page) HandleKeyPresses() {
 	s.EnableMouse()
 	s.Clear()
 
-    white := tcell.StyleDefault.
-        Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
+	white := tcell.StyleDefault.
+		Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
 
 	w, h := s.Size()
 

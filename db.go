@@ -12,9 +12,9 @@ type SearchString struct {
 }
 
 type Page struct {
-	Search SearchString
-	PageItems  []PageItem
-	CurPos int
+	Search    SearchString
+	PageItems []PageItem
+	CurPos    int
 }
 
 type PageItem struct {
@@ -44,7 +44,7 @@ func (p *Page) Load(rootPath string) error {
 func (p *Page) FetchMatches(s []rune) ([]PageItem, error) {
 	res := []PageItem{}
 	for _, p := range p.PageItems {
-		if IsFuzzyMatch(string(s), p.Line) {
+		if IsFuzzyMatch(s, p.Line) {
 			res = append(res, p)
 		}
 	}
