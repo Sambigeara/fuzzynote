@@ -56,8 +56,8 @@ func (scr *StdScr) HandleKeyPresses(db DbRepo) {
 	s.EnableMouse()
 	s.Clear()
 
-	//white := tcell.StyleDefault.
-	//    Foreground(tcell.ColorWhite).Background(tcell.ColorRed)
+    white := tcell.StyleDefault.
+        Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
 
 	w, h := s.Size()
 
@@ -96,7 +96,7 @@ func (scr *StdScr) HandleKeyPresses(db DbRepo) {
 			log.Println("stdin:", err)
 			break
 		}
-		emitStr(s, 0, 0, defStyle, fmt.Sprint(string(search.Key)))
+		emitStr(s, 0, 0, white, fmt.Sprint(string(search.Key)))
 		for i, r := range matches {
 			emitStr(s, 0, i+1, defStyle, r.Line)
 		}

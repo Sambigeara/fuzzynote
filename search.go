@@ -12,5 +12,5 @@ func isSubString(sub string, full string) bool {
 }
 
 func IsFuzzyMatch(sub string, full string) bool {
-	return isSubString(sub, full)
+	return isSubString(strings.ToLower(sub), strings.ToLower(full))
 }

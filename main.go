@@ -5,7 +5,7 @@ import (
 )
 
 // TODO Will be path eventually, read from env var
-const RootPath = "rootPage"
+const RootPath = "pages/root"
 
 type PageItem struct {
 	Line      string
