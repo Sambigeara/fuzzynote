@@ -12,16 +12,6 @@ import (
 
 var defStyle tcell.Style
 
-type SearchString struct {
-	Key []rune
-}
-
-type StdScr struct {
-	Search SearchString
-	Lines  []PageItem
-	CurPos int
-}
-
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	for _, c := range str {
 		var comb []rune
@@ -36,7 +26,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	}
 }
 
-func (scr *StdScr) HandleKeyPresses(db DbRepo) {
+func (p *Page) HandleKeyPresses() {
 
 	encoding.Register()
 
@@ -67,7 +57,7 @@ func (scr *StdScr) HandleKeyPresses(db DbRepo) {
 		s.Show()
 		ev := s.PollEvent()
 		w, h = s.Size()
-		search := &scr.Search
+		search := &p.Search
 
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
@@ -91,7 +81,7 @@ func (scr *StdScr) HandleKeyPresses(db DbRepo) {
 		}
 		s.Clear()
 
-		matches, err := db.FetchMatches(search.Key)
+		matches, err := p.FetchMatches(search.Key)
 		if err != nil {
 			log.Println("stdin:", err)
 			break

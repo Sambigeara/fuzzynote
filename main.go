@@ -4,9 +4,7 @@ package main
 const RootPath = "pages/root"
 
 func main() {
-	db := DbRepo{}
-	db.LoadRootPage(RootPath)
-
-	scr := StdScr{}
-	scr.HandleKeyPresses(db)
+	p := Page{}
+	p.Load(RootPath)
+	p.HandleKeyPresses()
 }

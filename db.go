@@ -7,22 +7,22 @@ import (
 	"time"
 )
 
+type SearchString struct {
+	Key []rune
+}
+
+type Page struct {
+	Search SearchString
+	PageItems  []PageItem
+	CurPos int
+}
+
 type PageItem struct {
 	Line      string
 	DtCreated time.Time
 }
 
-type PageRepo interface {
-	LoadRootPage() []PageItem
-	FetchMatches(searchString string) ([]PageItem, error)
-	AddPageItem(item PageItem) error
-}
-
-type DbRepo struct {
-	Page []PageItem
-}
-
-func (db *DbRepo) LoadRootPage(rootPath string) error {
+func (p *Page) Load(rootPath string) error {
 	file, err := os.Open(rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -33,7 +33,7 @@ func (db *DbRepo) LoadRootPage(rootPath string) error {
 	for scanner.Scan() {
 		t := scanner.Text()
 		pageItem := PageItem{t, time.Now()} // TODO need a way to persist datetime in files
-		db.Page = append(db.Page, pageItem)
+		p.PageItems = append(p.PageItems, pageItem)
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
@@ -41,9 +41,9 @@ func (db *DbRepo) LoadRootPage(rootPath string) error {
 	return nil
 }
 
-func (db *DbRepo) FetchMatches(s []rune) ([]PageItem, error) {
+func (p *Page) FetchMatches(s []rune) ([]PageItem, error) {
 	res := []PageItem{}
-	for _, p := range db.Page {
+	for _, p := range p.PageItems {
 		if IsFuzzyMatch(string(s), p.Line) {
 			res = append(res, p)
 		}
@@ -51,6 +51,6 @@ func (db *DbRepo) FetchMatches(s []rune) ([]PageItem, error) {
 	return res, nil // TODO
 }
 
-func (db *DbRepo) AddPageItem(p PageItem) error {
+func (p *Page) AddPageItem(pi PageItem) error {
 	return nil
 }
