@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"unicode"
 )
 
 func isSubString(sub string, full string) bool {
@@ -20,7 +21,7 @@ func IsFuzzyMatch(sub []rune, full string) bool {
 		if len(sub) == 0 {
 			return true
 		}
-		if c == sub[0] {
+		if unicode.ToLower(c) == unicode.ToLower(sub[0]) {
 			_, sub = sub[0], sub[1:]
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
@@ -67,26 +68,54 @@ func (p *Page) HandleKeyPresses() {
 			case tcell.KeyCtrlC:
 				s.Fini()
 				os.Exit(0)
+			case tcell.KeyEnter:
+				// If current search.Keys group has runes, close off and create new one
+				if len(search.Keys) > 0 {
+					lastTerm := search.Keys[len(search.Keys)-1]
+					if len(lastTerm) > 0 {
+						search.Keys = append(search.Keys, []rune{})
+					}
+				}
 			case tcell.KeyEscape:
-				search.Key = []rune{}
+				search.Keys = [][]rune{}
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
-				// Delete removes last item from slice
-				if len(search.Key) > 0 {
-					search.Key = search.Key[:len(search.Key)-1]
+				// Delete removes last item from last rune slice. If final slice is empty, remove that instead
+				if len(search.Keys) > 0 {
+					lastTerm := search.Keys[len(search.Keys)-1]
+					if len(lastTerm) > 0 {
+						lastTerm = lastTerm[:len(lastTerm)-1]
+						search.Keys[len(search.Keys)-1] = lastTerm
+					} else {
+						search.Keys = search.Keys[:len(search.Keys)-1]
+					}
 				}
 			default:
-				search.Key = append(search.Key, ev.Rune())
+				if len(search.Keys) > 0 {
+					lastTerm := search.Keys[len(search.Keys)-1]
+					lastTerm = append(lastTerm, ev.Rune())
+					search.Keys[len(search.Keys)-1] = lastTerm
+				} else {
+					var newTerm []rune
+					newTerm = append(newTerm, ev.Rune())
+					search.Keys = append(search.Keys, newTerm)
+				}
 			}
 		}
 		s.Clear()
 
-		matches, err := p.FetchMatches(search.Key)
+		matches, err := p.FetchMatches(search.Keys)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
-		emitStr(s, 0, 0, white, fmt.Sprint(string(search.Key)))
+
+		var b strings.Builder
+		for _, key := range search.Keys {
+			b.WriteString(string(key))
+			b.WriteString(" ")
+		}
+		emitStr(s, 0, 0, white, fmt.Sprint(b.String()))
 		for i, r := range matches {
 			emitStr(s, 0, i+1, defStyle, r.Line)
 		}

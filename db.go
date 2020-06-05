@@ -8,7 +8,7 @@ import (
 )
 
 type SearchString struct {
-	Key []rune
+	Keys [][]rune
 }
 
 type Page struct {
@@ -41,10 +41,18 @@ func (p *Page) Load(rootPath string) error {
 	return nil
 }
 
-func (p *Page) FetchMatches(s []rune) ([]PageItem, error) {
+func (p *Page) FetchMatches(searchGroups [][]rune) ([]PageItem, error) {
+	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
 	res := []PageItem{}
 	for _, p := range p.PageItems {
-		if IsFuzzyMatch(s, p.Line) {
+		isMatch := true
+		for _, group := range searchGroups {
+			if !IsFuzzyMatch(group, p.Line) {
+				isMatch = false
+				break
+			}
+		}
+		if isMatch {
 			res = append(res, p)
 		}
 	}
