@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
@@ -24,6 +23,15 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 		}
 		s.SetContent(x, y, c, comb, style)
 		x += w
+	}
+}
+
+func (p *Page) buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell.Style) {
+	var pos, l int
+	for _, key := range searchGroups {
+		emitStr(s, pos, 0, style, string(key))
+		l = len(key)
+		pos = pos + l + 1 // Add a separator between groups with `+ 1`
 	}
 }
 
@@ -51,8 +59,6 @@ func (p *Page) HandleKeyPresses() {
 		Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
 
 	w, h := s.Size()
-
-	//emitStr(s, 1, 1, white, "Welcome to fuzzy-note. Press Ctl-C to exit.")
 
 	for {
 		s.Show()
@@ -110,12 +116,7 @@ func (p *Page) HandleKeyPresses() {
 			break
 		}
 
-		var b strings.Builder
-		for _, key := range search.Keys {
-			b.WriteString(string(key))
-			b.WriteString(" ")
-		}
-		emitStr(s, 0, 0, white, fmt.Sprint(b.String()))
+		p.buildSearchBox(s, search.Keys, white)
 		for i, r := range matches {
 			emitStr(s, 0, i+1, defStyle, r.Line)
 		}
