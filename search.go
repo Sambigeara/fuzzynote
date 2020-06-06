@@ -6,7 +6,7 @@ import (
 )
 
 func isSubString(sub string, full string) bool {
-	if strings.Contains(full, sub) {
+	if strings.Contains(strings.ToLower(full), strings.ToLower(sub)) {
 		return true
 	}
 	return false
