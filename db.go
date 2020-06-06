@@ -47,7 +47,7 @@ func (p *Page) FetchMatches(searchGroups [][]rune) ([]PageItem, error) {
 	for _, p := range p.PageItems {
 		isMatch := true
 		for _, group := range searchGroups {
-			if !IsFuzzyMatch(group, p.Line) {
+			if !IsMatch(group, p.Line) {
 				isMatch = false
 				break
 			}
