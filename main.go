@@ -4,7 +4,7 @@ package main
 const RootPath = "pages/root"
 
 func main() {
-	p := Page{}
-	p.Load(RootPath)
+	p := List{}
+	p.BuildList(RootPath)
 	p.HandleKeyPresses()
 }

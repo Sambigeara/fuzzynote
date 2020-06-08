@@ -26,7 +26,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	}
 }
 
-func (p *Page) buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell.Style) {
+func (p *List) buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell.Style) {
 	var pos, l int
 	for _, key := range searchGroups {
 		emitStr(s, pos, 0, style, string(key))
@@ -35,7 +35,7 @@ func (p *Page) buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell
 	}
 }
 
-func (p *Page) HandleKeyPresses() {
+func (p *List) HandleKeyPresses() {
 
 	encoding.Register()
 
