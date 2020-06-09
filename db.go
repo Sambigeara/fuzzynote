@@ -44,6 +44,14 @@ func PutListItem(l ListItem, path string) error {
 	return nil
 }
 
+func PrependListArray(p *[]ListItem, l ListItem) []ListItem {
+	arr := *p
+	arr = append(arr, l)
+	copy(arr[1:], arr)
+	arr[0] = l
+	return arr
+}
+
 func (p *List) BuildList(rootPath string) error {
 	file, err := os.Open(rootPath)
 	if err != nil {
@@ -83,7 +91,8 @@ func (p *List) BuildList(rootPath string) error {
 
 		//fmt.Println(string(data))
 
-		p.ListItems = append(p.ListItems, ListItem{string(data), time.Now()})
+		//p.ListItems = append(p.ListItems, ListItem{string(data), time.Now()})
+		p.ListItems = PrependListArray(&p.ListItems, ListItem{string(data), time.Now()})
 	}
 
 	//scanner := bufio.NewScanner(file)

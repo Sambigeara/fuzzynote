@@ -19,13 +19,19 @@ func ImportLines() {
 	}
 	defer file.Close()
 
+	arr := []ListItem{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		t := scanner.Text()
 		listItem := ListItem{t, time.Now()}
-		PutListItem(listItem, destPath)
+		arr = PrependListArray(&arr, listItem)
+		//PutListItem(listItem, destPath)
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
+	}
+
+	for _, l := range arr {
+		PutListItem(l, destPath)
 	}
 }
