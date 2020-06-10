@@ -150,9 +150,11 @@ func (p *List) HandleKeyPresses() {
 					s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
+				if curs.Y == 0 {
+					search.Keys = [][]rune{}
+				}
 				curs.X = 0
 				curs.Y = 0
-				search.Keys = [][]rune{}
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
 				// Delete removes last item from last rune slice. If final slice is empty, remove that instead
