@@ -82,7 +82,7 @@ func sendExtraEventFix() {
 	if err != nil {
 		panic(err)
 	}
-	kb.SetKeys(keybd_event.VK_ESC)
+	kb.SetKeys(keybd_event.VK_ENTER)
 	err = kb.Launching()
 	if err != nil {
 		panic(err)
@@ -97,7 +97,9 @@ func openEditorSession() {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	err := cmd.Run()
-	log.Printf("Command finished with error: %v", err)
+    if err != nil {
+        log.Printf("Command finished with error: %v", err)
+    }
 }
 
 func (p *List) HandleKeyPresses() {
