@@ -9,6 +9,7 @@ import (
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
 	"github.com/mattn/go-runewidth"
+	"github.com/micmonay/keybd_event"
 )
 
 var defStyle tcell.Style
@@ -57,13 +58,7 @@ type cursor struct {
 	YMax int
 }
 
-func openPage() {
-}
-
-func (p *List) HandleKeyPresses() {
-
-	encoding.Register()
-
+func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 	s, e := tcell.NewScreen()
 	if e != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", e)
@@ -73,12 +68,47 @@ func (p *List) HandleKeyPresses() {
 		fmt.Fprintf(os.Stderr, "%v\n", e)
 		os.Exit(1)
 	}
+	s.SetStyle(style)
+	//s.EnableMouse()
+	s.Clear()
+	return s
+}
+
+// This method is a horrible workaround for this bug: https://github.com/gdamore/tcell/issues/194
+// When closing a screen session (to give full control to the external program, e.g. vim), a subsequent keypress is dropped.
+// This aditional EOL event is sent to ensure consequent events are correctly handled
+func sendExtraEventFix() {
+	kb, err := keybd_event.NewKeyBonding()
+	if err != nil {
+		panic(err)
+	}
+	kb.SetKeys(keybd_event.VK_ESC)
+	err = kb.Launching()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func openEditorSession() {
+	// TODO https://github.com/gdamore/tcell/issues/194
+	sendExtraEventFix()
+	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
+	cmd := exec.Command("vim")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	err := cmd.Run()
+	log.Printf("Command finished with error: %v", err)
+}
+
+func (p *List) HandleKeyPresses() {
+
+	encoding.Register()
+
 	defStyle = tcell.StyleDefault.
 		Background(tcell.ColorBlack).
 		Foreground(tcell.ColorWhite)
-	s.SetStyle(defStyle)
-	//s.EnableMouse()
-	s.Clear()
+
+	s := newInstantiatedScreen(defStyle)
 
 	white := tcell.StyleDefault.
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
@@ -115,14 +145,9 @@ func (p *List) HandleKeyPresses() {
 						}
 					}
 				} else {
-					//openPage(curs.Y)
-					//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
-					cmd := exec.Command("ls")
-					cmd.Stdin = os.Stdin
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					err := cmd.Run()
-					log.Printf("Command finished with error: %v", err)
+					s.Fini()
+					openEditorSession()
+					s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
 				curs.X = 0
@@ -130,16 +155,14 @@ func (p *List) HandleKeyPresses() {
 				search.Keys = [][]rune{}
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
-				if curs.Y == 0 {
-					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
-					if len(search.Keys) > 0 {
-						lastTerm := search.Keys[len(search.Keys)-1]
-						if len(lastTerm) > 0 {
-							lastTerm = lastTerm[:len(lastTerm)-1]
-							search.Keys[len(search.Keys)-1] = lastTerm
-						} else {
-							search.Keys = search.Keys[:len(search.Keys)-1]
-						}
+				// Delete removes last item from last rune slice. If final slice is empty, remove that instead
+				if len(search.Keys) > 0 {
+					lastTerm := search.Keys[len(search.Keys)-1]
+					if len(lastTerm) > 0 {
+						lastTerm = lastTerm[:len(lastTerm)-1]
+						search.Keys[len(search.Keys)-1] = lastTerm
+					} else {
+						search.Keys = search.Keys[:len(search.Keys)-1]
 					}
 				}
 			case tcell.KeyDown:
