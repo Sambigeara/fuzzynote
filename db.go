@@ -17,25 +17,13 @@ type PageHeader struct {
 
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
-func PutListItem(l ListItem, path string, overwrite bool) error {
-	var flag int
-	if overwrite {
-		flag = os.O_CREATE | os.O_WRONLY
-	} else {
-		flag = os.O_APPEND | os.O_CREATE | os.O_WRONLY
-	}
-	file, err := os.OpenFile(path, flag, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
+func PutListItem(l ListItem, file *os.File) error {
 	var header = PageHeader{
 		Id:         1, // TODO id generator
 		FileId:     1, // TODO
 		DataLength: uint64(len(l.Line)),
 	}
-	err = binary.Write(file, binary.LittleEndian, &header)
+	err := binary.Write(file, binary.LittleEndian, &header)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 		return err
@@ -58,16 +46,27 @@ func PrependListArray(p *[]ListItem, l ListItem) []ListItem {
 	return arr
 }
 
-func (p *List) StoreList(rootPath string) error {
+func (p *List) StoreList() error {
 	// TODO save to temp file and then transfer over
-	for _, l := range p.ListItems {
-		PutListItem(l, destPath, true)
+
+	// TODO when appending individual item rather than overwriting
+	//file, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+	file, err := os.Create(p.RootPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Add files in reverse for file order consistency
+	for i := len(p.ListItems) - 1; i >= 0; i-- {
+		PutListItem(p.ListItems[i], file)
 	}
 	return nil
 }
 
-func (p *List) BuildList(rootPath string) error {
-	file, err := os.Open(rootPath)
+func (p *List) BuildList() error {
+	file, err := os.Open(p.RootPath)
 	if err != nil {
 		log.Fatal(err)
 	}
