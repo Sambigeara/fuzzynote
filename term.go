@@ -51,13 +51,6 @@ func (p *List) buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell
 	}
 }
 
-type cursor struct {
-	X    int
-	Y    int
-	XMax int
-	YMax int
-}
-
 func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 	s, e := tcell.NewScreen()
 	if e != nil {
@@ -98,6 +91,23 @@ func openEditorSession() {
 	cmd.Stdout = os.Stdout
 	err := cmd.Run()
 	log.Printf("Command finished with error: %v", err)
+}
+
+type cursor struct {
+	X    int
+	Y    int
+	XMax int
+	YMax int
+}
+
+func (curs *cursor) realignPos(keys [][]rune) {
+	// Update cursor position if typing in search box
+	newCurPos := len(keys) - 1 // Account for spaces between search groups
+	for _, g := range keys {
+		newCurPos += len(g)
+	}
+	curs.X = newCurPos
+	curs.Y = 0
 }
 
 func (p *List) HandleKeyPresses() {
@@ -144,6 +154,7 @@ func (p *List) HandleKeyPresses() {
 							search.Keys = append(search.Keys, []rune{})
 						}
 					}
+					curs.realignPos(search.Keys)
 				} else {
 					s.Fini()
 					openEditorSession()
@@ -167,6 +178,7 @@ func (p *List) HandleKeyPresses() {
 						search.Keys = search.Keys[:len(search.Keys)-1]
 					}
 				}
+				curs.realignPos(search.Keys)
 			case tcell.KeyDown:
 				curs.Y = min(curs.Y+1, curs.YMax)
 			case tcell.KeyUp:
@@ -184,6 +196,9 @@ func (p *List) HandleKeyPresses() {
 					var newTerm []rune
 					newTerm = append(newTerm, ev.Rune())
 					search.Keys = append(search.Keys, newTerm)
+				}
+				if curs.Y == 0 {
+					curs.realignPos(search.Keys)
 				}
 			}
 		}
