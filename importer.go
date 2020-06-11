@@ -32,6 +32,6 @@ func ImportLines() {
 	}
 
 	for _, l := range arr {
-		PutListItem(l, destPath)
+		PutListItem(l, destPath, false)
 	}
 }

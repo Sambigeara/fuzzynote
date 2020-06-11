@@ -17,8 +17,14 @@ type PageHeader struct {
 
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
-func PutListItem(l ListItem, path string) error {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+func PutListItem(l ListItem, path string, overwrite bool) error {
+	var flag int
+	if overwrite {
+		flag = os.O_CREATE | os.O_WRONLY
+	} else {
+		flag = os.O_APPEND | os.O_CREATE | os.O_WRONLY
+	}
+	file, err := os.OpenFile(path, flag, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,6 +58,14 @@ func PrependListArray(p *[]ListItem, l ListItem) []ListItem {
 	return arr
 }
 
+func (p *List) StoreList(rootPath string) error {
+	// TODO save to temp file and then transfer over
+	for _, l := range p.ListItems {
+		PutListItem(l, destPath, true)
+	}
+	return nil
+}
+
 func (p *List) BuildList(rootPath string) error {
 	file, err := os.Open(rootPath)
 	if err != nil {
@@ -59,7 +73,6 @@ func (p *List) BuildList(rootPath string) error {
 	}
 	defer file.Close()
 
-	//var header PageHeader
 	for {
 		header := PageHeader{}
 		err := binary.Read(file, binary.LittleEndian, &header)
@@ -73,10 +86,6 @@ func (p *List) BuildList(rootPath string) error {
 			}
 		}
 
-		//fmt.Println(header.Id)
-		//fmt.Println(header.FileId)
-		//fmt.Println(header.DataLength)
-
 		data := make([]byte, header.DataLength)
 		err = binary.Read(file, binary.LittleEndian, &data)
 		if err != nil {
@@ -88,21 +97,6 @@ func (p *List) BuildList(rootPath string) error {
 				return err
 			}
 		}
-
-		//fmt.Println(string(data))
-
-		//p.ListItems = append(p.ListItems, ListItem{string(data), time.Now()})
 		p.ListItems = PrependListArray(&p.ListItems, ListItem{string(data), time.Now()})
 	}
-
-	//scanner := bufio.NewScanner(file)
-	//for scanner.Scan() {
-	//    t := scanner.Text()
-	//    pageItem := ListItem{t, time.Now()}
-	//    p.ListItems = append(p.ListItems, pageItem)
-	//}
-	//if err := scanner.Err(); err != nil {
-	//    log.Fatal(err)
-	//}
-	return nil
 }

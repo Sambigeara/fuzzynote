@@ -9,4 +9,6 @@ func main() {
 	p := List{}
 	p.BuildList(RootPath)
 	p.HandleKeyPresses()
+	// TODO this should be handled gracefully on shutdown in the loop
+	p.StoreList(RootPath)
 }
