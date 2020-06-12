@@ -24,7 +24,7 @@ func ImportLines() {
 	for scanner.Scan() {
 		t := scanner.Text()
 		listItem := ListItem{t, time.Now()}
-		arr = PrependListArray(&arr, listItem)
+		arr = PrependListArray(arr, listItem)
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)

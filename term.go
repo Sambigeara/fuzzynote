@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
@@ -102,16 +103,33 @@ type cursor struct {
 	YMax int
 }
 
-func (curs *cursor) realignPos(keys [][]rune) {
+func (c *cursor) goDown() {
+	c.Y = min(c.Y+1, c.YMax)
+}
+
+func (c *cursor) goUp() {
+	c.Y = max(c.Y-1, 0)
+}
+
+func (c *cursor) goRight() {
+	c.X = min(c.X+1, c.XMax)
+}
+
+func (c *cursor) goLeft() {
+	c.X = max(c.X-1, 0)
+}
+
+func (c *cursor) realignPos(keys [][]rune) {
 	// Update cursor position if typing in search box
 	newCurPos := len(keys) - 1 // Account for spaces between search groups
 	for _, g := range keys {
 		newCurPos += len(g)
 	}
-	curs.X = newCurPos
-	curs.Y = 0
+	c.X = newCurPos
+	c.Y = 0
 }
 
+// HandleKeyPresses Read key presses on a loop
 func (p *List) HandleKeyPresses() {
 
 	encoding.Register()
@@ -126,6 +144,8 @@ func (p *List) HandleKeyPresses() {
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
 	w, h := s.Size()
+	ecnt := 0
+	ecntDt := time.Now()
 	curs := cursor{
 		XMax: w,
 		YMax: h,
@@ -142,13 +162,27 @@ func (p *List) HandleKeyPresses() {
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			s.SetContent(curs.XMax-1, curs.YMax-1, ev.Rune(), nil, defStyle)
+			// TODO put delete keys in common group
+			if (ev.Rune() != 'D' && ev.Rune() != 'd') || ecntDt.Add(time.Second*1).Before(time.Now()) {
+				ecnt = 0
+			}
 			switch ev.Key() {
 			case tcell.KeyCtrlC:
 				s.Fini()
 				p.StoreList()
 				os.Exit(0)
 			case tcell.KeyEnter:
+				// Add a new item below current cursor position
+				l := ListItem{}
+				if curs.Y == 0 {
+					p.ListItems = PrependListArray(p.ListItems, l)
+				} else {
+					newItemIdx := curs.Y - 1
+					copy(p.ListItems[newItemIdx+2:], p.ListItems[newItemIdx+1:])
+					p.ListItems[newItemIdx+1] = l
+				}
+				curs.goDown()
+			case tcell.KeyTab:
 				if curs.Y == 0 {
 					// If current search.Keys group has runes, close off and create new one
 					if len(search.Keys) > 0 {
@@ -158,7 +192,9 @@ func (p *List) HandleKeyPresses() {
 						}
 					}
 					curs.realignPos(search.Keys)
-				} else {
+				}
+			case tcell.KeyCtrlO:
+				if curs.Y != 0 {
 					s.Fini()
 					openEditorSession()
 					s = newInstantiatedScreen(defStyle)
@@ -183,17 +219,22 @@ func (p *List) HandleKeyPresses() {
 				}
 				curs.realignPos(search.Keys)
 			case tcell.KeyDown:
-				curs.Y = min(curs.Y+1, curs.YMax)
+				curs.goDown()
 			case tcell.KeyUp:
-				curs.Y = max(curs.Y-1, 0)
+				curs.goUp()
 			case tcell.KeyRight:
-				curs.X = min(curs.X+1, curs.XMax)
+				curs.goRight()
 			case tcell.KeyLeft:
-				curs.X = max(curs.X-1, 0)
+				curs.goLeft()
 			default:
 				if (ev.Rune() == 'D' || ev.Rune() == 'd') && curs.Y != 0 {
-					itemIdx := curs.Y - 1
-					p.ListItems = append(p.ListItems[:itemIdx], p.ListItems[itemIdx+1:]...)
+					ecnt++
+					ecntDt = time.Now()
+					if ecnt > 1 {
+						itemIdx := curs.Y - 1
+						p.ListItems = append(p.ListItems[:itemIdx], p.ListItems[itemIdx+1:]...)
+						ecnt = 0
+					}
 				} else {
 					if len(search.Keys) > 0 {
 						lastTerm := search.Keys[len(search.Keys)-1]
@@ -212,7 +253,7 @@ func (p *List) HandleKeyPresses() {
 		}
 		s.Clear()
 
-		matches, err := p.FetchMatches(search.Keys)
+		matches, err := p.FetchMatches()
 		if err != nil {
 			log.Println("stdin:", err)
 			break

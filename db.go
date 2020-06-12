@@ -38,8 +38,7 @@ func PutListItem(l ListItem, file *os.File) error {
 	return nil
 }
 
-func PrependListArray(p *[]ListItem, l ListItem) []ListItem {
-	arr := *p
+func PrependListArray(arr []ListItem, l ListItem) []ListItem {
 	arr = append(arr, l)
 	copy(arr[1:], arr)
 	arr[0] = l
@@ -96,6 +95,6 @@ func (p *List) BuildList() error {
 				return err
 			}
 		}
-		p.ListItems = PrependListArray(&p.ListItems, ListItem{string(data), time.Now()})
+		p.ListItems = PrependListArray(p.ListItems, ListItem{string(data), time.Now()})
 	}
 }

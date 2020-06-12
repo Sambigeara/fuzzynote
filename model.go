@@ -20,19 +20,19 @@ type ListItem struct {
 	DtCreated time.Time
 }
 
-func (p *List) FetchMatches(searchGroups [][]rune) ([]ListItem, error) {
+func (p *List) FetchMatches() ([]ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
 	res := []ListItem{}
-	for _, p := range p.ListItems {
+	for _, i := range p.ListItems {
 		isMatch := true
-		for _, group := range searchGroups {
-			if !IsMatch(group, p.Line) {
+		for _, group := range p.Search.Keys {
+			if !IsMatch(group, i.Line) {
 				isMatch = false
 				break
 			}
 		}
 		if isMatch {
-			res = append(res, p)
+			res = append(res, i)
 		}
 	}
 	return res, nil // TODO
