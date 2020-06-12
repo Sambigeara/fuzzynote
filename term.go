@@ -146,6 +146,7 @@ func (p *List) HandleKeyPresses() {
 			switch ev.Key() {
 			case tcell.KeyCtrlC:
 				s.Fini()
+				p.StoreList()
 				os.Exit(0)
 			case tcell.KeyEnter:
 				if curs.Y == 0 {
@@ -190,17 +191,22 @@ func (p *List) HandleKeyPresses() {
 			case tcell.KeyLeft:
 				curs.X = max(curs.X-1, 0)
 			default:
-				if len(search.Keys) > 0 {
-					lastTerm := search.Keys[len(search.Keys)-1]
-					lastTerm = append(lastTerm, ev.Rune())
-					search.Keys[len(search.Keys)-1] = lastTerm
+				if (ev.Rune() == 'D' || ev.Rune() == 'd') && curs.Y != 0 {
+					itemIdx := curs.Y - 1
+					p.ListItems = append(p.ListItems[:itemIdx], p.ListItems[itemIdx+1:]...)
 				} else {
-					var newTerm []rune
-					newTerm = append(newTerm, ev.Rune())
-					search.Keys = append(search.Keys, newTerm)
-				}
-				if curs.Y == 0 {
-					curs.realignPos(search.Keys)
+					if len(search.Keys) > 0 {
+						lastTerm := search.Keys[len(search.Keys)-1]
+						lastTerm = append(lastTerm, ev.Rune())
+						search.Keys[len(search.Keys)-1] = lastTerm
+					} else {
+						var newTerm []rune
+						newTerm = append(newTerm, ev.Rune())
+						search.Keys = append(search.Keys, newTerm)
+					}
+					if curs.Y == 0 {
+						curs.realignPos(search.Keys)
+					}
 				}
 			}
 		}

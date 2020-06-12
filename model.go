@@ -9,6 +9,7 @@ type SearchString struct {
 }
 
 type List struct {
+	RootPath  string // TODO convert to native path type
 	Search    SearchString
 	ListItems []ListItem
 	CurPos    int

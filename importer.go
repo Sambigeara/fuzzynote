@@ -25,13 +25,18 @@ func ImportLines() {
 		t := scanner.Text()
 		listItem := ListItem{t, time.Now()}
 		arr = PrependListArray(&arr, listItem)
-		//PutListItem(listItem, destPath)
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
 
+	destFile, err := os.OpenFile(destPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer destFile.Close()
+
 	for _, l := range arr {
-		PutListItem(l, destPath)
+		PutListItem(l, destFile)
 	}
 }

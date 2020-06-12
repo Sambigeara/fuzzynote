@@ -17,19 +17,13 @@ type PageHeader struct {
 
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
-func PutListItem(l ListItem, path string) error {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
+func PutListItem(l ListItem, file *os.File) error {
 	var header = PageHeader{
 		Id:         1, // TODO id generator
 		FileId:     1, // TODO
 		DataLength: uint64(len(l.Line)),
 	}
-	err = binary.Write(file, binary.LittleEndian, &header)
+	err := binary.Write(file, binary.LittleEndian, &header)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 		return err
@@ -52,14 +46,32 @@ func PrependListArray(p *[]ListItem, l ListItem) []ListItem {
 	return arr
 }
 
-func (p *List) BuildList(rootPath string) error {
-	file, err := os.Open(rootPath)
+func (p *List) StoreList() error {
+	// TODO save to temp file and then transfer over
+
+	// TODO when appending individual item rather than overwriting
+	//file, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+	file, err := os.Create(p.RootPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	//var header PageHeader
+	// Add files in reverse for file order consistency
+	for i := len(p.ListItems) - 1; i >= 0; i-- {
+		PutListItem(p.ListItems[i], file)
+	}
+	return nil
+}
+
+func (p *List) BuildList() error {
+	file, err := os.Open(p.RootPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
 	for {
 		header := PageHeader{}
 		err := binary.Read(file, binary.LittleEndian, &header)
@@ -73,10 +85,6 @@ func (p *List) BuildList(rootPath string) error {
 			}
 		}
 
-		//fmt.Println(header.Id)
-		//fmt.Println(header.FileId)
-		//fmt.Println(header.DataLength)
-
 		data := make([]byte, header.DataLength)
 		err = binary.Read(file, binary.LittleEndian, &data)
 		if err != nil {
@@ -88,21 +96,6 @@ func (p *List) BuildList(rootPath string) error {
 				return err
 			}
 		}
-
-		//fmt.Println(string(data))
-
-		//p.ListItems = append(p.ListItems, ListItem{string(data), time.Now()})
 		p.ListItems = PrependListArray(&p.ListItems, ListItem{string(data), time.Now()})
 	}
-
-	//scanner := bufio.NewScanner(file)
-	//for scanner.Scan() {
-	//    t := scanner.Text()
-	//    pageItem := ListItem{t, time.Now()}
-	//    p.ListItems = append(p.ListItems, pageItem)
-	//}
-	//if err := scanner.Err(); err != nil {
-	//    log.Fatal(err)
-	//}
-	return nil
 }
