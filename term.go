@@ -90,9 +90,9 @@ func openEditorSession() {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	err := cmd.Run()
-    if err != nil {
-        log.Printf("Command finished with error: %v", err)
-    }
+	if err != nil {
+		log.Printf("Command finished with error: %v", err)
+	}
 }
 
 type cursor struct {
