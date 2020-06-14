@@ -175,12 +175,15 @@ func (p *List) HandleKeyPresses() {
 				l := ListItem{}
 				if curs.Y == 0 {
 					p.ListItems = PrependListArray(p.ListItems, l)
+				} else if len(p.ListItems) == curs.Y {
+					p.ListItems = append(p.ListItems, l)
 				} else {
-					newItemIdx := curs.Y - 1
-					copy(p.ListItems[newItemIdx+2:], p.ListItems[newItemIdx+1:])
-					p.ListItems[newItemIdx+1] = l
-					curs.X = 0
+					itemIdx := curs.Y - 1
+					p.ListItems = append(p.ListItems, ListItem{})
+					copy(p.ListItems[itemIdx+2:], p.ListItems[itemIdx+1:])
+					p.ListItems[itemIdx+1] = l
 				}
+				curs.X = 0
 				curs.goDown()
 			case tcell.KeyCtrlD:
 				if curs.Y != 0 {
