@@ -179,6 +179,7 @@ func (p *List) HandleKeyPresses() {
 					newItemIdx := curs.Y - 1
 					copy(p.ListItems[newItemIdx+2:], p.ListItems[newItemIdx+1:])
 					p.ListItems[newItemIdx+1] = l
+					curs.X = 0
 				}
 				curs.goDown()
 			case tcell.KeyCtrlD:
@@ -216,17 +217,29 @@ func (p *List) HandleKeyPresses() {
 				curs.Y = 0
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
-				// Delete removes last item from last rune slice. If final slice is empty, remove that instead
-				if len(search.Keys) > 0 {
-					lastTerm := search.Keys[len(search.Keys)-1]
-					if len(lastTerm) > 0 {
-						lastTerm = lastTerm[:len(lastTerm)-1]
-						search.Keys[len(search.Keys)-1] = lastTerm
-					} else {
-						search.Keys = search.Keys[:len(search.Keys)-1]
+				if curs.Y == 0 {
+					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
+					if len(search.Keys) > 0 {
+						lastTerm := search.Keys[len(search.Keys)-1]
+						if len(lastTerm) > 0 {
+							lastTerm = lastTerm[:len(lastTerm)-1]
+							search.Keys[len(search.Keys)-1] = lastTerm
+						} else {
+							search.Keys = search.Keys[:len(search.Keys)-1]
+						}
+					}
+					curs.realignPos(search.Keys)
+				} else if curs.X > 0 {
+					// Retrieve item to update
+					listItemIdx := curs.Y - 1
+					updatedListItem := p.ListItems[listItemIdx]
+					newLine := []rune(updatedListItem.Line)
+					if len(newLine) > 0 {
+						newLine = append(newLine[:curs.X-1], newLine[curs.X:]...)
+						p.ListItems[listItemIdx].Line = string(newLine)
+						curs.goLeft()
 					}
 				}
-				//curs.realignPos(search.Keys)
 			case tcell.KeyDown:
 				curs.goDown()
 			case tcell.KeyUp:
@@ -246,15 +259,19 @@ func (p *List) HandleKeyPresses() {
 						newTerm = append(newTerm, ev.Rune())
 						search.Keys = append(search.Keys, newTerm)
 					}
+					curs.realignPos(search.Keys)
 				} else {
 					// Retrieve item to update
 					listItemIdx := curs.Y - 1
-					updatedListItem := p.ListItems[listItemIdx]
-					newLine := []rune(updatedListItem.Line)
+					newLine := []rune(p.ListItems[listItemIdx].Line)
 					// Insert characters at position
-					newCharIdx := curs.X
-					copy(newLine[newCharIdx+1:], newLine[newCharIdx:])
-					newLine[newCharIdx] = ev.Rune()
+					if len(newLine) == 0 || len(newLine) == curs.X {
+						newLine = append(newLine, ev.Rune())
+					} else {
+						newLine = append(newLine, 0)
+						copy(newLine[curs.X+1:], newLine[curs.X:])
+						newLine[curs.X] = ev.Rune()
+					}
 					p.ListItems[listItemIdx].Line = string(newLine)
 					curs.goRight()
 				}
