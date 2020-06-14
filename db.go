@@ -65,7 +65,7 @@ func (p *List) StoreList() error {
 }
 
 func (p *List) BuildList() error {
-	file, err := os.Open(p.RootPath)
+	file, err := os.OpenFile(p.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}

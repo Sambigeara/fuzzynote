@@ -1,10 +1,14 @@
 package main
 
-// TODO Will be path eventually, read from env var
-const rootPath = "pages/root"
+import "os"
 
 func main() {
 	//ImportLines()
+
+	var rootPath string
+	if rootPath = os.Getenv("ROOT_PAGE"); rootPath == "" {
+		rootPath = "pages/root"
+	}
 
 	p := List{
 		RootPath: rootPath,
