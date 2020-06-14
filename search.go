@@ -16,11 +16,11 @@ func isSubString(sub string, full string) bool {
 // pop it and continue through. If you clear sub, return true. Searches in O(n)
 func isFuzzyMatch(sub []rune, full string) bool {
 	for _, c := range full {
-		if len(sub) == 0 {
-			return true
-		}
 		if unicode.ToLower(c) == unicode.ToLower(sub[0]) {
 			_, sub = sub[0], sub[1:]
+		}
+		if len(sub) == 0 {
+			return true
 		}
 	}
 	return false
