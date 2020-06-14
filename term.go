@@ -226,7 +226,7 @@ func (p *List) HandleKeyPresses() {
 						search.Keys = search.Keys[:len(search.Keys)-1]
 					}
 				}
-				curs.realignPos(search.Keys)
+				//curs.realignPos(search.Keys)
 			case tcell.KeyDown:
 				curs.goDown()
 			case tcell.KeyUp:
@@ -236,17 +236,27 @@ func (p *List) HandleKeyPresses() {
 			case tcell.KeyLeft:
 				curs.goLeft()
 			default:
-				if len(search.Keys) > 0 {
-					lastTerm := search.Keys[len(search.Keys)-1]
-					lastTerm = append(lastTerm, ev.Rune())
-					search.Keys[len(search.Keys)-1] = lastTerm
-				} else {
-					var newTerm []rune
-					newTerm = append(newTerm, ev.Rune())
-					search.Keys = append(search.Keys, newTerm)
-				}
 				if curs.Y == 0 {
-					curs.realignPos(search.Keys)
+					if len(search.Keys) > 0 {
+						lastTerm := search.Keys[len(search.Keys)-1]
+						lastTerm = append(lastTerm, ev.Rune())
+						search.Keys[len(search.Keys)-1] = lastTerm
+					} else {
+						var newTerm []rune
+						newTerm = append(newTerm, ev.Rune())
+						search.Keys = append(search.Keys, newTerm)
+					}
+				} else {
+					// Retrieve item to update
+					listItemIdx := curs.Y - 1
+					updatedListItem := p.ListItems[listItemIdx]
+					newLine := []rune(updatedListItem.Line)
+					// Insert characters at position
+					newCharIdx := curs.X
+					copy(newLine[newCharIdx+1:], newLine[newCharIdx:])
+					newLine[newCharIdx] = ev.Rune()
+					p.ListItems[listItemIdx].Line = string(newLine)
+					curs.goRight()
 				}
 			}
 		}
