@@ -162,8 +162,7 @@ func (p *List) HandleKeyPresses() {
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			// TODO put delete keys in common group
-			if (ev.Rune() != 'D' && ev.Rune() != 'd') || ecntDt.Add(time.Second*1).Before(time.Now()) {
+			if ev.Key() != tcell.KeyCtrlD || ecntDt.Add(time.Second*1).Before(time.Now()) {
 				ecnt = 0
 			}
 			switch ev.Key() {
@@ -182,6 +181,16 @@ func (p *List) HandleKeyPresses() {
 					p.ListItems[newItemIdx+1] = l
 				}
 				curs.goDown()
+			case tcell.KeyCtrlD:
+				if curs.Y != 0 {
+					ecnt++
+					ecntDt = time.Now()
+					if ecnt > 1 {
+						itemIdx := curs.Y - 1
+						p.ListItems = append(p.ListItems[:itemIdx], p.ListItems[itemIdx+1:]...)
+						ecnt = 0
+					}
+				}
 			case tcell.KeyTab:
 				if curs.Y == 0 {
 					// If current search.Keys group has runes, close off and create new one
@@ -227,27 +236,17 @@ func (p *List) HandleKeyPresses() {
 			case tcell.KeyLeft:
 				curs.goLeft()
 			default:
-				if (ev.Rune() == 'D' || ev.Rune() == 'd') && curs.Y != 0 {
-					ecnt++
-					ecntDt = time.Now()
-					if ecnt > 1 {
-						itemIdx := curs.Y - 1
-						p.ListItems = append(p.ListItems[:itemIdx], p.ListItems[itemIdx+1:]...)
-						ecnt = 0
-					}
+				if len(search.Keys) > 0 {
+					lastTerm := search.Keys[len(search.Keys)-1]
+					lastTerm = append(lastTerm, ev.Rune())
+					search.Keys[len(search.Keys)-1] = lastTerm
 				} else {
-					if len(search.Keys) > 0 {
-						lastTerm := search.Keys[len(search.Keys)-1]
-						lastTerm = append(lastTerm, ev.Rune())
-						search.Keys[len(search.Keys)-1] = lastTerm
-					} else {
-						var newTerm []rune
-						newTerm = append(newTerm, ev.Rune())
-						search.Keys = append(search.Keys, newTerm)
-					}
-					if curs.Y == 0 {
-						curs.realignPos(search.Keys)
-					}
+					var newTerm []rune
+					newTerm = append(newTerm, ev.Rune())
+					search.Keys = append(search.Keys, newTerm)
+				}
+				if curs.Y == 0 {
+					curs.realignPos(search.Keys)
 				}
 			}
 		}
