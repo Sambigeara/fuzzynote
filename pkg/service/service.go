@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,12 +12,12 @@ import (
 )
 
 type ListRepo interface {
-	Load() ([]ListItem, error)
-	Save([]ListItem) error
-	Add(line string, idx int, listItems *[]ListItem) ([]ListItem, error)
-	Update(line string, idx int, listItems *[]ListItem) error
-	Delete(idx int, listItems *[]ListItem) ([]ListItem, error)
-	Match(keys [][]rune, listItems *[]ListItem) ([]ListItem, error)
+	Load() (*ListItem, error)
+	Save(*ListItem) error
+	Add(line string, parent *ListItem, child *ListItem) (*ListItem, error)
+	Update(line string, listItem *ListItem) error
+	Delete(listItem ListItem) (*ListItem, error)
+	Match(keys [][]rune, listItem *ListItem) (*ListItem, error)
 	//OpenFile()
 }
 
@@ -31,7 +32,9 @@ type List struct {
 }
 
 type ListItem struct {
-	Line string
+	Line   string
+	Parent *ListItem
+	Child  *ListItem
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -49,14 +52,36 @@ func NewDBListRepo(rootPath string) *DBListRepo {
 	return &DBListRepo{rootPath}
 }
 
-func PrependListArray(arr []ListItem, l ListItem) []ListItem {
-	arr = append(arr, l)
-	copy(arr[1:], arr)
-	arr[0] = l
-	return arr
+func fetchPage(r io.Reader) ([]byte, error) {
+	header := PageHeader{}
+	err := binary.Read(r, binary.LittleEndian, &header)
+	if err != nil {
+		return nil, err
+		//switch err {
+		//case io.EOF:
+		//    return data, nil
+		//case io.ErrUnexpectedEOF:
+		//    fmt.Println("binary.Read failed on page header:", err)
+		//    return nil, err
+		//}
+	}
+
+	data := make([]byte, header.DataLength)
+	err = binary.Read(r, binary.LittleEndian, &data)
+	if err != nil {
+		return nil, err
+		//switch err {
+		//case io.EOF:
+		//    return data, nil
+		//case io.ErrUnexpectedEOF:
+		//    fmt.Println("binary.Read failed on page data:", err)
+		//    return nil, err
+		//}
+	}
+	return data, nil
 }
 
-func (r *DBListRepo) Load() ([]ListItem, error) {
+func (r *DBListRepo) Load() (*ListItem, error) {
 	file, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -64,42 +89,50 @@ func (r *DBListRepo) Load() ([]ListItem, error) {
 	}
 	defer file.Close()
 
-	listItems := make([]ListItem, 0)
+	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
+	var cur *ListItem
+
+OuterLoop:
 	for {
-		header := PageHeader{}
-		err := binary.Read(file, binary.LittleEndian, &header)
+		data, err := fetchPage(file)
 		if err != nil {
 			switch err {
 			case io.EOF:
-				return listItems, nil
+				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
 				return nil, err
 			}
 		}
 
-		data := make([]byte, header.DataLength)
-		err = binary.Read(file, binary.LittleEndian, &data)
-		if err != nil {
-			switch err {
-			case io.EOF:
-				return listItems, nil
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page data:", err)
-				return nil, err
-			}
+		nextItem := ListItem{
+			Line:   string(data),
+			Parent: cur,
 		}
-		listItems = PrependListArray(listItems, ListItem{string(data)})
+		cur = &nextItem
 	}
+
+	youngest := cur
+
+	// `cur` is now a ptr to the most recent ListItem
+	for {
+		if cur.Parent == nil {
+			break
+		}
+		cur.Parent.Child = cur
+		cur = cur.Parent
+	}
+
+	return youngest, nil
 }
 
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
-func writeListItemToFile(l ListItem, file *os.File) error {
+func writeListItemToFile(l *ListItem, file *os.File) error {
 	var header = PageHeader{
 		PageID:     1, // TODO id generator
 		FileID:     1, // TODO
-		DataLength: uint64(len(l.Line)),
+		DataLength: uint64(len((*l).Line)),
 	}
 	err := binary.Write(file, binary.LittleEndian, &header)
 	if err != nil {
@@ -107,7 +140,7 @@ func writeListItemToFile(l ListItem, file *os.File) error {
 		return err
 	}
 
-	data := []byte(l.Line)
+	data := []byte((*l).Line)
 	err = binary.Write(file, binary.LittleEndian, &data)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
@@ -116,7 +149,7 @@ func writeListItemToFile(l ListItem, file *os.File) error {
 	return nil
 }
 
-func (r *DBListRepo) Save(listItems []ListItem) error {
+func (r *DBListRepo) Save(listItem *ListItem) error {
 	// TODO save to temp file and then transfer over
 
 	// TODO when appending individual item rather than overwriting
@@ -129,39 +162,79 @@ func (r *DBListRepo) Save(listItems []ListItem) error {
 	}
 	defer file.Close()
 
-	for i := len(listItems) - 1; i >= 0; i-- {
-		err = writeListItemToFile(listItems[i], file)
+	// TODO store oldest item on Load
+	// Get oldest listItem
+	for {
+		if listItem.Parent == nil {
+			break
+		}
+		listItem = listItem.Parent
+	}
+
+	for {
+		err = writeListItemToFile(listItem, file)
 		if err != nil {
 			log.Fatal(err)
 			return err
 		}
+		if listItem.Child == nil {
+			break
+		}
+		listItem = listItem.Child
 	}
+
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, idx int, listItems *[]ListItem) ([]ListItem, error) {
-	l := *listItems
-	l = append(l, ListItem{})
-	item := ListItem{line}
-	if idx != len(l) {
-		l = append(l, item)
-		copy(l[idx+1:], l[idx:])
-		l[idx] = item
+func (r *DBListRepo) Add(line string, child *ListItem, parent *ListItem) (*ListItem, error) {
+	if child == nil && parent != nil {
+		child = parent.Child
+	} else if child != nil && parent == nil {
+		parent = child.Parent
+	} else {
+		return nil, errors.New("Add requires either a child or parent ptr, not both or neither")
 	}
-	return l, nil
+	newItem := ListItem{
+		Line:   line,
+		Child:  child,
+		Parent: parent,
+	}
+	if child != nil {
+		child.Parent = &newItem
+	}
+	if parent != nil {
+		parent.Child = &newItem
+	}
+	return &newItem, nil
 }
 
-func (r *DBListRepo) Update(line string, idx int, listItems *[]ListItem) error {
-	(*listItems)[idx].Line = line
+func (r *DBListRepo) Update(line string, listItem *ListItem) error {
+	listItem.Line = line
 	return nil
 }
 
-func (r *DBListRepo) Delete(idx int, listItems *[]ListItem) ([]ListItem, error) {
-	//l := *listItems
-	//l = append(l[:idx], l[idx+1:]...)
-	//*listItems = l
-	res := append((*listItems)[:idx], (*listItems)[idx+1:]...)
-	return res, nil
+func (r *DBListRepo) Delete(listItem *ListItem) (*ListItem, error) {
+	if listItem.Child != nil {
+		listItem.Child.Parent = listItem.Parent
+	}
+	if listItem.Parent != nil {
+		listItem.Parent.Child = listItem.Child
+	}
+	// Always return root/youngest/top listItem
+	var cur *ListItem
+	if listItem.Child != nil {
+		cur = listItem.Child
+	} else if listItem.Parent != nil {
+		cur = listItem.Parent
+	} else {
+		return nil, nil
+	}
+	for {
+		if cur.Child == nil {
+			return cur, nil
+		}
+		cur = cur.Child
+	}
 }
 
 // Search functionality
@@ -199,20 +272,35 @@ func isMatch(sub []rune, full string) bool {
 	}
 }
 
-func (r *DBListRepo) Match(keys [][]rune, listItems *[]ListItem) ([]ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, cur *ListItem) (*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
-	res := []ListItem{}
-	for _, i := range *listItems {
+	if cur == nil {
+		return nil, nil
+	}
+
+	var res *ListItem
+	for {
 		matched := true
 		for _, group := range keys {
-			if !isMatch(group, i.Line) {
+			if !isMatch(group, cur.Line) {
 				matched = false
 				break
 			}
 		}
 		if matched {
-			res = append(res, i)
+			// The first listItem will need to be generated, otherwise iterate forwards from the existing
+			if res != nil {
+				res = res.Parent
+			}
+			res = &ListItem{
+				Line: cur.Line,
+			}
 		}
+
+		if cur.Parent == nil {
+			fmt.Printf("HELLOOOOOOOOO %v\n", res)
+			return res, nil
+		}
+		cur = cur.Parent
 	}
-	return res, nil // TODO
 }
