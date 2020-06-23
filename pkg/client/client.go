@@ -114,20 +114,30 @@ type cursor struct {
 	YMax int
 }
 
-func (c *cursor) goDown() {
+func (c *cursor) setMaxCurPos(listItems *[]service.ListItem) {
+	if c.Y >= 1 {
+		c.X = min(c.X, len((*listItems)[c.Y-1].Line))
+	}
+}
+
+func (c *cursor) goDown(listItems *[]service.ListItem) {
 	c.Y = min(c.Y+1, c.YMax)
+	c.setMaxCurPos(listItems)
 }
 
-func (c *cursor) goUp() {
+func (c *cursor) goUp(listItems *[]service.ListItem) {
 	c.Y = max(c.Y-1, 0)
+	c.setMaxCurPos(listItems)
 }
 
-func (c *cursor) goRight() {
+func (c *cursor) goRight(listItems *[]service.ListItem) {
 	c.X = min(c.X+1, c.XMax)
+	c.setMaxCurPos(listItems)
 }
 
-func (c *cursor) goLeft() {
+func (c *cursor) goLeft(listItems *[]service.ListItem) {
 	c.X = max(c.X-1, 0)
+	c.setMaxCurPos(listItems)
 }
 
 func (c *cursor) realignPos(keys [][]rune) {
@@ -198,12 +208,13 @@ func (term *Terminal) RunClient() error {
 					log.Fatal(err)
 				}
 				curs.X = 0
-				curs.goDown()
+				curs.goDown(&listItems)
 			case tcell.KeyCtrlD:
 				if curs.Y != 0 {
 					ecnt++
 					ecntDt = time.Now()
-					if ecnt > 1 {
+					//if ecnt > 1 {
+					if ecnt > 0 {
 						var err error
 						listItems, err = term.db.Delete(curs.Y-1, &listItems)
 						s.Clear()
@@ -262,17 +273,17 @@ func (term *Terminal) RunClient() error {
 						if err != nil {
 							log.Fatal(err)
 						}
-						curs.goLeft()
+						curs.goLeft(&listItems)
 					}
 				}
 			case tcell.KeyDown:
-				curs.goDown()
+				curs.goDown(&listItems)
 			case tcell.KeyUp:
-				curs.goUp()
+				curs.goUp(&listItems)
 			case tcell.KeyRight:
-				curs.goRight()
+				curs.goRight(&listItems)
 			case tcell.KeyLeft:
-				curs.goLeft()
+				curs.goLeft(&listItems)
 			default:
 				if curs.Y == 0 {
 					if len(search) > 0 {
@@ -302,7 +313,7 @@ func (term *Terminal) RunClient() error {
 						log.Fatal(err)
 					}
 					//listItems[listItemIdx].Line = string(newLine)
-					curs.goRight()
+					curs.goRight(&listItems)
 				}
 			}
 		}
