@@ -14,7 +14,7 @@ func main() {
 	//ImportLines()
 
 	var rootPath string
-	if rootPath = os.Getenv("ROOT_PAGE"); rootPath == "" {
+	if rootPath = os.Getenv("FZN_ROOT_PAGE"); rootPath == "" {
 		rootPath = "pages/root"
 	}
 
