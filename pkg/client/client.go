@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"time"
+	//"time"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
@@ -16,28 +16,56 @@ import (
 	"github.com/micmonay/keybd_event"
 )
 
+const firstListLineIdx = 1
+
 type Terminal struct {
-	db service.ListRepo
+	db      service.ListRepo
+	search  [][]rune
+	root    *service.ListItem // The top/youngest listItem
+	curItem *service.ListItem // The currently selected item
+	s       tcell.Screen
+	style   tcell.Style
+	w       int
+	h       int
+	curX    int
+	curY    int
+}
+
+func NewTerm(db service.ListRepo) *Terminal {
+	encoding.Register()
+
+	defStyle = tcell.StyleDefault.
+		Background(tcell.ColorBlack).
+		Foreground(tcell.ColorWhite)
+
+	s := newInstantiatedScreen(defStyle)
+
+	w, h := s.Size()
+	return &Terminal{
+		db:    db,
+		s:     s,
+		style: tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite),
+		w:     w,
+		h:     h,
+	}
 }
 
 var defStyle tcell.Style
 
-func min(a, b int) int {
+func min(a, b int) (int, bool) {
+	// Returns `true` if first argument was smaller
 	if a < b {
-		return a
+		return a, true
 	}
-	return b
+	return b, false
 }
 
-func max(a, b int) int {
-	if a < b {
-		return b
+func max(a, b int) (int, bool) {
+	// Returns `true` if first argument was larger
+	if a > b {
+		return a, true
 	}
-	return a
-}
-
-func NewTerm(db service.ListRepo) *Terminal {
-	return &Terminal{db}
+	return b, false
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -51,15 +79,6 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 		}
 		s.SetContent(x, y, c, comb, style)
 		x += w
-	}
-}
-
-func buildSearchBox(s tcell.Screen, searchGroups [][]rune, style tcell.Style) {
-	var pos, l int
-	for _, key := range searchGroups {
-		emitStr(s, pos, 0, style, string(key))
-		l = len(key)
-		pos = pos + l + 1 // Add a separator between groups with `+ 1`
 	}
 }
 
@@ -114,88 +133,120 @@ type cursor struct {
 	YMax int
 }
 
-func (c *cursor) setMaxCurPos(listItems *[]service.ListItem) {
-	if c.Y >= 1 {
-		c.X = min(c.X, len((*listItems)[c.Y-1].Line))
+func (t *Terminal) setMaxCurPos() {
+	// Ignore if on search string
+	if t.curY >= firstListLineIdx {
+		t.curX, _ = min(t.curX, len(t.curItem.Line))
 	}
 }
 
-func (c *cursor) goDown(listItems *[]service.ListItem) {
-	c.Y = min(c.Y+1, c.YMax)
-	c.setMaxCurPos(listItems)
+func (t *Terminal) goDown() {
+	newY, isChanged := min(t.curY+1, t.h-1)
+	t.curY = newY
+	if isChanged {
+		if newY == firstListLineIdx {
+			t.curItem = t.root
+		} else {
+			t.curItem = t.curItem.Parent
+		}
+	}
+	t.setMaxCurPos()
 }
 
-func (c *cursor) goUp(listItems *[]service.ListItem) {
-	c.Y = max(c.Y-1, 0)
-	c.setMaxCurPos(listItems)
+func (t *Terminal) goUp() {
+	newY, isChanged := max(t.curY-1, 0)
+	t.curY = newY
+	if isChanged {
+		t.curItem = t.curItem.Child
+	}
+	t.setMaxCurPos()
 }
 
-func (c *cursor) goRight(listItems *[]service.ListItem) {
-	c.X = min(c.X+1, c.XMax)
-	c.setMaxCurPos(listItems)
+func (t *Terminal) goRight() {
+	t.curX, _ = min(t.curX+1, t.w-1)
+	t.setMaxCurPos()
 }
 
-func (c *cursor) goLeft(listItems *[]service.ListItem) {
-	c.X = max(c.X-1, 0)
-	c.setMaxCurPos(listItems)
+func (t *Terminal) goLeft() {
+	t.curX, _ = max(t.curX-1, 0)
+	t.setMaxCurPos()
 }
 
-func (c *cursor) realignPos(keys [][]rune) {
+func (t *Terminal) realignPos() {
 	// Update cursor position if typing in search box
-	newCurPos := len(keys) - 1 // Account for spaces between search groups
-	for _, g := range keys {
+	newCurPos := len(t.search) - 1 // Account for spaces between search groups
+	for _, g := range t.search {
 		newCurPos += len(g)
 	}
-	c.X = newCurPos
-	c.Y = 0
+	t.curX = newCurPos
+	t.curY = 0
+}
+
+func (t *Terminal) buildSearchBox(s tcell.Screen, style tcell.Style) {
+	var pos, l int
+	for _, key := range t.search {
+		emitStr(s, pos, 0, style, string(key))
+		l = len(key)
+		pos = pos + l + 1 // Add a separator between groups with `+ 1`
+	}
+}
+
+func (t *Terminal) resizeScreen() {
+	w, h := t.s.Size()
+	t.w = w
+	t.h = h
+}
+
+func (t *Terminal) paint(cur *service.ListItem) error {
+	t.buildSearchBox(t.s, t.style)
+
+	if cur == nil {
+		return nil
+	}
+
+	idx := firstListLineIdx
+	for {
+		emitStr(t.s, 0, idx, t.style, cur.Line)
+		if cur.Parent == nil {
+			break
+		}
+		cur = cur.Parent
+		idx++
+	}
+
+	t.s.ShowCursor(t.curX, t.curY)
+	return nil
 }
 
 // RunClient Read key presses on a loop
-func (term *Terminal) RunClient() error {
+func (t *Terminal) RunClient() error {
 
-	listItems, err := term.db.Load()
+	// TODO instantiate these elsewhere and put in a colour map
+	//white := tcell.StyleDefault.
+	//    Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
+
+	// List instantiation
+	root, err := t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
+	// Initially set root to the absolute root
+	t.root = root
 
-	encoding.Register()
-
-	defStyle = tcell.StyleDefault.
-		Background(tcell.ColorBlack).
-		Foreground(tcell.ColorWhite)
-
-	s := newInstantiatedScreen(defStyle)
-
-	white := tcell.StyleDefault.
-		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
-
-	w, h := s.Size()
-	ecnt := 0
-	ecntDt := time.Now()
-	curs := cursor{
-		XMax: w,
-		YMax: h,
-	}
-	var search [][]rune
+	t.paint(t.root)
 
 	for {
-		s.Show()
-		ev := s.PollEvent()
-		w, h = s.Size()
-		curs.XMax = w
-		curs.YMax = h
+		t.s.Show()
+		ev := t.s.PollEvent()
 
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			if ev.Key() != tcell.KeyCtrlD || ecntDt.Add(time.Second*1).Before(time.Now()) {
-				ecnt = 0
-			}
 			switch ev.Key() {
 			case tcell.KeyCtrlC:
-				s.Fini()
-				err := term.db.Save(listItems)
+				t.s.Fini()
+				err := t.db.Save(t.root)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -203,133 +254,124 @@ func (term *Terminal) RunClient() error {
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
 				var err error
-				listItems, err = term.db.Add("", curs.Y, &listItems)
+				if t.curY == 0 {
+					t.root, err = t.db.Add("", nil, t.root)
+				} else {
+					_, err = t.db.Add("", t.curItem, nil)
+				}
 				if err != nil {
 					log.Fatal(err)
 				}
-				curs.X = 0
-				curs.goDown(&listItems)
+				t.curX = 0
+				t.goDown()
 			case tcell.KeyCtrlD:
-				if curs.Y != 0 {
-					ecnt++
-					ecntDt = time.Now()
-					//if ecnt > 1 {
-					if ecnt > 0 {
-						var err error
-						listItems, err = term.db.Delete(curs.Y-1, &listItems)
-						s.Clear()
-						if err != nil {
-							log.Fatal(err)
-						}
-						ecnt = 0
-					}
-				}
-			case tcell.KeyTab:
-				if curs.Y == 0 {
-					// If current search group has runes, close off and create new one
-					if len(search) > 0 {
-						lastTerm := search[len(search)-1]
-						if len(lastTerm) > 0 {
-							search = append(search, []rune{})
-						}
-					}
-					curs.realignPos(search)
-				}
-			case tcell.KeyCtrlO:
-				if curs.Y != 0 {
-					s.Fini()
-					openEditorSession()
-					s = newInstantiatedScreen(defStyle)
-				}
-			case tcell.KeyEscape:
-				if curs.Y == 0 {
-					search = [][]rune{}
-				}
-				curs.X = 0
-				curs.Y = 0
-			case tcell.KeyBackspace:
-			case tcell.KeyBackspace2:
-				if curs.Y == 0 {
-					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
-					if len(search) > 0 {
-						lastTerm := search[len(search)-1]
-						if len(lastTerm) > 0 {
-							lastTerm = lastTerm[:len(lastTerm)-1]
-							search[len(search)-1] = lastTerm
-						} else {
-							search = search[:len(search)-1]
-						}
-					}
-					curs.realignPos(search)
-				} else if curs.X > 0 {
-					// Retrieve item to update
-					listItemIdx := curs.Y - 1
-					updatedListItem := listItems[listItemIdx]
-					newLine := []rune(updatedListItem.Line)
-					if len(newLine) > 0 {
-						newLine = append(newLine[:curs.X-1], newLine[curs.X:]...)
-						listItems[listItemIdx].Line = string(newLine)
-						err := term.db.Update(string(newLine), listItemIdx, &listItems)
-						if err != nil {
-							log.Fatal(err)
-						}
-						curs.goLeft(&listItems)
-					}
-				}
-			case tcell.KeyDown:
-				curs.goDown(&listItems)
-			case tcell.KeyUp:
-				curs.goUp(&listItems)
-			case tcell.KeyRight:
-				curs.goRight(&listItems)
-			case tcell.KeyLeft:
-				curs.goLeft(&listItems)
-			default:
-				if curs.Y == 0 {
-					if len(search) > 0 {
-						lastTerm := search[len(search)-1]
-						lastTerm = append(lastTerm, ev.Rune())
-						search[len(search)-1] = lastTerm
-					} else {
-						var newTerm []rune
-						newTerm = append(newTerm, ev.Rune())
-						search = append(search, newTerm)
-					}
-					curs.realignPos(search)
-				} else {
-					// Retrieve item to update
-					listItemIdx := curs.Y - 1
-					newLine := []rune(listItems[listItemIdx].Line)
-					// Insert characters at position
-					if len(newLine) == 0 || len(newLine) == curs.X {
-						newLine = append(newLine, ev.Rune())
-					} else {
-						newLine = append(newLine, 0)
-						copy(newLine[curs.X+1:], newLine[curs.X:])
-						newLine[curs.X] = ev.Rune()
-					}
-					err := term.db.Update(string(newLine), listItemIdx, &listItems)
+				if t.curY != 0 {
+					var err error
+					t.curItem, err = t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
-					//listItems[listItemIdx].Line = string(newLine)
-					curs.goRight(&listItems)
+					t.s.Clear()
+					if t.curY == firstListLineIdx {
+						// If deleting root, reset root
+						t.root = t.curItem
+					}
+				}
+			case tcell.KeyTab:
+				if t.curY == 0 {
+					// If current search group has runes, close off and create new one
+					if len(t.search) > 0 {
+						lastTerm := t.search[len(t.search)-1]
+						if len(lastTerm) > 0 {
+							t.search = append(t.search, []rune{})
+						}
+					}
+					t.realignPos()
+				}
+			case tcell.KeyCtrlO:
+				if t.curY != 0 {
+					t.s.Fini()
+					openEditorSession()
+					t.s = newInstantiatedScreen(defStyle)
+				}
+			case tcell.KeyEscape:
+				if t.curY == 0 {
+					t.search = [][]rune{}
+				}
+				t.curX = 0
+				t.curY = 0
+			case tcell.KeyBackspace:
+			case tcell.KeyBackspace2:
+				if t.curY == 0 {
+					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
+					if len(t.search) > 0 {
+						lastTerm := t.search[len(t.search)-1]
+						if len(lastTerm) > 0 {
+							lastTerm = lastTerm[:len(lastTerm)-1]
+							t.search[len(t.search)-1] = lastTerm
+						} else {
+							t.search = t.search[:len(t.search)-1]
+						}
+					}
+					t.realignPos()
+				} else if t.curX > 0 {
+					newLine := []rune(t.curItem.Line)
+					if len(newLine) > 0 {
+						newLine = append(newLine[:t.curX-1], newLine[t.curX:]...)
+						err := t.db.Update(string(newLine), t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						t.goLeft()
+					}
+				}
+			case tcell.KeyDown:
+				t.goDown()
+			case tcell.KeyUp:
+				t.goUp()
+			case tcell.KeyRight:
+				t.goRight()
+			case tcell.KeyLeft:
+				t.goLeft()
+			default:
+				if t.curY == 0 {
+					if len(t.search) > 0 {
+						lastTerm := t.search[len(t.search)-1]
+						lastTerm = append(lastTerm, ev.Rune())
+						t.search[len(t.search)-1] = lastTerm
+					} else {
+						var newTerm []rune
+						newTerm = append(newTerm, ev.Rune())
+						t.search = append(t.search, newTerm)
+					}
+					t.realignPos()
+				} else {
+					newLine := []rune(t.curItem.Line)
+					// Insert characters at position
+					if len(newLine) == 0 || len(newLine) == t.curX {
+						newLine = append(newLine, ev.Rune())
+					} else {
+						newLine = append(newLine, 0)
+						copy(newLine[t.curX+1:], newLine[t.curX:])
+						newLine[t.curX] = ev.Rune()
+					}
+					err := t.db.Update(string(newLine), t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					t.goRight()
 				}
 			}
 		}
-		s.Clear()
+		t.s.Clear()
 
-		matches, err := term.db.Match(search, &listItems)
+		matchRoot, err := t.db.Match(t.search, t.root)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
 
-		buildSearchBox(s, search, white)
-		for i, r := range matches {
-			emitStr(s, 0, i+1, defStyle, r.Line)
-		}
-		s.ShowCursor(curs.X, curs.Y)
+		t.paint(matchRoot)
 	}
 
 	return nil
