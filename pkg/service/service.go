@@ -14,9 +14,9 @@ import (
 type ListRepo interface {
 	Load() (*ListItem, error)
 	Save(*ListItem) error
-	Add(line string, parent *ListItem, child *ListItem) (*ListItem, error)
+	Add(line string, child *ListItem, parent *ListItem) (*ListItem, error)
 	Update(line string, listItem *ListItem) error
-	Delete(listItem ListItem) (*ListItem, error)
+	Delete(listItem *ListItem) (*ListItem, error)
 	Match(keys [][]rune, listItem *ListItem) (*ListItem, error)
 	//OpenFile()
 }
@@ -57,26 +57,12 @@ func fetchPage(r io.Reader) ([]byte, error) {
 	err := binary.Read(r, binary.LittleEndian, &header)
 	if err != nil {
 		return nil, err
-		//switch err {
-		//case io.EOF:
-		//    return data, nil
-		//case io.ErrUnexpectedEOF:
-		//    fmt.Println("binary.Read failed on page header:", err)
-		//    return nil, err
-		//}
 	}
 
 	data := make([]byte, header.DataLength)
 	err = binary.Read(r, binary.LittleEndian, &data)
 	if err != nil {
 		return nil, err
-		//switch err {
-		//case io.EOF:
-		//    return data, nil
-		//case io.ErrUnexpectedEOF:
-		//    fmt.Println("binary.Read failed on page data:", err)
-		//    return nil, err
-		//}
 	}
 	return data, nil
 }
@@ -220,6 +206,7 @@ func (r *DBListRepo) Delete(listItem *ListItem) (*ListItem, error) {
 	if listItem.Parent != nil {
 		listItem.Parent.Child = listItem.Child
 	}
+
 	// Always return root/youngest/top listItem
 	var cur *ListItem
 	if listItem.Child != nil {
@@ -278,7 +265,7 @@ func (r *DBListRepo) Match(keys [][]rune, cur *ListItem) (*ListItem, error) {
 		return nil, nil
 	}
 
-	var res *ListItem
+	var root, res *ListItem
 	for {
 		matched := true
 		for _, group := range keys {
@@ -289,17 +276,19 @@ func (r *DBListRepo) Match(keys [][]rune, cur *ListItem) (*ListItem, error) {
 		}
 		if matched {
 			// The first listItem will need to be generated, otherwise iterate forwards from the existing
-			if res != nil {
-				res = res.Parent
-			}
-			res = &ListItem{
+			newItem := &ListItem{
 				Line: cur.Line,
+			}
+			if res == nil {
+				root = newItem
+				res = newItem
+			} else {
+				res.Parent = newItem
 			}
 		}
 
 		if cur.Parent == nil {
-			fmt.Printf("HELLOOOOOOOOO %v\n", res)
-			return res, nil
+			return root, nil
 		}
 		cur = cur.Parent
 	}

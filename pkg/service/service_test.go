@@ -157,6 +157,9 @@ func TestServiceAdd(t *testing.T) {
 }
 
 func lenListItems(cur *ListItem) int {
+	if cur == nil {
+		return 0
+	}
 	cnt := 0
 	for {
 		cnt++
@@ -366,8 +369,12 @@ func TestServiceMatch(t *testing.T) {
 	mockListRepo := NewDBListRepo(rootPath)
 
 	t.Run("Update item in list", func(t *testing.T) {
+		item4 := ListItem{
+			Line: "Not second",
+		}
 		item3 := ListItem{
-			Line: "Third",
+			Line:   "Third",
+			Parent: &item4,
 		}
 		item2 := ListItem{
 			Line:   "Second",
@@ -377,6 +384,7 @@ func TestServiceMatch(t *testing.T) {
 			Line:   "First",
 			Parent: &item2,
 		}
+		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
 		mockListRepo.Save(&item1)
@@ -384,27 +392,32 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
 		}
-		matchItem, err := mockListRepo.Match(search, &item1)
+		matchRoot, err := mockListRepo.Match(search, &item1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		expectedLen := 1
-		if lenListItems(matchItem) != expectedLen {
-			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(matchItem))
+		expectedLen := 2
+		if lenListItems(matchRoot) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(matchRoot))
 		}
 
 		expectedLine := "Second"
-		if matchItem.Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matchItem.Line)
+		if matchRoot.Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matchRoot.Line)
 		}
 
-		if matchItem.Child != nil {
+		expectedLine = "Not second"
+		if matchRoot.Parent.Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matchRoot.Parent.Line)
+		}
+
+		if matchRoot.Child != nil {
 			t.Errorf("Returned item should have no child")
 		}
 
-		if matchItem.Parent != nil {
-			t.Errorf("Returned item should have no parent")
+		if matchRoot.Parent.Parent != nil {
+			t.Errorf("Last parent item should have no parent")
 		}
 
 		err = os.Remove(rootPath)
