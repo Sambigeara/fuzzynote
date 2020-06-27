@@ -190,27 +190,31 @@ func TestServiceDelete(t *testing.T) {
 		item2.Child = &item1
 		mockListRepo.Save(&item1)
 
-		root, err := mockListRepo.Delete(&item1)
+		newItem, err := mockListRepo.Delete(&item1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if root != &item2 {
+		if newItem != &item2 {
 			t.Errorf("item2 should be new root")
 		}
 
 		expectedLen := 2
-		if lenListItems(root) != expectedLen {
-			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(root))
+		if lenListItems(newItem) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(newItem))
 		}
 
 		expectedLine := "Second"
-		if root.Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, root.Line)
+		if newItem.Line != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, newItem.Line)
 		}
 
 		if item2.Child != nil {
-			t.Errorf("New root item should have no child")
+			t.Errorf("Returned item should have no child")
+		}
+
+		if item2.Parent != &item3 {
+			t.Errorf("Returned item's parent should be the same")
 		}
 
 		err = os.Remove(rootPath)
@@ -234,28 +238,23 @@ func TestServiceDelete(t *testing.T) {
 		item2.Child = &item1
 		mockListRepo.Save(&item1)
 
-		root, err := mockListRepo.Delete(&item3)
+		newItem, err := mockListRepo.Delete(&item3)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if root != &item1 {
-			t.Errorf("item1 should have remained the root")
-		}
-
 		expectedLen := 2
-		if lenListItems(root) != expectedLen {
-			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(root))
+		if lenListItems(&item1) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(&item1))
 		}
 
-		expectedLine := "First"
-		if root.Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, root.Line)
+		if newItem != &item2 {
+			t.Errorf("Returned item should be item2")
 		}
 
-		expectedLine = "Second"
-		if root.Parent.Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, root.Parent.Line)
+		expectedLine := "Second"
+		if newItem.Line != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, newItem.Line)
 		}
 
 		if item2.Parent != nil {
@@ -283,28 +282,23 @@ func TestServiceDelete(t *testing.T) {
 		item2.Child = &item1
 		mockListRepo.Save(&item1)
 
-		root, err := mockListRepo.Delete(&item2)
+		newItem, err := mockListRepo.Delete(&item2)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if root != &item1 {
-			t.Errorf("item1 should have remained the root")
+		if newItem != &item3 {
+			t.Errorf("Returned item should be previous parent")
 		}
 
 		expectedLen := 2
-		if lenListItems(root) != expectedLen {
-			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(root))
+		if lenListItems(&item1) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(&item1))
 		}
 
-		expectedLine := "First"
-		if root.Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, root.Line)
-		}
-
-		expectedLine = "Third"
-		if root.Parent.Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, root.Parent.Line)
+		expectedLine := "Third"
+		if newItem.Line != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, newItem.Line)
 		}
 
 		if item1.Parent != &item3 {
@@ -369,8 +363,12 @@ func TestServiceMatch(t *testing.T) {
 	mockListRepo := NewDBListRepo(rootPath)
 
 	t.Run("Update item in list", func(t *testing.T) {
+		item5 := ListItem{
+			Line: "Also not second",
+		}
 		item4 := ListItem{
-			Line: "Not second",
+			Line:   "Not second",
+			Parent: &item5,
 		}
 		item3 := ListItem{
 			Line:   "Third",
@@ -384,6 +382,7 @@ func TestServiceMatch(t *testing.T) {
 			Line:   "First",
 			Parent: &item2,
 		}
+		item5.Child = &item4
 		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
@@ -397,7 +396,7 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		expectedLen := 2
+		expectedLen := 3
 		if lenListItems(matchRoot) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, lenListItems(matchRoot))
 		}
@@ -412,11 +411,16 @@ func TestServiceMatch(t *testing.T) {
 			t.Errorf("Expected line %s but got %s", expectedLine, matchRoot.Parent.Line)
 		}
 
+		expectedLine = "Also not second"
+		if matchRoot.Parent.Parent.Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matchRoot.Parent.Parent.Line)
+		}
+
 		if matchRoot.Child != nil {
 			t.Errorf("Returned item should have no child")
 		}
 
-		if matchRoot.Parent.Parent != nil {
+		if matchRoot.Parent.Parent.Parent != nil {
 			t.Errorf("Last parent item should have no parent")
 		}
 

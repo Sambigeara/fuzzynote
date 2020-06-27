@@ -207,20 +207,13 @@ func (r *DBListRepo) Delete(listItem *ListItem) (*ListItem, error) {
 		listItem.Parent.Child = listItem.Child
 	}
 
-	// Always return root/youngest/top listItem
-	var cur *ListItem
-	if listItem.Child != nil {
-		cur = listItem.Child
-	} else if listItem.Parent != nil {
-		cur = listItem.Parent
+	// Return the item that takes the position of the deleted item
+	if listItem.Parent != nil {
+		return listItem.Parent, nil
+	} else if listItem.Child != nil {
+		return listItem.Child, nil
 	} else {
 		return nil, nil
-	}
-	for {
-		if cur.Child == nil {
-			return cur, nil
-		}
-		cur = cur.Child
 	}
 }
 
@@ -284,6 +277,7 @@ func (r *DBListRepo) Match(keys [][]rune, cur *ListItem) (*ListItem, error) {
 				res = newItem
 			} else {
 				res.Parent = newItem
+				res = res.Parent
 			}
 		}
 
