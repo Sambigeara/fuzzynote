@@ -141,7 +141,11 @@ func (t *Terminal) goDown(matches []*service.ListItem) {
 func (t *Terminal) goUp(matches []*service.ListItem) {
 	newY := max(t.curY-1, 0)
 	t.curY = newY
-	t.curItem = matches[newY-1]
+	if newY == 0 {
+		t.curItem = nil
+	} else {
+		t.curItem = matches[newY-1]
+	}
 	t.setMaxCurPos()
 }
 
@@ -285,6 +289,8 @@ func (t *Terminal) RunClient() error {
 				}
 				t.curX = 0
 				t.curY = 0
+				// TODO centralise curItem nullifying
+				t.curItem = nil
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
 				if t.curY == 0 {
