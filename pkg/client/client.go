@@ -52,20 +52,18 @@ func NewTerm(db service.ListRepo) *Terminal {
 
 var defStyle tcell.Style
 
-func min(a, b int) (int, bool) {
-	// Returns `true` if first argument was smaller
+func min(a, b int) int {
 	if a < b {
-		return a, true
+		return a
 	}
-	return b, false
+	return b
 }
 
-func max(a, b int) (int, bool) {
-	// Returns `true` if first argument was larger
+func max(a, b int) int {
 	if a > b {
-		return a, true
+		return a
 	}
-	return b, false
+	return b
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -126,49 +124,34 @@ func openEditorSession() {
 	}
 }
 
-type cursor struct {
-	X    int
-	Y    int
-	XMax int
-	YMax int
-}
-
 func (t *Terminal) setMaxCurPos() {
 	// Ignore if on search string
 	if t.curY >= firstListLineIdx {
-		t.curX, _ = min(t.curX, len(t.curItem.Line))
+		t.curX = min(t.curX, len(t.curItem.Line))
 	}
 }
 
-func (t *Terminal) goDown() {
-	newY, isChanged := min(t.curY+1, t.h-1)
+func (t *Terminal) goDown(matches []*service.ListItem) {
+	newY := min(t.curY+1, t.h-1)
 	t.curY = newY
-	if isChanged {
-		if newY == firstListLineIdx {
-			t.curItem = t.root
-		} else {
-			t.curItem = t.curItem.Parent
-		}
-	}
+	t.curItem = matches[newY-1]
 	t.setMaxCurPos()
 }
 
-func (t *Terminal) goUp() {
-	newY, isChanged := max(t.curY-1, 0)
+func (t *Terminal) goUp(matches []*service.ListItem) {
+	newY := max(t.curY-1, 0)
 	t.curY = newY
-	if isChanged {
-		t.curItem = t.curItem.Child
-	}
+	t.curItem = matches[newY-1]
 	t.setMaxCurPos()
 }
 
 func (t *Terminal) goRight() {
-	t.curX, _ = min(t.curX+1, t.w-1)
+	t.curX = min(t.curX+1, t.w-1)
 	t.setMaxCurPos()
 }
 
 func (t *Terminal) goLeft() {
-	t.curX, _ = max(t.curX-1, 0)
+	t.curX = max(t.curX-1, 0)
 	t.setMaxCurPos()
 }
 
@@ -197,21 +180,11 @@ func (t *Terminal) resizeScreen() {
 	t.h = h
 }
 
-func (t *Terminal) paint(cur *service.ListItem) error {
+func (t *Terminal) paint(matches []*service.ListItem) error {
 	t.buildSearchBox(t.s, t.style)
 
-	if cur == nil {
-		return nil
-	}
-
-	idx := firstListLineIdx
-	for {
-		emitStr(t.s, 0, idx, t.style, cur.Line)
-		if cur.Parent == nil {
-			break
-		}
-		cur = cur.Parent
-		idx++
+	for i, r := range matches {
+		emitStr(t.s, 0, i+1, defStyle, r.Line)
 	}
 
 	t.s.ShowCursor(t.curX, t.curY)
@@ -226,15 +199,21 @@ func (t *Terminal) RunClient() error {
 	//    Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
 	// List instantiation
-	root, err := t.db.Load()
+	err := t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
-	// Initially set root to the absolute root
-	t.root = root
 
-	t.paint(t.root)
+	// TODO abstract out of here, no need for it to be exposed to client??
+	// Initially set root to the absolute root
+	t.root = t.db.GetRoot()
+	matches, err := t.db.Match([][]rune{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	t.paint(matches)
 
 	for {
 		t.s.Show()
@@ -255,27 +234,28 @@ func (t *Terminal) RunClient() error {
 				// Add a new item below current cursor position
 				var err error
 				if t.curY == 0 {
-					t.root, err = t.db.Add("", nil, t.root)
+					err = t.db.Add("", t.root, true)
 				} else {
-					_, err = t.db.Add("", t.curItem, nil)
+					err = t.db.Add("", t.curItem, false)
 				}
 				if err != nil {
 					log.Fatal(err)
 				}
 				t.curX = 0
-				t.goDown()
+				// TODO this needs to be ran here to update the set before setting curItem in `goDown`. Ideally the `Match` call would be centralised
+				matches, err = t.db.Match(t.search)
+				if err != nil {
+					log.Fatal(err)
+				}
+				t.goDown(matches)
 			case tcell.KeyCtrlD:
 				if t.curY != 0 {
 					var err error
-					t.curItem, err = t.db.Delete(t.curItem)
+					err = t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
 					t.s.Clear()
-					if t.curY == firstListLineIdx {
-						// If deleting root, reset root
-						t.root = t.curItem
-					}
 				}
 			case tcell.KeyTab:
 				if t.curY == 0 {
@@ -326,9 +306,9 @@ func (t *Terminal) RunClient() error {
 					}
 				}
 			case tcell.KeyDown:
-				t.goDown()
+				t.goDown(matches)
 			case tcell.KeyUp:
-				t.goUp()
+				t.goUp(matches)
 			case tcell.KeyRight:
 				t.goRight()
 			case tcell.KeyLeft:
@@ -365,13 +345,13 @@ func (t *Terminal) RunClient() error {
 		}
 		t.s.Clear()
 
-		matchRoot, err := t.db.Match(t.search, t.root)
+		matches, err = t.db.Match(t.search)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
 
-		t.paint(matchRoot)
+		t.paint(matches)
 	}
 
 	return nil
