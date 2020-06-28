@@ -165,10 +165,13 @@ func (t *Terminal) realignPos() {
 	t.curY = 0
 }
 
-func (t *Terminal) buildSearchBox(s tcell.Screen, style tcell.Style) {
+func (t *Terminal) buildSearchBox(s tcell.Screen) {
+	white := tcell.StyleDefault.
+		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
+
 	var pos, l int
 	for _, key := range t.search {
-		emitStr(s, pos, 0, style, string(key))
+		emitStr(s, pos, 0, white, string(key))
 		l = len(key)
 		pos = pos + l + 1 // Add a separator between groups with `+ 1`
 	}
@@ -181,7 +184,7 @@ func (t *Terminal) resizeScreen() {
 }
 
 func (t *Terminal) paint(matches []*service.ListItem) error {
-	t.buildSearchBox(t.s, t.style)
+	t.buildSearchBox(t.s)
 
 	for i, r := range matches {
 		emitStr(t.s, 0, i+1, defStyle, r.Line)
@@ -193,10 +196,6 @@ func (t *Terminal) paint(matches []*service.ListItem) error {
 
 // RunClient Read key presses on a loop
 func (t *Terminal) RunClient() error {
-
-	// TODO instantiate these elsewhere and put in a colour map
-	//white := tcell.StyleDefault.
-	//    Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
 	// List instantiation
 	err := t.db.Load()
