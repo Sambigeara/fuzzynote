@@ -2,7 +2,7 @@ package service
 
 import (
 	"encoding/binary"
-	"errors"
+	//"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,23 +12,19 @@ import (
 )
 
 type ListRepo interface {
-	Load() (*ListItem, error)
+	Load() error
 	Save(*ListItem) error
-	Add(line string, parent *ListItem, child *ListItem) (*ListItem, error)
+	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
 	Update(line string, listItem *ListItem) error
-	Delete(listItem ListItem) (*ListItem, error)
-	Match(keys [][]rune, listItem *ListItem) (*ListItem, error)
+	Delete(listItem *ListItem) error
+	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
+	GetRoot() *ListItem
 	//OpenFile()
 }
 
 type DBListRepo struct {
 	RootPath string
-}
-
-type List struct {
-	RootPath  string // TODO convert to native path type
-	ListItems []ListItem
-	CurPos    int
+	Root     *ListItem
 }
 
 type ListItem struct {
@@ -49,7 +45,7 @@ type PageHeader struct {
 }
 
 func NewDBListRepo(rootPath string) *DBListRepo {
-	return &DBListRepo{rootPath}
+	return &DBListRepo{RootPath: rootPath}
 }
 
 func fetchPage(r io.Reader) ([]byte, error) {
@@ -57,35 +53,21 @@ func fetchPage(r io.Reader) ([]byte, error) {
 	err := binary.Read(r, binary.LittleEndian, &header)
 	if err != nil {
 		return nil, err
-		//switch err {
-		//case io.EOF:
-		//    return data, nil
-		//case io.ErrUnexpectedEOF:
-		//    fmt.Println("binary.Read failed on page header:", err)
-		//    return nil, err
-		//}
 	}
 
 	data := make([]byte, header.DataLength)
 	err = binary.Read(r, binary.LittleEndian, &data)
 	if err != nil {
 		return nil, err
-		//switch err {
-		//case io.EOF:
-		//    return data, nil
-		//case io.ErrUnexpectedEOF:
-		//    fmt.Println("binary.Read failed on page data:", err)
-		//    return nil, err
-		//}
 	}
 	return data, nil
 }
 
-func (r *DBListRepo) Load() (*ListItem, error) {
+func (r *DBListRepo) Load() error {
 	file, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
-		return nil, err
+		return err
 	}
 	defer file.Close()
 
@@ -101,7 +83,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return nil, err
+				return err
 			}
 		}
 
@@ -112,7 +94,7 @@ OuterLoop:
 		cur = &nextItem
 	}
 
-	youngest := cur
+	r.Root = cur
 
 	// `cur` is now a ptr to the most recent ListItem
 	for {
@@ -123,7 +105,7 @@ OuterLoop:
 		cur = cur.Parent
 	}
 
-	return youngest, nil
+	return nil
 }
 
 // TODO untangle boundaries between data store and local data model
@@ -162,6 +144,8 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 	defer file.Close()
 
+	root := listItem
+
 	// TODO store oldest item on Load
 	// Get oldest listItem
 	for {
@@ -183,28 +167,41 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 		listItem = listItem.Child
 	}
 
+	r.Root = root
+
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, child *ListItem, parent *ListItem) (*ListItem, error) {
-	if child == nil && parent != nil {
-		child = parent.Child
-	} else if child != nil && parent == nil {
-		parent = child.Parent
-	} else {
-		return nil, errors.New("Add requires either a child or parent ptr, not both or neither")
-	}
+func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListItem, error) {
 	newItem := ListItem{
-		Line:   line,
-		Child:  child,
-		Parent: parent,
+		Line: line,
 	}
-	if child != nil {
-		child.Parent = &newItem
+
+	if !addAsChild {
+		newItem.Child = item
+		newItem.Parent = item.Parent
+
+		oldParent := item.Parent
+		item.Parent = &newItem
+		if oldParent != nil {
+			oldParent.Child = &newItem
+		}
+	} else {
+		// If the item was the previous youngest, update the root to the new item
+		if item.Child == nil {
+			r.Root = &newItem
+		}
+
+		newItem.Parent = item
+		newItem.Child = item.Child
+
+		oldChild := item.Child
+		item.Child = &newItem
+		if oldChild != nil {
+			oldChild.Parent = &newItem
+		}
 	}
-	if parent != nil {
-		parent.Child = &newItem
-	}
+
 	return &newItem, nil
 }
 
@@ -213,28 +210,19 @@ func (r *DBListRepo) Update(line string, listItem *ListItem) error {
 	return nil
 }
 
-func (r *DBListRepo) Delete(listItem *ListItem) (*ListItem, error) {
-	if listItem.Child != nil {
-		listItem.Child.Parent = listItem.Parent
-	}
-	if listItem.Parent != nil {
-		listItem.Parent.Child = listItem.Child
-	}
-	// Always return root/youngest/top listItem
-	var cur *ListItem
-	if listItem.Child != nil {
-		cur = listItem.Child
-	} else if listItem.Parent != nil {
-		cur = listItem.Parent
+func (r *DBListRepo) Delete(item *ListItem) error {
+	if item.Child != nil {
+		item.Child.Parent = item.Parent
 	} else {
-		return nil, nil
+		// If the item has no child, it is at the top of the list and therefore we need to update the root
+		r.Root = item.Parent
 	}
-	for {
-		if cur.Child == nil {
-			return cur, nil
-		}
-		cur = cur.Child
+
+	if item.Parent != nil {
+		item.Parent.Child = item.Child
 	}
+
+	return nil
 }
 
 // Search functionality
@@ -272,35 +260,39 @@ func isMatch(sub []rune, full string) bool {
 	}
 }
 
-func (r *DBListRepo) Match(keys [][]rune, cur *ListItem) (*ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
+	cur := r.Root
+
+	res := make([]*ListItem, 0)
+
 	if cur == nil {
-		return nil, nil
+		return res, nil
 	}
 
-	var res *ListItem
 	for {
 		matched := true
 		for _, group := range keys {
+			if cur == active {
+				// "active" listItems pass automatically to allow mid-search item editing
+				break
+			}
 			if !isMatch(group, cur.Line) {
 				matched = false
 				break
 			}
 		}
 		if matched {
-			// The first listItem will need to be generated, otherwise iterate forwards from the existing
-			if res != nil {
-				res = res.Parent
-			}
-			res = &ListItem{
-				Line: cur.Line,
-			}
+			res = append(res, cur)
 		}
 
 		if cur.Parent == nil {
-			fmt.Printf("HELLOOOOOOOOO %v\n", res)
 			return res, nil
 		}
 		cur = cur.Parent
 	}
+}
+
+func (r *DBListRepo) GetRoot() *ListItem {
+	return r.Root
 }
