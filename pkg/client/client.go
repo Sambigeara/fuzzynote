@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	//"time"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
