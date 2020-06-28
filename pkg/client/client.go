@@ -208,7 +208,7 @@ func (t *Terminal) RunClient() error {
 	// TODO abstract out of here, no need for it to be exposed to client??
 	// Initially set root to the absolute root
 	t.root = t.db.GetRoot()
-	matches, err := t.db.Match([][]rune{})
+	matches, err := t.db.Match([][]rune{}, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -232,29 +232,35 @@ func (t *Terminal) RunClient() error {
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
+				var newItem *service.ListItem
 				var err error
 				if t.curY == 0 {
-					err = t.db.Add("", t.root, true)
+					newItem, err = t.db.Add("", t.root, true)
 				} else {
-					err = t.db.Add("", t.curItem, false)
+					newItem, err = t.db.Add("", t.curItem, false)
 				}
 				if err != nil {
 					log.Fatal(err)
 				}
 				t.curX = 0
 				// TODO this needs to be ran here to update the set before setting curItem in `goDown`. Ideally the `Match` call would be centralised
-				matches, err = t.db.Match(t.search)
+				matches, err = t.db.Match(t.search, newItem)
 				if err != nil {
 					log.Fatal(err)
 				}
 				t.goDown(matches)
 			case tcell.KeyCtrlD:
 				if t.curY != 0 {
-					var err error
-					err = t.db.Delete(t.curItem)
+					// Retrieve the new curItem prior to deleting the existing curItem so we can set it afterwards
+					newCurItem := t.curItem.Parent
+					if newCurItem == nil {
+						newCurItem = t.curItem.Child
+					}
+					err := t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
+					t.curItem = newCurItem
 					t.s.Clear()
 				}
 			case tcell.KeyTab:
@@ -345,7 +351,7 @@ func (t *Terminal) RunClient() error {
 		}
 		t.s.Clear()
 
-		matches, err = t.db.Match(t.search)
+		matches, err = t.db.Match(t.search, t.curItem)
 		if err != nil {
 			log.Println("stdin:", err)
 			break

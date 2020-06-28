@@ -14,10 +14,10 @@ import (
 type ListRepo interface {
 	Load() error
 	Save(*ListItem) error
-	Add(line string, item *ListItem, addAsChild bool) error
+	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
-	Match(keys [][]rune) ([]*ListItem, error)
+	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	GetRoot() *ListItem
 	//OpenFile()
 }
@@ -172,7 +172,7 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) error {
+func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListItem, error) {
 	newItem := ListItem{
 		Line: line,
 	}
@@ -202,7 +202,7 @@ func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) error {
 		}
 	}
 
-	return nil
+	return &newItem, nil
 }
 
 func (r *DBListRepo) Update(line string, listItem *ListItem) error {
@@ -260,7 +260,7 @@ func isMatch(sub []rune, full string) bool {
 	}
 }
 
-func (r *DBListRepo) Match(keys [][]rune) ([]*ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
 	cur := r.Root
 
@@ -273,6 +273,10 @@ func (r *DBListRepo) Match(keys [][]rune) ([]*ListItem, error) {
 	for {
 		matched := true
 		for _, group := range keys {
+			if cur == active {
+				// "active" listItems pass automatically to allow mid-search item editing
+				break
+			}
 			if !isMatch(group, cur.Line) {
 				matched = false
 				break
