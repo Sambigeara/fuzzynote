@@ -12,13 +12,12 @@ import (
 )
 
 type ListRepo interface {
-	Load() error
+	Load() (*ListItem, error)
 	Save(*ListItem) error
 	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
-	GetRoot() *ListItem
 	//OpenFile()
 }
 
@@ -63,11 +62,11 @@ func fetchPage(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func (r *DBListRepo) Load() error {
+func (r *DBListRepo) Load() (*ListItem, error) {
 	file, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
@@ -83,7 +82,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return err
+				return nil, err
 			}
 		}
 
@@ -105,7 +104,7 @@ OuterLoop:
 		cur = cur.Parent
 	}
 
-	return nil
+	return r.Root, nil
 }
 
 // TODO untangle boundaries between data store and local data model
@@ -291,8 +290,4 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 		}
 		cur = cur.Parent
 	}
-}
-
-func (r *DBListRepo) GetRoot() *ListItem {
-	return r.Root
 }

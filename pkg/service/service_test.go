@@ -16,7 +16,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		expectedLines[0] = "Test ListItem"
 		expectedLines[1] = "Another test ListItem"
 
-		err := mockListRepo.Load()
+		_, err := mockListRepo.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("New item should be original root's Child")
 		}
 
-		if mockListRepo.GetRoot() != matches[0] {
+		if mockListRepo.Root != matches[0] {
 			t.Errorf("item2 should be new root")
 		}
 
@@ -224,7 +224,7 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("item2 should be new root")
 		}
 
-		if mockListRepo.GetRoot() != &item2 {
+		if mockListRepo.Root != &item2 {
 			t.Errorf("item2 should be new root")
 		}
 

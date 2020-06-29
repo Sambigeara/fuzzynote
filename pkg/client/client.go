@@ -201,15 +201,13 @@ func (t *Terminal) paint(matches []*service.ListItem) error {
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
-	err := t.db.Load()
+	var err error
+	t.root, err = t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
 
-	// TODO abstract out of here, no need for it to be exposed to client??
-	// Initially set root to the absolute root
-	t.root = t.db.GetRoot()
 	matches, err := t.db.Match([][]rune{}, nil)
 	if err != nil {
 		log.Fatal(err)
