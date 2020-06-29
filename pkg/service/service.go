@@ -124,7 +124,7 @@ func writeListItemToFile(l *ListItem, file *os.File) error {
 		PageID:     0, // TODO id generator
 		Metadata:   0, // TODO
 		FileID:     0, // TODO
-		DataLength: uint64(len((*l).Line)),
+		DataLength: uint64(len(l.Line)),
 	}
 	err := binary.Write(file, binary.LittleEndian, &header)
 	if err != nil {
@@ -132,7 +132,7 @@ func writeListItemToFile(l *ListItem, file *os.File) error {
 		return err
 	}
 
-	data := []byte((*l).Line)
+	data := []byte(l.Line)
 	err = binary.Write(file, binary.LittleEndian, &data)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
@@ -171,7 +171,7 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 			PageID:     ID,
 			Metadata:   0, // TODO
 			FileID:     ID,
-			DataLength: uint64(len((*listItem).Line)),
+			DataLength: uint64(len(listItem.Line)),
 		}
 		// TODO the below writes need to be atomic
 		err := binary.Write(file, binary.LittleEndian, &header)
@@ -180,7 +180,7 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 			log.Fatal(err)
 			return err
 		}
-		data := []byte((*listItem).Line)
+		data := []byte(listItem.Line)
 		err = binary.Write(file, binary.LittleEndian, &data)
 		if err != nil {
 			fmt.Println("binary.Write failed:", err)
