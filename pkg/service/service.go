@@ -18,12 +18,14 @@ type ListRepo interface {
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
-	//OpenFile()
+	//GetPage(id uint32) (io.Reader, error)
+	//SavePage()
 }
 
 type DBListRepo struct {
 	RootPath string
 	Root     *ListItem
+	NextID   uint32
 }
 
 type ListItem struct {
@@ -37,29 +39,15 @@ type FileHeader struct {
 	SchemaID uint32
 }
 
-type PageHeader struct {
+type ItemHeader struct {
 	PageID     uint32
-	FileID     uint64
+	Metadata   uint32
+	FileID     uint32
 	DataLength uint64
 }
 
 func NewDBListRepo(rootPath string) *DBListRepo {
 	return &DBListRepo{RootPath: rootPath}
-}
-
-func fetchPage(r io.Reader) ([]byte, error) {
-	header := PageHeader{}
-	err := binary.Read(r, binary.LittleEndian, &header)
-	if err != nil {
-		return nil, err
-	}
-
-	data := make([]byte, header.DataLength)
-	err = binary.Read(r, binary.LittleEndian, &data)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
 }
 
 func (r *DBListRepo) Load() (*ListItem, error) {
@@ -73,9 +61,31 @@ func (r *DBListRepo) Load() (*ListItem, error) {
 	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
 	var cur *ListItem
 
+	r.NextID = 1
+
 OuterLoop:
 	for {
-		data, err := fetchPage(file)
+
+		header := ItemHeader{}
+		err := binary.Read(file, binary.LittleEndian, &header)
+
+		if err != nil {
+			switch err {
+			case io.EOF:
+				break OuterLoop
+			case io.ErrUnexpectedEOF:
+				fmt.Println("binary.Read failed on page header:", err)
+				return nil, err
+			}
+		}
+
+		if header.PageID > r.NextID {
+			r.NextID = header.PageID + 1
+		}
+
+		data := make([]byte, header.DataLength)
+		err = binary.Read(file, binary.LittleEndian, &data)
+
 		if err != nil {
 			switch err {
 			case io.EOF:
@@ -110,9 +120,10 @@ OuterLoop:
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
 func writeListItemToFile(l *ListItem, file *os.File) error {
-	var header = PageHeader{
-		PageID:     1, // TODO id generator
-		FileID:     1, // TODO
+	header := ItemHeader{
+		PageID:     0, // TODO id generator
+		Metadata:   0, // TODO
+		FileID:     0, // TODO
 		DataLength: uint64(len((*l).Line)),
 	}
 	err := binary.Write(file, binary.LittleEndian, &header)
@@ -155,11 +166,29 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 
 	for {
-		err = writeListItemToFile(listItem, file)
+		ID := r.NextID
+		header := ItemHeader{
+			PageID:     ID,
+			Metadata:   0, // TODO
+			FileID:     ID,
+			DataLength: uint64(len((*listItem).Line)),
+		}
+		// TODO the below writes need to be atomic
+		err := binary.Write(file, binary.LittleEndian, &header)
 		if err != nil {
+			fmt.Println("binary.Write failed:", err)
 			log.Fatal(err)
 			return err
 		}
+		data := []byte((*listItem).Line)
+		err = binary.Write(file, binary.LittleEndian, &data)
+		if err != nil {
+			fmt.Println("binary.Write failed:", err)
+			log.Fatal(err)
+			return err
+		}
+		r.NextID++
+
 		if listItem.Child == nil {
 			break
 		}
@@ -291,3 +320,6 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 		cur = cur.Parent
 	}
 }
+
+//func (r *DBListRepo) GetPage(id uint32) (io.Reader, error) {
+//}
