@@ -19,7 +19,6 @@ func main() {
 	}
 
 	// Create app directory if not present
-	// TODO atm only valid for macs in `/Applications/`
 	dirsToCreate := []string{
 		"notes",
 	}
