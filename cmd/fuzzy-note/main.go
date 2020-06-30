@@ -14,7 +14,8 @@ import (
 func main() {
 	var rootDir string
 	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
-		rootDir = "/Applications/fzn/"
+		// TODO currently only works on OSs with HOME
+		rootDir = path.Join(os.Getenv("HOME"), ".fzn/")
 	}
 
 	// Create app directory if not present
