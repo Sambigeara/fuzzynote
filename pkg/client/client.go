@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -110,17 +111,44 @@ func sendExtraEventFix() {
 	}
 }
 
-func openEditorSession() {
+func (t *Terminal) openEditorSession() error {
 	// TODO https://github.com/gdamore/tcell/issues/194
 	sendExtraEventFix()
+
+	dat, writeFn, err := t.db.EditPage(t.curItem.ID)
+
+	// Write text to temp file
+	tempFile := "/tmp/fzn_buffer"
+	f, err := os.Create(tempFile)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(*dat)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+
 	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
-	cmd := exec.Command("vim")
+	cmd := exec.Command("vim", tempFile)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Printf("Command finished with error: %v", err)
 	}
+
+	// Read back from the temp file, and return to the write function
+	newDat, err := ioutil.ReadFile(tempFile)
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	return writeFn(&newDat)
 }
 
 func (t *Terminal) setMaxCurPos() {
@@ -288,7 +316,10 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
 					t.s.Fini()
-					openEditorSession()
+					err = t.openEditorSession()
+					if err != nil {
+						log.Fatal(err)
+					}
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:

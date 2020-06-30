@@ -11,22 +11,25 @@ import (
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
 )
 
+const rootFileName = "primary.db"
+
 func main() {
-	var rootDir string
+	var rootDir, notesSubDir string
 	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
 		// TODO currently only works on OSs with HOME
 		rootDir = path.Join(os.Getenv("HOME"), ".fzn/")
 	}
-
-	// Create app directory if not present
-	dirsToCreate := []string{
-		"notes",
-	}
-	for _, d := range dirsToCreate {
-		os.MkdirAll(path.Join(rootDir, d), os.ModePerm)
+	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
+		notesSubDir = "notes"
 	}
 
-	listRepo := service.NewDBListRepo(rootDir)
+	rootPath := path.Join(rootDir, rootFileName)
+	notesDir := path.Join(rootDir, notesSubDir)
+
+	// Create (if not exists) the notes subdirectory
+	os.MkdirAll(notesDir, os.ModePerm)
+
+	listRepo := service.NewDBListRepo(rootPath, notesDir)
 
 	term := client.NewTerm(listRepo)
 

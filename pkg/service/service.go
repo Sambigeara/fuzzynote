@@ -5,6 +5,7 @@ import (
 	//"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -19,14 +20,14 @@ type ListRepo interface {
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
-	//GetPage(id uint32) (io.Reader, error)
-	//SavePage()
+	EditPage(id uint32) (*[]byte, func(*[]byte) error, error)
 }
 
 type DBListRepo struct {
-	RootPath string
-	Root     *ListItem
-	NextID   uint32
+	RootPath  string
+	NotesPath string
+	Root      *ListItem
+	NextID    uint32
 }
 
 type ListItem struct {
@@ -48,18 +49,20 @@ type ItemHeader struct {
 	DataLength uint64
 }
 
-func NewDBListRepo(rootDir string) *DBListRepo {
-	rootPath := path.Join(rootDir, "primary.db")
-	return &DBListRepo{RootPath: rootPath}
+func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
+	return &DBListRepo{
+		RootPath:  rootPath,
+		NotesPath: notesPath,
+	}
 }
 
 func (r *DBListRepo) Load() (*ListItem, error) {
-	file, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
+	f, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 		return nil, err
 	}
-	defer file.Close()
+	defer f.Close()
 
 	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
 	var cur, oldest *ListItem
@@ -70,7 +73,7 @@ OuterLoop:
 	for {
 
 		header := ItemHeader{}
-		err := binary.Read(file, binary.LittleEndian, &header)
+		err := binary.Read(f, binary.LittleEndian, &header)
 
 		if err != nil {
 			switch err {
@@ -88,7 +91,7 @@ OuterLoop:
 		}
 
 		data := make([]byte, header.DataLength)
-		err = binary.Read(file, binary.LittleEndian, &data)
+		err = binary.Read(f, binary.LittleEndian, &data)
 
 		if err != nil {
 			switch err {
@@ -145,21 +148,21 @@ OuterLoop:
 
 // TODO untangle boundaries between data store and local data model
 // TODO should not require string - should be a method attached to a datastore with config baked in
-func writeListItemToFile(l *ListItem, file *os.File) error {
+func writeListItemToFile(l *ListItem, f *os.File) error {
 	header := ItemHeader{
 		PageID:     0, // TODO id generator
 		Metadata:   0, // TODO
 		FileID:     0, // TODO
 		DataLength: uint64(len(l.Line)),
 	}
-	err := binary.Write(file, binary.LittleEndian, &header)
+	err := binary.Write(f, binary.LittleEndian, &header)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 		return err
 	}
 
 	data := []byte(l.Line)
-	err = binary.Write(file, binary.LittleEndian, &data)
+	err = binary.Write(f, binary.LittleEndian, &data)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 		return err
@@ -176,18 +179,18 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	// TODO save to temp file and then transfer over
 
 	// TODO when appending individual item rather than overwriting
-	//file, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	//f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
-	file, err := os.Create(r.RootPath)
+	f, err := os.Create(r.RootPath)
 	if err != nil {
 		log.Fatal(err)
 		return err
 	}
-	defer file.Close()
+	defer f.Close()
 
 	// Write empty file if no listItems exist
 	if listItem == nil {
-		err := binary.Write(file, binary.LittleEndian, []byte{})
+		err := binary.Write(f, binary.LittleEndian, []byte{})
 		if err != nil {
 			fmt.Println("binary.Write failed:", err)
 			log.Fatal(err)
@@ -220,14 +223,14 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 		}
 
 		// TODO the below writes need to be atomic
-		err := binary.Write(file, binary.LittleEndian, &header)
+		err := binary.Write(f, binary.LittleEndian, &header)
 		if err != nil {
 			fmt.Println("binary.Write failed:", err)
 			log.Fatal(err)
 			return err
 		}
 		data := []byte(listItem.Line)
-		err = binary.Write(file, binary.LittleEndian, &data)
+		err = binary.Write(f, binary.LittleEndian, &data)
 		if err != nil {
 			fmt.Println("binary.Write failed:", err)
 			log.Fatal(err)
@@ -374,5 +377,32 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	}
 }
 
-//func (r *DBListRepo) GetPage(id uint32) (io.Reader, error) {
-//}
+func (r *DBListRepo) EditPage(id uint32) (*[]byte, func(*[]byte) error, error) {
+	strID := fmt.Sprint(id)
+	filePath := path.Join(r.NotesPath, strID)
+	fmt.Printf("HELLOOO %s\n", filePath)
+
+	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
+	// This needs to be before the ReadFile below to ensure the file exists
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0755)
+
+	// Read whole file
+	dat, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+		return nil, nil, err
+	}
+
+	writeFn := func(newDat *[]byte) error {
+		defer f.Close()
+
+		_, err = f.Write(*newDat)
+		if err != nil {
+			fmt.Println("binary.Write failed:", err)
+			return err
+		}
+		return nil
+	}
+
+	return &dat, writeFn, nil
+}
