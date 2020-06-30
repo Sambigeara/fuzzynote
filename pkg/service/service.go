@@ -32,6 +32,7 @@ type ListItem struct {
 	Line   string
 	Parent *ListItem
 	Child  *ListItem
+	ID     uint32
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -59,7 +60,7 @@ func (r *DBListRepo) Load() (*ListItem, error) {
 	defer file.Close()
 
 	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
-	var cur *ListItem
+	var cur, oldest *ListItem
 
 	r.NextID = 1
 
@@ -79,6 +80,7 @@ OuterLoop:
 			}
 		}
 
+		// Initially we need to find the next available index for the ENTIRE dataset
 		if header.PageID > r.NextID {
 			r.NextID = header.PageID + 1
 		}
@@ -99,8 +101,30 @@ OuterLoop:
 		nextItem := ListItem{
 			Line:   string(data),
 			Parent: cur,
+			ID:     header.PageID,
+		}
+		if cur == nil {
+			// `cur` will only be nil on the first iteration, therefore we can assign the oldest node here for idx assignment below
+			oldest = &nextItem
 		}
 		cur = &nextItem
+	}
+
+	// Handle empty file
+	if cur == nil {
+		return nil, nil
+	}
+
+	// Now we have know the global NextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
+	for {
+		if oldest.Child == nil {
+			break
+		}
+		if oldest.ID == 0 {
+			oldest.ID = r.NextID
+			r.NextID++
+		}
+		oldest = oldest.Child
 	}
 
 	r.Root = cur
@@ -142,6 +166,11 @@ func writeListItemToFile(l *ListItem, file *os.File) error {
 }
 
 func (r *DBListRepo) Save(listItem *ListItem) error {
+	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
+	if r.NextID == 0 {
+		r.NextID = 1
+	}
+
 	// TODO save to temp file and then transfer over
 
 	// TODO when appending individual item rather than overwriting
@@ -166,13 +195,17 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 
 	for {
-		ID := r.NextID
+		if listItem.ID == 0 {
+			listItem.ID = r.NextID
+			r.NextID++
+		}
 		header := ItemHeader{
-			PageID:     ID,
-			Metadata:   0, // TODO
-			FileID:     ID,
+			PageID:     listItem.ID,
+			Metadata:   0,           // TODO
+			FileID:     listItem.ID, // TODO
 			DataLength: uint64(len(listItem.Line)),
 		}
+
 		// TODO the below writes need to be atomic
 		err := binary.Write(file, binary.LittleEndian, &header)
 		if err != nil {
@@ -187,7 +220,6 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 			log.Fatal(err)
 			return err
 		}
-		r.NextID++
 
 		if listItem.Child == nil {
 			break
@@ -203,6 +235,14 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListItem, error) {
 	newItem := ListItem{
 		Line: line,
+		ID:   r.NextID,
+	}
+	r.NextID++
+
+	// If `item` is nil, it's the first item in the list so set as root and return
+	if item == nil {
+		r.Root = &newItem
+		return &newItem, nil
 	}
 
 	if !addAsChild {

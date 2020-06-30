@@ -235,7 +235,12 @@ func (t *Terminal) RunClient() error {
 				var newItem *service.ListItem
 				var err error
 				if t.curY == 0 {
-					newItem, err = t.db.Add("", matches[0], true)
+					if len(matches) == 0 {
+						newItem, err = t.db.Add("", nil, true)
+						t.root = newItem
+					} else {
+						newItem, err = t.db.Add("", matches[0], true)
+					}
 				} else {
 					newItem, err = t.db.Add("", t.curItem, false)
 				}

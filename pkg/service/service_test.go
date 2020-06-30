@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -25,22 +24,37 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.Root.Line)
 		}
 
+		expectedID := uint32(2)
+		if mockListRepo.Root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		}
+
 		if mockListRepo.Root.Parent.Line != expectedLines[1] {
 			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.Root.Line)
+		}
+
+		expectedID = 1
+		if mockListRepo.Root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
 		}
 	})
 	t.Run("Stores to new file and loads back", func(t *testing.T) {
 		rootPath := "file_to_delete"
 		mockListRepo := NewDBListRepo(rootPath)
 
-		item3 := ListItem{
+		// Instantiate NextID index with initial empty load
+		mockListRepo.Load()
+
+		oldItem := ListItem{
 			Line: "Old newly created line",
+			ID:   uint32(1),
 		}
 		newItem := ListItem{
 			Line:   "New newly created line",
-			Parent: &item3,
+			Parent: &oldItem,
+			ID:     uint32(2),
 		}
-		item3.Child = &newItem
+		oldItem.Child = &newItem
 
 		err := mockListRepo.Save(&newItem)
 		if err != nil {
@@ -53,8 +67,64 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.Root.Line)
 		}
 
-		if mockListRepo.Root.Parent.Line != item3.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.Root.Parent.Line, item3.Line)
+		expectedID := uint32(2)
+		if mockListRepo.Root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		}
+
+		if mockListRepo.Root.Parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.Root.Parent.Line, oldItem.Line)
+		}
+
+		expectedID = uint32(1)
+		if mockListRepo.Root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+	t.Run("Stores to new file and loads back", func(t *testing.T) {
+		rootPath := "file_to_delete"
+		mockListRepo := NewDBListRepo(rootPath)
+
+		// Instantiate NextID index with initial empty load
+		mockListRepo.Load()
+
+		oldItem := ListItem{
+			Line: "Old newly created line",
+		}
+		newItem := ListItem{
+			Line:   "New newly created line",
+			Parent: &oldItem,
+		}
+		oldItem.Child = &newItem
+
+		err := mockListRepo.Save(&newItem)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		mockListRepo.Load()
+
+		if mockListRepo.Root.Line != newItem.Line {
+			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.Root.Line)
+		}
+
+		expectedID := uint32(2)
+		if mockListRepo.Root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		}
+
+		if mockListRepo.Root.Parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.Root.Parent.Line, oldItem.Line)
+		}
+
+		expectedID = uint32(1)
+		if mockListRepo.Root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
 		}
 
 		err = os.Remove(rootPath)
@@ -99,6 +169,11 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("New item should be original root's Child")
 		}
 
+		expectedID := uint32(3)
+		if newItem.ID != expectedID {
+			t.Errorf("Expected ID %d but got %d", expectedID, newItem.ID)
+		}
+
 		if mockListRepo.Root != matches[0] {
 			t.Errorf("item2 should be new root")
 		}
@@ -125,7 +200,6 @@ func TestServiceAdd(t *testing.T) {
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil)
 		oldLen := len(matches)
-		fmt.Printf("HELLOOOO %v\n", matches)
 
 		newItem, err := mockListRepo.Add(newLine, &item2, false)
 		if err != nil {
@@ -465,6 +539,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Match items in list", func(t *testing.T) {
+		// Instantiate NextID index with initial empty load
+		mockListRepo.Load()
+
 		item5 := ListItem{
 			Line: "Also not second",
 		}
