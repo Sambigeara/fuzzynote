@@ -132,9 +132,11 @@ func (t *Terminal) setMaxCurPos() {
 
 func (t *Terminal) goDown(matches []*service.ListItem) {
 	newY := min(t.curY+1, t.h-1)
-	t.curY = newY
-	t.curItem = matches[newY-1]
-	t.setMaxCurPos()
+	if newY <= len(matches) {
+		t.curY = newY
+		t.curItem = matches[newY-1]
+		t.setMaxCurPos()
+	}
 }
 
 func (t *Terminal) goUp(matches []*service.ListItem) {
@@ -266,6 +268,10 @@ func (t *Terminal) RunClient() error {
 						log.Fatal(err)
 					}
 					t.curItem = newCurItem
+					// If deleting last item in list, go up
+					if t.curY == len(matches) {
+						t.goUp(matches)
+					}
 					t.s.Clear()
 				}
 			case tcell.KeyTab:
