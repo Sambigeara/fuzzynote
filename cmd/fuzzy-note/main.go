@@ -11,12 +11,16 @@ import (
 )
 
 func main() {
-	var rootPath string
-	if rootPath = os.Getenv("FZN_ROOT_PAGE"); rootPath == "" {
-		rootPath = "pages/root"
+	var rootDir string
+	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
+		rootDir = "/Applications/fzn/"
 	}
 
-	listRepo := service.NewDBListRepo(rootPath)
+	// Create app directory if not present
+	// TODO atm only valid for macs in `/Applications/`
+	os.MkdirAll(rootDir, os.ModePerm)
+
+	listRepo := service.NewDBListRepo(rootDir)
 
 	term := client.NewTerm(listRepo)
 

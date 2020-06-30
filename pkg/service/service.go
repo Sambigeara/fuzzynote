@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"strings"
 	"unicode"
 )
@@ -47,7 +48,8 @@ type ItemHeader struct {
 	DataLength uint64
 }
 
-func NewDBListRepo(rootPath string) *DBListRepo {
+func NewDBListRepo(rootDir string) *DBListRepo {
+	rootPath := path.Join(rootDir, "primary.db")
 	return &DBListRepo{RootPath: rootPath}
 }
 
