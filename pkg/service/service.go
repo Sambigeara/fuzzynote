@@ -185,6 +185,17 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 	defer file.Close()
 
+	// Write empty file if no listItems exist
+	if listItem == nil {
+		err := binary.Write(file, binary.LittleEndian, []byte{})
+		if err != nil {
+			fmt.Println("binary.Write failed:", err)
+			log.Fatal(err)
+			return err
+		}
+		return nil
+	}
+
 	root := listItem
 
 	// TODO store oldest item on Load
