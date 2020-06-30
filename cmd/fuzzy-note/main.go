@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"path"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
@@ -18,7 +19,12 @@ func main() {
 
 	// Create app directory if not present
 	// TODO atm only valid for macs in `/Applications/`
-	os.MkdirAll(rootDir, os.ModePerm)
+	dirsToCreate := []string{
+		"notes",
+	}
+	for _, d := range dirsToCreate {
+		os.MkdirAll(path.Join(rootDir, d), os.ModePerm)
+	}
 
 	listRepo := service.NewDBListRepo(rootDir)
 
