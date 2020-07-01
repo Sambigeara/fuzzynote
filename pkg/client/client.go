@@ -298,6 +298,10 @@ func (t *Terminal) RunClient() error {
 					t.curItem = newCurItem
 					// If deleting last item in list, go up
 					if t.curY == len(matches) {
+						matches, err = t.db.Match(t.search, t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
 						t.goUp(matches)
 					}
 					t.s.Clear()
@@ -394,6 +398,12 @@ func (t *Terminal) RunClient() error {
 			}
 		}
 		t.s.Clear()
+
+		// NOTE this is useful for debugging curItem setting
+		//if t.curItem != nil {
+		//    strID := fmt.Sprint(t.curItem.ID)
+		//    emitStr(t.s, 0, t.h-1, t.style, strID)
+		//}
 
 		matches, err = t.db.Match(t.search, t.curItem)
 		if err != nil {

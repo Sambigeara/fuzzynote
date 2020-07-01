@@ -380,7 +380,6 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 func (r *DBListRepo) EditPage(id uint32) (*[]byte, func(*[]byte) error, error) {
 	strID := fmt.Sprint(id)
 	filePath := path.Join(r.NotesPath, strID)
-	fmt.Printf("HELLOOO %s\n", filePath)
 
 	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
 	// This needs to be before the ReadFile below to ensure the file exists
