@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -110,17 +111,44 @@ func sendExtraEventFix() {
 	}
 }
 
-func openEditorSession() {
+func (t *Terminal) openEditorSession() error {
 	// TODO https://github.com/gdamore/tcell/issues/194
 	sendExtraEventFix()
+
+	dat, writeFn, err := t.db.EditPage(t.curItem.ID)
+
+	// Write text to temp file
+	tempFile := "/tmp/fzn_buffer"
+	f, err := os.Create(tempFile)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(*dat)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+
 	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
-	cmd := exec.Command("vim")
+	cmd := exec.Command("vim", tempFile)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Printf("Command finished with error: %v", err)
 	}
+
+	// Read back from the temp file, and return to the write function
+	newDat, err := ioutil.ReadFile(tempFile)
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	return writeFn(&newDat)
 }
 
 func (t *Terminal) setMaxCurPos() {
@@ -132,9 +160,11 @@ func (t *Terminal) setMaxCurPos() {
 
 func (t *Terminal) goDown(matches []*service.ListItem) {
 	newY := min(t.curY+1, t.h-1)
-	t.curY = newY
-	t.curItem = matches[newY-1]
-	t.setMaxCurPos()
+	if newY <= len(matches) {
+		t.curY = newY
+		t.curItem = matches[newY-1]
+		t.setMaxCurPos()
+	}
 }
 
 func (t *Terminal) goUp(matches []*service.ListItem) {
@@ -201,15 +231,13 @@ func (t *Terminal) paint(matches []*service.ListItem) error {
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
-	err := t.db.Load()
+	var err error
+	t.root, err = t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
 
-	// TODO abstract out of here, no need for it to be exposed to client??
-	// Initially set root to the absolute root
-	t.root = t.db.GetRoot()
 	matches, err := t.db.Match([][]rune{}, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -237,7 +265,12 @@ func (t *Terminal) RunClient() error {
 				var newItem *service.ListItem
 				var err error
 				if t.curY == 0 {
-					newItem, err = t.db.Add("", matches[0], true)
+					if len(matches) == 0 {
+						newItem, err = t.db.Add("", nil, true)
+						t.root = newItem
+					} else {
+						newItem, err = t.db.Add("", matches[0], true)
+					}
 				} else {
 					newItem, err = t.db.Add("", t.curItem, false)
 				}
@@ -263,6 +296,14 @@ func (t *Terminal) RunClient() error {
 						log.Fatal(err)
 					}
 					t.curItem = newCurItem
+					// If deleting last item in list, go up
+					if t.curY == len(matches) {
+						matches, err = t.db.Match(t.search, t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						t.goUp(matches)
+					}
 					t.s.Clear()
 				}
 			case tcell.KeyTab:
@@ -279,7 +320,10 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
 					t.s.Fini()
-					openEditorSession()
+					err = t.openEditorSession()
+					if err != nil {
+						log.Fatal(err)
+					}
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
@@ -354,6 +398,12 @@ func (t *Terminal) RunClient() error {
 			}
 		}
 		t.s.Clear()
+
+		// NOTE this is useful for debugging curItem setting
+		//if t.curItem != nil {
+		//    strID := fmt.Sprint(t.curItem.ID)
+		//    emitStr(t.s, 0, t.h-1, t.style, strID)
+		//}
 
 		matches, err = t.db.Match(t.search, t.curItem)
 		if err != nil {
