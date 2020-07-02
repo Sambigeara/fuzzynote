@@ -253,7 +253,7 @@ func (t *Terminal) RunClient() error {
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			switch ev.Key() {
-			case tcell.KeyCtrlC:
+			case tcell.KeyCtrlX:
 				t.s.Fini()
 				err := t.db.Save(t.root)
 				if err != nil {
