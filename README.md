@@ -10,6 +10,8 @@ The root data directory location `$HOME/.fzn/`. You can override this by setting
 
 Run the bin direct `./bin/fzn` or add to your PATH (soz, haven't yet gotten my head around proper Go build/install processes).
 
+To see the app TODO list, run the following: `FZN_ROOT_DIR=todo ./bin/fzn`
+
 ## Search
 
 The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `#` .
@@ -23,7 +25,7 @@ Examples:
 
 - `Enter`: Add new line below
 - `Ctrl-d`: Delete line
-- `Ctrl-c`: Save and exit
+- `Ctrl-x`: Save and exit
 - `TAB (top line)`: Add new search group
 - `ESCAPE` (top line): Clear search groups
 - `ESCAPE` (not top line): Go to search line
