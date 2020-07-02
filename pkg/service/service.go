@@ -306,6 +306,17 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 		item.Parent.Child = item.Child
 	}
 
+	// Delete the notes file to prevent orphaned files being used with future notes (due to current idx logic)
+	strID := fmt.Sprint(item.ID)
+	notePath := path.Join(r.NotesPath, strID)
+	err := os.Remove(notePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Fatal(err)
+			return err
+		}
+	}
+
 	return nil
 }
 
