@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -306,10 +307,13 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 		item.Parent.Child = item.Child
 	}
 
-	// Delete the notes file to prevent orphaned files being used with future notes (due to current idx logic)
+	// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally deleted with lots of data),
+	// append them with `_bak_{line}_{timestamp}`, so we know the context of the line, and the timestamp at which it was deleted.
+	// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
 	strID := fmt.Sprint(item.ID)
-	notePath := path.Join(r.NotesPath, strID)
-	err := os.Remove(notePath)
+	oldPath := path.Join(r.NotesPath, strID)
+	newPath := path.Join(r.NotesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, item.Line, fmt.Sprint(time.Now().Unix())))
+	err := os.Rename(oldPath, newPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Fatal(err)
