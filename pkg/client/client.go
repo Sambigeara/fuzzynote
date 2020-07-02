@@ -35,8 +35,8 @@ func NewTerm(db service.ListRepo) *Terminal {
 	encoding.Register()
 
 	defStyle = tcell.StyleDefault.
-		Background(tcell.ColorBlack).
-		Foreground(tcell.ColorWhite)
+		Background(tcell.ColorWhite).
+		Foreground(tcell.ColorBlack)
 
 	s := newInstantiatedScreen(defStyle)
 
@@ -44,7 +44,7 @@ func NewTerm(db service.ListRepo) *Terminal {
 	return &Terminal{
 		db:    db,
 		s:     s,
-		style: tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite),
+		style: defStyle,
 		w:     w,
 		h:     h,
 	}
@@ -199,12 +199,12 @@ func (t *Terminal) realignPos() {
 }
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
-	white := tcell.StyleDefault.
+	searchStyle := tcell.StyleDefault.
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
 	var pos, l int
 	for _, key := range t.search {
-		emitStr(s, pos, 0, white, string(key))
+		emitStr(s, pos, 0, searchStyle, string(key))
 		l = len(key)
 		pos = pos + l + 1 // Add a separator between groups with `+ 1`
 	}
