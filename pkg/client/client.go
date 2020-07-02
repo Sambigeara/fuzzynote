@@ -285,7 +285,9 @@ func (t *Terminal) RunClient() error {
 				}
 				t.goDown(matches)
 			case tcell.KeyCtrlD:
-				if t.curY != 0 {
+				if t.curY == 0 {
+					t.search = [][]rune{}
+				} else {
 					// Retrieve the new curItem prior to deleting the existing curItem so we can set it afterwards
 					newCurItem := t.curItem.Parent
 					if newCurItem == nil {
@@ -327,9 +329,6 @@ func (t *Terminal) RunClient() error {
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
-				if t.curY == 0 {
-					t.search = [][]rune{}
-				}
 				t.curX = 0
 				t.curY = 0
 				// TODO centralise curItem nullifying
@@ -409,6 +408,13 @@ func (t *Terminal) RunClient() error {
 		if err != nil {
 			log.Println("stdin:", err)
 			break
+		}
+
+		// Reset local root item each iteration
+		if len(matches) > 0 {
+			t.root = matches[0]
+		} else {
+			t.root = nil
 		}
 
 		t.paint(matches)
