@@ -17,7 +17,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		expectedLines[0] = "Test ListItem"
 		expectedLines[1] = "Another test ListItem"
 
-		_, err := mockListRepo.Load()
+		err := mockListRepo.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,8 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		oldItem.Child = &newItem
 
-		err := mockListRepo.Save(&newItem)
+		mockListRepo.Root = &newItem
+		err := mockListRepo.Save()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +105,8 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		oldItem.Child = &newItem
 
-		err := mockListRepo.Save(&newItem)
+		mockListRepo.Root = &newItem
+		err := mockListRepo.Save()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,19 +150,21 @@ func TestServiceAdd(t *testing.T) {
 		Parent: &item2,
 	}
 	item2.Child = &item1
-	err := mockListRepo.Save(&item1)
+	mockListRepo.Root = &item1
+	err := mockListRepo.Save()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		newItem, err := mockListRepo.Add(newLine, &item1, true)
+		err := mockListRepo.Add(newLine, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil)
+		newItem := matches[0]
 
 		expectedLen := 3
 		if len(matches) != expectedLen {
@@ -203,12 +207,13 @@ func TestServiceAdd(t *testing.T) {
 		matches, _ := mockListRepo.Match([][]rune{}, nil)
 		oldLen := len(matches)
 
-		newItem, err := mockListRepo.Add(newLine, &item2, false)
+		err := mockListRepo.Add(newLine, &item2)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		matches, _ = mockListRepo.Match([][]rune{}, nil)
+		newItem := matches[len(matches)-1]
 
 		expectedLen := oldLen + 1
 		if len(matches) != expectedLen {
@@ -242,23 +247,27 @@ func TestServiceAdd(t *testing.T) {
 
 		oldParent := item1.Parent
 
-		_, err := mockListRepo.Add(newLine, &item1, false)
+		err := mockListRepo.Add(newLine, &item1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil)
 
-		expectedIdx := 2
-		if matches[expectedIdx].Line != newLine {
-			t.Errorf("Expected %s but got %s", newLine, matches[expectedIdx].Line)
+		expectedItem := matches[2]
+		if expectedItem.Line != newLine {
+			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
 		}
 
-		if item1.Parent != matches[expectedIdx] {
+		if expectedItem.Parent != oldParent {
+			t.Errorf("New item should have inherit old child's parent")
+		}
+
+		if item1.Parent != expectedItem {
 			t.Errorf("Original youngest listItem has incorrect Parent")
 		}
 
-		if oldParent.Child != matches[expectedIdx] {
+		if oldParent.Child != expectedItem {
 			t.Errorf("Original old parent has incorrect Child")
 		}
 	})
@@ -287,7 +296,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Save(&item1)
+		mockListRepo.Root = &item1
+		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item1)
 		if err != nil {
@@ -337,7 +347,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Save(&item1)
+		mockListRepo.Root = &item1
+		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item3)
 		if err != nil {
@@ -383,7 +394,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Save(&item1)
+		mockListRepo.Root = &item1
+		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item2)
 		if err != nil {
@@ -437,7 +449,8 @@ func TestServiceUpdate(t *testing.T) {
 	}
 	item3.Child = &item2
 	item2.Child = &item1
-	mockListRepo.Save(&item1)
+	mockListRepo.Root = &item1
+	mockListRepo.Save()
 
 	expectedLine := "Oooo I'm new"
 	err := mockListRepo.Update(expectedLine, &item2)
@@ -490,7 +503,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Save(&item1)
+		mockListRepo.Root = &item1
+		mockListRepo.Save()
 
 		search := [][]rune{
 			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
@@ -565,7 +579,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Save(&item1)
+		mockListRepo.Root = &item1
+		mockListRepo.Save()
 
 		search := [][]rune{
 			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
@@ -618,7 +633,8 @@ func TestServiceEditPage(t *testing.T) {
 		Parent: &item2,
 	}
 	item2.Child = &item1
-	mockListRepo.Save(&item1)
+	mockListRepo.Root = &item1
+	mockListRepo.Save()
 
 	expectedID := uint32(2)
 	if item1.ID != expectedID {

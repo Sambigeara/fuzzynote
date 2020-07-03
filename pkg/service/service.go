@@ -17,7 +17,7 @@ import (
 type ListRepo interface {
 	Load() error
 	Save() error
-	Add(line string, item *ListItem, addAsChild bool) error
+	Add(line string, item *ListItem) error
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
@@ -250,43 +250,30 @@ func (r *DBListRepo) Save() error {
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) error {
+func (r *DBListRepo) Add(line string, child *ListItem) error {
 	newItem := ListItem{
-		Line: line,
-		ID:   r.NextID,
+		Line:  line,
+		ID:    r.NextID,
+		Child: child,
 	}
 	r.NextID++
 
-	// If `item` is nil, it's the first item in the list so set as root and return
-	if item == nil {
+	// If `child` is nil, it's the first item in the list so set as root and return
+	if child == nil {
+		oldRoot := r.Root
 		r.Root = &newItem
+		if oldRoot != nil {
+			newItem.Parent = oldRoot
+			oldRoot.Child = &newItem
+		}
 		return nil
 	}
 
-	if !addAsChild {
-		newItem.Child = item
-		newItem.Parent = item.Parent
-
-		oldParent := item.Parent
-		item.Parent = &newItem
-		if oldParent != nil {
-			oldParent.Child = &newItem
-		}
-	} else {
-		// If the item was the previous youngest, update the root to the new item
-		if item.Child == nil {
-			r.Root = &newItem
-		}
-
-		newItem.Parent = item
-		newItem.Child = item.Child
-
-		oldChild := item.Child
-		item.Child = &newItem
-		if oldChild != nil {
-			oldChild.Parent = &newItem
-		}
+	if child.Parent != nil {
+		child.Parent.Child = &newItem
+		newItem.Parent = child.Parent
 	}
+	child.Parent = &newItem
 
 	return nil
 }
@@ -373,8 +360,9 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	for {
 		matched := true
 		for _, group := range keys {
-			if cur == active {
-				// "active" listItems pass automatically to allow mid-search item editing
+			// Match any items with empty Lines (this accounts for lines added when search is active)
+			// "active" listItems pass automatically to allow mid-search item editing
+			if len(cur.Line) == 0 || cur == active {
 				break
 			}
 			if !isMatch(group, cur.Line) {

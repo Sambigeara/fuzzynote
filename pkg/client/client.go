@@ -216,13 +216,9 @@ func (t *Terminal) RunClient() error {
 				// Add a new item below current cursor position
 				var err error
 				if t.curY == 0 {
-					if len(matches) == 0 {
-						err = t.db.Add("", nil, true)
-					} else {
-						err = t.db.Add("", matches[0], true)
-					}
+					err = t.db.Add("", nil)
 				} else {
-					err = t.db.Add("", t.curItem, false)
+					err = t.db.Add("", t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
@@ -329,8 +325,11 @@ func (t *Terminal) RunClient() error {
 		//    emitStr(t.s, 0, t.h-1, t.style, strID)
 		//}
 
-		// TODO visibility of curItem should be handled by the client side, the backend should't now
-		matches, err = t.db.Match(t.search, t.curItem)
+		var cur *service.ListItem
+		if t.curItem != nil {
+			cur = t.curItem
+		}
+		matches, err = t.db.Match(t.search, cur)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
