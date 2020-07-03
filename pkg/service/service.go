@@ -17,7 +17,7 @@ import (
 type ListRepo interface {
 	Load() error
 	Save() error
-	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
+	Add(line string, item *ListItem, addAsChild bool) error
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
@@ -250,7 +250,7 @@ func (r *DBListRepo) Save() error {
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListItem, error) {
+func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) error {
 	newItem := ListItem{
 		Line: line,
 		ID:   r.NextID,
@@ -260,7 +260,7 @@ func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListIte
 	// If `item` is nil, it's the first item in the list so set as root and return
 	if item == nil {
 		r.Root = &newItem
-		return &newItem, nil
+		return nil
 	}
 
 	if !addAsChild {
@@ -288,7 +288,7 @@ func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListIte
 		}
 	}
 
-	return &newItem, nil
+	return nil
 }
 
 func (r *DBListRepo) Update(line string, listItem *ListItem) error {

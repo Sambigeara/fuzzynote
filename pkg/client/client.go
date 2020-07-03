@@ -150,22 +150,6 @@ func (t *Terminal) openEditorSession() error {
 	return writeFn(&newDat)
 }
 
-func (t *Terminal) setMaxCurPos() {
-	// Ignore if on search string
-	if t.curY >= firstListLineIdx {
-		t.curX = min(t.curX, len(t.curItem.Line))
-	}
-}
-
-func (t *Terminal) realignPos() {
-	// Update cursor position if typing in search box
-	newCurPos := len(t.search) - 1 // Account for spaces between search groups
-	for _, g := range t.search {
-		newCurPos += len(g)
-	}
-	t.curX = newCurPos
-}
-
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	searchStyle := tcell.StyleDefault.
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
@@ -199,8 +183,7 @@ func (t *Terminal) paint(matches []*service.ListItem) error {
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
-	var err error
-	err = t.db.Load()
+	err := t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
@@ -234,12 +217,12 @@ func (t *Terminal) RunClient() error {
 				var err error
 				if t.curY == 0 {
 					if len(matches) == 0 {
-						_, err = t.db.Add("", nil, true)
+						err = t.db.Add("", nil, true)
 					} else {
-						_, err = t.db.Add("", matches[0], true)
+						err = t.db.Add("", matches[0], true)
 					}
 				} else {
-					_, err = t.db.Add("", t.curItem, false)
+					err = t.db.Add("", t.curItem, false)
 				}
 				if err != nil {
 					log.Fatal(err)
@@ -250,7 +233,6 @@ func (t *Terminal) RunClient() error {
 				if t.curY == 0 {
 					t.search = [][]rune{}
 				} else {
-					// Retrieve the new curItem prior to deleting the existing curItem so we can set it afterwards
 					err := t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
@@ -335,8 +317,8 @@ func (t *Terminal) RunClient() error {
 					if err != nil {
 						log.Fatal(err)
 					}
-					posDiff[0]++
 				}
+				posDiff[0]++
 			}
 		}
 		t.s.Clear()
@@ -347,38 +329,45 @@ func (t *Terminal) RunClient() error {
 		//    emitStr(t.s, 0, t.h-1, t.style, strID)
 		//}
 
+		// TODO visibility of curItem should be handled by the client side, the backend should't now
 		matches, err = t.db.Match(t.search, t.curItem)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
 
-		// Change cursor position based on aggregated position increments
-		// Neither can be less than 0. The upper bounds are limited by the screen size.
-		t.curX = min(max(posDiff[0], 0), t.w-1)
-		t.curY = min(max(posDiff[1], 0), t.h-1)
+		// Change vertical cursor position based on a number of constraints.
+		// This needs to happen after matches have been refreshed, but before setting a new curItem
+		newY := t.curY + posDiff[1]                         // Apply diff from ops
+		newY = max(newY, 0)                                 // Prevent index < 0
+		newY = min(newY, t.h-1)                             // Prevent going out of range of screen
+		t.curY = min(newY, len(matches)-1+firstListLineIdx) // Prevent going out of range of returned matches
 
-		emitStr(t.s, 0, t.h-1, t.style, fmt.Sprintf("HELLO %v", len(matches)))
+		isSearchLine := t.curY == 0
 
-		if t.curY == 0 {
+		// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
+		// If on search line, just set to nil
+		if isSearchLine {
 			t.curItem = nil
 		} else {
-			maxIdx := len(matches) - 1
-			if maxIdx >= 0 {
-				t.curItem = matches[maxIdx]
-			}
+			t.curItem = matches[t.curY-1]
 		}
-		//if len(matches) > 0 && t.curY <= len(matches) {
-		//    t.curItem = matches[t.curY-1]
-		//} else {
-		//    t.curItem = nil
-		//    t.realignPos()
-		//}
 
-		t.setMaxCurPos()
+		// Then refresh the X position based on vertical position and curItem
+		newX := t.curX + posDiff[0]
+		newX = max(0, newX) // Prevent index < 0
+		if isSearchLine {
+			// Add up max potential position based on number of runes in groups, and separators between
+			lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
+			for _, g := range t.search {
+				lenSearchBox += len(g)
+			}
+			t.curX = min(newX, lenSearchBox)
+		} else {
+			t.curX = min(newX, len(t.curItem.Line)) // Prevent going out of range of the line
+		}
 
 		t.paint(matches)
-		//fmt.Printf("HELLOOOO %v\n", t.curY)
 	}
 
 	return nil
