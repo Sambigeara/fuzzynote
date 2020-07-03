@@ -21,7 +21,6 @@ const firstListLineIdx = 1
 type Terminal struct {
 	db      service.ListRepo
 	search  [][]rune
-	root    *service.ListItem // The top/youngest listItem
 	curItem *service.ListItem // The currently selected item
 	s       tcell.Screen
 	style   tcell.Style
@@ -151,53 +150,6 @@ func (t *Terminal) openEditorSession() error {
 	return writeFn(&newDat)
 }
 
-func (t *Terminal) setMaxCurPos() {
-	// Ignore if on search string
-	if t.curY >= firstListLineIdx {
-		t.curX = min(t.curX, len(t.curItem.Line))
-	}
-}
-
-func (t *Terminal) goDown(matches []*service.ListItem) {
-	newY := min(t.curY+1, t.h-1)
-	if newY <= len(matches) {
-		t.curY = newY
-		t.curItem = matches[newY-1]
-		t.setMaxCurPos()
-	}
-}
-
-func (t *Terminal) goUp(matches []*service.ListItem) {
-	newY := max(t.curY-1, 0)
-	t.curY = newY
-	if newY == 0 {
-		t.curItem = nil
-	} else {
-		t.curItem = matches[newY-1]
-	}
-	t.setMaxCurPos()
-}
-
-func (t *Terminal) goRight() {
-	t.curX = min(t.curX+1, t.w-1)
-	t.setMaxCurPos()
-}
-
-func (t *Terminal) goLeft() {
-	t.curX = max(t.curX-1, 0)
-	t.setMaxCurPos()
-}
-
-func (t *Terminal) realignPos() {
-	// Update cursor position if typing in search box
-	newCurPos := len(t.search) - 1 // Account for spaces between search groups
-	for _, g := range t.search {
-		newCurPos += len(g)
-	}
-	t.curX = newCurPos
-	t.curY = 0
-}
-
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	searchStyle := tcell.StyleDefault.
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
@@ -231,8 +183,7 @@ func (t *Terminal) paint(matches []*service.ListItem) error {
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
-	var err error
-	t.root, err = t.db.Load()
+	err := t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
@@ -246,6 +197,7 @@ func (t *Terminal) RunClient() error {
 	t.paint(matches)
 
 	for {
+		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 		t.s.Show()
 		ev := t.s.PollEvent()
 
@@ -255,58 +207,32 @@ func (t *Terminal) RunClient() error {
 			switch ev.Key() {
 			case tcell.KeyCtrlX:
 				t.s.Fini()
-				err := t.db.Save(t.root)
+				err := t.db.Save()
 				if err != nil {
 					log.Fatal(err)
 				}
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
-				var newItem *service.ListItem
 				var err error
 				if t.curY == 0 {
-					if len(matches) == 0 {
-						newItem, err = t.db.Add("", nil, true)
-						t.root = newItem
-					} else {
-						newItem, err = t.db.Add("", matches[0], true)
-					}
+					err = t.db.Add("", nil)
 				} else {
-					newItem, err = t.db.Add("", t.curItem, false)
+					err = t.db.Add("", t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
 				}
+				posDiff[1]++
 				t.curX = 0
-				// TODO this needs to be ran here to update the set before setting curItem in `goDown`. Ideally the `Match` call would be centralised
-				matches, err = t.db.Match(t.search, newItem)
-				if err != nil {
-					log.Fatal(err)
-				}
-				t.goDown(matches)
 			case tcell.KeyCtrlD:
 				if t.curY == 0 {
 					t.search = [][]rune{}
 				} else {
-					// Retrieve the new curItem prior to deleting the existing curItem so we can set it afterwards
-					newCurItem := t.curItem.Parent
-					if newCurItem == nil {
-						newCurItem = t.curItem.Child
-					}
 					err := t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
-					t.curItem = newCurItem
-					// If deleting last item in list, go up
-					if t.curY == len(matches) {
-						matches, err = t.db.Match(t.search, t.curItem)
-						if err != nil {
-							log.Fatal(err)
-						}
-						t.goUp(matches)
-					}
-					t.s.Clear()
 				}
 			case tcell.KeyTab:
 				if t.curY == 0 {
@@ -317,7 +243,6 @@ func (t *Terminal) RunClient() error {
 							t.search = append(t.search, []rune{})
 						}
 					}
-					t.realignPos()
 				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
@@ -329,10 +254,8 @@ func (t *Terminal) RunClient() error {
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
-				t.curX = 0
-				t.curY = 0
-				// TODO centralise curItem nullifying
-				t.curItem = nil
+				t.curX = 0 // TODO
+				t.curY = 0 // TODO
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
 				if t.curY == 0 {
@@ -346,7 +269,6 @@ func (t *Terminal) RunClient() error {
 							t.search = t.search[:len(t.search)-1]
 						}
 					}
-					t.realignPos()
 				} else if t.curX > 0 {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 {
@@ -355,17 +277,17 @@ func (t *Terminal) RunClient() error {
 						if err != nil {
 							log.Fatal(err)
 						}
-						t.goLeft()
+						posDiff[0]--
 					}
 				}
 			case tcell.KeyDown:
-				t.goDown(matches)
+				posDiff[1]++
 			case tcell.KeyUp:
-				t.goUp(matches)
+				posDiff[1]--
 			case tcell.KeyRight:
-				t.goRight()
+				posDiff[0]++
 			case tcell.KeyLeft:
-				t.goLeft()
+				posDiff[0]--
 			default:
 				if t.curY == 0 {
 					if len(t.search) > 0 {
@@ -377,7 +299,6 @@ func (t *Terminal) RunClient() error {
 						newTerm = append(newTerm, ev.Rune())
 						t.search = append(t.search, newTerm)
 					}
-					t.realignPos()
 				} else {
 					newLine := []rune(t.curItem.Line)
 					// Insert characters at position
@@ -392,8 +313,8 @@ func (t *Terminal) RunClient() error {
 					if err != nil {
 						log.Fatal(err)
 					}
-					t.goRight()
 				}
+				posDiff[0]++
 			}
 		}
 		t.s.Clear()
@@ -404,17 +325,45 @@ func (t *Terminal) RunClient() error {
 		//    emitStr(t.s, 0, t.h-1, t.style, strID)
 		//}
 
-		matches, err = t.db.Match(t.search, t.curItem)
+		var cur *service.ListItem
+		if t.curItem != nil {
+			cur = t.curItem
+		}
+		matches, err = t.db.Match(t.search, cur)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
 
-		// Reset local root item each iteration
-		if len(matches) > 0 {
-			t.root = matches[0]
+		// Change vertical cursor position based on a number of constraints.
+		// This needs to happen after matches have been refreshed, but before setting a new curItem
+		newY := t.curY + posDiff[1]                         // Apply diff from ops
+		newY = max(newY, 0)                                 // Prevent index < 0
+		newY = min(newY, t.h-1)                             // Prevent going out of range of screen
+		t.curY = min(newY, len(matches)-1+firstListLineIdx) // Prevent going out of range of returned matches
+
+		isSearchLine := t.curY == 0
+
+		// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
+		// If on search line, just set to nil
+		if isSearchLine {
+			t.curItem = nil
 		} else {
-			t.root = nil
+			t.curItem = matches[t.curY-1]
+		}
+
+		// Then refresh the X position based on vertical position and curItem
+		newX := t.curX + posDiff[0]
+		newX = max(0, newX) // Prevent index < 0
+		if isSearchLine {
+			// Add up max potential position based on number of runes in groups, and separators between
+			lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
+			for _, g := range t.search {
+				lenSearchBox += len(g)
+			}
+			t.curX = min(newX, lenSearchBox)
+		} else {
+			t.curX = min(newX, len(t.curItem.Line)) // Prevent going out of range of the line
 		}
 
 		t.paint(matches)
