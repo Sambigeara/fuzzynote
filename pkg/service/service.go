@@ -9,15 +9,16 @@ import (
 	"log"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
 )
 
 type ListRepo interface {
-	Load() (*ListItem, error)
-	Save(*ListItem) error
-	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
+	Load() error
+	Save() error
+	Add(line string, item *ListItem) error
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
@@ -57,11 +58,11 @@ func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	}
 }
 
-func (r *DBListRepo) Load() (*ListItem, error) {
+func (r *DBListRepo) Load() error {
 	f, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -82,7 +83,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return nil, err
+				return err
 			}
 		}
 
@@ -100,7 +101,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return nil, err
+				return err
 			}
 		}
 
@@ -118,7 +119,7 @@ OuterLoop:
 
 	// Handle empty file
 	if cur == nil {
-		return nil, nil
+		return nil
 	}
 
 	// Now we have know the global NextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
@@ -144,7 +145,7 @@ OuterLoop:
 		cur = cur.Parent
 	}
 
-	return r.Root, nil
+	return nil
 }
 
 // TODO untangle boundaries between data store and local data model
@@ -171,7 +172,7 @@ func writeListItemToFile(l *ListItem, f *os.File) error {
 	return nil
 }
 
-func (r *DBListRepo) Save(listItem *ListItem) error {
+func (r *DBListRepo) Save() error {
 	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
 	if r.NextID == 0 {
 		r.NextID = 1
@@ -189,6 +190,8 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 	defer f.Close()
 
+	listItem := r.Root
+
 	// Write empty file if no listItems exist
 	if listItem == nil {
 		err := binary.Write(f, binary.LittleEndian, []byte{})
@@ -201,6 +204,7 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 
 	root := listItem
+	r.Root = root
 
 	// TODO store oldest item on Load
 	// Get oldest listItem
@@ -244,50 +248,35 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 		listItem = listItem.Child
 	}
 
-	r.Root = root
-
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, item *ListItem, addAsChild bool) (*ListItem, error) {
+func (r *DBListRepo) Add(line string, child *ListItem) error {
 	newItem := ListItem{
-		Line: line,
-		ID:   r.NextID,
+		Line:  line,
+		ID:    r.NextID,
+		Child: child,
 	}
 	r.NextID++
 
-	// If `item` is nil, it's the first item in the list so set as root and return
-	if item == nil {
+	// If `child` is nil, it's the first item in the list so set as root and return
+	if child == nil {
+		oldRoot := r.Root
 		r.Root = &newItem
-		return &newItem, nil
+		if oldRoot != nil {
+			newItem.Parent = oldRoot
+			oldRoot.Child = &newItem
+		}
+		return nil
 	}
 
-	if !addAsChild {
-		newItem.Child = item
-		newItem.Parent = item.Parent
-
-		oldParent := item.Parent
-		item.Parent = &newItem
-		if oldParent != nil {
-			oldParent.Child = &newItem
-		}
-	} else {
-		// If the item was the previous youngest, update the root to the new item
-		if item.Child == nil {
-			r.Root = &newItem
-		}
-
-		newItem.Parent = item
-		newItem.Child = item.Child
-
-		oldChild := item.Child
-		item.Child = &newItem
-		if oldChild != nil {
-			oldChild.Parent = &newItem
-		}
+	if child.Parent != nil {
+		child.Parent.Child = &newItem
+		newItem.Parent = child.Parent
 	}
+	child.Parent = &newItem
 
-	return &newItem, nil
+	return nil
 }
 
 func (r *DBListRepo) Update(line string, listItem *ListItem) error {
@@ -312,8 +301,15 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 	// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
 	strID := fmt.Sprint(item.ID)
 	oldPath := path.Join(r.NotesPath, strID)
-	newPath := path.Join(r.NotesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, item.Line, fmt.Sprint(time.Now().Unix())))
-	err := os.Rename(oldPath, newPath)
+
+	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+	alphanumline := reg.ReplaceAllString(item.Line, "")
+
+	newPath := path.Join(r.NotesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
+	err = os.Rename(oldPath, newPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Fatal(err)
@@ -372,8 +368,9 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	for {
 		matched := true
 		for _, group := range keys {
-			if cur == active {
-				// "active" listItems pass automatically to allow mid-search item editing
+			// Match any items with empty Lines (this accounts for lines added when search is active)
+			// "active" listItems pass automatically to allow mid-search item editing
+			if len(cur.Line) == 0 || cur == active {
 				break
 			}
 			if !isMatch(group, cur.Line) {
