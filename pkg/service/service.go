@@ -15,8 +15,8 @@ import (
 )
 
 type ListRepo interface {
-	Load() (*ListItem, error)
-	Save(*ListItem) error
+	Load() error
+	Save() error
 	Add(line string, item *ListItem, addAsChild bool) (*ListItem, error)
 	Update(line string, listItem *ListItem) error
 	Delete(listItem *ListItem) error
@@ -57,11 +57,11 @@ func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	}
 }
 
-func (r *DBListRepo) Load() (*ListItem, error) {
+func (r *DBListRepo) Load() error {
 	f, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -82,7 +82,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return nil, err
+				return err
 			}
 		}
 
@@ -100,7 +100,7 @@ OuterLoop:
 				break OuterLoop
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
-				return nil, err
+				return err
 			}
 		}
 
@@ -118,7 +118,7 @@ OuterLoop:
 
 	// Handle empty file
 	if cur == nil {
-		return nil, nil
+		return nil
 	}
 
 	// Now we have know the global NextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
@@ -144,7 +144,7 @@ OuterLoop:
 		cur = cur.Parent
 	}
 
-	return r.Root, nil
+	return nil
 }
 
 // TODO untangle boundaries between data store and local data model
@@ -171,7 +171,7 @@ func writeListItemToFile(l *ListItem, f *os.File) error {
 	return nil
 }
 
-func (r *DBListRepo) Save(listItem *ListItem) error {
+func (r *DBListRepo) Save() error {
 	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
 	if r.NextID == 0 {
 		r.NextID = 1
@@ -189,6 +189,8 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 	defer f.Close()
 
+	listItem := r.Root
+
 	// Write empty file if no listItems exist
 	if listItem == nil {
 		err := binary.Write(f, binary.LittleEndian, []byte{})
@@ -201,6 +203,7 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 	}
 
 	root := listItem
+	r.Root = root
 
 	// TODO store oldest item on Load
 	// Get oldest listItem
@@ -243,8 +246,6 @@ func (r *DBListRepo) Save(listItem *ListItem) error {
 		}
 		listItem = listItem.Child
 	}
-
-	r.Root = root
 
 	return nil
 }

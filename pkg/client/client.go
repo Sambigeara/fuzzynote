@@ -21,7 +21,6 @@ const firstListLineIdx = 1
 type Terminal struct {
 	db      service.ListRepo
 	search  [][]rune
-	root    *service.ListItem // The top/youngest listItem
 	curItem *service.ListItem // The currently selected item
 	s       tcell.Screen
 	style   tcell.Style
@@ -158,36 +157,6 @@ func (t *Terminal) setMaxCurPos() {
 	}
 }
 
-func (t *Terminal) goDown(matches []*service.ListItem) {
-	newY := min(t.curY+1, t.h-1)
-	if newY <= len(matches) {
-		t.curY = newY
-		t.curItem = matches[newY-1]
-		t.setMaxCurPos()
-	}
-}
-
-func (t *Terminal) goUp(matches []*service.ListItem) {
-	newY := max(t.curY-1, 0)
-	t.curY = newY
-	if newY == 0 {
-		t.curItem = nil
-	} else {
-		t.curItem = matches[newY-1]
-	}
-	t.setMaxCurPos()
-}
-
-func (t *Terminal) goRight() {
-	t.curX = min(t.curX+1, t.w-1)
-	t.setMaxCurPos()
-}
-
-func (t *Terminal) goLeft() {
-	t.curX = max(t.curX-1, 0)
-	t.setMaxCurPos()
-}
-
 func (t *Terminal) realignPos() {
 	// Update cursor position if typing in search box
 	newCurPos := len(t.search) - 1 // Account for spaces between search groups
@@ -195,7 +164,6 @@ func (t *Terminal) realignPos() {
 		newCurPos += len(g)
 	}
 	t.curX = newCurPos
-	t.curY = 0
 }
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
@@ -232,7 +200,7 @@ func (t *Terminal) RunClient() error {
 
 	// List instantiation
 	var err error
-	t.root, err = t.db.Load()
+	err = t.db.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
@@ -246,6 +214,7 @@ func (t *Terminal) RunClient() error {
 	t.paint(matches)
 
 	for {
+		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 		t.s.Show()
 		ev := t.s.PollEvent()
 
@@ -255,58 +224,37 @@ func (t *Terminal) RunClient() error {
 			switch ev.Key() {
 			case tcell.KeyCtrlX:
 				t.s.Fini()
-				err := t.db.Save(t.root)
+				err := t.db.Save()
 				if err != nil {
 					log.Fatal(err)
 				}
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
-				var newItem *service.ListItem
 				var err error
 				if t.curY == 0 {
 					if len(matches) == 0 {
-						newItem, err = t.db.Add("", nil, true)
-						t.root = newItem
+						_, err = t.db.Add("", nil, true)
 					} else {
-						newItem, err = t.db.Add("", matches[0], true)
+						_, err = t.db.Add("", matches[0], true)
 					}
 				} else {
-					newItem, err = t.db.Add("", t.curItem, false)
+					_, err = t.db.Add("", t.curItem, false)
 				}
 				if err != nil {
 					log.Fatal(err)
 				}
+				posDiff[1]++
 				t.curX = 0
-				// TODO this needs to be ran here to update the set before setting curItem in `goDown`. Ideally the `Match` call would be centralised
-				matches, err = t.db.Match(t.search, newItem)
-				if err != nil {
-					log.Fatal(err)
-				}
-				t.goDown(matches)
 			case tcell.KeyCtrlD:
 				if t.curY == 0 {
 					t.search = [][]rune{}
 				} else {
 					// Retrieve the new curItem prior to deleting the existing curItem so we can set it afterwards
-					newCurItem := t.curItem.Parent
-					if newCurItem == nil {
-						newCurItem = t.curItem.Child
-					}
 					err := t.db.Delete(t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
-					t.curItem = newCurItem
-					// If deleting last item in list, go up
-					if t.curY == len(matches) {
-						matches, err = t.db.Match(t.search, t.curItem)
-						if err != nil {
-							log.Fatal(err)
-						}
-						t.goUp(matches)
-					}
-					t.s.Clear()
 				}
 			case tcell.KeyTab:
 				if t.curY == 0 {
@@ -317,7 +265,6 @@ func (t *Terminal) RunClient() error {
 							t.search = append(t.search, []rune{})
 						}
 					}
-					t.realignPos()
 				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
@@ -329,10 +276,8 @@ func (t *Terminal) RunClient() error {
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
-				t.curX = 0
-				t.curY = 0
-				// TODO centralise curItem nullifying
-				t.curItem = nil
+				t.curX = 0 // TODO
+				t.curY = 0 // TODO
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
 				if t.curY == 0 {
@@ -346,7 +291,6 @@ func (t *Terminal) RunClient() error {
 							t.search = t.search[:len(t.search)-1]
 						}
 					}
-					t.realignPos()
 				} else if t.curX > 0 {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 {
@@ -355,17 +299,17 @@ func (t *Terminal) RunClient() error {
 						if err != nil {
 							log.Fatal(err)
 						}
-						t.goLeft()
+						posDiff[0]--
 					}
 				}
 			case tcell.KeyDown:
-				t.goDown(matches)
+				posDiff[1]++
 			case tcell.KeyUp:
-				t.goUp(matches)
+				posDiff[1]--
 			case tcell.KeyRight:
-				t.goRight()
+				posDiff[0]++
 			case tcell.KeyLeft:
-				t.goLeft()
+				posDiff[0]--
 			default:
 				if t.curY == 0 {
 					if len(t.search) > 0 {
@@ -377,7 +321,6 @@ func (t *Terminal) RunClient() error {
 						newTerm = append(newTerm, ev.Rune())
 						t.search = append(t.search, newTerm)
 					}
-					t.realignPos()
 				} else {
 					newLine := []rune(t.curItem.Line)
 					// Insert characters at position
@@ -392,7 +335,7 @@ func (t *Terminal) RunClient() error {
 					if err != nil {
 						log.Fatal(err)
 					}
-					t.goRight()
+					posDiff[0]++
 				}
 			}
 		}
@@ -410,14 +353,32 @@ func (t *Terminal) RunClient() error {
 			break
 		}
 
-		// Reset local root item each iteration
-		if len(matches) > 0 {
-			t.root = matches[0]
+		// Change cursor position based on aggregated position increments
+		// Neither can be less than 0. The upper bounds are limited by the screen size.
+		t.curX = min(max(posDiff[0], 0), t.w-1)
+		t.curY = min(max(posDiff[1], 0), t.h-1)
+
+		emitStr(t.s, 0, t.h-1, t.style, fmt.Sprintf("HELLO %v", len(matches)))
+
+		if t.curY == 0 {
+			t.curItem = nil
 		} else {
-			t.root = nil
+			maxIdx := len(matches) - 1
+			if maxIdx >= 0 {
+				t.curItem = matches[maxIdx]
+			}
 		}
+		//if len(matches) > 0 && t.curY <= len(matches) {
+		//    t.curItem = matches[t.curY-1]
+		//} else {
+		//    t.curItem = nil
+		//    t.realignPos()
+		//}
+
+		t.setMaxCurPos()
 
 		t.paint(matches)
+		//fmt.Printf("HELLOOOO %v\n", t.curY)
 	}
 
 	return nil
