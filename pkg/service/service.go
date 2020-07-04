@@ -23,13 +23,15 @@ type ListRepo interface {
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	EditPage(id uint32) (*[]byte, func(*[]byte) error, error)
+	HasPendingChanges() bool
 }
 
 type DBListRepo struct {
-	RootPath  string
-	NotesPath string
-	Root      *ListItem
-	NextID    uint32
+	rootPath          string
+	notesPath         string
+	root              *ListItem
+	nextID            uint32
+	hasPendingChanges bool
 }
 
 type ListItem struct {
@@ -53,13 +55,14 @@ type ItemHeader struct {
 
 func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	return &DBListRepo{
-		RootPath:  rootPath,
-		NotesPath: notesPath,
+		rootPath:          rootPath,
+		notesPath:         notesPath,
+		hasPendingChanges: false,
 	}
 }
 
 func (r *DBListRepo) Load() error {
-	f, err := os.OpenFile(r.RootPath, os.O_CREATE, 0644)
+	f, err := os.OpenFile(r.rootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -69,7 +72,7 @@ func (r *DBListRepo) Load() error {
 	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
 	var cur, oldest *ListItem
 
-	r.NextID = 1
+	r.nextID = 1
 
 OuterLoop:
 	for {
@@ -88,8 +91,8 @@ OuterLoop:
 		}
 
 		// Initially we need to find the next available index for the ENTIRE dataset
-		if header.PageID > r.NextID {
-			r.NextID = header.PageID + 1
+		if header.PageID > r.nextID {
+			r.nextID = header.PageID + 1
 		}
 
 		data := make([]byte, header.DataLength)
@@ -122,19 +125,19 @@ OuterLoop:
 		return nil
 	}
 
-	// Now we have know the global NextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
+	// Now we have know the global nextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
 	for {
 		if oldest.Child == nil {
 			break
 		}
 		if oldest.ID == 0 {
-			oldest.ID = r.NextID
-			r.NextID++
+			oldest.ID = r.nextID
+			r.nextID++
 		}
 		oldest = oldest.Child
 	}
 
-	r.Root = cur
+	r.root = cur
 
 	// `cur` is now a ptr to the most recent ListItem
 	for {
@@ -174,23 +177,21 @@ func writeListItemToFile(l *ListItem, f *os.File) error {
 
 func (r *DBListRepo) Save() error {
 	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
-	if r.NextID == 0 {
-		r.NextID = 1
+	if r.nextID == 0 {
+		r.nextID = 1
 	}
-
-	// TODO save to temp file and then transfer over
 
 	// TODO when appending individual item rather than overwriting
 	//f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
-	f, err := os.Create(r.RootPath)
+	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
 		return err
 	}
 	defer f.Close()
 
-	listItem := r.Root
+	listItem := r.root
 
 	// Write empty file if no listItems exist
 	if listItem == nil {
@@ -204,7 +205,7 @@ func (r *DBListRepo) Save() error {
 	}
 
 	root := listItem
-	r.Root = root
+	r.root = root
 
 	// TODO store oldest item on Load
 	// Get oldest listItem
@@ -217,8 +218,8 @@ func (r *DBListRepo) Save() error {
 
 	for {
 		if listItem.ID == 0 {
-			listItem.ID = r.NextID
-			r.NextID++
+			listItem.ID = r.nextID
+			r.nextID++
 		}
 		header := ItemHeader{
 			PageID:     listItem.ID,
@@ -248,21 +249,25 @@ func (r *DBListRepo) Save() error {
 		listItem = listItem.Child
 	}
 
+	r.hasPendingChanges = false
+
 	return nil
 }
 
 func (r *DBListRepo) Add(line string, child *ListItem) error {
+	r.hasPendingChanges = true
+
 	newItem := ListItem{
 		Line:  line,
-		ID:    r.NextID,
+		ID:    r.nextID,
 		Child: child,
 	}
-	r.NextID++
+	r.nextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if child == nil {
-		oldRoot := r.Root
-		r.Root = &newItem
+		oldRoot := r.root
+		r.root = &newItem
 		if oldRoot != nil {
 			newItem.Parent = oldRoot
 			oldRoot.Child = &newItem
@@ -281,6 +286,7 @@ func (r *DBListRepo) Add(line string, child *ListItem) error {
 
 func (r *DBListRepo) Update(line string, listItem *ListItem) error {
 	listItem.Line = line
+	r.hasPendingChanges = true
 	return nil
 }
 
@@ -289,7 +295,7 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 		item.Child.Parent = item.Parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.Parent
+		r.root = item.Parent
 	}
 
 	if item.Parent != nil {
@@ -300,7 +306,7 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 	// append them with `_bak_{line}_{timestamp}`, so we know the context of the line, and the timestamp at which it was deleted.
 	// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
 	strID := fmt.Sprint(item.ID)
-	oldPath := path.Join(r.NotesPath, strID)
+	oldPath := path.Join(r.notesPath, strID)
 
 	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
 	if err != nil {
@@ -308,7 +314,7 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 	}
 	alphanumline := reg.ReplaceAllString(item.Line, "")
 
-	newPath := path.Join(r.NotesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
+	newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
 	err = os.Rename(oldPath, newPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -316,6 +322,8 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 			return err
 		}
 	}
+
+	r.hasPendingChanges = true
 
 	return nil
 }
@@ -357,7 +365,7 @@ func isMatch(sub []rune, full string) bool {
 
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
-	cur := r.Root
+	cur := r.root
 
 	res := make([]*ListItem, 0)
 
@@ -391,7 +399,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 
 func (r *DBListRepo) EditPage(id uint32) (*[]byte, func(*[]byte) error, error) {
 	strID := fmt.Sprint(id)
-	filePath := path.Join(r.NotesPath, strID)
+	filePath := path.Join(r.notesPath, strID)
 
 	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
 	// This needs to be before the ReadFile below to ensure the file exists
@@ -415,5 +423,11 @@ func (r *DBListRepo) EditPage(id uint32) (*[]byte, func(*[]byte) error, error) {
 		return nil
 	}
 
+	r.hasPendingChanges = true
+
 	return &dat, writeFn, nil
+}
+
+func (r *DBListRepo) HasPendingChanges() bool {
+	return r.hasPendingChanges
 }
