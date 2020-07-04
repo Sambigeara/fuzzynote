@@ -19,10 +19,10 @@ type ListRepo interface {
 	Load() error
 	Save() error
 	Add(line string, item *ListItem) error
-	Update(line string, listItem *ListItem) error
+	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
-	EditPage(id uint32) (*[]byte, func(*[]byte) error, error)
+	//EditPage(id uint32) (*[]byte, func(*[]byte) error, error)
 	HasPendingChanges() bool
 }
 
@@ -39,6 +39,7 @@ type ListItem struct {
 	Parent *ListItem
 	Child  *ListItem
 	ID     uint32
+	Note   *[]byte
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -108,10 +109,16 @@ OuterLoop:
 			}
 		}
 
+		dat, err := r.loadPage(header.PageID)
+		if err != nil {
+			return err
+		}
+
 		nextItem := ListItem{
 			Line:   string(data),
 			Parent: cur,
 			ID:     header.PageID,
+			Note:   dat,
 		}
 		if cur == nil {
 			// `cur` will only be nil on the first iteration, therefore we can assign the oldest node here for idx assignment below
@@ -201,11 +208,11 @@ func (r *DBListRepo) Save() error {
 			log.Fatal(err)
 			return err
 		}
+		r.hasPendingChanges = false
 		return nil
 	}
 
-	root := listItem
-	r.root = root
+	r.root = listItem
 
 	// TODO store oldest item on Load
 	// Get oldest listItem
@@ -242,6 +249,10 @@ func (r *DBListRepo) Save() error {
 			log.Fatal(err)
 			return err
 		}
+		// If Note is not empty, save as a note file
+		if listItem.Note != nil && len(*listItem.Note) > 0 {
+			r.savePage(listItem.ID, listItem.Note)
+		}
 
 		if listItem.Child == nil {
 			break
@@ -250,7 +261,6 @@ func (r *DBListRepo) Save() error {
 	}
 
 	r.hasPendingChanges = false
-
 	return nil
 }
 
@@ -261,6 +271,7 @@ func (r *DBListRepo) Add(line string, child *ListItem) error {
 		Line:  line,
 		ID:    r.nextID,
 		Child: child,
+		Note:  &[]byte{},
 	}
 	r.nextID++
 
@@ -284,13 +295,16 @@ func (r *DBListRepo) Add(line string, child *ListItem) error {
 	return nil
 }
 
-func (r *DBListRepo) Update(line string, listItem *ListItem) error {
+func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
 	listItem.Line = line
+	listItem.Note = note
 	r.hasPendingChanges = true
 	return nil
 }
 
 func (r *DBListRepo) Delete(item *ListItem) error {
+	r.hasPendingChanges = true
+
 	if item.Child != nil {
 		item.Child.Parent = item.Parent
 	} else {
@@ -322,8 +336,6 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 			return err
 		}
 	}
-
-	r.hasPendingChanges = true
 
 	return nil
 }
@@ -358,9 +370,8 @@ func isMatch(sub []rune, full string) bool {
 	}
 	if sub[0] == '#' {
 		return isSubString(string(sub[1:]), full)
-	} else {
-		return isFuzzyMatch(sub, full)
 	}
+	return isFuzzyMatch(sub, full)
 }
 
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error) {
@@ -397,35 +408,44 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	}
 }
 
-func (r *DBListRepo) EditPage(id uint32) (*[]byte, func(*[]byte) error, error) {
+func (r *DBListRepo) loadPage(id uint32) (*[]byte, error) {
+	strID := fmt.Sprint(id)
+	filePath := path.Join(r.notesPath, strID)
+
+	dat := make([]byte, 0)
+	// If file does not exist, return nil
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			return &dat, nil
+		} else {
+			return nil, err
+		}
+	}
+
+	// Read whole file
+	dat, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+		return nil, err
+	}
+	return &dat, nil
+}
+
+func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
 	strID := fmt.Sprint(id)
 	filePath := path.Join(r.notesPath, strID)
 
 	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
 	// This needs to be before the ReadFile below to ensure the file exists
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0755)
+	defer f.Close()
 
-	// Read whole file
-	dat, err := ioutil.ReadFile(filePath)
+	_, err = f.Write(*data)
 	if err != nil {
-		log.Fatal(err)
-		return nil, nil, err
+		fmt.Println("binary.Write failed:", err)
+		return err
 	}
-
-	writeFn := func(newDat *[]byte) error {
-		defer f.Close()
-
-		_, err = f.Write(*newDat)
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			return err
-		}
-		return nil
-	}
-
-	r.hasPendingChanges = true
-
-	return &dat, writeFn, nil
+	return nil
 }
 
 func (r *DBListRepo) HasPendingChanges() bool {

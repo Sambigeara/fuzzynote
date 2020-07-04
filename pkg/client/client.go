@@ -118,8 +118,6 @@ func (t *Terminal) openEditorSession() error {
 	// TODO https://github.com/gdamore/tcell/issues/194
 	sendExtraEventFix()
 
-	dat, writeFn, err := t.db.EditPage(t.curItem.ID)
-
 	// Write text to temp file
 	tempFile := "/tmp/fzn_buffer"
 	f, err := os.Create(tempFile)
@@ -129,7 +127,7 @@ func (t *Terminal) openEditorSession() error {
 	}
 	defer f.Close()
 
-	_, err = f.Write(*dat)
+	_, err = f.Write(*t.curItem.Note)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -151,7 +149,12 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	return writeFn(&newDat)
+	err = t.db.Update(t.curItem.Line, &newDat, t.curItem)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return nil
 }
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
@@ -308,7 +311,7 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 {
 						newLine = append(newLine[:t.curX-1], newLine[t.curX:]...)
-						err := t.db.Update(string(newLine), t.curItem)
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -344,7 +347,7 @@ func (t *Terminal) RunClient() error {
 						copy(newLine[t.curX+1:], newLine[t.curX:])
 						newLine[t.curX] = ev.Rune()
 					}
-					err := t.db.Update(string(newLine), t.curItem)
+					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
