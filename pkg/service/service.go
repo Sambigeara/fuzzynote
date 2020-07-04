@@ -32,6 +32,7 @@ type DBListRepo struct {
 	root              *ListItem
 	nextID            uint32
 	hasPendingChanges bool
+	pendingDeletions  []*ListItem
 }
 
 type ListItem struct {
@@ -183,6 +184,30 @@ func writeListItemToFile(l *ListItem, f *os.File) error {
 }
 
 func (r *DBListRepo) Save() error {
+	for _, item := range r.pendingDeletions {
+		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally deleted with lots of data),
+		// append them with `_bak_{line}_{timestamp}`, so we know the context of the line, and the timestamp at which it was deleted.
+		// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
+		strID := fmt.Sprint(item.ID)
+		oldPath := path.Join(r.notesPath, strID)
+
+		reg, err := regexp.Compile("[^a-zA-Z0-9]+")
+		if err != nil {
+			log.Fatal(err)
+		}
+		alphanumline := reg.ReplaceAllString(item.Line, "")
+
+		newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
+		err = os.Rename(oldPath, newPath)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Fatal(err)
+				return err
+			}
+		}
+	}
+
+	r.pendingDeletions = []*ListItem{}
 	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
 	if r.nextID == 0 {
 		r.nextID = 1
@@ -259,7 +284,6 @@ func (r *DBListRepo) Save() error {
 		}
 		listItem = listItem.Child
 	}
-
 	r.hasPendingChanges = false
 	return nil
 }
@@ -316,26 +340,7 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 		item.Parent.Child = item.Child
 	}
 
-	// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally deleted with lots of data),
-	// append them with `_bak_{line}_{timestamp}`, so we know the context of the line, and the timestamp at which it was deleted.
-	// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
-	strID := fmt.Sprint(item.ID)
-	oldPath := path.Join(r.notesPath, strID)
-
-	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
-	if err != nil {
-		log.Fatal(err)
-	}
-	alphanumline := reg.ReplaceAllString(item.Line, "")
-
-	newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
-	err = os.Rename(oldPath, newPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Fatal(err)
-			return err
-		}
-	}
+	r.pendingDeletions = append(r.pendingDeletions, item)
 
 	return nil
 }

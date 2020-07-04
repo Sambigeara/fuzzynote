@@ -1,10 +1,10 @@
 package service
 
 import (
-	//"fmt"
+	"fmt"
 	"log"
 	"os"
-	//"path"
+	"path"
 	"testing"
 )
 
@@ -618,73 +618,80 @@ func TestServiceMatch(t *testing.T) {
 	})
 }
 
-//func TestServiceEditPage(t *testing.T) {
-//    rootPath := "file_to_delete"
-//    notesDir := "notes"
-//    os.MkdirAll(notesDir, os.ModePerm)
+func TestServiceEditPage(t *testing.T) {
+	rootPath := "file_to_delete"
+	notesDir := "notes"
+	os.MkdirAll(notesDir, os.ModePerm)
 
-//    mockListRepo := NewDBListRepo(rootPath, notesDir)
+	mockListRepo := NewDBListRepo(rootPath, notesDir)
 
-//    item2 := ListItem{
-//        Line: "Second",
-//    }
-//    item1 := ListItem{
-//        Line:   "First",
-//        Parent: &item2,
-//    }
-//    item2.Child = &item1
-//    mockListRepo.root = &item1
-//    mockListRepo.Save()
+	oldNote := []byte("I am an old note")
+	item2 := ListItem{
+		Line: "Second",
+	}
+	item1 := ListItem{
+		Line:   "First",
+		Parent: &item2,
+		Note:   &oldNote,
+	}
+	item2.Child = &item1
+	mockListRepo.root = &item1
+	mockListRepo.Save()
 
-//    expectedID := uint32(2)
-//    if item1.ID != expectedID {
-//        t.Errorf("item1 ID should be %d", expectedID)
-//    }
+	stringToWrite := "I am a new line"
+	dataToWrite := []byte(stringToWrite)
 
-//    data, writeFn, err := mockListRepo.EditPage(expectedID)
-//    if err != nil {
-//        t.Fatal(err)
-//    }
+	err := mockListRepo.Update(item2.Line, &dataToWrite, &item2)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-//    if len(*data) > 0 {
-//        t.Errorf("Item1 note should be empty")
-//    }
+	if string(*item2.Note) != stringToWrite {
+		t.Errorf("Expected line %s but got %s", stringToWrite, string(*item1.Note))
+	}
 
-//    stringToWrite := "I am a new line"
-//    dataToWrite := []byte(stringToWrite)
+	// Assert that file for first note does already exist
+	strID1 := fmt.Sprint(item1.ID)
+	expectedNotePath1 := path.Join(notesDir, strID1)
+	if _, err := os.Stat(expectedNotePath1); os.IsNotExist(err) {
+		t.Errorf("New file %s should already exist", expectedNotePath1)
+	}
 
-//    err = writeFn(&dataToWrite)
-//    if err != nil {
-//        t.Fatal(err)
-//    }
+	// Assert that file for newly added note doesn't yet exist
+	strID2 := fmt.Sprint(item2.ID)
+	expectedNotePath2 := path.Join(notesDir, strID2)
+	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
+		t.Errorf("New file %s should not yet have been generated", expectedNotePath2)
+	}
 
-//    // Assert that file exists
-//    strID := fmt.Sprint(expectedID)
-//    expectedNotePath := path.Join(notesDir, strID)
-//    if _, err := os.Stat(expectedNotePath); os.IsNotExist(err) {
-//        t.Errorf("New file %s should have been generated", expectedNotePath)
-//    }
+	mockListRepo.Save()
 
-//    // Read back from file and assert data correct
-//    data, _, err = mockListRepo.EditPage(expectedID)
-//    if err != nil {
-//        t.Fatal(err)
-//    }
+	// Assert that file does now exist after save
+	if _, err := os.Stat(expectedNotePath2); os.IsNotExist(err) {
+		t.Errorf("New file %s should have been generated", expectedNotePath2)
+	}
 
-//    if len(*data) == 0 {
-//        t.Errorf("Item1 note should NOT be empty")
-//    }
+	// Delete item2
+	mockListRepo.Delete(&item2)
 
-//    if string(*data) != string(dataToWrite) {
-//        t.Errorf("Data read is not same as data written")
-//    }
+	// Assert that file still exists
+	if _, err := os.Stat(expectedNotePath2); os.IsNotExist(err) {
+		t.Errorf("New file %s should still exist", expectedNotePath2)
+	}
 
-//    err = os.Remove(rootPath)
-//    if err != nil {
-//        log.Fatal(err)
-//    }
-//    err = os.RemoveAll(notesDir)
-//    if err != nil {
-//        log.Fatal(err)
-//    }
-//}
+	mockListRepo.Save()
+
+	// Assert that file for newly added note has now been deleted
+	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
+		t.Errorf("New file %s should now have been deleted", expectedNotePath2)
+	}
+
+	err = os.Remove(rootPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = os.RemoveAll(notesDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
