@@ -19,7 +19,7 @@ import (
 const (
 	firstListLinePos int    = 1
 	nReservedEndLine int    = 1
-	saveWarningMsg   string = "UNSAVED CHANGES: save with Ctrl-s, or ignore changes and exit with BLAH"
+	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
 )
 
 type Terminal struct {
@@ -246,6 +246,9 @@ func (t *Terminal) RunClient() error {
 				} else {
 					triggerSaveWarning = true
 				}
+			case tcell.KeyCtrlUnderscore:
+				t.s.Fini()
+				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
 				var err error
