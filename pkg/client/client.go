@@ -16,7 +16,11 @@ import (
 	"github.com/micmonay/keybd_event"
 )
 
-const firstListLineIdx = 1
+const (
+	firstListLinePos int    = 1
+	nReservedEndLine int    = 1
+	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
+)
 
 type Terminal struct {
 	db      service.ListRepo
@@ -114,8 +118,6 @@ func (t *Terminal) openEditorSession() error {
 	// TODO https://github.com/gdamore/tcell/issues/194
 	sendExtraEventFix()
 
-	dat, writeFn, err := t.db.EditPage(t.curItem.ID)
-
 	// Write text to temp file
 	tempFile := "/tmp/fzn_buffer"
 	f, err := os.Create(tempFile)
@@ -125,7 +127,7 @@ func (t *Terminal) openEditorSession() error {
 	}
 	defer f.Close()
 
-	_, err = f.Write(*dat)
+	_, err = f.Write(*t.curItem.Note)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -147,7 +149,12 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	return writeFn(&newDat)
+	err = t.db.Update(t.curItem.Line, &newDat, t.curItem)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return nil
 }
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
@@ -162,17 +169,39 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	}
 }
 
+func (t *Terminal) buildFooter(s tcell.Screen, text string) {
+	footer := tcell.StyleDefault.
+		Foreground(tcell.ColorBlue).Background(tcell.ColorYellow)
+
+	// Pad out remaining line with spaces to ensure whole bar is filled
+	lenStr := len(text)
+	text += string(make([]rune, t.w-lenStr))
+	emitStr(s, 0, t.h-1, footer, text)
+}
+
 func (t *Terminal) resizeScreen() {
 	w, h := t.s.Size()
 	t.w = w
 	t.h = h
 }
 
-func (t *Terminal) paint(matches []*service.ListItem) error {
+func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
+	// Build top search box
 	t.buildSearchBox(t.s)
 
+	// Fill lineItems
+	var offset int
 	for i, r := range matches {
-		emitStr(t.s, 0, i+1, defStyle, r.Line)
+		offset = i + firstListLinePos
+		emitStr(t.s, 0, offset, defStyle, r.Line)
+		if offset == t.h {
+			break
+		}
+	}
+
+	if saveWarning {
+		// Fill reserved footer/info line at the bottom of the screen if present
+		t.buildFooter(t.s, saveWarningMsg)
 	}
 
 	t.s.ShowCursor(t.curX, t.curY)
@@ -194,23 +223,34 @@ func (t *Terminal) RunClient() error {
 		log.Fatal(err)
 	}
 
-	t.paint(matches)
+	triggerSaveWarning := false
+	t.paint(matches, triggerSaveWarning)
 
 	for {
 		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 		t.s.Show()
 		ev := t.s.PollEvent()
 
+		triggerSaveWarning = false
+
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			switch ev.Key() {
-			case tcell.KeyCtrlX:
-				t.s.Fini()
+			case tcell.KeyCtrlS:
 				err := t.db.Save()
 				if err != nil {
 					log.Fatal(err)
 				}
+			case tcell.KeyCtrlX:
+				if !t.db.HasPendingChanges() {
+					t.s.Fini()
+					os.Exit(0)
+				} else {
+					triggerSaveWarning = true
+				}
+			case tcell.KeyCtrlUnderscore:
+				t.s.Fini()
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
@@ -224,7 +264,6 @@ func (t *Terminal) RunClient() error {
 					log.Fatal(err)
 				}
 				posDiff[1]++
-				t.curX = 0
 			case tcell.KeyCtrlD:
 				if t.curY == 0 {
 					t.search = [][]rune{}
@@ -254,7 +293,6 @@ func (t *Terminal) RunClient() error {
 					t.s = newInstantiatedScreen(defStyle)
 				}
 			case tcell.KeyEscape:
-				t.curX = 0 // TODO
 				t.curY = 0 // TODO
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
@@ -273,7 +311,7 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 {
 						newLine = append(newLine[:t.curX-1], newLine[t.curX:]...)
-						err := t.db.Update(string(newLine), t.curItem)
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -309,7 +347,7 @@ func (t *Terminal) RunClient() error {
 						copy(newLine[t.curX+1:], newLine[t.curX:])
 						newLine[t.curX] = ev.Rune()
 					}
-					err := t.db.Update(string(newLine), t.curItem)
+					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -340,7 +378,7 @@ func (t *Terminal) RunClient() error {
 		newY := t.curY + posDiff[1]                         // Apply diff from ops
 		newY = max(newY, 0)                                 // Prevent index < 0
 		newY = min(newY, t.h-1)                             // Prevent going out of range of screen
-		t.curY = min(newY, len(matches)-1+firstListLineIdx) // Prevent going out of range of returned matches
+		t.curY = min(newY, len(matches)-1+firstListLinePos) // Prevent going out of range of returned matches
 
 		isSearchLine := t.curY == 0
 
@@ -366,7 +404,7 @@ func (t *Terminal) RunClient() error {
 			t.curX = min(newX, len(t.curItem.Line)) // Prevent going out of range of the line
 		}
 
-		t.paint(matches)
+		t.paint(matches, triggerSaveWarning)
 	}
 
 	return nil
