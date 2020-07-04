@@ -25,7 +25,9 @@ Examples:
 
 - `Enter`: Add new line below
 - `Ctrl-d`: Delete line
-- `Ctrl-x`: Save and exit
+- `Ctrl-s`: Save
+- `Ctrl-x`: Exit
+- `Ctrl-_`: Exit WITHOUT saving
 - `TAB (top line)`: Add new search group
 - `ESCAPE` (top line): Clear search groups
 - `ESCAPE` (not top line): Go to search line
