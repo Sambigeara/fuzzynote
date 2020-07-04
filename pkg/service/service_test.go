@@ -22,22 +22,22 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if mockListRepo.Root.Line != expectedLines[0] {
-			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.Root.Line)
+		if mockListRepo.root.Line != expectedLines[0] {
+			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.root.Line)
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.Root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		if mockListRepo.root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
 		}
 
-		if mockListRepo.Root.Parent.Line != expectedLines[1] {
-			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.Root.Line)
+		if mockListRepo.root.Parent.Line != expectedLines[1] {
+			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
 		}
 
 		expectedID = 1
-		if mockListRepo.Root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
+		if mockListRepo.root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
 		}
 	})
 	t.Run("Stores to new file and loads back", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		oldItem.Child = &newItem
 
-		mockListRepo.Root = &newItem
+		mockListRepo.root = &newItem
 		err := mockListRepo.Save()
 		if err != nil {
 			t.Fatal(err)
@@ -66,22 +66,22 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		mockListRepo.Load()
 
-		if mockListRepo.Root.Line != newItem.Line {
-			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.Root.Line)
+		if mockListRepo.root.Line != newItem.Line {
+			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.root.Line)
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.Root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		if mockListRepo.root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
 		}
 
-		if mockListRepo.Root.Parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.Root.Parent.Line, oldItem.Line)
+		if mockListRepo.root.Parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.root.Parent.Line, oldItem.Line)
 		}
 
 		expectedID = uint32(1)
-		if mockListRepo.Root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
+		if mockListRepo.root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
 		}
 
 		err = os.Remove(rootPath)
@@ -105,7 +105,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		oldItem.Child = &newItem
 
-		mockListRepo.Root = &newItem
+		mockListRepo.root = &newItem
 		err := mockListRepo.Save()
 		if err != nil {
 			t.Fatal(err)
@@ -113,22 +113,22 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		mockListRepo.Load()
 
-		if mockListRepo.Root.Line != newItem.Line {
-			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.Root.Line)
+		if mockListRepo.root.Line != newItem.Line {
+			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.root.Line)
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.Root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.ID)
+		if mockListRepo.root.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
 		}
 
-		if mockListRepo.Root.Parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.Root.Parent.Line, oldItem.Line)
+		if mockListRepo.root.Parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.root.Parent.Line, oldItem.Line)
 		}
 
 		expectedID = uint32(1)
-		if mockListRepo.Root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.Root.Parent.ID)
+		if mockListRepo.root.Parent.ID != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
 		}
 
 		err = os.Remove(rootPath)
@@ -150,7 +150,7 @@ func TestServiceAdd(t *testing.T) {
 		Parent: &item2,
 	}
 	item2.Child = &item1
-	mockListRepo.Root = &item1
+	mockListRepo.root = &item1
 	err := mockListRepo.Save()
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected ID %d but got %d", expectedID, newItem.ID)
 		}
 
-		if mockListRepo.Root != matches[0] {
+		if mockListRepo.root != matches[0] {
 			t.Errorf("item2 should be new root")
 		}
 
@@ -296,7 +296,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Root = &item1
+		mockListRepo.root = &item1
 		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item1)
@@ -310,7 +310,7 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("item2 should be new root")
 		}
 
-		if mockListRepo.Root != &item2 {
+		if mockListRepo.root != &item2 {
 			t.Errorf("item2 should be new root")
 		}
 
@@ -347,7 +347,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Root = &item1
+		mockListRepo.root = &item1
 		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item3)
@@ -394,7 +394,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Root = &item1
+		mockListRepo.root = &item1
 		mockListRepo.Save()
 
 		err := mockListRepo.Delete(&item2)
@@ -449,11 +449,11 @@ func TestServiceUpdate(t *testing.T) {
 	}
 	item3.Child = &item2
 	item2.Child = &item1
-	mockListRepo.Root = &item1
+	mockListRepo.root = &item1
 	mockListRepo.Save()
 
 	expectedLine := "Oooo I'm new"
-	err := mockListRepo.Update(expectedLine, &item2)
+	err := mockListRepo.Update(expectedLine, &[]byte{}, &item2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +503,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Root = &item1
+		mockListRepo.root = &item1
 		mockListRepo.Save()
 
 		search := [][]rune{
@@ -579,7 +579,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.Child = &item3
 		item3.Child = &item2
 		item2.Child = &item1
-		mockListRepo.Root = &item1
+		mockListRepo.root = &item1
 		mockListRepo.Save()
 
 		search := [][]rune{
@@ -625,58 +625,65 @@ func TestServiceEditPage(t *testing.T) {
 
 	mockListRepo := NewDBListRepo(rootPath, notesDir)
 
+	oldNote := []byte("I am an old note")
 	item2 := ListItem{
 		Line: "Second",
 	}
 	item1 := ListItem{
 		Line:   "First",
 		Parent: &item2,
+		Note:   &oldNote,
 	}
 	item2.Child = &item1
-	mockListRepo.Root = &item1
+	mockListRepo.root = &item1
 	mockListRepo.Save()
-
-	expectedID := uint32(2)
-	if item1.ID != expectedID {
-		t.Errorf("item1 ID should be %d", expectedID)
-	}
-
-	data, writeFn, err := mockListRepo.EditPage(expectedID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(*data) > 0 {
-		t.Errorf("Item1 note should be empty")
-	}
 
 	stringToWrite := "I am a new line"
 	dataToWrite := []byte(stringToWrite)
 
-	err = writeFn(&dataToWrite)
+	err := mockListRepo.Update(item2.Line, &dataToWrite, &item2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Assert that file exists
-	strID := fmt.Sprint(expectedID)
-	expectedNotePath := path.Join(notesDir, strID)
-	if _, err := os.Stat(expectedNotePath); os.IsNotExist(err) {
-		t.Errorf("New file %s should have been generated", expectedNotePath)
+	if string(*item2.Note) != stringToWrite {
+		t.Errorf("Expected line %s but got %s", stringToWrite, string(*item1.Note))
 	}
 
-	// Read back from file and assert data correct
-	data, _, err = mockListRepo.EditPage(expectedID)
-	if err != nil {
-		t.Fatal(err)
+	// Assert that file for first note does already exist
+	strID1 := fmt.Sprint(item1.ID)
+	expectedNotePath1 := path.Join(notesDir, strID1)
+	if _, err := os.Stat(expectedNotePath1); os.IsNotExist(err) {
+		t.Errorf("New file %s should already exist", expectedNotePath1)
 	}
 
-	if len(*data) == 0 {
-		t.Errorf("Item1 note should NOT be empty")
+	// Assert that file for newly added note doesn't yet exist
+	strID2 := fmt.Sprint(item2.ID)
+	expectedNotePath2 := path.Join(notesDir, strID2)
+	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
+		t.Errorf("New file %s should not yet have been generated", expectedNotePath2)
 	}
 
-	if string(*data) != string(dataToWrite) {
-		t.Errorf("Data read is not same as data written")
+	mockListRepo.Save()
+
+	// Assert that file does now exist after save
+	if _, err := os.Stat(expectedNotePath2); os.IsNotExist(err) {
+		t.Errorf("New file %s should have been generated", expectedNotePath2)
+	}
+
+	// Delete item2
+	mockListRepo.Delete(&item2)
+
+	// Assert that file still exists
+	if _, err := os.Stat(expectedNotePath2); os.IsNotExist(err) {
+		t.Errorf("New file %s should still exist", expectedNotePath2)
+	}
+
+	mockListRepo.Save()
+
+	// Assert that file for newly added note has now been deleted
+	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
+		t.Errorf("New file %s should now have been deleted", expectedNotePath2)
 	}
 
 	err = os.Remove(rootPath)
