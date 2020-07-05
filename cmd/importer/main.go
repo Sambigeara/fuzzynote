@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	fileName     = "cmd/importer/workflowy_test.xml"
+	fileName     = "cmd/importer/workflowy_source.xml"
 	nodeTitle    = "outline"
 	rootFileName = "primary.db"
 )
@@ -45,26 +45,33 @@ func (n *Node) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 func walk(db service.ListRepo, nodes []Node, chain []string, f func(Node) bool) {
-	for _, n := range nodes {
+	// Iterate over in reverse order to mimic real life entry
+	//for _, n := range nodes {
+	for i := len(nodes) - 1; i >= 0; i-- {
+		n := nodes[i]
 		newChain := chain
 		if f(n) {
 			newChain = append(newChain, n.Text.Value)
 		}
 		walk(db, n.Nodes, newChain, f)
 		fullString := strings.Join(newChain, " >> ")
-		fmt.Printf("%v\n", fullString)
-		fmt.Printf("NOOOOOOOTE %s\n", n.Note.Value)
-		//if note := n.Note.Value; note != "" {
-		//    fmt.Printf("NOOOOOOOTE %s\n", note)
-		//} else {
-		//    note = ""
-		//}
-		//db.Add(fullString, []byte(note), nil)
+		byteNote := []byte(n.Note.Value)
+		err := db.Add(fullString, &byteNote, nil)
+		if err != nil {
+			log.Fatal(err)
+			os.Exit(1)
+		}
+		fmt.Printf("TEXT: %v\n", fullString)
+		fmt.Printf("NOTE: %s\n", n.Note.Value)
 	}
 }
 
 func importLines(db service.ListRepo) error {
-	db.Load() // Instantiate db
+	err := db.Load() // Instantiate db
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
 
 	dat, err := ioutil.ReadFile(fileName)
 	if err != nil {
@@ -87,6 +94,13 @@ func importLines(db service.ListRepo) error {
 		}
 		return false
 	})
+
+	err = db.Save()
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+
 	return nil
 }
 
@@ -94,7 +108,7 @@ func main() {
 	var rootDir, notesSubDir string
 	if rootDir = os.Getenv("FZN_IMPORT_ROOT_DIR"); rootDir == "" {
 		// TODO currently only works on OSs with HOME
-		rootDir = path.Join(os.Getenv("HOME"), ".fzn/imported/")
+		rootDir = path.Join(os.Getenv("HOME"), ".fzn/import/")
 	}
 	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
 		notesSubDir = "notes"
@@ -108,5 +122,9 @@ func main() {
 
 	listRepo := service.NewDBListRepo(rootPath, notesDir)
 
-	importLines(listRepo)
+	err := importLines(listRepo)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
+	}
 }
