@@ -256,9 +256,9 @@ func (t *Terminal) RunClient() error {
 				// Add a new item below current cursor position
 				var err error
 				if t.curY == 0 {
-					err = t.db.Add("", nil)
+					err = t.db.Add("", nil, nil)
 				} else {
-					err = t.db.Add("", t.curItem)
+					err = t.db.Add("", nil, t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
