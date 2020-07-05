@@ -34,19 +34,16 @@ type Node struct {
 	Nodes   []Node     `xml:",any"`
 	Attrs   []xml.Attr `xml:"-"`
 	//Time  Time
-	//Content []byte     `xml:",innerxml"`
 }
 
 func (n *Node) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	n.Attrs = start.Attr
 	type node Node
-
 	return d.DecodeElement((*node)(n), &start)
 }
 
 func walk(db service.ListRepo, nodes []Node, chain []string, f func(Node) bool) {
 	// Iterate over in reverse order to mimic real life entry
-	//for _, n := range nodes {
 	for i := len(nodes) - 1; i >= 0; i-- {
 		n := nodes[i]
 		newChain := chain

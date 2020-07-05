@@ -18,6 +18,7 @@ import (
 
 const (
 	firstListLinePos int    = 1
+	leftBorderWidth  int    = 1
 	nReservedEndLine int    = 1
 	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
 )
@@ -193,7 +194,12 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	var offset int
 	for i, r := range matches {
 		offset = i + firstListLinePos
-		emitStr(t.s, 0, offset, defStyle, r.Line)
+		// If note is present, indicate with a `*` rune
+		if len(*(r.Note)) > 0 {
+			emitStr(t.s, 0, offset, defStyle, "*")
+		}
+		// Emit line
+		emitStr(t.s, leftBorderWidth, offset, defStyle, r.Line)
 		if offset == t.h {
 			break
 		}
