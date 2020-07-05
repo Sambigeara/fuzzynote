@@ -32,3 +32,17 @@ Examples:
 - `ESCAPE` (top line): Clear search groups
 - `ESCAPE` (not top line): Go to search line
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim.
+
+## Workflowy importer
+
+I have historically used Workflowy as my note-taking tool of choice. Because of this, I've written an importer which converts the output XML from Workflowy's `export` function into the flat format fzn expects. It will also take care of converting notes that existed on the Workflowy nodes. To use this, do the following:
+
+1. Export data from workflowy in the OPML (aka extended XML) format
+2. Paste this data into a file named `workflowy_source.xml` in the project root
+3. Run `./bin/importer`
+4. By default, this generates all the data in `$FZN_ROOT_DIR/import/` (to prevent any accidental merges - you can then move to `.fzn/` manually)
+5. If you wish to merge directly with any existing data, you can specify the directory with the `FZN_IMPORT_ROOT_DIR` argument as such:
+
+```bash
+FZN_IMPORT_ROOT_DIR=$HOME/.fzn/ ./bin/import
+```
