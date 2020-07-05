@@ -37,7 +37,7 @@ type Terminal struct {
 func NewTerm(db service.ListRepo) *Terminal {
 	encoding.Register()
 
-	defStyle = tcell.StyleDefault.
+	defStyle := tcell.StyleDefault.
 		Background(tcell.ColorWhite).
 		Foreground(tcell.ColorBlack)
 
@@ -52,8 +52,6 @@ func NewTerm(db service.ListRepo) *Terminal {
 		h:     h,
 	}
 }
-
-var defStyle tcell.Style
 
 func min(a, b int) int {
 	if a < b {
@@ -189,11 +187,24 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.s)
 
+	// Style for highlighting notes
+	noteStyle := tcell.StyleDefault.
+		Background(tcell.ColorGrey).
+		Foreground(tcell.ColorWhite)
+
 	// Fill lineItems
 	var offset int
+	var style tcell.Style
 	for i, r := range matches {
 		offset = i + firstListLinePos
-		emitStr(t.s, 0, offset, defStyle, r.Line)
+		// If note is present, indicate with a different style
+		if len(*(r.Note)) > 0 {
+			style = noteStyle
+		} else {
+			style = t.style
+		}
+		// Emit line
+		emitStr(t.s, 0, offset, style, r.Line)
 		if offset == t.h {
 			break
 		}
@@ -256,9 +267,9 @@ func (t *Terminal) RunClient() error {
 				// Add a new item below current cursor position
 				var err error
 				if t.curY == 0 {
-					err = t.db.Add("", nil)
+					err = t.db.Add("", nil, nil)
 				} else {
-					err = t.db.Add("", t.curItem)
+					err = t.db.Add("", nil, t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
@@ -282,6 +293,7 @@ func (t *Terminal) RunClient() error {
 							t.search = append(t.search, []rune{})
 						}
 					}
+					posDiff[0]++
 				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
@@ -290,7 +302,7 @@ func (t *Terminal) RunClient() error {
 					if err != nil {
 						log.Fatal(err)
 					}
-					t.s = newInstantiatedScreen(defStyle)
+					t.s = newInstantiatedScreen(t.style)
 				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
