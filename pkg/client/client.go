@@ -282,6 +282,7 @@ func (t *Terminal) RunClient() error {
 							t.search = append(t.search, []rune{})
 						}
 					}
+					posDiff[0]++
 				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
