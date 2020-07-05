@@ -1,12 +1,13 @@
 package main
 
 import (
-	"log"
-	"os"
-	"path"
+	//"log"
+	//"os"
+	//"path"
 
-	"fuzzy-note/pkg/client"
-	"fuzzy-note/pkg/service"
+	//"fuzzy-note/pkg/client"
+	"fuzzy-note/pkg/importer"
+	//"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/client"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
 )
@@ -14,27 +15,29 @@ import (
 const rootFileName = "primary.db"
 
 func main() {
-	var rootDir, notesSubDir string
-	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
-		// TODO currently only works on OSs with HOME
-		rootDir = path.Join(os.Getenv("HOME"), ".fzn/")
-	}
-	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
-		notesSubDir = "notes"
-	}
+	importer.ImportLines()
 
-	rootPath := path.Join(rootDir, rootFileName)
-	notesDir := path.Join(rootDir, notesSubDir)
+	//var rootDir, notesSubDir string
+	//if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
+	//    // TODO currently only works on OSs with HOME
+	//    rootDir = path.Join(os.Getenv("HOME"), ".fzn/")
+	//}
+	//if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
+	//    notesSubDir = "notes"
+	//}
 
-	// Create (if not exists) the notes subdirectory
-	os.MkdirAll(notesDir, os.ModePerm)
+	//rootPath := path.Join(rootDir, rootFileName)
+	//notesDir := path.Join(rootDir, notesSubDir)
 
-	listRepo := service.NewDBListRepo(rootPath, notesDir)
+	//// Create (if not exists) the notes subdirectory
+	//os.MkdirAll(notesDir, os.ModePerm)
 
-	term := client.NewTerm(listRepo)
+	//listRepo := service.NewDBListRepo(rootPath, notesDir)
 
-	err := term.RunClient()
-	if err != nil {
-		log.Fatal(err)
-	}
+	//term := client.NewTerm(listRepo)
+
+	//err := term.RunClient()
+	//if err != nil {
+	//    log.Fatal(err)
+	//}
 }
