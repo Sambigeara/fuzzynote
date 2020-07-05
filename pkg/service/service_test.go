@@ -158,7 +158,7 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		err := mockListRepo.Add(newLine, nil)
+		err := mockListRepo.Add(newLine, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,7 +207,7 @@ func TestServiceAdd(t *testing.T) {
 		matches, _ := mockListRepo.Match([][]rune{}, nil)
 		oldLen := len(matches)
 
-		err := mockListRepo.Add(newLine, &item2)
+		err := mockListRepo.Add(newLine, nil, &item2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestServiceAdd(t *testing.T) {
 
 		oldParent := item1.Parent
 
-		err := mockListRepo.Add(newLine, &item1)
+		err := mockListRepo.Add(newLine, nil, &item1)
 		if err != nil {
 			t.Fatal(err)
 		}
