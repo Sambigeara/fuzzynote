@@ -18,7 +18,7 @@ import (
 type ListRepo interface {
 	Load() error
 	Save() error
-	Add(line string, item *ListItem) error
+	Add(line string, note *[]byte, item *ListItem) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
@@ -288,14 +288,17 @@ func (r *DBListRepo) Save() error {
 	return nil
 }
 
-func (r *DBListRepo) Add(line string, child *ListItem) error {
+func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 	r.hasPendingChanges = true
 
+	if note == nil {
+		note = &[]byte{}
+	}
 	newItem := ListItem{
 		Line:  line,
 		ID:    r.nextID,
 		Child: child,
-		Note:  &[]byte{},
+		Note:  note,
 	}
 	r.nextID++
 
