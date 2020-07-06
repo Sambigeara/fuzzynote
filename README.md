@@ -25,11 +25,11 @@ Examples:
 
 - `Enter`: Add new line below
 - `Ctrl-d`: Delete line
+- `Ctrl-d` (top line): Clear search groups
 - `Ctrl-s`: Save
 - `Ctrl-x`: Exit
 - `Ctrl-_`: Exit WITHOUT saving
 - `TAB (top line)`: Add new search group
-- `ESCAPE` (top line): Clear search groups
 - `ESCAPE` (not top line): Go to search line
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim.
 
