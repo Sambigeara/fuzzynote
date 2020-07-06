@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"strings"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
@@ -31,7 +32,13 @@ func main() {
 
 	listRepo := service.NewDBListRepo(rootPath, notesDir)
 
-	term := client.NewTerm(listRepo)
+	// Set colourscheme
+	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
+	if fznColour == "" || (fznColour != "light" && fznColour != "dark") {
+		fznColour = "light"
+	}
+
+	term := client.NewTerm(listRepo, fznColour)
 
 	err := term.RunClient()
 	if err != nil {
