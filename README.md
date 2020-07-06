@@ -14,7 +14,7 @@ To see the app TODO list, run the following: `FZN_ROOT_DIR=todo ./bin/fzn`
 
 ## Search
 
-The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `#` .
+The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `#`. To inverse string match (on full strings), prepend the search group with `#!`.
 
 Examples:
 
@@ -32,6 +32,10 @@ Examples:
 - `ESCAPE` (top line): Clear search groups
 - `ESCAPE` (not top line): Go to search line
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim.
+
+## Colour scheme
+
+You can trigger between `light` and `dark` by setting `FZN_COLOUR` to the former or latter accordingly.
 
 ## Workflowy importer
 

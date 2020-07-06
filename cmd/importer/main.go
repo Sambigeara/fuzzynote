@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
@@ -36,13 +35,7 @@ type Node struct {
 	//Time  Time
 }
 
-func (n *Node) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	n.Attrs = start.Attr
-	type node Node
-	return d.DecodeElement((*node)(n), &start)
-}
-
-func walk(db service.ListRepo, nodes []Node, chain []string, f func(Node) bool) {
+func walk(db service.ListRepo, oldItem *service.ListItem, nodes []Node, chain []string, f func(Node) bool) {
 	// Iterate over in reverse order to mimic real life entry
 	for i := len(nodes) - 1; i >= 0; i-- {
 		n := nodes[i]
@@ -50,10 +43,10 @@ func walk(db service.ListRepo, nodes []Node, chain []string, f func(Node) bool) 
 		if f(n) {
 			newChain = append(newChain, n.Text.Value)
 		}
-		walk(db, n.Nodes, newChain, f)
+		walk(db, oldItem, n.Nodes, newChain, f)
 		fullString := strings.Join(newChain, " >> ")
 		byteNote := []byte(n.Note.Value)
-		err := db.Add(fullString, &byteNote, nil)
+		err := db.Add(fullString, &byteNote, oldItem)
 		if err != nil {
 			log.Fatal(err)
 			os.Exit(1)
@@ -76,16 +69,22 @@ func importLines(db service.ListRepo) error {
 		return err
 	}
 
-	buf := bytes.NewBuffer(dat)
-	dec := xml.NewDecoder(buf)
-
-	var n Node
-	err = dec.Decode(&n)
+	n := Node{}
+	err = xml.Unmarshal(dat, &n)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
+		return err
 	}
 
-	walk(db, []Node{n}, []string{}, func(n Node) bool {
+	// Retrieve oldest item pre-import
+	matches, err := db.Match([][]rune{}, nil)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+
+	oldItem := matches[len(matches)-1]
+	walk(db, oldItem, []Node{n}, []string{}, func(n Node) bool {
 		if n.XMLName.Local == nodeTitle {
 			return true
 		}
