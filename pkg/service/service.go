@@ -93,7 +93,7 @@ OuterLoop:
 		}
 
 		// Initially we need to find the next available index for the ENTIRE dataset
-		if header.PageID > r.nextID {
+		if header.PageID >= r.nextID {
 			r.nextID = header.PageID + 1
 		}
 
@@ -156,30 +156,6 @@ OuterLoop:
 		cur = cur.Parent
 	}
 
-	return nil
-}
-
-// TODO untangle boundaries between data store and local data model
-// TODO should not require string - should be a method attached to a datastore with config baked in
-func writeListItemToFile(l *ListItem, f *os.File) error {
-	header := ItemHeader{
-		PageID:     0, // TODO id generator
-		Metadata:   0, // TODO
-		FileID:     0, // TODO
-		DataLength: uint64(len(l.Line)),
-	}
-	err := binary.Write(f, binary.LittleEndian, &header)
-	if err != nil {
-		fmt.Println("binary.Write failed:", err)
-		return err
-	}
-
-	data := []byte(l.Line)
-	err = binary.Write(f, binary.LittleEndian, &data)
-	if err != nil {
-		fmt.Println("binary.Write failed:", err)
-		return err
-	}
 	return nil
 }
 
