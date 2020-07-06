@@ -353,6 +353,12 @@ func isMatch(sub []rune, full string) bool {
 		return true
 	}
 	if sub[0] == '#' {
+		if len(sub) >= 2 {
+			// Inverse string match if a search group begins with `#!`
+			if sub[1] == '!' {
+				return !isSubString(string(sub[2:]), full)
+			}
+		}
 		return isSubString(string(sub[1:]), full)
 	}
 	return isFuzzyMatch(sub, full)
