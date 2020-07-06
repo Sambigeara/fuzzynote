@@ -33,6 +33,10 @@ Examples:
 - `ESCAPE` (not top line): Go to search line
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim.
 
+## Colour scheme
+
+You can trigger between `light` and `dark` by setting `FZN_COLOUR` to the former or latter accordingly.
+
 ## Workflowy importer
 
 I have historically used Workflowy as my note-taking tool of choice. Because of this, I've written an importer which converts the output XML from Workflowy's `export` function into the flat format fzn expects. It will also take care of converting notes that existed on the Workflowy nodes. To use this, do the following:

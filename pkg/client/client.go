@@ -34,12 +34,19 @@ type Terminal struct {
 	curY    int
 }
 
-func NewTerm(db service.ListRepo) *Terminal {
+func NewTerm(db service.ListRepo, colour string) *Terminal {
 	encoding.Register()
 
-	defStyle := tcell.StyleDefault.
-		Background(tcell.ColorWhite).
-		Foreground(tcell.ColorBlack)
+	var defStyle tcell.Style
+	if colour == "light" {
+		defStyle = tcell.StyleDefault.
+			Background(tcell.ColorWhite).
+			Foreground(tcell.ColorBlack)
+	} else {
+		defStyle = tcell.StyleDefault.
+			Background(tcell.ColorBlack).
+			Foreground(tcell.ColorWhite)
+	}
 
 	s := newInstantiatedScreen(defStyle)
 
