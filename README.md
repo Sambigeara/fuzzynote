@@ -23,6 +23,9 @@ Examples:
 
 ## Controls
 
+- `Arrow keys`: General navigation
+- `Ctrl-a` (not search line): Go to start of item
+- `Ctrl-e` (not search line): Go to end of item
 - `Enter`: Add new line below
 - `Ctrl-d`: Delete line
 - `Ctrl-d` (top line): Clear search groups
