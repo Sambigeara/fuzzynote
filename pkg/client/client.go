@@ -18,6 +18,7 @@ import (
 
 const (
 	reservedTopLines int    = 1
+	reservedEndChars int    = 1
 	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
 )
 
@@ -33,6 +34,7 @@ type Terminal struct {
 	curY        int // Cur "screen" index, not related to matched item lists
 	vertOffset  int // The index of the first displayed item in the match set
 	horizOffset int // The index of the first displayed char in the curItem
+	showHidden  bool
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -53,11 +55,12 @@ func NewTerm(db service.ListRepo, colour string) *Terminal {
 
 	w, h := s.Size()
 	return &Terminal{
-		db:    db,
-		s:     s,
-		style: defStyle,
-		w:     w,
-		h:     h,
+		db:         db,
+		s:          s,
+		style:      defStyle,
+		w:          w,
+		h:          h,
+		showHidden: true,
 	}
 }
 
@@ -173,6 +176,13 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 		l = len(key)
 		pos = pos + l + 1 // Add a separator between groups with `+ 1`
 	}
+
+	// Display whether all items or just non-hidden items are currently displayed
+	if t.showHidden {
+		emitStr(s, t.w-3+reservedEndChars, 0, searchStyle, "VIS")
+	} else {
+		emitStr(s, t.w-3+reservedEndChars, 0, searchStyle, "HID")
+	}
 }
 
 func (t *Terminal) buildFooter(s tcell.Screen, text string) {
@@ -187,7 +197,7 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 
 func (t *Terminal) resizeScreen() {
 	w, h := t.s.Size()
-	t.w = w
+	t.w = w - reservedEndChars
 	t.h = h
 }
 
@@ -220,6 +230,10 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 
 		// Emit line
 		emitStr(t.s, 0, offset, style, line)
+		// Emit `hidden` indicator
+		if r.IsHidden {
+			emitStr(t.s, t.w, offset, style, "*")
+		}
 		if offset == t.h {
 			break
 		}
@@ -244,7 +258,7 @@ func (t *Terminal) RunClient() error {
 		os.Exit(0)
 	}
 
-	matches, err := t.db.Match([][]rune{}, nil)
+	matches, err := t.db.Match([][]rune{}, nil, t.showHidden)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -323,17 +337,24 @@ func (t *Terminal) RunClient() error {
 				}
 			case tcell.KeyCtrlA:
 				// Go to beginning of line
-				if t.curY != 0 {
+				if t.curY != reservedTopLines-1 {
 					// TODO decouple cursor mutation from key handling
 					t.curX = 0
 					t.horizOffset = 0
 				}
 			case tcell.KeyCtrlE:
 				// Go to end of line
-				if t.curY != 0 {
+				if t.curY != reservedTopLines-1 {
 					// TODO
 					t.curX = len(t.curItem.Line)
 					t.horizOffset = len(t.curItem.Line) - t.w
+				}
+			case tcell.KeyCtrlV:
+				// Toggle hidden item visibility
+				if t.curY == reservedTopLines-1 {
+					t.showHidden = !t.showHidden
+				} else {
+					t.curItem.IsHidden = !t.curItem.IsHidden
 				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
@@ -411,7 +432,7 @@ func (t *Terminal) RunClient() error {
 		if t.curItem != nil {
 			cur = t.curItem
 		}
-		matches, err = t.db.Match(t.search, cur)
+		matches, err = t.db.Match(t.search, cur, t.showHidden)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
@@ -478,6 +499,10 @@ func (t *Terminal) RunClient() error {
 			t.horizOffset = 0
 		}
 
+		// Some logic above do forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
+		// Therefore ensure we do not go < 0
+		t.horizOffset = max(0, t.horizOffset)
+
 		newXIdx := t.curX + posDiff[0]
 		if isSearchLine {
 			newXIdx = max(0, newXIdx) // Prevent index < 0
@@ -498,11 +523,12 @@ func (t *Terminal) RunClient() error {
 				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 					t.horizOffset++
 				}
-				newXIdx = min(newXIdx, len(t.curItem.Line)) // Prevent going out of range of the line
-				t.curX = min(newXIdx, t.w-1)                // Prevent going out of range of the page
+				newXIdx = min(newXIdx, len(t.curItem.Line)-t.horizOffset) // Prevent going out of range of the line
+				t.curX = min(newXIdx, t.w-1)                              // Prevent going out of range of the page
 			}
 		}
 
+		t.resizeScreen()
 		t.paint(matches, triggerSaveWarning)
 	}
 
