@@ -17,21 +17,21 @@ import (
 )
 
 const (
-	firstListLinePos int    = 1
-	nReservedEndLine int    = 1
+	reservedTopLines int    = 1
 	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
 )
 
 type Terminal struct {
-	db      service.ListRepo
-	search  [][]rune
-	curItem *service.ListItem // The currently selected item
-	s       tcell.Screen
-	style   tcell.Style
-	w       int
-	h       int
-	curX    int
-	curY    int
+	db         service.ListRepo
+	search     [][]rune
+	curItem    *service.ListItem // The currently selected item
+	s          tcell.Screen
+	style      tcell.Style
+	w          int
+	h          int
+	curX       int // Cur "screen" index, not related to matched item lists
+	curY       int // Cur "screen" index, not related to matched item lists
+	vertOffset int // The index of the first displayed item in the match set
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -202,8 +202,8 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	// Fill lineItems
 	var offset int
 	var style tcell.Style
-	for i, r := range matches {
-		offset = i + firstListLinePos
+	for i, r := range matches[t.vertOffset:] {
+		offset = i + reservedTopLines
 		// If note is present, indicate with a different style
 		if len(*(r.Note)) > 0 {
 			style = noteStyle
@@ -273,7 +273,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
 				var err error
-				if t.curY == 0 {
+				if t.curY == reservedTopLines-1 {
 					err = t.db.Add("", nil, nil)
 				} else {
 					err = t.db.Add("", nil, t.curItem)
@@ -283,7 +283,7 @@ func (t *Terminal) RunClient() error {
 				}
 				posDiff[1]++
 			case tcell.KeyCtrlD:
-				if t.curY == 0 {
+				if t.curY == reservedTopLines-1 {
 					t.search = [][]rune{}
 				} else {
 					err := t.db.Delete(t.curItem)
@@ -292,7 +292,7 @@ func (t *Terminal) RunClient() error {
 					}
 				}
 			case tcell.KeyTab:
-				if t.curY == 0 {
+				if t.curY == reservedTopLines-1 {
 					// If current search group has runes, close off and create new one
 					if len(t.search) > 0 {
 						lastTerm := t.search[len(t.search)-1]
@@ -315,7 +315,7 @@ func (t *Terminal) RunClient() error {
 				t.curY = 0 // TODO
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
-				if t.curY == 0 {
+				if t.curY == reservedTopLines-1 {
 					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
 					if len(t.search) > 0 {
 						lastTerm := t.search[len(t.search)-1]
@@ -346,7 +346,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyLeft:
 				posDiff[0]--
 			default:
-				if t.curY == 0 {
+				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
 						lastTerm := t.search[len(t.search)-1]
 						lastTerm = append(lastTerm, ev.Rune())
@@ -392,35 +392,72 @@ func (t *Terminal) RunClient() error {
 			break
 		}
 
+		// N available item slots
+		nItemSlots := t.h - reservedTopLines
+
+		// Before doing anything with vertical positioning, we need to automatically reduce available
+		// offset if there are unused visible lines
+		linesToClear := nItemSlots - len(matches) + t.vertOffset
+		if linesToClear > 0 {
+			t.vertOffset = max(0, t.vertOffset-linesToClear)
+		}
+
 		// Change vertical cursor position based on a number of constraints.
 		// This needs to happen after matches have been refreshed, but before setting a new curItem
-		newY := t.curY + posDiff[1]                         // Apply diff from ops
-		newY = max(newY, 0)                                 // Prevent index < 0
-		newY = min(newY, t.h-1)                             // Prevent going out of range of screen
-		t.curY = min(newY, len(matches)-1+firstListLinePos) // Prevent going out of range of returned matches
+		newYIdx := t.curY + posDiff[1] // Apply diff from ops
 
-		isSearchLine := t.curY == 0
+		// If there are hidden items above the top displayed item, shift all down 1
+		if newYIdx < reservedTopLines-1 {
+			if t.vertOffset > 0 {
+				t.vertOffset--
+			}
+		}
+
+		// Prevent index < 0
+		newYIdx = max(newYIdx, reservedTopLines-1)
+
+		// Cater for hidden items below
+		if newYIdx > t.h-1 {
+			// N items still available below the top offset (aka any hidden at the top of the list)
+			nItemsBelowOffset := len(matches) - t.vertOffset
+
+			// N items remaining BELOW the item slots (aka visible portion of the list)
+			nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
+
+			if nItemsBelowInvisible > 0 {
+				t.vertOffset++
+			}
+		}
+		// Prevent going out of range of screen
+		newYIdx = min(newYIdx, t.h-1)
+
+		// Prevent going out of range of returned matches
+		// This needs to knowledge of the vertOffset as we will never show empty lines at the bottom of the screen if there is an
+		// offset available at the top
+		t.curY = min(newYIdx, reservedTopLines+len(matches)-1)
+
+		isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
 
 		// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
 		// If on search line, just set to nil
 		if isSearchLine {
 			t.curItem = nil
 		} else {
-			t.curItem = matches[t.curY-1]
+			t.curItem = matches[t.curY-reservedTopLines+t.vertOffset]
 		}
 
 		// Then refresh the X position based on vertical position and curItem
-		newX := t.curX + posDiff[0]
-		newX = max(0, newX) // Prevent index < 0
+		newXIdx := t.curX + posDiff[0]
+		newXIdx = max(0, newXIdx) // Prevent index < 0
 		if isSearchLine {
 			// Add up max potential position based on number of runes in groups, and separators between
 			lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
 			for _, g := range t.search {
 				lenSearchBox += len(g)
 			}
-			t.curX = min(newX, lenSearchBox)
+			t.curX = min(newXIdx, lenSearchBox)
 		} else {
-			t.curX = min(newX, len(t.curItem.Line)) // Prevent going out of range of the line
+			t.curX = min(newXIdx, len(t.curItem.Line)) // Prevent going out of range of the line
 		}
 
 		t.paint(matches, triggerSaveWarning)
