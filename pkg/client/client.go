@@ -321,6 +321,20 @@ func (t *Terminal) RunClient() error {
 					}
 					t.s = newInstantiatedScreen(t.style)
 				}
+			case tcell.KeyCtrlA:
+				// Go to beginning of line
+				if t.curY != 0 {
+					// TODO decouple cursor mutation from key handling
+					t.curX = 0
+					t.horizOffset = 0
+				}
+			case tcell.KeyCtrlE:
+				// Go to end of line
+				if t.curY != 0 {
+					// TODO
+					t.curX = len(t.curItem.Line)
+					t.horizOffset = len(t.curItem.Line) - t.w
+				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
 			case tcell.KeyBackspace:
