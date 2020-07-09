@@ -22,16 +22,17 @@ const (
 )
 
 type Terminal struct {
-	db         service.ListRepo
-	search     [][]rune
-	curItem    *service.ListItem // The currently selected item
-	s          tcell.Screen
-	style      tcell.Style
-	w          int
-	h          int
-	curX       int // Cur "screen" index, not related to matched item lists
-	curY       int // Cur "screen" index, not related to matched item lists
-	vertOffset int // The index of the first displayed item in the match set
+	db          service.ListRepo
+	search      [][]rune
+	curItem     *service.ListItem // The currently selected item
+	s           tcell.Screen
+	style       tcell.Style
+	w           int
+	h           int
+	curX        int // Cur "screen" index, not related to matched item lists
+	curY        int // Cur "screen" index, not related to matched item lists
+	vertOffset  int // The index of the first displayed item in the match set
+	horizOffset int // The index of the first displayed char in the curItem
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -210,8 +211,15 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		} else {
 			style = t.style
 		}
+
+		line := r.Line
+		// Account for horizontal offset if on curItem
+		if r == t.curItem {
+			line = line[t.horizOffset:]
+		}
+
 		// Emit line
-		emitStr(t.s, 0, offset, style, r.Line)
+		emitStr(t.s, 0, offset, style, line)
 		if offset == t.h {
 			break
 		}
@@ -250,6 +258,8 @@ func (t *Terminal) RunClient() error {
 		ev := t.s.PollEvent()
 
 		triggerSaveWarning = false
+
+		offsetX := t.horizOffset + t.curX
 
 		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
@@ -326,10 +336,11 @@ func (t *Terminal) RunClient() error {
 							t.search = t.search[:len(t.search)-1]
 						}
 					}
-				} else if t.curX > 0 {
+				} else if offsetX > 0 {
+					// Only delete character if not in the first position
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 {
-						newLine = append(newLine[:t.curX-1], newLine[t.curX:]...)
+						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 						if err != nil {
 							log.Fatal(err)
@@ -359,12 +370,12 @@ func (t *Terminal) RunClient() error {
 				} else {
 					newLine := []rune(t.curItem.Line)
 					// Insert characters at position
-					if len(newLine) == 0 || len(newLine) == t.curX {
+					if len(newLine) == 0 || len(newLine) == offsetX {
 						newLine = append(newLine, ev.Rune())
 					} else {
 						newLine = append(newLine, 0)
-						copy(newLine[t.curX+1:], newLine[t.curX:])
-						newLine[t.curX] = ev.Rune()
+						copy(newLine[offsetX+1:], newLine[offsetX:])
+						newLine[offsetX] = ev.Rune()
 					}
 					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 					if err != nil {
@@ -447,9 +458,15 @@ func (t *Terminal) RunClient() error {
 		}
 
 		// Then refresh the X position based on vertical position and curItem
+
+		// If we've moved up for down, clear the horizontal offset
+		if posDiff[1] > 0 || posDiff[1] < 0 {
+			t.horizOffset = 0
+		}
+
 		newXIdx := t.curX + posDiff[0]
-		newXIdx = max(0, newXIdx) // Prevent index < 0
 		if isSearchLine {
+			newXIdx = max(0, newXIdx) // Prevent index < 0
 			// Add up max potential position based on number of runes in groups, and separators between
 			lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
 			for _, g := range t.search {
@@ -457,7 +474,19 @@ func (t *Terminal) RunClient() error {
 			}
 			t.curX = min(newXIdx, lenSearchBox)
 		} else {
-			t.curX = min(newXIdx, len(t.curItem.Line)) // Prevent going out of range of the line
+			// Deal with horizontal offset if applicable
+			if newXIdx < 0 {
+				if t.horizOffset > 0 {
+					t.horizOffset--
+				}
+				t.curX = max(0, newXIdx) // Prevent index < 0
+			} else {
+				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
+					t.horizOffset++
+				}
+				newXIdx = min(newXIdx, len(t.curItem.Line)) // Prevent going out of range of the line
+				t.curX = min(newXIdx, t.w-1)                // Prevent going out of range of the page
+			}
 		}
 
 		t.paint(matches, triggerSaveWarning)
