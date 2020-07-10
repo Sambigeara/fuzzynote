@@ -20,6 +20,7 @@ Examples:
 
 - "foo" will match "fobo"
 - "#foo" will not match on "fobo", but will match on "foo"
+- "#!foo" will ignore any lines with the **full** string "foo" in it
 
 ## Controls
 
