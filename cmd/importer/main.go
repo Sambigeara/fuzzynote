@@ -77,7 +77,7 @@ func importLines(db service.ListRepo) error {
 	}
 
 	// Retrieve oldest item pre-import
-	matches, err := db.Match([][]rune{}, nil)
+	matches, err := db.Match([][]rune{}, nil, true)
 	if err != nil {
 		log.Fatal(err)
 		return err
