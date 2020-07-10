@@ -21,8 +21,7 @@ type ListRepo interface {
 	Add(line string, note *[]byte, item *ListItem) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
-	Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
-	//EditPage(id uint32) (*[]byte, func(*[]byte) error, error)
+	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
 	HasPendingChanges() bool
 }
 
@@ -36,11 +35,12 @@ type DBListRepo struct {
 }
 
 type ListItem struct {
-	Line   string
-	Parent *ListItem
-	Child  *ListItem
-	ID     uint32
-	Note   *[]byte
+	Line     string
+	Parent   *ListItem
+	Child    *ListItem
+	ID       uint32
+	Note     *[]byte
+	IsHidden bool
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -48,9 +48,20 @@ type FileHeader struct {
 	SchemaID uint32
 }
 
+type bits uint32
+
+const (
+	hidden bits = 1 << iota
+)
+
+func set(b, flag bits) bits    { return b | flag }
+func clear(b, flag bits) bits  { return b &^ flag }
+func toggle(b, flag bits) bits { return b ^ flag }
+func has(b, flag bits) bool    { return b&flag != 0 }
+
 type ItemHeader struct {
 	PageID     uint32
-	Metadata   uint32
+	Metadata   bits
 	FileID     uint32
 	DataLength uint64
 }
@@ -116,10 +127,11 @@ OuterLoop:
 		}
 
 		nextItem := ListItem{
-			Line:   string(data),
-			Parent: cur,
-			ID:     header.PageID,
-			Note:   dat,
+			Line:     string(data),
+			Parent:   cur,
+			ID:       header.PageID,
+			Note:     dat,
+			IsHidden: has(header.Metadata, hidden),
 		}
 		if cur == nil {
 			// `cur` will only be nil on the first iteration, therefore we can assign the oldest node here for idx assignment below
@@ -229,9 +241,13 @@ func (r *DBListRepo) Save() error {
 			listItem.ID = r.nextID
 			r.nextID++
 		}
+		var metadata bits = 0
+		if listItem.IsHidden {
+			metadata = set(metadata, hidden)
+		}
 		header := ItemHeader{
 			PageID:     listItem.ID,
-			Metadata:   0,           // TODO
+			Metadata:   metadata,
 			FileID:     listItem.ID, // TODO
 			DataLength: uint64(len(listItem.Line)),
 		}
@@ -364,7 +380,7 @@ func isMatch(sub []rune, full string) bool {
 	return isFuzzyMatch(sub, full)
 }
 
-func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
 	cur := r.root
 
@@ -375,20 +391,22 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem) ([]*ListItem, error)
 	}
 
 	for {
-		matched := true
-		for _, group := range keys {
-			// Match any items with empty Lines (this accounts for lines added when search is active)
-			// "active" listItems pass automatically to allow mid-search item editing
-			if len(cur.Line) == 0 || cur == active {
-				break
+		if showHidden || !cur.IsHidden {
+			matched := true
+			for _, group := range keys {
+				// Match any items with empty Lines (this accounts for lines added when search is active)
+				// "active" listItems pass automatically to allow mid-search item editing
+				if len(cur.Line) == 0 || cur == active {
+					break
+				}
+				if !isMatch(group, cur.Line) {
+					matched = false
+					break
+				}
 			}
-			if !isMatch(group, cur.Line) {
-				matched = false
-				break
+			if matched {
+				res = append(res, cur)
 			}
-		}
-		if matched {
-			res = append(res, cur)
 		}
 
 		if cur.Parent == nil {
