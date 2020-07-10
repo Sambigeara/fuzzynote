@@ -60,7 +60,7 @@ func NewTerm(db service.ListRepo, colour string) *Terminal {
 		style:      defStyle,
 		w:          w,
 		h:          h,
-		showHidden: true,
+		showHidden: false,
 	}
 }
 
