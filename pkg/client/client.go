@@ -261,6 +261,13 @@ func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
 	return grpIdx, charOffset
 }
 
+func (t *Terminal) insertCharInPlace(line []rune, offset int, newChar rune) []rune {
+	line = append(line, 0)
+	copy(line[offset+1:], line[offset:])
+	line[offset] = newChar
+	return line
+}
+
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
@@ -415,9 +422,12 @@ func (t *Terminal) RunClient() error {
 			default:
 				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						lastTerm = append(lastTerm, ev.Rune())
-						t.search[len(t.search)-1] = lastTerm
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						newGroup := []rune(t.search[grpIdx])
+
+						// We want to insert a char into the current search group then update in place
+						newGroup = t.insertCharInPlace(newGroup, charOffset, ev.Rune())
+						t.search[grpIdx] = newGroup
 					} else {
 						var newTerm []rune
 						newTerm = append(newTerm, ev.Rune())
@@ -429,9 +439,7 @@ func (t *Terminal) RunClient() error {
 					if len(newLine) == 0 || len(newLine) == offsetX {
 						newLine = append(newLine, ev.Rune())
 					} else {
-						newLine = append(newLine, 0)
-						copy(newLine[offsetX+1:], newLine[offsetX:])
-						newLine[offsetX] = ev.Rune()
+						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 					}
 					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 					if err != nil {
