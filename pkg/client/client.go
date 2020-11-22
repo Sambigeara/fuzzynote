@@ -248,7 +248,20 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	return nil
 }
 
-// RunClient Read key presses on a loop
+func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
+	// Get search group to operate on, and the char within that
+	grpIdx, start := 0, 0
+	end := len(t.search[grpIdx])
+	for end < t.curX {
+		grpIdx++
+		start = end + 1 // `1` accounts for the visual separator between groups
+		end = start + len(t.search[grpIdx])
+	}
+	charOffset := t.curX - start
+	return grpIdx, charOffset
+}
+
+// RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
@@ -275,7 +288,6 @@ func (t *Terminal) RunClient() error {
 
 		offsetX := t.horizOffset + t.curX
 
-		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			switch ev.Key() {
@@ -315,17 +327,6 @@ func (t *Terminal) RunClient() error {
 						log.Fatal(err)
 					}
 				}
-			case tcell.KeyTab:
-				if t.curY == reservedTopLines-1 {
-					// If current search group has runes, close off and create new one
-					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						if len(lastTerm) > 0 {
-							t.search = append(t.search, []rune{})
-						}
-					}
-					posDiff[0]++
-				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
 					t.s.Fini()
@@ -358,18 +359,38 @@ func (t *Terminal) RunClient() error {
 				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
-			case tcell.KeyBackspace:
-			case tcell.KeyBackspace2:
+			case tcell.KeyTab:
 				if t.curY == reservedTopLines-1 {
-					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
+					// If current search group has runes, close off and create new one
 					if len(t.search) > 0 {
 						lastTerm := t.search[len(t.search)-1]
 						if len(lastTerm) > 0 {
-							lastTerm = lastTerm[:len(lastTerm)-1]
-							t.search[len(t.search)-1] = lastTerm
-						} else {
-							t.search = t.search[:len(t.search)-1]
+							t.search = append(t.search, []rune{})
 						}
+					}
+					posDiff[0]++
+				}
+			case tcell.KeyBackspace:
+			case tcell.KeyBackspace2:
+				if t.curY == reservedTopLines-1 {
+					if len(t.search) > 0 {
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						newGroup := []rune(t.search[grpIdx])
+
+						// If charOffset == 0 we are acting on the previous separator
+						if charOffset <= 0 {
+							// If we are operating on a middle (or initial) separator, we need to merge
+							// previous and next search groups before cleaning up the search group
+							if grpIdx > 0 {
+								newGroup = append(t.search[grpIdx-1], t.search[grpIdx]...)
+								t.search[grpIdx-1] = newGroup
+								t.search = append(t.search[:grpIdx], t.search[grpIdx+1:]...)
+							}
+						} else {
+							newGroup = append(newGroup[:charOffset-1], newGroup[charOffset:]...)
+							t.search[grpIdx] = newGroup
+						}
+						posDiff[0]--
 					}
 				} else if offsetX > 0 {
 					// Only delete character if not in the first position
