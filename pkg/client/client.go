@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
@@ -315,11 +316,19 @@ func (t *Terminal) RunClient() error {
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
+				// This will insert the contents of the current search string (omitting search args like `#`)
+				var searchStrings []string
+				for _, group := range t.search {
+					_, nChars := t.db.GetMatchPattern(group)
+					searchStrings = append(searchStrings, string(group[nChars:]))
+				}
+				newString := strings.Join(searchStrings, " ")
+
 				var err error
 				if t.curY == reservedTopLines-1 {
-					err = t.db.Add("", nil, nil)
+					err = t.db.Add(newString, nil, nil)
 				} else {
-					err = t.db.Add("", nil, t.curItem)
+					err = t.db.Add(newString, nil, t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
