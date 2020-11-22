@@ -129,7 +129,7 @@ func (t *Terminal) openEditorSession() error {
 	sendExtraEventFix()
 
 	// Write text to temp file
-	tempFile := "/tmp/fzn_buffer"
+	tempFile := fmt.Sprintf("/tmp/fzn_buffer_%d", t.curItem.ID)
 	f, err := os.Create(tempFile)
 	if err != nil {
 		log.Fatal(err)
