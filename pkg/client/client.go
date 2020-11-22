@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
@@ -248,7 +249,27 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	return nil
 }
 
-// RunClient Read key presses on a loop
+func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
+	// Get search group to operate on, and the char within that
+	grpIdx, start := 0, 0
+	end := len(t.search[grpIdx])
+	for end < t.curX {
+		grpIdx++
+		start = end + 1 // `1` accounts for the visual separator between groups
+		end = start + len(t.search[grpIdx])
+	}
+	charOffset := t.curX - start
+	return grpIdx, charOffset
+}
+
+func (t *Terminal) insertCharInPlace(line []rune, offset int, newChar rune) []rune {
+	line = append(line, 0)
+	copy(line[offset+1:], line[offset:])
+	line[offset] = newChar
+	return line
+}
+
+// RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
 	// List instantiation
@@ -275,7 +296,6 @@ func (t *Terminal) RunClient() error {
 
 		offsetX := t.horizOffset + t.curX
 
-		// https://github.com/gdamore/tcell/blob/master/_demos/mouse.go
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			switch ev.Key() {
@@ -296,11 +316,19 @@ func (t *Terminal) RunClient() error {
 				os.Exit(0)
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
+				// This will insert the contents of the current search string (omitting search args like `#`)
+				var searchStrings []string
+				for _, group := range t.search {
+					_, nChars := t.db.GetMatchPattern(group)
+					searchStrings = append(searchStrings, string(group[nChars:]))
+				}
+				newString := strings.Join(searchStrings, " ")
+
 				var err error
 				if t.curY == reservedTopLines-1 {
-					err = t.db.Add("", nil, nil)
+					err = t.db.Add(newString, nil, nil)
 				} else {
-					err = t.db.Add("", nil, t.curItem)
+					err = t.db.Add(newString, nil, t.curItem)
 				}
 				if err != nil {
 					log.Fatal(err)
@@ -314,17 +342,6 @@ func (t *Terminal) RunClient() error {
 					if err != nil {
 						log.Fatal(err)
 					}
-				}
-			case tcell.KeyTab:
-				if t.curY == reservedTopLines-1 {
-					// If current search group has runes, close off and create new one
-					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						if len(lastTerm) > 0 {
-							t.search = append(t.search, []rune{})
-						}
-					}
-					posDiff[0]++
 				}
 			case tcell.KeyCtrlO:
 				if t.curY != 0 {
@@ -358,18 +375,45 @@ func (t *Terminal) RunClient() error {
 				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
+			case tcell.KeyTab:
+				if t.curY == reservedTopLines-1 {
+					// If no search groups exist, rely on separate new char insertion elsewhere
+					if len(t.search) > 0 {
+						// The location of the cursor will determine where the search group is added
+						// If `Tabbing` in the middle of the search group, we need to split the group into two
+						// The character immediately after the current position will represent the first
+						// character in the new (right most) search group
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						currentGroup := t.search[grpIdx]
+						newLeft, newRight := currentGroup[:charOffset], currentGroup[charOffset:]
+						t.search = append(t.search, []rune{})
+						copy(t.search[grpIdx+1:], t.search[grpIdx:])
+						t.search[grpIdx] = newLeft
+						t.search[grpIdx+1] = newRight
+					}
+					posDiff[0]++
+				}
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
 				if t.curY == reservedTopLines-1 {
-					// Delete removes last item from last rune slice. If final slice is empty, remove that instead
 					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						if len(lastTerm) > 0 {
-							lastTerm = lastTerm[:len(lastTerm)-1]
-							t.search[len(t.search)-1] = lastTerm
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						newGroup := []rune(t.search[grpIdx])
+
+						// If charOffset == 0 we are acting on the previous separator
+						if charOffset <= 0 {
+							// If we are operating on a middle (or initial) separator, we need to merge
+							// previous and next search groups before cleaning up the search group
+							if grpIdx > 0 {
+								newGroup = append(t.search[grpIdx-1], t.search[grpIdx]...)
+								t.search[grpIdx-1] = newGroup
+								t.search = append(t.search[:grpIdx], t.search[grpIdx+1:]...)
+							}
 						} else {
-							t.search = t.search[:len(t.search)-1]
+							newGroup = append(newGroup[:charOffset-1], newGroup[charOffset:]...)
+							t.search[grpIdx] = newGroup
 						}
+						posDiff[0]--
 					}
 				} else if offsetX > 0 {
 					// Only delete character if not in the first position
@@ -394,9 +438,12 @@ func (t *Terminal) RunClient() error {
 			default:
 				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						lastTerm = append(lastTerm, ev.Rune())
-						t.search[len(t.search)-1] = lastTerm
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						newGroup := []rune(t.search[grpIdx])
+
+						// We want to insert a char into the current search group then update in place
+						newGroup = t.insertCharInPlace(newGroup, charOffset, ev.Rune())
+						t.search[grpIdx] = newGroup
 					} else {
 						var newTerm []rune
 						newTerm = append(newTerm, ev.Rune())
@@ -408,9 +455,7 @@ func (t *Terminal) RunClient() error {
 					if len(newLine) == 0 || len(newLine) == offsetX {
 						newLine = append(newLine, ev.Rune())
 					} else {
-						newLine = append(newLine, 0)
-						copy(newLine[offsetX+1:], newLine[offsetX:])
-						newLine[offsetX] = ev.Rune()
+						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 					}
 					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 					if err != nil {
