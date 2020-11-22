@@ -23,6 +23,7 @@ type ListRepo interface {
 	Delete(listItem *ListItem) error
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
 	HasPendingChanges() bool
+	GetMatchPattern(sub []rune) (MatchPattern, int)
 }
 
 type DBListRepo struct {
@@ -363,21 +364,57 @@ func isFuzzyMatch(sub []rune, full string) bool {
 	return false
 }
 
+type MatchPattern int
+
+const (
+	FullMatchPattern MatchPattern = iota
+	InverseMatchPattern
+	FuzzyMatchPattern
+)
+
+// matchChars represents the number of characters at the start of the string
+// which are attributed to the match pattern.
+// This is used elsewhere to strip the characters where appropriate
+var matchChars = map[MatchPattern]int{
+	FullMatchPattern:    1,
+	InverseMatchPattern: 2,
+	FuzzyMatchPattern:   0,
+}
+
+// GetMatchPattern will return the MatchPattern of a given string, if any, plus the number
+// of chars that can be omitted to leave only the relevant text
+func (r *DBListRepo) GetMatchPattern(sub []rune) (MatchPattern, int) {
+	pattern := FuzzyMatchPattern
+	if sub[0] == '#' {
+		if len(sub) > 1 {
+			// Inverse string match if a search group begins with `#!`
+			if sub[1] == '!' {
+				pattern = InverseMatchPattern
+			}
+		}
+		pattern = FullMatchPattern
+	}
+	nChars, _ := matchChars[pattern]
+	return pattern, nChars
+}
+
 // If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
-func isMatch(sub []rune, full string) bool {
+func (r *DBListRepo) isMatch(sub []rune, full string) bool {
 	if len(sub) == 0 {
 		return true
 	}
-	if sub[0] == '#' {
-		if len(sub) >= 2 {
-			// Inverse string match if a search group begins with `#!`
-			if sub[1] == '!' {
-				return !isSubString(string(sub[2:]), full)
-			}
-		}
-		return isSubString(string(sub[1:]), full)
+	pattern, nChars := r.GetMatchPattern(sub)
+	switch pattern {
+	case FullMatchPattern:
+		return isSubString(string(sub[nChars:]), full)
+	case InverseMatchPattern:
+		return !isSubString(string(sub[nChars:]), full)
+	case FuzzyMatchPattern:
+		return isFuzzyMatch(sub, full)
+	default:
+		// Shouldn't reach here
+		return false
 	}
-	return isFuzzyMatch(sub, full)
 }
 
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
@@ -399,7 +436,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 				if len(cur.Line) == 0 || cur == active {
 					break
 				}
-				if !isMatch(group, cur.Line) {
+				if !r.isMatch(group, cur.Line) {
 					matched = false
 					break
 				}
