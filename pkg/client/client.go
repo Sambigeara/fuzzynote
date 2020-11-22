@@ -368,12 +368,19 @@ func (t *Terminal) RunClient() error {
 				t.curY = 0 // TODO
 			case tcell.KeyTab:
 				if t.curY == reservedTopLines-1 {
-					// If current search group has runes, close off and create new one
+					// If no search groups exist, rely on separate new char insertion elsewhere
 					if len(t.search) > 0 {
-						lastTerm := t.search[len(t.search)-1]
-						if len(lastTerm) > 0 {
-							t.search = append(t.search, []rune{})
-						}
+						// The location of the cursor will determine where the search group is added
+						// If `Tabbing` in the middle of the search group, we need to split the group into two
+						// The character immediately after the current position will represent the first
+						// character in the new (right most) search group
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						currentGroup := t.search[grpIdx]
+						newLeft, newRight := currentGroup[:charOffset], currentGroup[charOffset:]
+						t.search = append(t.search, []rune{})
+						copy(t.search[grpIdx+1:], t.search[grpIdx:])
+						t.search[grpIdx] = newLeft
+						t.search[grpIdx+1] = newRight
 					}
 					posDiff[0]++
 				}
