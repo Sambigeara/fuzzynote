@@ -129,31 +129,31 @@ func (t *Terminal) openEditorSession() error {
 	sendExtraEventFix()
 
 	// Write text to temp file
-	tempFile := fmt.Sprintf("/tmp/fzn_buffer_%d", t.curItem.ID)
-	f, err := os.Create(tempFile)
+	tmpfile, err := ioutil.TempFile("", "fzn_buffer")
 	if err != nil {
 		log.Fatal(err)
 		return err
 	}
-	defer f.Close()
 
-	_, err = f.Write(*t.curItem.Note)
-	if err != nil {
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write(*t.curItem.Note); err != nil {
 		log.Fatal(err)
 		return err
 	}
 
 	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
-	cmd := exec.Command("vim", tempFile)
+	cmd := exec.Command("vim", tmpfile.Name())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	err = cmd.Run()
 	if err != nil {
 		log.Printf("Command finished with error: %v", err)
+		return err
 	}
 
 	// Read back from the temp file, and return to the write function
-	newDat, err := ioutil.ReadFile(tempFile)
+	newDat, err := ioutil.ReadFile(tmpfile.Name())
 	if err != nil {
 		log.Fatal(err)
 		return nil
@@ -161,6 +161,10 @@ func (t *Terminal) openEditorSession() error {
 
 	err = t.db.Update(t.curItem.Line, &newDat, t.curItem)
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := tmpfile.Close(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -320,7 +324,9 @@ func (t *Terminal) RunClient() error {
 				var searchStrings []string
 				for _, group := range t.search {
 					_, nChars := t.db.GetMatchPattern(group)
-					searchStrings = append(searchStrings, string(group[nChars:]))
+					if len(group) > 0 {
+						searchStrings = append(searchStrings, string(group[nChars:]))
+					}
 				}
 				newString := strings.Join(searchStrings, " ")
 
@@ -428,9 +434,31 @@ func (t *Terminal) RunClient() error {
 					}
 				}
 			case tcell.KeyDown:
-				posDiff[1]++
+				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
+					// Move the current item down and follow with cursor
+					moved, err := t.db.MoveDown(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					if moved {
+						posDiff[1]++
+					}
+				} else {
+					posDiff[1]++
+				}
 			case tcell.KeyUp:
-				posDiff[1]--
+				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
+					// Move the current item up and follow with cursor
+					moved, err := t.db.MoveUp(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					if moved {
+						posDiff[1]--
+					}
+				} else {
+					posDiff[1]--
+				}
 			case tcell.KeyRight:
 				posDiff[0]++
 			case tcell.KeyLeft:
