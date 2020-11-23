@@ -21,6 +21,8 @@ type ListRepo interface {
 	Add(line string, note *[]byte, item *ListItem) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
+	MoveUp(listItem *ListItem) (bool, error)
+	MoveDown(listItem *ListItem) (bool, error)
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
 	HasPendingChanges() bool
 	GetMatchPattern(sub []rune) (MatchPattern, int)
@@ -36,12 +38,14 @@ type DBListRepo struct {
 }
 
 type ListItem struct {
-	Line     string
-	Parent   *ListItem
-	Child    *ListItem
-	ID       uint32
-	Note     *[]byte
-	IsHidden bool
+	Line        string
+	Parent      *ListItem
+	Child       *ListItem
+	ID          uint32
+	Note        *[]byte
+	IsHidden    bool
+	MatchParent *ListItem
+	MatchChild  *ListItem
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -341,6 +345,69 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 	return nil
 }
 
+func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
+	r.hasPendingChanges = true
+
+	targetItem := item.MatchChild
+	if targetItem == nil {
+		return false, nil
+	}
+
+	// Close off gap from source location (for whole dataset)
+	oldSourceParent := item.Parent
+	if oldSourceParent != nil {
+		item.Parent.Child = item.Child
+	}
+	if item.Child != nil {
+		item.Child.Parent = oldSourceParent
+	}
+
+	// Insert item into new position based on Matched pointers
+	item.Parent = targetItem
+	if targetItem.Child == nil {
+		// New root
+		item.Child = nil
+		r.root = item
+	} else {
+		item.Child = targetItem.Child
+		targetItem.Child.Parent = item
+	}
+	targetItem.Child = item
+
+	return true, nil
+}
+
+func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
+	r.hasPendingChanges = true
+
+	targetItem := item.MatchParent
+	if targetItem == nil {
+		return false, nil
+	}
+
+	// Close off gap from source location (for whole dataset)
+	oldSourceChild := item.Child
+	if oldSourceChild != nil {
+		item.Child.Parent = item.Parent
+	}
+	if item.Parent != nil {
+		item.Parent.Child = oldSourceChild
+		if oldSourceChild == nil {
+			r.root = item.Parent
+		}
+	}
+
+	// Insert item into new position based on Matched pointers
+	item.Child = targetItem
+	if targetItem.Parent != nil {
+		targetItem.Parent.Child = item
+	}
+	item.Parent = targetItem.Parent
+	targetItem.Parent = item
+
+	return true, nil
+}
+
 // Search functionality
 
 func isSubString(sub string, full string) bool {
@@ -370,6 +437,7 @@ const (
 	FullMatchPattern MatchPattern = iota
 	InverseMatchPattern
 	FuzzyMatchPattern
+	NoMatchPattern
 )
 
 // matchChars represents the number of characters at the start of the string
@@ -379,11 +447,15 @@ var matchChars = map[MatchPattern]int{
 	FullMatchPattern:    1,
 	InverseMatchPattern: 2,
 	FuzzyMatchPattern:   0,
+	NoMatchPattern:      0,
 }
 
 // GetMatchPattern will return the MatchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
 func (r *DBListRepo) GetMatchPattern(sub []rune) (MatchPattern, int) {
+	if len(sub) == 0 {
+		return NoMatchPattern, 0
+	}
 	pattern := FuzzyMatchPattern
 	if sub[0] == '#' {
 		if len(sub) > 1 {
@@ -420,6 +492,7 @@ func (r *DBListRepo) isMatch(sub []rune, full string) bool {
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
 	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
 	cur := r.root
+	var lastCur *ListItem
 
 	res := make([]*ListItem, 0)
 
@@ -443,12 +516,19 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 			}
 			if matched {
 				res = append(res, cur)
+
+				if lastCur != nil {
+					lastCur.MatchParent = cur
+				}
+				cur.MatchChild = lastCur
+				lastCur = cur
 			}
 		}
 
 		if cur.Parent == nil {
 			return res, nil
 		}
+
 		cur = cur.Parent
 	}
 }

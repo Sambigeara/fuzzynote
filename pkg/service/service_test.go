@@ -432,6 +432,356 @@ func TestServiceDelete(t *testing.T) {
 	})
 }
 
+func TestServiceMove(t *testing.T) {
+	rootPath := "file_to_delete"
+	mockListRepo := NewDBListRepo(rootPath, "")
+
+	t.Run("Move item up from bottom", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveUp(&item3)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if mockListRepo.root != &item1 {
+			t.Errorf("item1 should still be root")
+		}
+		if matches[0] != &item1 {
+			t.Errorf("Root should have remained the same")
+		}
+		if matches[1] != &item3 {
+			t.Errorf("item3 should have moved up one")
+		}
+		if matches[2] != &item2 {
+			t.Errorf("item2 should have moved down one")
+		}
+
+		if item3.Child != &item1 {
+			t.Errorf("Moved item child should now be root")
+		}
+		if item3.Parent != &item2 {
+			t.Errorf("Moved item parent should be previous child")
+		}
+
+		if mockListRepo.root.Parent != &item3 {
+			t.Errorf("Root parent should be newly moved item")
+		}
+		if item2.Child != &item3 {
+			t.Errorf("New lowest parent should be newly moved item")
+		}
+		if item2.Parent != nil {
+			t.Errorf("New lowest parent should have no parent")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item up from middle", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveUp(&item2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if mockListRepo.root != &item2 {
+			t.Errorf("item2 should have become root")
+		}
+		if matches[0] != &item2 {
+			t.Errorf("item2 should have become root")
+		}
+		if matches[1] != &item1 {
+			t.Errorf("previous root should have moved up one")
+		}
+		if matches[2] != &item3 {
+			t.Errorf("previous oldest should have stayed the same")
+		}
+
+		if item2.Child != nil {
+			t.Errorf("Moved item child should be null")
+		}
+		if item2.Parent != &item1 {
+			t.Errorf("Moved item parent should be previous root")
+		}
+
+		if item1.Parent != &item3 {
+			t.Errorf("Old root parent should be unchanged oldest item")
+		}
+		if item1.Child != &item2 {
+			t.Errorf("Old root child should be new root item")
+		}
+		if item3.Child != &item1 {
+			t.Errorf("Lowest parent's child should be old root")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item up from top", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveUp(&item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if mockListRepo.root != &item1 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[0] != &item1 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[1] != &item2 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[2] != &item3 {
+			t.Errorf("All items should remain unchanged")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item down from top", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveDown(&item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if mockListRepo.root != &item2 {
+			t.Errorf("item2 should now be root")
+		}
+		if matches[0] != &item2 {
+			t.Errorf("item2 should now be root")
+		}
+		if matches[1] != &item1 {
+			t.Errorf("item1 should have moved down one")
+		}
+		if matches[2] != &item3 {
+			t.Errorf("item3 should still be at the bottom")
+		}
+
+		if item1.Child != &item2 {
+			t.Errorf("Moved item child should now be root")
+		}
+		if item3.Child != &item1 {
+			t.Errorf("Oldest item's child should be previous child")
+		}
+
+		if mockListRepo.root.Parent != &item1 {
+			t.Errorf("Root parent should be newly moved item")
+		}
+		if item3.Child != &item1 {
+			t.Errorf("Lowest parent should be newly moved item")
+		}
+		if item3.Parent != nil {
+			t.Errorf("New lowest parent should have no parent")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item down from middle", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveDown(&item2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+		fmt.Println(mockListRepo.root)
+
+		if mockListRepo.root != &item1 {
+			t.Errorf("Root should have remained the same")
+		}
+		if matches[0] != &item1 {
+			t.Errorf("Root should have remained the same")
+		}
+		if matches[1] != &item3 {
+			t.Errorf("previous oldest should have moved up one")
+		}
+		if matches[2] != &item2 {
+			t.Errorf("moved item should now be oldest")
+		}
+
+		if item2.Child != &item3 {
+			t.Errorf("Moved item child should be previous oldest")
+		}
+		if item2.Parent != nil {
+			t.Errorf("Moved item child should be null")
+		}
+
+		if item3.Parent != &item2 {
+			t.Errorf("Previous oldest parent should be new oldest item")
+		}
+		if item3.Child != &item1 {
+			t.Errorf("Previous oldest child should be unchanged root item")
+		}
+		if item1.Parent != &item3 {
+			t.Errorf("Root's parent should be moved item")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item down from bottom", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			Parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			Parent: &item2,
+		}
+		item3.Child = &item2
+		item2.Child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveDown(&item3)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if mockListRepo.root != &item1 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[0] != &item1 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[1] != &item2 {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[2] != &item3 {
+			t.Errorf("All items should remain unchanged")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+}
+
 func TestServiceUpdate(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
@@ -529,6 +879,25 @@ func TestServiceMatch(t *testing.T) {
 		expectedLen := 3
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		if matches[0].MatchChild != nil {
+			t.Errorf("New root MatchChild should be null")
+		}
+		if matches[0].MatchParent != matches[1] {
+			t.Errorf("New root MatchParent should be second match")
+		}
+		if matches[1].MatchChild != matches[0] {
+			t.Errorf("Second item MatchChild should be new root")
+		}
+		if matches[1].MatchParent != matches[2] {
+			t.Errorf("Second item MatchParent should be third match")
+		}
+		if matches[2].MatchChild != matches[1] {
+			t.Errorf("Third item MatchChild should be second match")
+		}
+		if matches[2].MatchParent != nil {
+			t.Errorf("Third item MatchParent should be null")
 		}
 
 		expectedLine := "Second"
