@@ -178,9 +178,10 @@ OuterLoop:
 
 func (r *DBListRepo) Save() error {
 	for _, item := range r.pendingDeletions {
-		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally deleted with lots of data),
-		// append them with `_bak_{line}_{timestamp}`, so we know the context of the line, and the timestamp at which it was deleted.
-		// We need to remove the originally named notes file to prevent orphaned files being used with future notes (due to current idx logic)
+		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally
+		// deleted with lots of data), append them with `_bak_{line}_{timestamp}`, so we know the context
+		// of the line, and the timestamp at which it was deleted. We need to remove the originally named
+		// notes file to prevent orphaned files being used with future notes (due to current idx logic)
 		strID := fmt.Sprint(item.ID)
 		oldPath := path.Join(r.notesPath, strID)
 
@@ -271,10 +272,7 @@ func (r *DBListRepo) Save() error {
 			log.Fatal(err)
 			return err
 		}
-		// If Note is not empty, save as a note file
-		if listItem.Note != nil && len(*listItem.Note) > 0 {
-			r.savePage(listItem.ID, listItem.Note)
-		}
+		r.savePage(listItem.ID, listItem.Note)
 
 		if listItem.Child == nil {
 			break
@@ -560,9 +558,17 @@ func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
 	strID := fmt.Sprint(id)
 	filePath := path.Join(r.notesPath, strID)
 
+	// If data has been removed or is empty, delete the file and return
+	if data == nil || len(*data) == 0 {
+		_ = os.Remove(filePath)
+		// TODO handle failure more gracefully? AFAIK os.Remove just returns a *PathError on failure
+		// which is mostly indicative of a noneexistent file, so good enough for now...
+		return nil
+	}
+
 	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
 	// This needs to be before the ReadFile below to ensure the file exists
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0755)
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
 	defer f.Close()
 
 	_, err = f.Write(*data)
