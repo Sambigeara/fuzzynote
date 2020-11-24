@@ -15,6 +15,9 @@ import (
 	"unicode"
 )
 
+// This is THE date that Golang needs to determine custom formatting
+const dateFormat string = "Mon, Jan 2, 2006"
+
 type ListRepo interface {
 	Load() error
 	Save() error
@@ -25,7 +28,7 @@ type ListRepo interface {
 	MoveDown(listItem *ListItem) (bool, error)
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
 	HasPendingChanges() bool
-	GetMatchPattern(sub []rune) (MatchPattern, int)
+	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
 type DBListRepo struct {
@@ -429,57 +432,86 @@ func isFuzzyMatch(sub []rune, full string) bool {
 	return false
 }
 
-type MatchPattern int
+const (
+	openOp  rune = '{'
+	closeOp rune = '}'
+)
+
+type matchPattern int
 
 const (
-	FullMatchPattern MatchPattern = iota
-	InverseMatchPattern
-	FuzzyMatchPattern
-	NoMatchPattern
+	fullMatchPattern matchPattern = iota
+	inverseMatchPattern
+	fuzzyMatchPattern
+	opMatchPattern
+	noMatchPattern
 )
 
 // matchChars represents the number of characters at the start of the string
 // which are attributed to the match pattern.
 // This is used elsewhere to strip the characters where appropriate
-var matchChars = map[MatchPattern]int{
-	FullMatchPattern:    1,
-	InverseMatchPattern: 2,
-	FuzzyMatchPattern:   0,
-	NoMatchPattern:      0,
+var matchChars = map[matchPattern]int{
+	fullMatchPattern:    1,
+	inverseMatchPattern: 2,
+	fuzzyMatchPattern:   0,
+	opMatchPattern:      1,
+	noMatchPattern:      0,
 }
 
-// GetMatchPattern will return the MatchPattern of a given string, if any, plus the number
+// GetMatchPattern will return the matchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
-func (r *DBListRepo) GetMatchPattern(sub []rune) (MatchPattern, int) {
+func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	if len(sub) == 0 {
-		return NoMatchPattern, 0
+		return noMatchPattern, 0
 	}
-	pattern := FuzzyMatchPattern
+	pattern := fuzzyMatchPattern
 	if sub[0] == '#' {
 		if len(sub) > 1 {
 			// Inverse string match if a search group begins with `#!`
 			if sub[1] == '!' {
-				pattern = InverseMatchPattern
+				pattern = inverseMatchPattern
 			}
 		}
-		pattern = FullMatchPattern
+		pattern = fullMatchPattern
+	} else if sub[0] == openOp {
+		pattern = opMatchPattern
 	}
 	nChars, _ := matchChars[pattern]
 	return pattern, nChars
 }
 
+func parseOperatorGroup(sub []rune, nChars int) []rune {
+	// Handle generic ops between the operator boundary runes
+	// Get operator
+	opRunes := []rune{}
+	for _, r := range sub[nChars:] {
+		if r == closeOp {
+			// Match the op against any known operator (e.g. date) and parse if applicable.
+			// TODO for now, just match `d` or `D` for date, we'll expand in the future.
+			if len(opRunes) == 1 && unicode.ToLower(opRunes[len(opRunes)-1]) == 'd' {
+				// Parse date string and return cast rune array
+				now := time.Now()
+				dateString := now.Format(dateFormat)
+				return []rune(dateString)
+			}
+			break
+		}
+		opRunes = append(opRunes, r)
+	}
+	return sub
+}
+
 // If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
-func (r *DBListRepo) isMatch(sub []rune, full string) bool {
+func isMatch(sub []rune, full string, pattern matchPattern, nChars int) bool {
 	if len(sub) == 0 {
 		return true
 	}
-	pattern, nChars := r.GetMatchPattern(sub)
 	switch pattern {
-	case FullMatchPattern:
+	case fullMatchPattern:
 		return isSubString(string(sub[nChars:]), full)
-	case InverseMatchPattern:
+	case inverseMatchPattern:
 		return !isSubString(string(sub[nChars:]), full)
-	case FuzzyMatchPattern:
+	case fuzzyMatchPattern:
 		return isFuzzyMatch(sub, full)
 	default:
 		// Shouldn't reach here
@@ -492,10 +524,24 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 	cur := r.root
 	var lastCur *ListItem
 
-	res := make([]*ListItem, 0)
+	res := []*ListItem{}
 
 	if cur == nil {
 		return res, nil
+	}
+
+	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
+	// we have no matching lines, the parsing logic will not be reached, and things get messy
+
+	for i, group := range keys {
+		// Check if we need to parse any operators
+		pattern, nChars := r.GetMatchPattern(group)
+		if pattern == opMatchPattern {
+			group = parseOperatorGroup(group, nChars)
+			// TODO Confirm: The slices within the slice appear to be the same mem locations as those
+			// passed in so they mutate as needed
+			keys[i] = group
+		}
 	}
 
 	for {
@@ -507,7 +553,9 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 				if len(cur.Line) == 0 || cur == active {
 					break
 				}
-				if !r.isMatch(group, cur.Line) {
+				// TODO unfortunate reuse of vars - refactor to tidy
+				pattern, nChars := r.GetMatchPattern(group)
+				if !isMatch(group, cur.Line, pattern, nChars) {
 					matched = false
 					break
 				}

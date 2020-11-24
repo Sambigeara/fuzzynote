@@ -273,6 +273,15 @@ func (t *Terminal) insertCharInPlace(line []rune, offset int, newChar rune) []ru
 	return line
 }
 
+func (t *Terminal) getLenSearchBox() int {
+	// Add up max potential position based on number of runes in groups, and separators between
+	lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
+	for _, g := range t.search {
+		lenSearchBox += len(g)
+	}
+	return lenSearchBox
+}
+
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
@@ -520,11 +529,23 @@ func (t *Terminal) RunClient() error {
 		if t.curItem != nil {
 			cur = t.curItem
 		}
+
+		// Certain search character combo's are interpreted as special operators by the backend
+		// This means that the length of the search string might unpredictably change when calling
+		// `Match` leaving the cursor in an undesired location. To combat this, we need to take
+		// note of the length of the search string prior to a key press and after, and apply the diff.
+		// We wrap this around the `Match` call
+		startLen := t.getLenSearchBox()
+
+		// Mutations to search string may occur in `Match` calls
 		matches, err = t.db.Match(t.search, cur, t.showHidden)
 		if err != nil {
 			log.Println("stdin:", err)
 			break
 		}
+
+		// Applying the unpredictable diff noted above
+		posDiff[0] += t.getLenSearchBox() - startLen
 
 		// N available item slots
 		nItemSlots := t.h - reservedTopLines
@@ -594,12 +615,7 @@ func (t *Terminal) RunClient() error {
 		newXIdx := t.curX + posDiff[0]
 		if isSearchLine {
 			newXIdx = max(0, newXIdx) // Prevent index < 0
-			// Add up max potential position based on number of runes in groups, and separators between
-			lenSearchBox := max(0, len(t.search)-1) // Account for spaces between search groups
-			for _, g := range t.search {
-				lenSearchBox += len(g)
-			}
-			t.curX = min(newXIdx, lenSearchBox)
+			t.curX = min(newXIdx, t.getLenSearchBox())
 		} else {
 			// Deal with horizontal offset if applicable
 			if newXIdx < 0 {

@@ -43,6 +43,12 @@ Examples:
 - `Ctrl-i`: Toggle visibility of current item
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim
 
+## Token operators
+
+When typed in a search group, the following character combinations will parse to different useful outputs:
+
+- `{d}`: A date in the form `Mon, Jan 2, 2006`
+
 ## Colour scheme
 
 You can trigger between `light` and `dark` by setting `FZN_COLOUR` to the former or latter accordingly.
