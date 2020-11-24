@@ -27,7 +27,7 @@ Examples:
 - `Arrow keys`: General navigation
 - `Ctrl-a` (not search line): Go to start of item
 - `Ctrl-e` (not search line): Go to end of item
-- `Enter`: Add new line below
+- `Enter`: Add new line below (prepends search line to new line)
 - `Ctrl-d`: Delete line
 - `Ctrl-d` (top line): Clear search groups
 - `Ctrl-s`: Save
@@ -35,7 +35,8 @@ Examples:
 - `Ctrl-_`: Exit WITHOUT saving
 - `TAB (top line)`: Add new search group
 - `ESCAPE` (not top line): Go to search line
-- `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim.
+- `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim
+- `Alt-Up/Alt-Down`: Moves the current item up or down in the list
 
 ## Colour scheme
 
