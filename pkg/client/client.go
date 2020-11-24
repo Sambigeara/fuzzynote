@@ -421,16 +421,31 @@ func (t *Terminal) RunClient() error {
 						}
 						posDiff[0]--
 					}
-				} else if offsetX > 0 {
-					// Only delete character if not in the first position
+				} else {
+					// If cursor in 0 position and current line is empty, delete current line and go
+					// to end of previous line (if present)
 					newLine := []rune(t.curItem.Line)
-					if len(newLine) > 0 {
+					if offsetX > 0 && len(newLine) > 0 {
 						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
 						posDiff[0]--
+					} else if offsetX == 0 && len(newLine) == 0 {
+						err := t.db.Delete(t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						// If we haven't just deleted the top most item, move cursor up and go to
+						// end of line
+						if t.curY > reservedTopLines {
+							posDiff[1]--
+							// TODO setting to the max width isn't completely robust as other
+							// decrements will affect, but it's good enough for now as the cursor
+							// repositioning logic will take care of over-increments
+							posDiff[0] += t.w
+						}
 					}
 				}
 			case tcell.KeyDown:
