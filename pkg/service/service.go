@@ -39,13 +39,13 @@ type DBListRepo struct {
 
 type ListItem struct {
 	Line        string
-	Parent      *ListItem
-	Child       *ListItem
-	ID          uint32
 	Note        *[]byte
 	IsHidden    bool
-	MatchParent *ListItem
-	MatchChild  *ListItem
+	parent      *ListItem
+	child       *ListItem
+	id          uint32
+	matchParent *ListItem
+	matchChild  *ListItem
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -133,8 +133,8 @@ OuterLoop:
 
 		nextItem := ListItem{
 			Line:     string(data),
-			Parent:   cur,
-			ID:       header.PageID,
+			parent:   cur,
+			id:       header.PageID,
 			Note:     dat,
 			IsHidden: has(header.Metadata, hidden),
 		}
@@ -152,25 +152,25 @@ OuterLoop:
 
 	// Now we have know the global nextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
 	for {
-		if oldest.Child == nil {
+		if oldest.child == nil {
 			break
 		}
-		if oldest.ID == 0 {
-			oldest.ID = r.nextID
+		if oldest.id == 0 {
+			oldest.id = r.nextID
 			r.nextID++
 		}
-		oldest = oldest.Child
+		oldest = oldest.child
 	}
 
 	r.root = cur
 
 	// `cur` is now a ptr to the most recent ListItem
 	for {
-		if cur.Parent == nil {
+		if cur.parent == nil {
 			break
 		}
-		cur.Parent.Child = cur
-		cur = cur.Parent
+		cur.parent.child = cur
+		cur = cur.parent
 	}
 
 	return nil
@@ -182,7 +182,7 @@ func (r *DBListRepo) Save() error {
 		// deleted with lots of data), append them with `_bak_{line}_{timestamp}`, so we know the context
 		// of the line, and the timestamp at which it was deleted. We need to remove the originally named
 		// notes file to prevent orphaned files being used with future notes (due to current idx logic)
-		strID := fmt.Sprint(item.ID)
+		strID := fmt.Sprint(item.id)
 		oldPath := path.Join(r.notesPath, strID)
 
 		reg, err := regexp.Compile("[^a-zA-Z0-9]+")
@@ -191,7 +191,7 @@ func (r *DBListRepo) Save() error {
 		}
 		alphanumline := reg.ReplaceAllString(item.Line, "")
 
-		newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.ID, alphanumline, fmt.Sprint(time.Now().Unix())))
+		newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.id, alphanumline, fmt.Sprint(time.Now().Unix())))
 		err = os.Rename(oldPath, newPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -202,7 +202,7 @@ func (r *DBListRepo) Save() error {
 	}
 
 	r.pendingDeletions = []*ListItem{}
-	// Account for edge condition where Load hasn't been run, and the ID is incorrectly set to 0
+	// Account for edge condition where Load hasn't been run, and the id is incorrectly set to 0
 	if r.nextID == 0 {
 		r.nextID = 1
 	}
@@ -236,15 +236,15 @@ func (r *DBListRepo) Save() error {
 	// TODO store oldest item on Load
 	// Get oldest listItem
 	for {
-		if listItem.Parent == nil {
+		if listItem.parent == nil {
 			break
 		}
-		listItem = listItem.Parent
+		listItem = listItem.parent
 	}
 
 	for {
-		if listItem.ID == 0 {
-			listItem.ID = r.nextID
+		if listItem.id == 0 {
+			listItem.id = r.nextID
 			r.nextID++
 		}
 		var metadata bits = 0
@@ -252,9 +252,9 @@ func (r *DBListRepo) Save() error {
 			metadata = set(metadata, hidden)
 		}
 		header := ItemHeader{
-			PageID:     listItem.ID,
+			PageID:     listItem.id,
 			Metadata:   metadata,
-			FileID:     listItem.ID, // TODO
+			FileID:     listItem.id, // TODO
 			DataLength: uint64(len(listItem.Line)),
 		}
 
@@ -272,12 +272,12 @@ func (r *DBListRepo) Save() error {
 			log.Fatal(err)
 			return err
 		}
-		r.savePage(listItem.ID, listItem.Note)
+		r.savePage(listItem.id, listItem.Note)
 
-		if listItem.Child == nil {
+		if listItem.child == nil {
 			break
 		}
-		listItem = listItem.Child
+		listItem = listItem.child
 	}
 	r.hasPendingChanges = false
 	return nil
@@ -291,8 +291,8 @@ func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 	}
 	newItem := ListItem{
 		Line:  line,
-		ID:    r.nextID,
-		Child: child,
+		id:    r.nextID,
+		child: child,
 		Note:  note,
 	}
 	r.nextID++
@@ -302,17 +302,17 @@ func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 		oldRoot := r.root
 		r.root = &newItem
 		if oldRoot != nil {
-			newItem.Parent = oldRoot
-			oldRoot.Child = &newItem
+			newItem.parent = oldRoot
+			oldRoot.child = &newItem
 		}
 		return nil
 	}
 
-	if child.Parent != nil {
-		child.Parent.Child = &newItem
-		newItem.Parent = child.Parent
+	if child.parent != nil {
+		child.parent.child = &newItem
+		newItem.parent = child.parent
 	}
-	child.Parent = &newItem
+	child.parent = &newItem
 
 	return nil
 }
@@ -327,15 +327,15 @@ func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error
 func (r *DBListRepo) Delete(item *ListItem) error {
 	r.hasPendingChanges = true
 
-	if item.Child != nil {
-		item.Child.Parent = item.Parent
+	if item.child != nil {
+		item.child.parent = item.parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.root = item.Parent
+		r.root = item.parent
 	}
 
-	if item.Parent != nil {
-		item.Parent.Child = item.Child
+	if item.parent != nil {
+		item.parent.child = item.child
 	}
 
 	r.pendingDeletions = append(r.pendingDeletions, item)
@@ -346,31 +346,31 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 	r.hasPendingChanges = true
 
-	targetItem := item.MatchChild
+	targetItem := item.matchChild
 	if targetItem == nil {
 		return false, nil
 	}
 
 	// Close off gap from source location (for whole dataset)
-	oldSourceParent := item.Parent
+	oldSourceParent := item.parent
 	if oldSourceParent != nil {
-		item.Parent.Child = item.Child
+		item.parent.child = item.child
 	}
-	if item.Child != nil {
-		item.Child.Parent = oldSourceParent
+	if item.child != nil {
+		item.child.parent = oldSourceParent
 	}
 
 	// Insert item into new position based on Matched pointers
-	item.Parent = targetItem
-	if targetItem.Child == nil {
+	item.parent = targetItem
+	if targetItem.child == nil {
 		// New root
-		item.Child = nil
+		item.child = nil
 		r.root = item
 	} else {
-		item.Child = targetItem.Child
-		targetItem.Child.Parent = item
+		item.child = targetItem.child
+		targetItem.child.parent = item
 	}
-	targetItem.Child = item
+	targetItem.child = item
 
 	return true, nil
 }
@@ -378,30 +378,30 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	r.hasPendingChanges = true
 
-	targetItem := item.MatchParent
+	targetItem := item.matchParent
 	if targetItem == nil {
 		return false, nil
 	}
 
 	// Close off gap from source location (for whole dataset)
-	oldSourceChild := item.Child
+	oldSourceChild := item.child
 	if oldSourceChild != nil {
-		item.Child.Parent = item.Parent
+		item.child.parent = item.parent
 	}
-	if item.Parent != nil {
-		item.Parent.Child = oldSourceChild
+	if item.parent != nil {
+		item.parent.child = oldSourceChild
 		if oldSourceChild == nil {
-			r.root = item.Parent
+			r.root = item.parent
 		}
 	}
 
 	// Insert item into new position based on Matched pointers
-	item.Child = targetItem
-	if targetItem.Parent != nil {
-		targetItem.Parent.Child = item
+	item.child = targetItem
+	if targetItem.parent != nil {
+		targetItem.parent.child = item
 	}
-	item.Parent = targetItem.Parent
-	targetItem.Parent = item
+	item.parent = targetItem.parent
+	targetItem.parent = item
 
 	return true, nil
 }
@@ -516,18 +516,18 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 				res = append(res, cur)
 
 				if lastCur != nil {
-					lastCur.MatchParent = cur
+					lastCur.matchParent = cur
 				}
-				cur.MatchChild = lastCur
+				cur.matchChild = lastCur
 				lastCur = cur
 			}
 		}
 
-		if cur.Parent == nil {
+		if cur.parent == nil {
 			return res, nil
 		}
 
-		cur = cur.Parent
+		cur = cur.parent
 	}
 }
 
@@ -566,7 +566,7 @@ func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
 		return nil
 	}
 
-	// Open or create a file in the `/notes/` subdir using the listItem ID as the file name
+	// Open or create a file in the `/notes/` subdir using the listItem id as the file name
 	// This needs to be before the ReadFile below to ensure the file exists
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
 	defer f.Close()
