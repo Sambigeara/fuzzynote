@@ -458,31 +458,9 @@ func (t *Terminal) RunClient() error {
 					}
 				}
 			case tcell.KeyDown:
-				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
-					// Move the current item down and follow with cursor
-					moved, err := t.db.MoveDown(t.curItem)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if moved {
-						posDiff[1]++
-					}
-				} else {
-					posDiff[1]++
-				}
+				posDiff[1]++
 			case tcell.KeyUp:
-				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
-					// Move the current item up and follow with cursor
-					moved, err := t.db.MoveUp(t.curItem)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if moved {
-						posDiff[1]--
-					}
-				} else {
-					posDiff[1]--
-				}
+				posDiff[1]--
 			case tcell.KeyRight:
 				posDiff[0]++
 			case tcell.KeyLeft:
@@ -501,20 +479,41 @@ func (t *Terminal) RunClient() error {
 						newTerm = append(newTerm, ev.Rune())
 						t.search = append(t.search, newTerm)
 					}
+					posDiff[0]++
 				} else {
-					newLine := []rune(t.curItem.Line)
-					// Insert characters at position
-					if len(newLine) == 0 || len(newLine) == offsetX {
-						newLine = append(newLine, ev.Rune())
+					if ev.Rune() == '[' && ev.Modifiers()&tcell.ModAlt != 0 {
+						// Move the current item down and follow with cursor
+						moved, err := t.db.MoveDown(t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						if moved {
+							posDiff[1]++
+						}
+					} else if ev.Rune() == ']' && ev.Modifiers()&tcell.ModAlt != 0 {
+						// Move the current item up and follow with cursor
+						moved, err := t.db.MoveUp(t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						if moved {
+							posDiff[1]--
+						}
 					} else {
-						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
-					}
-					err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
-					if err != nil {
-						log.Fatal(err)
+						newLine := []rune(t.curItem.Line)
+						// Insert characters at position
+						if len(newLine) == 0 || len(newLine) == offsetX {
+							newLine = append(newLine, ev.Rune())
+						} else {
+							newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
+						}
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						posDiff[0]++
 					}
 				}
-				posDiff[0]++
 			}
 		}
 		t.s.Clear()
