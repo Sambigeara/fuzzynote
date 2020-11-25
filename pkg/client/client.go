@@ -458,9 +458,33 @@ func (t *Terminal) RunClient() error {
 					}
 				}
 			case tcell.KeyDown:
-				posDiff[1]++
+				// TODO remove duplication once key combos are sorted (also handled on `Alt-[`)
+				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
+					// Move the current item down and follow with cursor
+					moved, err := t.db.MoveDown(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					if moved {
+						posDiff[1]++
+					}
+				} else {
+					posDiff[1]++
+				}
 			case tcell.KeyUp:
-				posDiff[1]--
+				// TODO remove duplication once key combos are sorted (also handled on `Alt-]`)
+				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
+					// Move the current item up and follow with cursor
+					moved, err := t.db.MoveUp(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					if moved {
+						posDiff[1]--
+					}
+				} else {
+					posDiff[1]--
+				}
 			case tcell.KeyRight:
 				posDiff[0]++
 			case tcell.KeyLeft:
