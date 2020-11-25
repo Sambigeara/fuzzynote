@@ -1,0 +1,21 @@
+Two scenarios
+add search group of any length
+tab to create a new search group, add any number of chars
+
+THEN EITHER
+left key back to x position immediately after first search group
+enter another key
+char copies to next search group unexpectedly
+
+OR
+go to position 0
+enter another key
+it copies final character to next search group
+
+BOTH SCENARIOS
+final char of first search group regardless of length bumps to next search group under any circumstance
+
+THEORY
+Adding a char to the initial search group shifts the final char off into the first char of the subsequent one. This happens even if you're appending a char to the end of the first search group
+
+Only problem is it's not always the case lol
