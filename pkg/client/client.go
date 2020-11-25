@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"fuzzy-note/pkg/service"
@@ -113,6 +114,10 @@ func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 // When closing a screen session (to give full control to the external program, e.g. vim), a subsequent keypress is dropped.
 // This aditional EOL event is sent to ensure consequent events are correctly handled
 func sendExtraEventFix() {
+	// only required on MacOS
+	if runtime.GOOS != "darwin" {
+		return
+	}
 	kb, err := keybd_event.NewKeyBonding()
 	if err != nil {
 		panic(err)
