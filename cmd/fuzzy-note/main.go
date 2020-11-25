@@ -17,8 +17,12 @@ const rootFileName = "primary.db"
 func main() {
 	var rootDir, notesSubDir string
 	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
-		// TODO currently only works on OSs with HOME
-		rootDir = path.Join(os.Getenv("HOME"), ".fzn/")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal(err)
+			os.Exit(1)
+		}
+		rootDir = path.Join(home, ".fzn/")
 	}
 	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
 		notesSubDir = "notes"
