@@ -18,9 +18,9 @@ The top line of the client is used as a search bar. You can separate search term
 
 Examples:
 
-- "foo" will match "fobo"
-- "#foo" will not match on "fobo", but will match on "foo"
-- "#!foo" will ignore any lines with the **full** string "foo" in it
+- `foo` will match `fobo`
+- `#foo` will not match on `fobo`, but will match on `foo`
+- `#!foo` will ignore any lines with the **full** string `foo` in it
 
 ## Controls
 
@@ -33,7 +33,7 @@ Examples:
 - `Enter`: Add new line below (prepends search line to new line)
 - `Ctrl-d`: Delete line
 - `Ctrl-d` (top line): Clear search groups
-- `Alt-Up/Alt-Down`: Moves the current item up or down in the list
+- `Alt-]/Alt-[`: Moves the current item up or down in the list
 
 - `Ctrl-s`: Save
 - `Ctrl-x`: Exit
