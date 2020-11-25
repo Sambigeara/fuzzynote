@@ -469,7 +469,8 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
 						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
-						newGroup := []rune(t.search[grpIdx])
+						newGroup := make([]rune, len(t.search[grpIdx]))
+						copy(newGroup, t.search[grpIdx])
 
 						// We want to insert a char into the current search group then update in place
 						newGroup = t.insertCharInPlace(newGroup, charOffset, ev.Rune())
