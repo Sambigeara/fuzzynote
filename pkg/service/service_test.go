@@ -829,7 +829,7 @@ func TestServiceMatch(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
 
-	t.Run("Match items in list", func(t *testing.T) {
+	t.Run("Full match items in list", func(t *testing.T) {
 		item5 := ListItem{
 			Line: "Also not second",
 		}
@@ -857,7 +857,7 @@ func TestServiceMatch(t *testing.T) {
 		mockListRepo.Save()
 
 		search := [][]rune{
-			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
+			[]rune{'#', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
 		matches, err := mockListRepo.Match(search, nil, true)
 		if err != nil {
@@ -921,7 +921,99 @@ func TestServiceMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("Match items in list", func(t *testing.T) {
+	t.Run("Fuzzy match items in list", func(t *testing.T) {
+		item5 := ListItem{
+			Line: "Also not second",
+		}
+		item4 := ListItem{
+			Line:   "Not second",
+			parent: &item5,
+		}
+		item3 := ListItem{
+			Line:   "Third",
+			parent: &item4,
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			parent: &item2,
+		}
+		item5.child = &item4
+		item4.child = &item3
+		item3.child = &item2
+		item2.child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		search := [][]rune{
+			[]rune{'s', 'c', 'o', 'n', 'd'},
+		}
+		matches, err := mockListRepo.Match(search, nil, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if matches[0] != &item2 {
+			t.Errorf("First match is incorrect")
+		}
+
+		if matches[1] != &item4 {
+			t.Errorf("Second match is incorrect")
+		}
+
+		if matches[2] != &item5 {
+			t.Errorf("Third match is incorrect")
+		}
+
+		expectedLen := 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		if matches[0].matchChild != nil {
+			t.Errorf("New root matchChild should be null")
+		}
+		if matches[0].matchParent != matches[1] {
+			t.Errorf("New root matchParent should be second match")
+		}
+		if matches[1].matchChild != matches[0] {
+			t.Errorf("Second item matchChild should be new root")
+		}
+		if matches[1].matchParent != matches[2] {
+			t.Errorf("Second item matchParent should be third match")
+		}
+		if matches[2].matchChild != matches[1] {
+			t.Errorf("Third item matchChild should be second match")
+		}
+		if matches[2].matchParent != nil {
+			t.Errorf("Third item matchParent should be null")
+		}
+
+		expectedLine := "Second"
+		if matches[0].Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[0].Line)
+		}
+
+		expectedLine = "Not second"
+		if matches[1].Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[1].Line)
+		}
+
+		expectedLine = "Also not second"
+		if matches[2].Line != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line)
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Match items in list with active", func(t *testing.T) {
 		// Instantiate NextID index with initial empty load
 		mockListRepo.Load()
 
@@ -976,6 +1068,63 @@ func TestServiceMatch(t *testing.T) {
 		}
 
 		expectedLen := 4
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Inverse match items in list", func(t *testing.T) {
+		// Instantiate NextID index with initial empty load
+		mockListRepo.Load()
+
+		item5 := ListItem{
+			Line: "Also not second",
+		}
+		item4 := ListItem{
+			Line:   "Not second",
+			parent: &item5,
+		}
+		item3 := ListItem{
+			Line:   "Third",
+			parent: &item4,
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			parent: &item2,
+		}
+		item5.child = &item4
+		item4.child = &item3
+		item3.child = &item2
+		item2.child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		search := [][]rune{
+			[]rune{'#', '!', 's', 'e', 'c', 'o', 'n', 'd'},
+		}
+		matches, err := mockListRepo.Match(search, nil, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if matches[0] != &item1 {
+			t.Errorf("First match is incorrect")
+		}
+
+		if matches[1] != &item3 {
+			t.Errorf("Active item should be returned even with no string match")
+		}
+
+		expectedLen := 2
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
