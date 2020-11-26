@@ -27,17 +27,17 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
+		if mockListRepo.root.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
 		}
 
-		if mockListRepo.root.Parent.Line != expectedLines[1] {
+		if mockListRepo.root.parent.Line != expectedLines[1] {
 			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
 		}
 
 		expectedID = 1
-		if mockListRepo.root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
+		if mockListRepo.root.parent.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
 	})
 	t.Run("Stores to new file and loads back", func(t *testing.T) {
@@ -49,14 +49,14 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		oldItem := ListItem{
 			Line: "Old newly created line",
-			ID:   uint32(1),
+			id:   uint32(1),
 		}
 		newItem := ListItem{
 			Line:   "New newly created line",
-			Parent: &oldItem,
-			ID:     uint32(2),
+			parent: &oldItem,
+			id:     uint32(2),
 		}
-		oldItem.Child = &newItem
+		oldItem.child = &newItem
 
 		mockListRepo.root = &newItem
 		err := mockListRepo.Save()
@@ -71,17 +71,17 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
+		if mockListRepo.root.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
 		}
 
-		if mockListRepo.root.Parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.root.Parent.Line, oldItem.Line)
+		if mockListRepo.root.parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.root.parent.Line, oldItem.Line)
 		}
 
 		expectedID = uint32(1)
-		if mockListRepo.root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
+		if mockListRepo.root.parent.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
 
 		err = os.Remove(rootPath)
@@ -101,9 +101,9 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		newItem := ListItem{
 			Line:   "New newly created line",
-			Parent: &oldItem,
+			parent: &oldItem,
 		}
-		oldItem.Child = &newItem
+		oldItem.child = &newItem
 
 		mockListRepo.root = &newItem
 		err := mockListRepo.Save()
@@ -118,17 +118,17 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 
 		expectedID := uint32(2)
-		if mockListRepo.root.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.ID)
+		if mockListRepo.root.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
 		}
 
-		if mockListRepo.root.Parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.root.Parent.Line, oldItem.Line)
+		if mockListRepo.root.parent.Line != oldItem.Line {
+			t.Errorf("Expected %s but got %s", mockListRepo.root.parent.Line, oldItem.Line)
 		}
 
 		expectedID = uint32(1)
-		if mockListRepo.root.Parent.ID != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.Parent.ID)
+		if mockListRepo.root.parent.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
 
 		err = os.Remove(rootPath)
@@ -147,9 +147,9 @@ func TestServiceAdd(t *testing.T) {
 	}
 	item1 := ListItem{
 		Line:   "New existing created line",
-		Parent: &item2,
+		parent: &item2,
 	}
-	item2.Child = &item1
+	item2.child = &item1
 	mockListRepo.root = &item1
 	err := mockListRepo.Save()
 	if err != nil {
@@ -171,13 +171,13 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if newItem != item1.Child {
-			t.Errorf("New item should be original root's Child")
+		if newItem != item1.child {
+			t.Errorf("New item should be original root's child")
 		}
 
 		expectedID := uint32(3)
-		if newItem.ID != expectedID {
-			t.Errorf("Expected ID %d but got %d", expectedID, newItem.ID)
+		if newItem.id != expectedID {
+			t.Errorf("Expected id %d but got %d", expectedID, newItem.id)
 		}
 
 		if mockListRepo.root != matches[0] {
@@ -188,16 +188,16 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected %s but got %s", newLine, matches[0].Line)
 		}
 
-		if matches[0].Child != nil {
-			t.Errorf("Newly generated listItem should have a nil Child")
+		if matches[0].child != nil {
+			t.Errorf("Newly generated listItem should have a nil child")
 		}
 
-		if matches[0].Parent != &item1 {
-			t.Errorf("Newly generated listItem has incorrect Parent")
+		if matches[0].parent != &item1 {
+			t.Errorf("Newly generated listItem has incorrect parent")
 		}
 
-		if item1.Child != matches[0] {
-			t.Errorf("Original young listItem has incorrect Child")
+		if item1.child != matches[0] {
+			t.Errorf("Original young listItem has incorrect child")
 		}
 	})
 
@@ -220,7 +220,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if newItem != item2.Parent {
+		if newItem != item2.parent {
 			t.Errorf("Returned item should be new bottom item")
 		}
 
@@ -229,23 +229,23 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected %s but got %s", newLine, matches[expectedIdx].Line)
 		}
 
-		if matches[expectedIdx].Parent != nil {
-			t.Errorf("Newly generated listItem should have a nil Parent")
+		if matches[expectedIdx].parent != nil {
+			t.Errorf("Newly generated listItem should have a nil parent")
 		}
 
-		if matches[expectedIdx].Child != &item2 {
-			t.Errorf("Newly generated listItem has incorrect Child")
+		if matches[expectedIdx].child != &item2 {
+			t.Errorf("Newly generated listItem has incorrect child")
 		}
 
-		if item2.Parent != matches[expectedIdx] {
-			t.Errorf("Original youngest listItem has incorrect Parent")
+		if item2.parent != matches[expectedIdx] {
+			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 	})
 
 	t.Run("Add item in middle of list", func(t *testing.T) {
 		newLine := "I'm somewhere in the middle"
 
-		oldParent := item1.Parent
+		oldparent := item1.parent
 
 		err := mockListRepo.Add(newLine, nil, &item1)
 		if err != nil {
@@ -259,16 +259,16 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
 		}
 
-		if expectedItem.Parent != oldParent {
+		if expectedItem.parent != oldparent {
 			t.Errorf("New item should have inherit old child's parent")
 		}
 
-		if item1.Parent != expectedItem {
-			t.Errorf("Original youngest listItem has incorrect Parent")
+		if item1.parent != expectedItem {
+			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 
-		if oldParent.Child != expectedItem {
-			t.Errorf("Original old parent has incorrect Child")
+		if oldparent.child != expectedItem {
+			t.Errorf("Original old parent has incorrect child")
 		}
 	})
 
@@ -288,14 +288,14 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -324,7 +324,7 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Expected %s but got %s", expectedLine, matches[0].Line)
 		}
 
-		if matches[0].Child != nil {
+		if matches[0].child != nil {
 			t.Errorf("First item should have no child")
 		}
 
@@ -339,14 +339,14 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -371,7 +371,7 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Expected %s but got %s", expectedLine, matches[expectedLen-1].Line)
 		}
 
-		if matches[expectedLen-1].Parent != nil {
+		if matches[expectedLen-1].parent != nil {
 			t.Errorf("Third item should have been deleted")
 		}
 
@@ -386,14 +386,14 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -417,11 +417,11 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[0].Parent != &item3 {
+		if matches[0].parent != &item3 {
 			t.Errorf("First item parent should be third item")
 		}
 
-		if matches[1].Child != &item1 {
+		if matches[1].child != &item1 {
 			t.Errorf("Third item child should be first item")
 		}
 
@@ -442,14 +442,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -476,20 +476,20 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("item2 should have moved down one")
 		}
 
-		if item3.Child != &item1 {
+		if item3.child != &item1 {
 			t.Errorf("Moved item child should now be root")
 		}
-		if item3.Parent != &item2 {
+		if item3.parent != &item2 {
 			t.Errorf("Moved item parent should be previous child")
 		}
 
-		if mockListRepo.root.Parent != &item3 {
+		if mockListRepo.root.parent != &item3 {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if item2.Child != &item3 {
+		if item2.child != &item3 {
 			t.Errorf("New lowest parent should be newly moved item")
 		}
-		if item2.Parent != nil {
+		if item2.parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
 
@@ -505,14 +505,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -539,20 +539,20 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("previous oldest should have stayed the same")
 		}
 
-		if item2.Child != nil {
+		if item2.child != nil {
 			t.Errorf("Moved item child should be null")
 		}
-		if item2.Parent != &item1 {
+		if item2.parent != &item1 {
 			t.Errorf("Moved item parent should be previous root")
 		}
 
-		if item1.Parent != &item3 {
+		if item1.parent != &item3 {
 			t.Errorf("Old root parent should be unchanged oldest item")
 		}
-		if item1.Child != &item2 {
+		if item1.child != &item2 {
 			t.Errorf("Old root child should be new root item")
 		}
-		if item3.Child != &item1 {
+		if item3.child != &item1 {
 			t.Errorf("Lowest parent's child should be old root")
 		}
 
@@ -568,14 +568,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -614,14 +614,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -648,20 +648,20 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("item3 should still be at the bottom")
 		}
 
-		if item1.Child != &item2 {
+		if item1.child != &item2 {
 			t.Errorf("Moved item child should now be root")
 		}
-		if item3.Child != &item1 {
+		if item3.child != &item1 {
 			t.Errorf("Oldest item's child should be previous child")
 		}
 
-		if mockListRepo.root.Parent != &item1 {
+		if mockListRepo.root.parent != &item1 {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if item3.Child != &item1 {
+		if item3.child != &item1 {
 			t.Errorf("Lowest parent should be newly moved item")
 		}
-		if item3.Parent != nil {
+		if item3.parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
 
@@ -677,14 +677,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -712,20 +712,20 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("moved item should now be oldest")
 		}
 
-		if item2.Child != &item3 {
+		if item2.child != &item3 {
 			t.Errorf("Moved item child should be previous oldest")
 		}
-		if item2.Parent != nil {
+		if item2.parent != nil {
 			t.Errorf("Moved item child should be null")
 		}
 
-		if item3.Parent != &item2 {
+		if item3.parent != &item2 {
 			t.Errorf("Previous oldest parent should be new oldest item")
 		}
-		if item3.Child != &item1 {
+		if item3.child != &item1 {
 			t.Errorf("Previous oldest child should be unchanged root item")
 		}
-		if item1.Parent != &item3 {
+		if item1.parent != &item3 {
 			t.Errorf("Root's parent should be moved item")
 		}
 
@@ -741,14 +741,14 @@ func TestServiceMove(t *testing.T) {
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item3.Child = &item2
-		item2.Child = &item1
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -791,14 +791,14 @@ func TestServiceUpdate(t *testing.T) {
 	}
 	item2 := ListItem{
 		Line:   "Second",
-		Parent: &item3,
+		parent: &item3,
 	}
 	item1 := ListItem{
 		Line:   "First",
-		Parent: &item2,
+		parent: &item2,
 	}
-	item3.Child = &item2
-	item2.Child = &item1
+	item3.child = &item2
+	item2.child = &item1
 	mockListRepo.root = &item1
 	mockListRepo.Save()
 
@@ -835,24 +835,24 @@ func TestServiceMatch(t *testing.T) {
 		}
 		item4 := ListItem{
 			Line:   "Not second",
-			Parent: &item5,
+			parent: &item5,
 		}
 		item3 := ListItem{
 			Line:   "Third",
-			Parent: &item4,
+			parent: &item4,
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item5.Child = &item4
-		item4.Child = &item3
-		item3.Child = &item2
-		item2.Child = &item1
+		item5.child = &item4
+		item4.child = &item3
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -881,23 +881,23 @@ func TestServiceMatch(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[0].MatchChild != nil {
-			t.Errorf("New root MatchChild should be null")
+		if matches[0].matchChild != nil {
+			t.Errorf("New root matchChild should be null")
 		}
-		if matches[0].MatchParent != matches[1] {
-			t.Errorf("New root MatchParent should be second match")
+		if matches[0].matchParent != matches[1] {
+			t.Errorf("New root matchParent should be second match")
 		}
-		if matches[1].MatchChild != matches[0] {
-			t.Errorf("Second item MatchChild should be new root")
+		if matches[1].matchChild != matches[0] {
+			t.Errorf("Second item matchChild should be new root")
 		}
-		if matches[1].MatchParent != matches[2] {
-			t.Errorf("Second item MatchParent should be third match")
+		if matches[1].matchParent != matches[2] {
+			t.Errorf("Second item matchParent should be third match")
 		}
-		if matches[2].MatchChild != matches[1] {
-			t.Errorf("Third item MatchChild should be second match")
+		if matches[2].matchChild != matches[1] {
+			t.Errorf("Third item matchChild should be second match")
 		}
-		if matches[2].MatchParent != nil {
-			t.Errorf("Third item MatchParent should be null")
+		if matches[2].matchParent != nil {
+			t.Errorf("Third item matchParent should be null")
 		}
 
 		expectedLine := "Second"
@@ -930,24 +930,24 @@ func TestServiceMatch(t *testing.T) {
 		}
 		item4 := ListItem{
 			Line:   "Not second",
-			Parent: &item5,
+			parent: &item5,
 		}
 		item3 := ListItem{
 			Line:   "Third",
-			Parent: &item4,
+			parent: &item4,
 		}
 		item2 := ListItem{
 			Line:   "Second",
-			Parent: &item3,
+			parent: &item3,
 		}
 		item1 := ListItem{
 			Line:   "First",
-			Parent: &item2,
+			parent: &item2,
 		}
-		item5.Child = &item4
-		item4.Child = &item3
-		item3.Child = &item2
-		item2.Child = &item1
+		item5.child = &item4
+		item4.child = &item3
+		item3.child = &item2
+		item2.child = &item1
 		mockListRepo.root = &item1
 		mockListRepo.Save()
 
@@ -1000,10 +1000,10 @@ func TestServiceEditPage(t *testing.T) {
 	}
 	item1 := ListItem{
 		Line:   "First",
-		Parent: &item2,
+		parent: &item2,
 		Note:   &oldNote,
 	}
-	item2.Child = &item1
+	item2.child = &item1
 	mockListRepo.root = &item1
 	mockListRepo.Save()
 
@@ -1020,14 +1020,14 @@ func TestServiceEditPage(t *testing.T) {
 	}
 
 	// Assert that file for first note does already exist
-	strID1 := fmt.Sprint(item1.ID)
+	strID1 := fmt.Sprint(item1.id)
 	expectedNotePath1 := path.Join(notesDir, strID1)
 	if _, err := os.Stat(expectedNotePath1); os.IsNotExist(err) {
 		t.Errorf("New file %s should already exist", expectedNotePath1)
 	}
 
 	// Assert that file for newly added note doesn't yet exist
-	strID2 := fmt.Sprint(item2.ID)
+	strID2 := fmt.Sprint(item2.id)
 	expectedNotePath2 := path.Join(notesDir, strID2)
 	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
 		t.Errorf("New file %s should not yet have been generated", expectedNotePath2)
