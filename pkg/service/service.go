@@ -466,13 +466,13 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	}
 	pattern := fuzzyMatchPattern
 	if sub[0] == '#' {
+		pattern = fullMatchPattern
 		if len(sub) > 1 {
 			// Inverse string match if a search group begins with `#!`
 			if sub[1] == '!' {
 				pattern = inverseMatchPattern
 			}
 		}
-		pattern = fullMatchPattern
 	} else if sub[0] == openOp {
 		pattern = opMatchPattern
 	}
@@ -502,15 +502,15 @@ func parseOperatorGroup(sub []rune, nChars int) []rune {
 }
 
 // If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
-func isMatch(sub []rune, full string, pattern matchPattern, nChars int) bool {
+func isMatch(sub []rune, full string, pattern matchPattern) bool {
 	if len(sub) == 0 {
 		return true
 	}
 	switch pattern {
 	case fullMatchPattern:
-		return isSubString(string(sub[nChars:]), full)
+		return isSubString(string(sub), full)
 	case inverseMatchPattern:
-		return !isSubString(string(sub[nChars:]), full)
+		return !isSubString(string(sub), full)
 	case fuzzyMatchPattern:
 		return isFuzzyMatch(sub, full)
 	default:
@@ -555,7 +555,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
 				pattern, nChars := r.GetMatchPattern(group)
-				if !isMatch(group, cur.Line, pattern, nChars) {
+				if !isMatch(group[nChars:], cur.Line, pattern) {
 					matched = false
 					break
 				}
