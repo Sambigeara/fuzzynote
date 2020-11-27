@@ -321,6 +321,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 }
 
 func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
+	line = r.parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
 	r.hasPendingChanges = true
@@ -443,7 +444,6 @@ const (
 	fullMatchPattern matchPattern = iota
 	inverseMatchPattern
 	fuzzyMatchPattern
-	opMatchPattern
 	noMatchPattern
 )
 
@@ -454,7 +454,6 @@ var matchChars = map[matchPattern]int{
 	fullMatchPattern:    1,
 	inverseMatchPattern: 2,
 	fuzzyMatchPattern:   0,
-	opMatchPattern:      1,
 	noMatchPattern:      0,
 }
 
@@ -473,31 +472,17 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 				pattern = inverseMatchPattern
 			}
 		}
-	} else if sub[0] == openOp {
-		pattern = opMatchPattern
 	}
 	nChars, _ := matchChars[pattern]
 	return pattern, nChars
 }
 
-func parseOperatorGroup(sub []rune, nChars int) []rune {
-	// Handle generic ops between the operator boundary runes
-	// Get operator
-	opRunes := []rune{}
-	for _, r := range sub[nChars:] {
-		if r == closeOp {
-			// Match the op against any known operator (e.g. date) and parse if applicable.
-			// TODO for now, just match `d` or `D` for date, we'll expand in the future.
-			if len(opRunes) == 1 && unicode.ToLower(opRunes[len(opRunes)-1]) == 'd' {
-				// Parse date string and return cast rune array
-				now := time.Now()
-				dateString := now.Format(dateFormat)
-				return []rune(dateString)
-			}
-			break
-		}
-		opRunes = append(opRunes, r)
-	}
+func (r *DBListRepo) parseOperatorGroups(sub string) string {
+	// Match the op against any known operator (e.g. date) and parse if applicable.
+	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
+	now := time.Now()
+	dateString := now.Format(dateFormat)
+	sub = strings.ReplaceAll(sub, "{d}", dateString)
 	return sub
 }
 
@@ -520,7 +505,17 @@ func isMatch(sub []rune, full string, pattern matchPattern) bool {
 }
 
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
-	/*For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups. */
+	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
+
+	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
+	// we have no matching lines, the parsing logic will not be reached, and things get messy
+	for i, group := range keys {
+		group = []rune(r.parseOperatorGroups(string(group)))
+		// TODO Confirm: The slices within the slice appear to be the same mem locations as those
+		// passed in so they mutate as needed
+		keys[i] = group
+	}
+
 	cur := r.root
 	var lastCur *ListItem
 
@@ -530,19 +525,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		return res, nil
 	}
 
-	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
-	// we have no matching lines, the parsing logic will not be reached, and things get messy
-
-	for i, group := range keys {
-		// Check if we need to parse any operators
-		pattern, nChars := r.GetMatchPattern(group)
-		if pattern == opMatchPattern {
-			group = parseOperatorGroup(group, nChars)
-			// TODO Confirm: The slices within the slice appear to be the same mem locations as those
-			// passed in so they mutate as needed
-			keys[i] = group
-		}
-	}
+	//newMatches := *newMatchesPtr
 
 	for {
 		if showHidden || !cur.IsHidden {
@@ -572,6 +555,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		}
 
 		if cur.parent == nil {
+			//newMatchesPtr = &newMatches
 			return res, nil
 		}
 

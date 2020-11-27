@@ -282,6 +282,19 @@ func (t *Terminal) getLenSearchBox() int {
 	return lenSearchBox
 }
 
+func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, posDiff *[]int, updateFunc func() error) {
+	// Certain search character combo's are interpreted as special operators by the backend
+	// This means that the length of the search string might unpredictably change when calling
+	// `Match` leaving the cursor in an undesired location. To combat this, we need to take
+	// note of the length of the search string prior to a key press and after, and apply the diff.
+	// We wrap this around the `Match` call
+	err := updateFunc()
+	if err != nil {
+		log.Fatal(err)
+	}
+	(*posDiff)[0] += endLenFunc() - startLen
+}
+
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
@@ -532,10 +545,16 @@ func (t *Terminal) RunClient() error {
 						} else {
 							newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 						}
-						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
-						if err != nil {
-							log.Fatal(err)
+
+						lenFunc := func() int {
+							return len(t.curItem.Line)
 						}
+						updateFunc := func() error {
+							return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						}
+						// len([]rune) rather than len(string) as some string chars are >1 bytes
+						t.handleTextLengthChange(len([]rune(newLine)), lenFunc, &posDiff, updateFunc)
+
 						posDiff[0]++
 					}
 				}
@@ -554,22 +573,12 @@ func (t *Terminal) RunClient() error {
 			cur = t.curItem
 		}
 
-		// Certain search character combo's are interpreted as special operators by the backend
-		// This means that the length of the search string might unpredictably change when calling
-		// `Match` leaving the cursor in an undesired location. To combat this, we need to take
-		// note of the length of the search string prior to a key press and after, and apply the diff.
-		// We wrap this around the `Match` call
-		startLen := t.getLenSearchBox()
-
-		// Mutations to search string may occur in `Match` calls
-		matches, err = t.db.Match(t.search, cur, t.showHidden)
-		if err != nil {
-			log.Println("stdin:", err)
-			break
+		matches := []*service.ListItem{}
+		updateFunc := func() error {
+			matches, err = t.db.Match(t.search, cur, t.showHidden)
+			return err
 		}
-
-		// Applying the unpredictable diff noted above
-		posDiff[0] += t.getLenSearchBox() - startLen
+		t.handleTextLengthChange(t.getLenSearchBox(), t.getLenSearchBox, &posDiff, updateFunc)
 
 		// N available item slots
 		nItemSlots := t.h - reservedTopLines
@@ -651,14 +660,13 @@ func (t *Terminal) RunClient() error {
 				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 					t.horizOffset++
 				}
-				newXIdx = min(newXIdx, len(t.curItem.Line)-t.horizOffset) // Prevent going out of range of the line
-				t.curX = min(newXIdx, t.w-1)                              // Prevent going out of range of the page
+				// len([]rune) rather than len(string) as some string chars are >1 bytes
+				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset) // Prevent going out of range of the line
+				t.curX = min(newXIdx, t.w-1)                                      // Prevent going out of range of the page
 			}
 		}
 
 		t.resizeScreen()
 		t.paint(matches, triggerSaveWarning)
 	}
-
-	return nil
 }
