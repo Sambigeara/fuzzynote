@@ -18,6 +18,7 @@ import (
 // This is THE date that Golang needs to determine custom formatting
 const dateFormat string = "Mon, Jan 2, 2006"
 
+// ListRepo represents the main interface to the data store backend
 type ListRepo interface {
 	Load() error
 	Save() error
@@ -31,6 +32,7 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
+// DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	rootPath          string
 	notesPath         string
@@ -40,15 +42,16 @@ type DBListRepo struct {
 	pendingDeletions  []*ListItem
 }
 
+// ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	Line        string
 	Note        *[]byte
 	IsHidden    bool
-	parent      *ListItem
 	child       *ListItem
+	parent      *ListItem
 	id          uint32
-	matchParent *ListItem
 	matchChild  *ListItem
+	matchParent *ListItem
 }
 
 // FileHeader will store the schema id, so we know which pageheader to use
@@ -67,6 +70,8 @@ func clear(b, flag bits) bits  { return b &^ flag }
 func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
+// ItemHeader represents the byte structure of an individual LineItem when it is stored in the
+// primary.db file
 type ItemHeader struct {
 	PageID     uint32
 	Metadata   bits
@@ -74,6 +79,7 @@ type ItemHeader struct {
 	DataLength uint64
 }
 
+// NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	return &DBListRepo{
 		rootPath:          rootPath,
@@ -82,6 +88,8 @@ func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	}
 }
 
+// Load is called on initial startup. It instantiates the app, and deserialises and displays
+// default LineItems
 func (r *DBListRepo) Load() error {
 	f, err := os.OpenFile(r.rootPath, os.O_CREATE, 0644)
 	if err != nil {
@@ -179,6 +187,7 @@ OuterLoop:
 	return nil
 }
 
+// Save is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Save() error {
 	for _, item := range r.pendingDeletions {
 		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally
@@ -286,6 +295,7 @@ func (r *DBListRepo) Save() error {
 	return nil
 }
 
+// Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
 func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 	r.hasPendingChanges = true
 
@@ -320,6 +330,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
 	return nil
 }
 
+// Update will update the line or note of an existing ListItem
 func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
 	line = r.parseOperatorGroups(line)
 	listItem.Line = line
@@ -328,6 +339,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error
 	return nil
 }
 
+// Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) error {
 	r.hasPendingChanges = true
 
@@ -347,6 +359,36 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 	return nil
 }
 
+func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *ListItem) error {
+	// Close off gap from source location (for whole dataset)
+	if item.child != nil {
+		item.child.parent = item.parent
+	}
+	if item.parent != nil {
+		item.parent.child = item.child
+	}
+
+	// Insert item into new position based on Matched pointers
+	item.child = newChild
+	item.parent = newParent
+
+	// Update pointers at target location
+	if newParent != nil {
+		newParent.child = item
+	}
+	if newChild != nil {
+		newChild.parent = item
+	}
+
+	// Update root if required
+	for r.root.child != nil {
+		r.root = r.root.child
+	}
+	return nil
+}
+
+// MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
+// current matches into account.
 func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 	r.hasPendingChanges = true
 
@@ -355,30 +397,14 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 		return false, nil
 	}
 
-	// Close off gap from source location (for whole dataset)
-	oldSourceParent := item.parent
-	if oldSourceParent != nil {
-		item.parent.child = item.child
-	}
-	if item.child != nil {
-		item.child.parent = oldSourceParent
-	}
-
-	// Insert item into new position based on Matched pointers
-	item.parent = targetItem
-	if targetItem.child == nil {
-		// New root
-		item.child = nil
-		r.root = item
-	} else {
-		item.child = targetItem.child
-		targetItem.child.parent = item
-	}
-	targetItem.child = item
-
-	return true, nil
+	newChild := targetItem.child
+	newParent := targetItem
+	err := r.moveItem(item, newChild, newParent)
+	return true, err
 }
 
+// MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
+// current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	r.hasPendingChanges = true
 
@@ -387,27 +413,10 @@ func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 		return false, nil
 	}
 
-	// Close off gap from source location (for whole dataset)
-	oldSourceChild := item.child
-	if oldSourceChild != nil {
-		item.child.parent = item.parent
-	}
-	if item.parent != nil {
-		item.parent.child = oldSourceChild
-		if oldSourceChild == nil {
-			r.root = item.parent
-		}
-	}
-
-	// Insert item into new position based on Matched pointers
-	item.child = targetItem
-	if targetItem.parent != nil {
-		targetItem.parent.child = item
-	}
-	item.parent = targetItem.parent
-	targetItem.parent = item
-
-	return true, nil
+	newChild := targetItem
+	newParent := targetItem.parent
+	err := r.moveItem(item, newChild, newParent)
+	return true, err
 }
 
 // Search functionality
@@ -504,6 +513,8 @@ func isMatch(sub []rune, full string, pattern matchPattern) bool {
 	}
 }
 
+// Match takes a set of search groups and applies each to all ListItems, returning those that
+// fulfil all rules.
 func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
@@ -525,9 +536,13 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		return res, nil
 	}
 
-	//newMatches := *newMatchesPtr
-
 	for {
+		// Nullify match pointers
+		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
+		// aren't cleaned up between ANY ops, it can lead to weird behaviour as things operate based on
+		// the existence and setting of them)
+		cur.matchChild, cur.matchParent = nil, nil
+
 		if showHidden || !cur.IsHidden {
 			matched := true
 			for _, group := range keys {
@@ -555,7 +570,6 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		}
 
 		if cur.parent == nil {
-			//newMatchesPtr = &newMatches
 			return res, nil
 		}
 
@@ -611,6 +625,8 @@ func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
 	return nil
 }
 
+// HasPendingChanges returns true if state has changed in the app which needs to be flushed to disk
+// (or ignored)
 func (r *DBListRepo) HasPendingChanges() bool {
 	return r.hasPendingChanges
 }
