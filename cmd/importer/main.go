@@ -46,7 +46,7 @@ func walk(db service.ListRepo, oldItem *service.ListItem, nodes []Node, chain []
 		walk(db, oldItem, n.Nodes, newChain, f)
 		fullString := strings.Join(newChain, " >> ")
 		byteNote := []byte(n.Note.Value)
-		err := db.Add(fullString, &byteNote, oldItem)
+		err := db.Add(fullString, &byteNote, oldItem, nil)
 		if err != nil {
 			log.Fatal(err)
 			os.Exit(1)
