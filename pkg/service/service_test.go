@@ -437,6 +437,7 @@ func TestServiceMove(t *testing.T) {
 	mockListRepo := NewDBListRepo(rootPath, "")
 
 	t.Run("Move item up from bottom", func(t *testing.T) {
+		//t.Skip()
 		item3 := ListItem{
 			Line: "Third",
 		}
@@ -773,6 +774,80 @@ func TestServiceMove(t *testing.T) {
 		}
 		if matches[2] != &item3 {
 			t.Errorf("All items should remain unchanged")
+		}
+
+		err = os.Remove(rootPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	t.Run("Move item down from top to bottom", func(t *testing.T) {
+		item3 := ListItem{
+			Line: "Third",
+		}
+		item2 := ListItem{
+			Line:   "Second",
+			parent: &item3,
+		}
+		item1 := ListItem{
+			Line:   "First",
+			parent: &item2,
+		}
+		item3.child = &item2
+		item2.child = &item1
+		mockListRepo.root = &item1
+		mockListRepo.Save()
+
+		// Preset Match pointers with Match call
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		_, err := mockListRepo.MoveDown(&item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
+		mockListRepo.Match([][]rune{}, nil, true)
+		_, err = mockListRepo.MoveDown(&item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+		fmt.Println(mockListRepo.root)
+
+		if mockListRepo.root != &item2 {
+			t.Errorf("Root should be previous middle")
+		}
+		if matches[0] != &item2 {
+			t.Errorf("Root should be previous middle")
+		}
+		if matches[1] != &item3 {
+			t.Errorf("Previous oldest should have moved up one")
+		}
+		if matches[2] != &item1 {
+			t.Errorf("Preview root should have moved to the bottom")
+		}
+
+		if item2.child != nil {
+			t.Errorf("New root should have nil child")
+		}
+		if item2.parent != &item3 {
+			t.Errorf("New root parent should remain unchanged after two moves")
+		}
+
+		if item3.parent != &item1 {
+			t.Errorf("Previous oldest's parent should be old root")
+		}
+		if item3.child != &item2 {
+			t.Errorf("Previous oldest's child should have unchanged child")
+		}
+		if item1.child != &item3 {
+			t.Errorf("New oldest child should be old oldest")
+		}
+		if item1.parent != nil {
+			t.Errorf("New oldest should have no parent")
 		}
 
 		err = os.Remove(rootPath)
