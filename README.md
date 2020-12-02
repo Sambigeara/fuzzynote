@@ -24,19 +24,26 @@ Examples:
 
 ## Controls
 
+### Navigation
+
 - `Arrow keys`: General navigation
 - `Ctrl-a` (not search line): Go to start of item
 - `Ctrl-e` (not search line): Go to end of item
 - `ESCAPE` (not top line): Go to search line
 
+### Search
+
 - `TAB (top line)`: Add new search group
 - `Enter`: Add new line below (prepends search line to new line)
-- `Ctrl-d`: Delete line
-- `Ctrl-d` (top line): Clear search groups
+- `Ctrl-d`: Delete line or clear search groups
 - `Alt-]/Alt-[`: Moves the current item up or down in the list
+
+### State
 
 - `Ctrl-u/Ctrl-r`: Undo/Redo
 - `Ctrl-_`: Exit
+
+### Items
 
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
