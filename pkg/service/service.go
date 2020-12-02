@@ -88,6 +88,7 @@ func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 		rootPath:    rootPath,
 		notesPath:   notesPath,
 		eventLogger: &DbEventLogger{0, []eventLog{el}},
+		nextID:      1,
 	}
 }
 
@@ -102,7 +103,7 @@ func (r *DBListRepo) Load() error {
 	defer f.Close()
 
 	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
-	var cur, oldest *ListItem
+	var cur *ListItem
 
 	r.nextID = 1
 
@@ -122,7 +123,7 @@ OuterLoop:
 			}
 		}
 
-		// Initially we need to find the next available index for the ENTIRE dataset
+		// Find the next available index for the ENTIRE dataset
 		if header.PageID >= r.nextID {
 			r.nextID = header.PageID + 1
 		}
@@ -152,28 +153,12 @@ OuterLoop:
 			Note:     dat,
 			IsHidden: has(header.Metadata, hidden),
 		}
-		if cur == nil {
-			// `cur` will only be nil on the first iteration, therefore we can assign the oldest node here for idx assignment below
-			oldest = &nextItem
-		}
 		cur = &nextItem
 	}
 
 	// Handle empty file
 	if cur == nil {
 		return nil
-	}
-
-	// Now we have know the global nextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
-	for {
-		if oldest.child == nil {
-			break
-		}
-		if oldest.id == 0 {
-			oldest.id = r.nextID
-			r.nextID++
-		}
-		oldest = oldest.child
 	}
 
 	r.root = cur
@@ -194,27 +179,19 @@ OuterLoop:
 func (r *DBListRepo) Save() error {
 	// TODO remove all files starting with `bak_*`, these are no longer needed
 
+	// Delete any files that need clearing up
 	for _, item := range r.pendingDeletions {
 		strID := fmt.Sprint(item.id)
 		oldPath := path.Join(r.notesPath, strID)
-
 		err := os.Remove(oldPath)
 		if err != nil {
+			// TODO is this required?
 			if !os.IsNotExist(err) {
 				log.Fatal(err)
 				return err
 			}
 		}
 	}
-
-	r.pendingDeletions = []*ListItem{}
-	// Account for edge condition where Load hasn't been run, and the id is incorrectly set to 0
-	if r.nextID == 0 {
-		r.nextID = 1
-	}
-
-	// TODO when appending individual item rather than overwriting
-	//f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
 	f, err := os.Create(r.rootPath)
 	if err != nil {
@@ -223,10 +200,8 @@ func (r *DBListRepo) Save() error {
 	}
 	defer f.Close()
 
-	listItem := r.root
-
 	// Write empty file if no listItems exist
-	if listItem == nil {
+	if r.root == nil {
 		err := binary.Write(f, binary.LittleEndian, []byte{})
 		if err != nil {
 			fmt.Println("binary.Write failed:", err)
@@ -236,7 +211,7 @@ func (r *DBListRepo) Save() error {
 		return nil
 	}
 
-	r.root = listItem
+	listItem := r.root
 
 	// TODO store oldest item on Load
 	// Get oldest listItem
