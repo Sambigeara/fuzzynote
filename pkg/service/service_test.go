@@ -158,7 +158,7 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		err := mockListRepo.Add(newLine, nil, nil)
+		err := mockListRepo.Add(newLine, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,7 +207,7 @@ func TestServiceAdd(t *testing.T) {
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
 		oldLen := len(matches)
 
-		err := mockListRepo.Add(newLine, nil, &item2)
+		err := mockListRepo.Add(newLine, nil, &item2, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestServiceAdd(t *testing.T) {
 
 		oldparent := item1.parent
 
-		err := mockListRepo.Add(newLine, nil, &item1)
+		err := mockListRepo.Add(newLine, nil, &item1, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -698,7 +698,6 @@ func TestServiceMove(t *testing.T) {
 		}
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
-		fmt.Println(mockListRepo.root)
 
 		if mockListRepo.root != &item1 {
 			t.Errorf("Root should have remained the same")
@@ -815,7 +814,6 @@ func TestServiceMove(t *testing.T) {
 		}
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
-		fmt.Println(mockListRepo.root)
 
 		if mockListRepo.root != &item2 {
 			t.Errorf("Root should be previous middle")
