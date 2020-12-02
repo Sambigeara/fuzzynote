@@ -195,7 +195,7 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 		Foreground(tcell.ColorBlue).Background(tcell.ColorYellow)
 
 	// Pad out remaining line with spaces to ensure whole bar is filled
-	lenStr := len(text)
+	lenStr := len([]rune(text))
 	text += string(make([]rune, t.w-lenStr))
 	emitStr(s, 0, t.h-1, footer, text)
 }
@@ -244,10 +244,10 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		}
 	}
 
-	if saveWarning {
-		// Fill reserved footer/info line at the bottom of the screen if present
-		t.buildFooter(t.s, saveWarningMsg)
-	}
+	//if saveWarning {
+	//    // Fill reserved footer/info line at the bottom of the screen if present
+	//    t.buildFooter(t.s, saveWarningMsg)
+	//}
 
 	t.s.ShowCursor(t.curX, t.curY)
 	return nil
@@ -310,34 +310,23 @@ func (t *Terminal) RunClient() error {
 		log.Fatal(err)
 	}
 
-	triggerSaveWarning := false
-	t.paint(matches, triggerSaveWarning)
+	t.paint(matches, false)
 
 	for {
 		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 		t.s.Show()
 		ev := t.s.PollEvent()
 
-		triggerSaveWarning = false
-
 		offsetX := t.horizOffset + t.curX
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			switch ev.Key() {
-			case tcell.KeyCtrlS:
+			case tcell.KeyCtrlUnderscore:
 				err := t.db.Save()
 				if err != nil {
 					log.Fatal(err)
 				}
-			case tcell.KeyCtrlX:
-				if !t.db.HasPendingChanges() {
-					t.s.Fini()
-					os.Exit(0)
-				} else {
-					triggerSaveWarning = true
-				}
-			case tcell.KeyCtrlUnderscore:
 				t.s.Fini()
 				os.Exit(0)
 			case tcell.KeyEnter:
@@ -354,9 +343,9 @@ func (t *Terminal) RunClient() error {
 
 				var err error
 				if t.curY == reservedTopLines-1 {
-					err = t.db.Add(newString, nil, nil)
+					err = t.db.Add(newString, nil, nil, nil)
 				} else {
-					err = t.db.Add(newString, nil, t.curItem)
+					err = t.db.Add(newString, nil, t.curItem, nil)
 				}
 				if err != nil {
 					log.Fatal(err)
@@ -391,8 +380,8 @@ func (t *Terminal) RunClient() error {
 				// Go to end of line
 				if t.curY != reservedTopLines-1 {
 					// TODO
-					t.curX = len(t.curItem.Line)
-					t.horizOffset = len(t.curItem.Line) - t.w
+					t.curX = len([]rune(t.curItem.Line))
+					t.horizOffset = len([]rune(t.curItem.Line)) - t.w
 				}
 			case tcell.KeyCtrlV:
 				// Toggle hidden item visibility
@@ -400,6 +389,16 @@ func (t *Terminal) RunClient() error {
 					t.showHidden = !t.showHidden
 				} else {
 					t.curItem.IsHidden = !t.curItem.IsHidden
+				}
+			case tcell.KeyCtrlU:
+				err := t.db.Undo()
+				if err != nil {
+					log.Fatal(err)
+				}
+			case tcell.KeyCtrlR:
+				err := t.db.Redo()
+				if err != nil {
+					log.Fatal(err)
 				}
 			case tcell.KeyEscape:
 				t.curY = 0 // TODO
@@ -547,7 +546,7 @@ func (t *Terminal) RunClient() error {
 						}
 
 						lenFunc := func() int {
-							return len(t.curItem.Line)
+							return len([]rune(t.curItem.Line))
 						}
 						updateFunc := func() error {
 							return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
@@ -667,6 +666,6 @@ func (t *Terminal) RunClient() error {
 		}
 
 		t.resizeScreen()
-		t.paint(matches, triggerSaveWarning)
+		t.paint(matches, false)
 	}
 }

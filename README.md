@@ -35,9 +35,8 @@ Examples:
 - `Ctrl-d` (top line): Clear search groups
 - `Alt-]/Alt-[`: Moves the current item up or down in the list
 
-- `Ctrl-s`: Save
-- `Ctrl-x`: Exit
-- `Ctrl-_`: Exit WITHOUT saving
+- `Ctrl-u/Ctrl-r`: Undo/Redo
+- `Ctrl-_`: Exit
 
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
