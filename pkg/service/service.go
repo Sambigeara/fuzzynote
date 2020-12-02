@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -53,11 +52,6 @@ type ListItem struct {
 	id          uint32
 	matchChild  *ListItem
 	matchParent *ListItem
-}
-
-// FileHeader will store the schema id, so we know which pageheader to use
-type FileHeader struct {
-	SchemaID uint32
 }
 
 type bits uint32
@@ -198,22 +192,13 @@ OuterLoop:
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Save() error {
+	// TODO remove all files starting with `bak_*`, these are no longer needed
+
 	for _, item := range r.pendingDeletions {
-		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally
-		// deleted with lots of data), append them with `_bak_{line}_{timestamp}`, so we know the context
-		// of the line, and the timestamp at which it was deleted. We need to remove the originally named
-		// notes file to prevent orphaned files being used with future notes (due to current idx logic)
 		strID := fmt.Sprint(item.id)
 		oldPath := path.Join(r.notesPath, strID)
 
-		reg, err := regexp.Compile("[^a-zA-Z0-9]+")
-		if err != nil {
-			log.Fatal(err)
-		}
-		alphanumline := reg.ReplaceAllString(item.Line, "")
-
-		newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.id, alphanumline, fmt.Sprint(time.Now().Unix())))
-		err = os.Rename(oldPath, newPath)
+		err := os.Remove(oldPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				log.Fatal(err)
