@@ -22,24 +22,25 @@ const dateFormat string = "Mon, Jan 2, 2006"
 type ListRepo interface {
 	Load() error
 	Save() error
-	Add(line string, note *[]byte, item *ListItem) error
+	Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	MoveUp(listItem *ListItem) (bool, error)
 	MoveDown(listItem *ListItem) (bool, error)
+	Undo() error
+	Redo() error
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
-	HasPendingChanges() bool
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	rootPath          string
-	notesPath         string
-	root              *ListItem
-	nextID            uint32
-	hasPendingChanges bool
-	pendingDeletions  []*ListItem
+	rootPath         string
+	notesPath        string
+	root             *ListItem
+	nextID           uint32
+	pendingDeletions []*ListItem
+	eventLogger      *DbEventLogger
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -81,10 +82,18 @@ type ItemHeader struct {
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
+	el := eventLog{
+		nullEvent,
+		nil,
+		"",
+		nil,
+		"",
+		nil,
+	}
 	return &DBListRepo{
-		rootPath:          rootPath,
-		notesPath:         notesPath,
-		hasPendingChanges: false,
+		rootPath:    rootPath,
+		notesPath:   notesPath,
+		eventLogger: &DbEventLogger{0, []eventLog{el}},
 	}
 }
 
@@ -239,7 +248,6 @@ func (r *DBListRepo) Save() error {
 			log.Fatal(err)
 			return err
 		}
-		r.hasPendingChanges = false
 		return nil
 	}
 
@@ -291,58 +299,52 @@ func (r *DBListRepo) Save() error {
 		}
 		listItem = listItem.child
 	}
-	r.hasPendingChanges = false
 	return nil
 }
 
-// Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
-func (r *DBListRepo) Add(line string, note *[]byte, child *ListItem) error {
-	r.hasPendingChanges = true
-
+func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) (*ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
-	newItem := ListItem{
-		Line:  line,
-		id:    r.nextID,
-		child: child,
-		Note:  note,
+	if newItem == nil {
+		newItem = &ListItem{
+			Line:  line,
+			id:    r.nextID,
+			child: childItem,
+			Note:  note,
+		}
 	}
 	r.nextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
-	if child == nil {
+	if childItem == nil {
 		oldRoot := r.root
-		r.root = &newItem
+		r.root = newItem
 		if oldRoot != nil {
 			newItem.parent = oldRoot
-			oldRoot.child = &newItem
+			oldRoot.child = newItem
 		}
-		return nil
+		return newItem, nil
 	}
 
-	if child.parent != nil {
-		child.parent.child = &newItem
-		newItem.parent = child.parent
+	if childItem.parent != nil {
+		childItem.parent.child = newItem
+		newItem.parent = childItem.parent
 	}
-	child.parent = &newItem
+	childItem.parent = newItem
 
-	return nil
+	return newItem, nil
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
+func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) error {
 	line = r.parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
-	r.hasPendingChanges = true
 	return nil
 }
 
-// Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(item *ListItem) error {
-	r.hasPendingChanges = true
-
+func (r *DBListRepo) del(item *ListItem) error {
 	if item.child != nil {
 		item.child.parent = item.parent
 	} else {
@@ -387,11 +389,7 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 	return nil
 }
 
-// MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
-// current matches into account.
-func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
-	r.hasPendingChanges = true
-
+func (r *DBListRepo) moveUp(item *ListItem) (bool, error) {
 	targetItem := item.matchChild
 	if targetItem == nil {
 		return false, nil
@@ -403,11 +401,7 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 	return true, err
 }
 
-// MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
-// current matches into account.
-func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
-	r.hasPendingChanges = true
-
+func (r *DBListRepo) moveDown(item *ListItem) (bool, error) {
 	targetItem := item.matchParent
 	if targetItem == nil {
 		return false, nil
@@ -417,6 +411,92 @@ func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	newParent := targetItem.parent
 	err := r.moveItem(item, newChild, newParent)
 	return true, err
+}
+
+func (r *DBListRepo) incrementEventLog() {
+	r.eventLogger.curIdx++
+	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
+	// are overwritten
+	r.eventLogger.log = r.eventLogger.log[:r.eventLogger.curIdx+1]
+}
+
+// Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
+func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
+	newItem, err := r.add(line, note, childItem, newItem)
+	r.eventLogger.addLog(addEvent, newItem, "", nil)
+	r.incrementEventLog()
+	return err
+}
+
+// Update will update the line or note of an existing ListItem
+func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
+	r.eventLogger.addLog(updateEvent, listItem, line, note)
+	r.incrementEventLog()
+	return r.update(line, note, listItem)
+}
+
+// Delete will remove an existing ListItem
+func (r *DBListRepo) Delete(item *ListItem) error {
+	r.eventLogger.addLog(deleteEvent, item, "", nil)
+	r.incrementEventLog()
+	return r.del(item)
+}
+
+// MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
+// current matches into account.
+func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
+	r.eventLogger.addLog(moveUpEvent, item, "", nil)
+	r.incrementEventLog()
+	return r.moveUp(item)
+}
+
+// MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
+// current matches into account.
+func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
+	r.eventLogger.addLog(moveDownEvent, item, "", nil)
+	r.incrementEventLog()
+	return r.moveDown(item)
+}
+
+func (r *DBListRepo) callFunctionForEventLog(ev eventType, ptr *ListItem, line string, note *[]byte) error {
+	var err error
+	switch ev {
+	case addEvent:
+		_, err = r.add(ptr.Line, ptr.Note, ptr.child, ptr)
+	case deleteEvent:
+		err = r.del(ptr)
+	case updateEvent:
+		err = r.update(line, note, ptr)
+	case moveUpEvent:
+		_, err = r.moveUp(ptr)
+	case moveDownEvent:
+		_, err = r.moveDown(ptr)
+	}
+	return err
+}
+
+func (r *DBListRepo) Undo() error {
+	if r.eventLogger.curIdx > 0 {
+		eventLog := r.eventLogger.log[r.eventLogger.curIdx]
+		// callFunctionForEventLog needs to call the appropriate function with the
+		// necessary parameters to reverse the operation
+		opEv := oppositeEvent[eventLog.eventType]
+		err := r.callFunctionForEventLog(opEv, eventLog.ptr, eventLog.undoLine, eventLog.undoNote)
+		r.eventLogger.curIdx--
+		return err
+	}
+	return nil
+}
+
+func (r *DBListRepo) Redo() error {
+	// Redo needs to look forward +1 index when actioning events
+	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
+		eventLog := r.eventLogger.log[r.eventLogger.curIdx+1]
+		err := r.callFunctionForEventLog(eventLog.eventType, eventLog.ptr, eventLog.redoLine, eventLog.redoNote)
+		r.eventLogger.curIdx++
+		return err
+	}
+	return nil
 }
 
 // Search functionality
@@ -623,10 +703,4 @@ func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
 		return err
 	}
 	return nil
-}
-
-// HasPendingChanges returns true if state has changed in the app which needs to be flushed to disk
-// (or ignored)
-func (r *DBListRepo) HasPendingChanges() bool {
-	return r.hasPendingChanges
 }
