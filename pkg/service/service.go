@@ -102,17 +102,13 @@ func (r *DBListRepo) Load() error {
 	}
 	defer f.Close()
 
-	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
+	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	var cur *ListItem
-
-	r.nextID = 1
 
 OuterLoop:
 	for {
-
 		header := ItemHeader{}
 		err := binary.Read(f, binary.LittleEndian, &header)
-
 		if err != nil {
 			switch err {
 			case io.EOF:
@@ -148,10 +144,13 @@ OuterLoop:
 
 		nextItem := ListItem{
 			Line:     string(data),
-			parent:   cur,
+			child:    cur,
 			id:       header.PageID,
 			Note:     dat,
 			IsHidden: has(header.Metadata, hidden),
+		}
+		if cur == nil {
+			r.root = &nextItem
 		}
 		cur = &nextItem
 	}
@@ -161,15 +160,13 @@ OuterLoop:
 		return nil
 	}
 
-	r.root = cur
-
-	// `cur` is now a ptr to the most recent ListItem
+	// `cur` is now a ptr to the oldest ListItem
 	for {
-		if cur.parent == nil {
+		if cur.child == nil {
 			break
 		}
-		cur.parent.child = cur
-		cur = cur.parent
+		cur.child.parent = cur
+		cur = cur.child
 	}
 
 	return nil
@@ -213,20 +210,7 @@ func (r *DBListRepo) Save() error {
 
 	listItem := r.root
 
-	// TODO store oldest item on Load
-	// Get oldest listItem
 	for {
-		if listItem.parent == nil {
-			break
-		}
-		listItem = listItem.parent
-	}
-
-	for {
-		if listItem.id == 0 {
-			listItem.id = r.nextID
-			r.nextID++
-		}
 		var metadata bits = 0
 		if listItem.IsHidden {
 			metadata = set(metadata, hidden)
@@ -254,10 +238,10 @@ func (r *DBListRepo) Save() error {
 		}
 		r.savePage(listItem.id, listItem.Note)
 
-		if listItem.child == nil {
+		if listItem.parent == nil {
 			break
 		}
-		listItem = listItem.child
+		listItem = listItem.parent
 	}
 	return nil
 }

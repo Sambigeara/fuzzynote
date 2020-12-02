@@ -26,7 +26,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.root.Line)
 		}
 
-		expectedID := uint32(2)
+		expectedID := uint32(1)
 		if mockListRepo.root.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
 		}
@@ -35,7 +35,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
 		}
 
-		expectedID = 1
+		expectedID = 2
 		if mockListRepo.root.parent.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
@@ -98,10 +98,12 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		oldItem := ListItem{
 			Line: "Old newly created line",
+			id:   2,
 		}
 		newItem := ListItem{
 			Line:   "New newly created line",
 			parent: &oldItem,
+			id:     1,
 		}
 		oldItem.child = &newItem
 
@@ -117,7 +119,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.root.Line)
 		}
 
-		expectedID := uint32(2)
+		expectedID := uint32(1)
 		if mockListRepo.root.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
 		}
@@ -126,7 +128,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("Expected %s but got %s", mockListRepo.root.parent.Line, oldItem.Line)
 		}
 
-		expectedID = uint32(1)
+		expectedID = uint32(2)
 		if mockListRepo.root.parent.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
@@ -144,13 +146,16 @@ func TestServiceAdd(t *testing.T) {
 
 	item2 := ListItem{
 		Line: "Old existing created line",
+		id:   2,
 	}
 	item1 := ListItem{
 		Line:   "New existing created line",
 		parent: &item2,
+		id:     1,
 	}
 	item2.child = &item1
 	mockListRepo.root = &item1
+	mockListRepo.nextID = 3
 	err := mockListRepo.Save()
 	if err != nil {
 		t.Fatal(err)
@@ -1219,14 +1224,17 @@ func TestServiceEditPage(t *testing.T) {
 	oldNote := []byte("I am an old note")
 	item2 := ListItem{
 		Line: "Second",
+		id:   2,
 	}
 	item1 := ListItem{
 		Line:   "First",
 		parent: &item2,
 		Note:   &oldNote,
+		id:     1,
 	}
 	item2.child = &item1
 	mockListRepo.root = &item1
+	mockListRepo.nextID = 3
 	mockListRepo.Save()
 
 	stringToWrite := "I am a new line"
