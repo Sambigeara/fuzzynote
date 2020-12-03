@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/binary"
-	//"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -105,71 +104,50 @@ func (r *DBListRepo) Load() error {
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	var cur *ListItem
 
-OuterLoop:
 	for {
 		header := ItemHeader{}
 		err := binary.Read(f, binary.LittleEndian, &header)
 		if err != nil {
 			switch err {
 			case io.EOF:
-				break OuterLoop
+				return nil
 			case io.ErrUnexpectedEOF:
 				fmt.Println("binary.Read failed on page header:", err)
 				return err
 			}
 		}
 
-		// Find the next available index for the ENTIRE dataset
-		if header.PageID >= r.nextID {
-			r.nextID = header.PageID + 1
-		}
-
-		data := make([]byte, header.DataLength)
-		err = binary.Read(f, binary.LittleEndian, &data)
-
+		line := make([]byte, header.DataLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
 		if err != nil {
-			switch err {
-			case io.EOF:
-				break OuterLoop
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
-				return err
-			}
+			fmt.Println("binary.Read failed on page header:", err)
+			return err
 		}
 
-		dat, err := r.loadPage(header.PageID)
+		note, err := r.loadPage(header.PageID)
 		if err != nil {
 			return err
 		}
 
 		nextItem := ListItem{
-			Line:     string(data),
+			Line:     string(line),
 			child:    cur,
 			id:       header.PageID,
-			Note:     dat,
+			Note:     note,
 			IsHidden: has(header.Metadata, hidden),
 		}
 		if cur == nil {
 			r.root = &nextItem
+		} else {
+			cur.parent = &nextItem
 		}
 		cur = &nextItem
-	}
 
-	// Handle empty file
-	if cur == nil {
-		return nil
-	}
-
-	// `cur` is now a ptr to the oldest ListItem
-	for {
-		if cur.child == nil {
-			break
+		// We need to find the next available index for the entire dataset
+		if header.PageID >= r.nextID {
+			r.nextID = header.PageID + 1
 		}
-		cur.child.parent = cur
-		cur = cur.child
 	}
-
-	return nil
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
@@ -197,14 +175,9 @@ func (r *DBListRepo) Save() error {
 	}
 	defer f.Close()
 
-	// Write empty file if no listItems exist
+	// Return if no files to write. os.Create truncates by default so the file will
+	// have been overwritten
 	if r.root == nil {
-		err := binary.Write(f, binary.LittleEndian, []byte{})
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
-			return err
-		}
 		return nil
 	}
 
@@ -221,21 +194,20 @@ func (r *DBListRepo) Save() error {
 			FileID:     listItem.id, // TODO
 			DataLength: uint64(len(listItem.Line)),
 		}
+		byteLine := []byte(listItem.Line)
+
+		data := []interface{}{&header, &byteLine}
 
 		// TODO the below writes need to be atomic
-		err := binary.Write(f, binary.LittleEndian, &header)
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
-			return err
+		for _, v := range data {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Println("binary.Write failed:", err)
+				log.Fatal(err)
+				return err
+			}
 		}
-		data := []byte(listItem.Line)
-		err = binary.Write(f, binary.LittleEndian, &data)
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
-			return err
-		}
+
 		r.savePage(listItem.id, listItem.Note)
 
 		if listItem.parent == nil {
