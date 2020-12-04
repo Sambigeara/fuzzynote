@@ -8,15 +8,11 @@ import (
 )
 
 // LatestFileSchemaID will be the id used when saving files
-const LatestFileSchemaID uint16 = 1
+const LatestFileSchemaID uint16 = 0
 
 type fileHeader struct {
 	FileSchemaID uint16
 }
-
-//type listItemSchema interface {
-//    readItem() error
-//}
 
 type listItemSchema0 struct {
 	PageID     uint32
@@ -31,20 +27,9 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-//func (l *listItemSchema0) readItem() error {
-//    return nil
-//}
-
-//func (l *listItemSchema1) readItem() error {
-//    return nil
-//}
-
 var listItemSchemaMap = map[uint16]interface{}{
 	0: listItemSchema0{},
 	1: listItemSchema1{},
-	// TODO
-	//1: listItemSchema0{},
-	//0: listItemSchema1{},
 }
 
 func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newItem *ListItem) (bool, error) {
@@ -103,7 +88,6 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 			return false, err
 		}
 
-		fmt.Printf("HELLO   %v\n", s.NoteLength)
 		note := make([]byte, s.NoteLength)
 		err = binary.Read(f, binary.LittleEndian, &note)
 		if err != nil {

@@ -101,7 +101,7 @@ func (r *DBListRepo) Load() error {
 	// bytes of the initial uint32 assigned for the first listItemID.
 	// Therefore, if the second uint16 == 0, we're most probably using file schema 0...
 	var checkBytes uint16
-	f.Seek(2, 0)
+	f.Seek(2, io.SeekStart)
 	err = binary.Read(f, binary.LittleEndian, &checkBytes)
 	if err != nil {
 		if err == io.EOF {
@@ -111,7 +111,7 @@ func (r *DBListRepo) Load() error {
 		return err
 	}
 
-	f.Seek(0, 0)
+	f.Seek(0, io.SeekStart)
 	if checkBytes == 0 {
 		fileHeader.FileSchemaID = 0
 	} else {
