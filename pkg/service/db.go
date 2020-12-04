@@ -8,7 +8,7 @@ import (
 )
 
 // LatestFileSchemaID will be the id used when saving files
-const LatestFileSchemaID uint16 = 0
+const LatestFileSchemaID uint16 = 1
 
 type fileHeader struct {
 	FileSchemaID uint16
