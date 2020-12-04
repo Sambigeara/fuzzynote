@@ -64,24 +64,15 @@ func clear(b, flag bits) bits  { return b &^ flag }
 func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
-// ItemHeader represents the byte structure of an individual LineItem when it is stored in the
-// primary.db file
-type ItemHeader struct {
-	PageID     uint32
-	Metadata   bits
-	FileID     uint32
-	DataLength uint64
-}
-
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	el := eventLog{
-		nullEvent,
-		nil,
-		"",
-		nil,
-		"",
-		nil,
+		eventType: nullEvent,
+		ptr:       nil,
+		undoLine:  "",
+		undoNote:  nil,
+		redoLine:  "",
+		redoNote:  nil,
 	}
 	return &DBListRepo{
 		rootPath:    rootPath,
@@ -99,43 +90,53 @@ func (r *DBListRepo) Load() error {
 		log.Fatal(err)
 		return err
 	}
+
+	// Read the file schema to retrieve the listItemSchema ID.
+	fileHeader := fileHeader{}
+	err = binary.Read(f, binary.LittleEndian, &fileHeader)
+	if err == io.EOF {
+		return nil
+	} else if err != nil {
+		if err != nil {
+			log.Fatal(err)
+			return err
+		}
+	} else if fileHeader.FileSchemaID > 0 {
+		// TODO take out temp horrible hack until all files are correctly versioned!!
+		// The first 4 bytes (prior to file versioning) were a uint32 representing listItemIds.
+		// 2020-12-04 It's highly unlikely that current users have >= 65k items, so it's safe
+		// to assume that the 3rd and 4th bytes have bits set.
+		// Therefore, if we read the 3rd and 4th bytes and find they're = 0, we can infer that
+		// the fileSchemaID should be 0, e.g. the first non-versioned schema
+		// If the file is explicitly versioned to 1, the checkBytes will be > 0 as the page id will be set
+		// In this case, we need to close and reopen the file, assuming it is file schema version 0
+		var checkBytes uint16
+		err = binary.Read(f, binary.LittleEndian, &checkBytes)
+		if checkBytes == 0 {
+			f.Close()
+			f, err = os.OpenFile(r.rootPath, os.O_CREATE, 0644)
+			if err != nil {
+				log.Fatal(err)
+				return err
+			}
+			fileHeader.FileSchemaID = 0
+		}
+	}
+
+	// Defer placed here to allow for emergency file close/reopen above
 	defer f.Close()
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	var cur *ListItem
 
 	for {
-		header := ItemHeader{}
-		err := binary.Read(f, binary.LittleEndian, &header)
-		if err != nil {
-			switch err {
-			case io.EOF:
-				return nil
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
-				return err
-			}
+		nextItem := ListItem{}
+		cont, _ := r.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
+		nextItem.child = cur
+		if !cont {
+			return nil
 		}
-
-		line := make([]byte, header.DataLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			fmt.Println("binary.Read failed on page header:", err)
-			return err
-		}
-
-		note, err := r.loadPage(header.PageID)
-		if err != nil {
-			return err
-		}
-
-		nextItem := ListItem{
-			Line:     string(line),
-			child:    cur,
-			id:       header.PageID,
-			Note:     note,
-			IsHidden: has(header.Metadata, hidden),
-		}
+		fmt.Printf("HELLO    %v\n", nextItem)
 		if cur == nil {
 			r.root = &nextItem
 		} else {
@@ -144,8 +145,8 @@ func (r *DBListRepo) Load() error {
 		cur = &nextItem
 
 		// We need to find the next available index for the entire dataset
-		if header.PageID >= r.nextID {
-			r.nextID = header.PageID + 1
+		if nextItem.id >= r.nextID {
+			r.nextID = nextItem.id + 1
 		}
 	}
 }
@@ -181,39 +182,23 @@ func (r *DBListRepo) Save() error {
 		return nil
 	}
 
-	listItem := r.root
+	cur := r.root
+
+	// Write the file schema id to the start of the file
+	err = binary.Write(f, binary.LittleEndian, LatestFileSchemaID)
+	if err != nil {
+		fmt.Println("binary.Write failed:", err)
+		log.Fatal(err)
+		return err
+	}
 
 	for {
-		var metadata bits = 0
-		if listItem.IsHidden {
-			metadata = set(metadata, hidden)
-		}
-		header := ItemHeader{
-			PageID:     listItem.id,
-			Metadata:   metadata,
-			FileID:     listItem.id, // TODO
-			DataLength: uint64(len(listItem.Line)),
-		}
-		byteLine := []byte(listItem.Line)
+		r.writeFileFromListItem(f, cur)
 
-		data := []interface{}{&header, &byteLine}
-
-		// TODO the below writes need to be atomic
-		for _, v := range data {
-			err := binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Println("binary.Write failed:", err)
-				log.Fatal(err)
-				return err
-			}
-		}
-
-		r.savePage(listItem.id, listItem.Note)
-
-		if listItem.parent == nil {
+		if cur.parent == nil {
 			break
 		}
-		listItem = listItem.parent
+		cur = cur.parent
 	}
 	return nil
 }
