@@ -104,6 +104,12 @@ func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) erro
 		if listItem.IsHidden {
 			metadata = set(metadata, hidden)
 		}
+
+		s.PageID = listItem.id
+		s.Metadata = metadata
+		s.FileID = listItem.id // TODO
+		s.LineLength = uint64(len(listItem.Line))
+
 		byteLine := []byte(listItem.Line)
 
 		data := []interface{}{&s, &byteLine}

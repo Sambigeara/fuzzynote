@@ -90,9 +90,11 @@ func (r *DBListRepo) Load() error {
 		log.Fatal(err)
 		return err
 	}
+	defer f.Close()
 
 	// Read the file schema to retrieve the listItemSchema ID.
 	fileHeader := fileHeader{}
+	//fmt.Printf("HELLO   %v\n", fileHeader.FileSchemaID)
 	err = binary.Read(f, binary.LittleEndian, &fileHeader)
 	if err == io.EOF {
 		return nil
@@ -113,18 +115,10 @@ func (r *DBListRepo) Load() error {
 		var checkBytes uint16
 		err = binary.Read(f, binary.LittleEndian, &checkBytes)
 		if checkBytes == 0 {
-			f.Close()
-			f, err = os.OpenFile(r.rootPath, os.O_CREATE, 0644)
-			if err != nil {
-				log.Fatal(err)
-				return err
-			}
+			f.Seek(0, 0)
 			fileHeader.FileSchemaID = 0
 		}
 	}
-
-	// Defer placed here to allow for emergency file close/reopen above
-	defer f.Close()
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	var cur *ListItem
@@ -136,7 +130,6 @@ func (r *DBListRepo) Load() error {
 		if !cont {
 			return nil
 		}
-		fmt.Printf("HELLO    %v\n", nextItem)
 		if cur == nil {
 			r.root = &nextItem
 		} else {
@@ -182,8 +175,6 @@ func (r *DBListRepo) Save() error {
 		return nil
 	}
 
-	cur := r.root
-
 	// Write the file schema id to the start of the file
 	err = binary.Write(f, binary.LittleEndian, LatestFileSchemaID)
 	if err != nil {
@@ -191,6 +182,8 @@ func (r *DBListRepo) Save() error {
 		log.Fatal(err)
 		return err
 	}
+
+	cur := r.root
 
 	for {
 		r.writeFileFromListItem(f, cur)

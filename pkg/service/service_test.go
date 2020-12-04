@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"log"
+	//"log"
 	"os"
 	"path"
 	"testing"
@@ -10,6 +10,7 @@ import (
 
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file", func(t *testing.T) {
+		t.Skip()
 		rootPath := "tests/test_file"
 		mockListRepo := NewDBListRepo(rootPath, "")
 
@@ -43,9 +44,7 @@ func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Stores to new file and loads back", func(t *testing.T) {
 		rootPath := "file_to_delete"
 		mockListRepo := NewDBListRepo(rootPath, "")
-
-		// Instantiate NextID index with initial empty load
-		mockListRepo.Load()
+		defer os.Remove(rootPath)
 
 		oldItem := ListItem{
 			Line: "Old newly created line",
@@ -83,15 +82,11 @@ func TestServiceStoreLoad(t *testing.T) {
 		if mockListRepo.root.parent.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 	t.Run("Stores to new file and loads back", func(t *testing.T) {
 		rootPath := "file_to_delete"
 		mockListRepo := NewDBListRepo(rootPath, "")
+		defer os.Remove(rootPath)
 
 		// Instantiate NextID index with initial empty load
 		mockListRepo.Load()
@@ -132,17 +127,13 @@ func TestServiceStoreLoad(t *testing.T) {
 		if mockListRepo.root.parent.id != expectedID {
 			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 }
 
 func TestServiceAdd(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
+	defer os.Remove(rootPath)
 
 	item2 := ListItem{
 		Line: "Old existing created line",
@@ -276,16 +267,12 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Original old parent has incorrect child")
 		}
 	})
-
-	err = os.Remove(rootPath)
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 func TestServiceDelete(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
+	defer os.Remove(rootPath)
 
 	t.Run("Delete item from head of list", func(t *testing.T) {
 		item3 := ListItem{
@@ -332,11 +319,6 @@ func TestServiceDelete(t *testing.T) {
 		if matches[0].child != nil {
 			t.Errorf("First item should have no child")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
 		item3 := ListItem{
@@ -378,11 +360,6 @@ func TestServiceDelete(t *testing.T) {
 
 		if matches[expectedLen-1].parent != nil {
 			t.Errorf("Third item should have been deleted")
-		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
 		}
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
@@ -429,20 +406,15 @@ func TestServiceDelete(t *testing.T) {
 		if matches[1].child != &item1 {
 			t.Errorf("Third item child should be first item")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 }
 
 func TestServiceMove(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
+	defer os.Remove(rootPath)
 
 	t.Run("Move item up from bottom", func(t *testing.T) {
-		//t.Skip()
 		item3 := ListItem{
 			Line: "Third",
 		}
@@ -497,11 +469,6 @@ func TestServiceMove(t *testing.T) {
 		}
 		if item2.parent != nil {
 			t.Errorf("New lowest parent should have no parent")
-		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
 		}
 	})
 
@@ -561,11 +528,6 @@ func TestServiceMove(t *testing.T) {
 		if item3.child != &item1 {
 			t.Errorf("Lowest parent's child should be old root")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
@@ -606,11 +568,6 @@ func TestServiceMove(t *testing.T) {
 		}
 		if matches[2] != &item3 {
 			t.Errorf("All items should remain unchanged")
-		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
 		}
 	})
 
@@ -670,11 +627,6 @@ func TestServiceMove(t *testing.T) {
 		if item3.parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 
 	t.Run("Move item down from middle", func(t *testing.T) {
@@ -733,11 +685,6 @@ func TestServiceMove(t *testing.T) {
 		if item1.parent != &item3 {
 			t.Errorf("Root's parent should be moved item")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 
 	t.Run("Move item down from bottom", func(t *testing.T) {
@@ -778,11 +725,6 @@ func TestServiceMove(t *testing.T) {
 		}
 		if matches[2] != &item3 {
 			t.Errorf("All items should remain unchanged")
-		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
 		}
 	})
 
@@ -852,17 +794,13 @@ func TestServiceMove(t *testing.T) {
 		if item1.parent != nil {
 			t.Errorf("New oldest should have no parent")
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 }
 
 func TestServiceUpdate(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
+	defer os.Remove(rootPath)
 
 	item3 := ListItem{
 		Line: "Third",
@@ -896,16 +834,12 @@ func TestServiceUpdate(t *testing.T) {
 	if item2.Line != expectedLine {
 		t.Errorf("Expected %s but got %s", expectedLine, item2.Line)
 	}
-
-	err = os.Remove(rootPath)
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 func TestServiceMatch(t *testing.T) {
 	rootPath := "file_to_delete"
 	mockListRepo := NewDBListRepo(rootPath, "")
+	defer os.Remove(rootPath)
 
 	t.Run("Full match items in list", func(t *testing.T) {
 		item5 := ListItem{
@@ -991,11 +925,6 @@ func TestServiceMatch(t *testing.T) {
 		expectedLine = "Also not second"
 		if matches[2].Line != expectedLine {
 			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line)
-		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
 		}
 	})
 
@@ -1084,11 +1013,6 @@ func TestServiceMatch(t *testing.T) {
 		if matches[2].Line != expectedLine {
 			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line)
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 
 	t.Run("Match items in list with active", func(t *testing.T) {
@@ -1149,11 +1073,6 @@ func TestServiceMatch(t *testing.T) {
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
@@ -1206,11 +1125,6 @@ func TestServiceMatch(t *testing.T) {
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-
-		err = os.Remove(rootPath)
-		if err != nil {
-			log.Fatal(err)
-		}
 	})
 }
 
@@ -1218,6 +1132,8 @@ func TestServiceEditPage(t *testing.T) {
 	rootPath := "file_to_delete"
 	notesDir := "notes"
 	os.MkdirAll(notesDir, os.ModePerm)
+	defer os.Remove(rootPath)
+	defer os.RemoveAll(notesDir)
 
 	mockListRepo := NewDBListRepo(rootPath, notesDir)
 
@@ -1283,14 +1199,5 @@ func TestServiceEditPage(t *testing.T) {
 	// Assert that file for newly added note has now been deleted
 	if _, err := os.Stat(expectedNotePath2); !os.IsNotExist(err) {
 		t.Errorf("New file %s should now have been deleted", expectedNotePath2)
-	}
-
-	err = os.Remove(rootPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = os.RemoveAll(notesDir)
-	if err != nil {
-		log.Fatal(err)
 	}
 }
