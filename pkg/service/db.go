@@ -8,8 +8,7 @@ import (
 )
 
 // LatestFileSchemaID will be the id used when saving files
-//const LatestFileSchemaID = 1
-const LatestFileSchemaID uint16 = 0
+const LatestFileSchemaID uint16 = 1
 
 type fileHeader struct {
 	FileSchemaID uint16
@@ -43,6 +42,9 @@ type listItemSchema1 struct {
 var listItemSchemaMap = map[uint16]interface{}{
 	0: listItemSchema0{},
 	1: listItemSchema1{},
+	// TODO
+	//1: listItemSchema0{},
+	//0: listItemSchema1{},
 }
 
 func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newItem *ListItem) (bool, error) {
@@ -78,15 +80,42 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 		}
 
 		newItem.Line = string(line)
-		//newItem.child = cur
 		newItem.id = s.PageID
 		newItem.Note = note
 		newItem.IsHidden = has(s.Metadata, hidden)
 		return true, nil
 	case listItemSchema1:
-		//TODO
-		//err = binary.Read(f, binary.LittleEndian, &s)
-		return false, nil
+		err = binary.Read(f, binary.LittleEndian, &s)
+		if err != nil {
+			switch err {
+			case io.EOF:
+				return false, nil
+			case io.ErrUnexpectedEOF:
+				fmt.Println("binary.Read failed on page header:", err)
+				return false, err
+			}
+		}
+
+		line := make([]byte, s.LineLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
+		if err != nil {
+			fmt.Println("binary.Read failed on page header:", err)
+			return false, err
+		}
+
+		fmt.Printf("HELLO   %v\n", s.NoteLength)
+		note := make([]byte, s.NoteLength)
+		err = binary.Read(f, binary.LittleEndian, &note)
+		if err != nil {
+			fmt.Println("binary.Read failed on page header:", err)
+			return false, err
+		}
+
+		newItem.Line = string(line)
+		newItem.id = s.PageID
+		newItem.Note = &note
+		newItem.IsHidden = has(s.Metadata, hidden)
+		return true, nil
 	}
 	return false, err
 }
@@ -94,6 +123,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
 	i, ok := listItemSchemaMap[LatestFileSchemaID]
 	if !ok {
+		fmt.Printf("KAPOW   %v\n", i)
 		i, _ = listItemSchemaMap[0]
 	}
 
@@ -107,8 +137,8 @@ func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) erro
 
 		s.PageID = listItem.id
 		s.Metadata = metadata
-		s.FileID = listItem.id // TODO
-		s.LineLength = uint64(len(listItem.Line))
+		s.FileID = listItem.id
+		s.LineLength = uint64(len([]byte(listItem.Line)))
 
 		byteLine := []byte(listItem.Line)
 
@@ -126,9 +156,32 @@ func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) erro
 
 		r.savePage(listItem.id, listItem.Note)
 	case listItemSchema1:
-		//TODO
-		//err = binary.Read(f, binary.LittleEndian, &s)
-		return nil
+		var metadata bits = 0
+		if listItem.IsHidden {
+			metadata = set(metadata, hidden)
+		}
+		byteLine := []byte(listItem.Line)
+
+		s.PageID = listItem.id
+		s.Metadata = metadata
+		s.LineLength = uint64(len([]byte(listItem.Line)))
+		s.NoteLength = 0
+
+		data := []interface{}{&s, &byteLine}
+		if listItem.Note != nil {
+			s.NoteLength = uint64(len(*listItem.Note))
+			data = append(data, listItem.Note)
+		}
+
+		// TODO the below writes need to be atomic
+		for _, v := range data {
+			err = binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Println("binary.Write failed:", err)
+				log.Fatal(err)
+				return err
+			}
+		}
 	}
 	return err
 }

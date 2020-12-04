@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/binary"
 	"fmt"
 	//"log"
 	"os"
@@ -9,16 +10,126 @@ import (
 )
 
 func TestServiceStoreLoad(t *testing.T) {
-	t.Run("Loads from file", func(t *testing.T) {
-		t.Skip()
-		rootPath := "tests/test_file"
+	t.Run("Loads from file schema 0", func(t *testing.T) {
+		rootPath := "file_to_delete"
 		mockListRepo := NewDBListRepo(rootPath, "")
+
+		f, err := os.Create(rootPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(rootPath)
 
 		expectedLines := make([]string, 2)
 		expectedLines[0] = "Test ListItem"
 		expectedLines[1] = "Another test ListItem"
 
-		err := mockListRepo.Load()
+		// TODO use schema from db.go
+		// Schema 0
+		type fileItem struct {
+			PageID     uint32
+			Metadata   bits
+			FileID     uint32
+			LineLength uint64
+		}
+
+		data := []interface{}{
+			fileItem{
+				1,
+				0,
+				1,
+				uint64(len([]byte(expectedLines[0]))),
+			},
+			[]byte(expectedLines[0]),
+			fileItem{
+				2,
+				0,
+				2,
+				uint64(len([]byte(expectedLines[1]))),
+			},
+			[]byte(expectedLines[1]),
+		}
+		for _, v := range data {
+			err = binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		f.Close()
+
+		err = mockListRepo.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if mockListRepo.root.Line != expectedLines[0] {
+			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.root.Line)
+		}
+
+		expectedID := uint32(1)
+		if mockListRepo.root.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
+		}
+
+		if mockListRepo.root.parent.Line != expectedLines[1] {
+			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
+		}
+
+		expectedID = 2
+		if mockListRepo.root.parent.id != expectedID {
+			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
+		}
+	})
+	t.Run("Loads from file schema 1", func(t *testing.T) {
+		rootPath := "file_to_delete"
+		mockListRepo := NewDBListRepo(rootPath, "")
+
+		f, err := os.Create(rootPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(rootPath)
+
+		expectedLines := make([]string, 2)
+		expectedLines[0] = "Test ListItem"
+		expectedLines[1] = "Another test ListItem"
+
+		// Schema 1
+		type fileItem struct {
+			PageID     uint32
+			Metadata   bits
+			LineLength uint64
+			NoteLength uint64
+		}
+
+		data := []interface{}{
+			uint16(1), // Schema type 1
+			fileItem{
+				1,
+				0,
+				uint64(len([]byte(expectedLines[0]))),
+				0,
+			},
+			[]byte(expectedLines[0]),
+			fileItem{
+				2,
+				0,
+				uint64(len([]byte(expectedLines[1]))),
+				0,
+			},
+			[]byte(expectedLines[1]),
+		}
+		for _, v := range data {
+			err = binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		f.Close()
+
+		err = mockListRepo.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,9 +198,6 @@ func TestServiceStoreLoad(t *testing.T) {
 		rootPath := "file_to_delete"
 		mockListRepo := NewDBListRepo(rootPath, "")
 		defer os.Remove(rootPath)
-
-		// Instantiate NextID index with initial empty load
-		mockListRepo.Load()
 
 		oldItem := ListItem{
 			Line: "Old newly created line",
@@ -1016,9 +1124,6 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Match items in list with active", func(t *testing.T) {
-		// Instantiate NextID index with initial empty load
-		mockListRepo.Load()
-
 		item5 := ListItem{
 			Line: "Also not second",
 		}
@@ -1076,9 +1181,6 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
-		// Instantiate NextID index with initial empty load
-		mockListRepo.Load()
-
 		item5 := ListItem{
 			Line: "Also not second",
 		}
@@ -1129,11 +1231,13 @@ func TestServiceMatch(t *testing.T) {
 }
 
 func TestServiceEditPage(t *testing.T) {
+	t.Skip("New file schemas save notes within the main list item db file")
 	rootPath := "file_to_delete"
 	notesDir := "notes"
 	os.MkdirAll(notesDir, os.ModePerm)
 	defer os.Remove(rootPath)
 	defer os.RemoveAll(notesDir)
+	// TODO notesDir can be removed now
 
 	mockListRepo := NewDBListRepo(rootPath, notesDir)
 

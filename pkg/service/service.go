@@ -94,29 +94,34 @@ func (r *DBListRepo) Load() error {
 
 	// Read the file schema to retrieve the listItemSchema ID.
 	fileHeader := fileHeader{}
-	//fmt.Printf("HELLO   %v\n", fileHeader.FileSchemaID)
-	err = binary.Read(f, binary.LittleEndian, &fileHeader)
-	if err == io.EOF {
-		return nil
-	} else if err != nil {
+
+	// TODO remove this temp measure once all users are on file schema >= 1
+	// The first version did not have a file schema. To detemine if a file is of the original schema,
+	// we rely on the likely fact that no-one has generated enough listItems to use the left two
+	// bytes of the initial uint32 assigned for the first listItemID.
+	// Therefore, if the second uint16 == 0, we're most probably using file schema 0...
+	var checkBytes uint16
+	f.Seek(2, 0)
+	err = binary.Read(f, binary.LittleEndian, &checkBytes)
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		log.Fatal(err)
+		return err
+	}
+
+	f.Seek(0, 0)
+	if checkBytes == 0 {
+		fileHeader.FileSchemaID = 0
+	} else {
+		err = binary.Read(f, binary.LittleEndian, &fileHeader)
 		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
 			log.Fatal(err)
 			return err
-		}
-	} else if fileHeader.FileSchemaID > 0 {
-		// TODO take out temp horrible hack until all files are correctly versioned!!
-		// The first 4 bytes (prior to file versioning) were a uint32 representing listItemIds.
-		// 2020-12-04 It's highly unlikely that current users have >= 65k items, so it's safe
-		// to assume that the 3rd and 4th bytes have bits set.
-		// Therefore, if we read the 3rd and 4th bytes and find they're = 0, we can infer that
-		// the fileSchemaID should be 0, e.g. the first non-versioned schema
-		// If the file is explicitly versioned to 1, the checkBytes will be > 0 as the page id will be set
-		// In this case, we need to close and reopen the file, assuming it is file schema version 0
-		var checkBytes uint16
-		err = binary.Read(f, binary.LittleEndian, &checkBytes)
-		if checkBytes == 0 {
-			f.Seek(0, 0)
-			fileHeader.FileSchemaID = 0
 		}
 	}
 
