@@ -2,14 +2,12 @@ package service
 
 import (
 	"encoding/binary"
-	//"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -35,12 +33,13 @@ type ListRepo interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	rootPath         string
-	notesPath        string
-	root             *ListItem
-	nextID           uint32
-	pendingDeletions []*ListItem
-	eventLogger      *DbEventLogger
+	rootPath           string
+	notesPath          string
+	root               *ListItem
+	nextID             uint32
+	pendingDeletions   []*ListItem
+	eventLogger        *DbEventLogger
+	latestFileSchemaID uint16
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -55,11 +54,6 @@ type ListItem struct {
 	matchParent *ListItem
 }
 
-// FileHeader will store the schema id, so we know which pageheader to use
-type FileHeader struct {
-	SchemaID uint32
-}
-
 type bits uint32
 
 const (
@@ -71,29 +65,22 @@ func clear(b, flag bits) bits  { return b &^ flag }
 func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
-// ItemHeader represents the byte structure of an individual LineItem when it is stored in the
-// primary.db file
-type ItemHeader struct {
-	PageID     uint32
-	Metadata   bits
-	FileID     uint32
-	DataLength uint64
-}
-
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 	el := eventLog{
-		nullEvent,
-		nil,
-		"",
-		nil,
-		"",
-		nil,
+		eventType: nullEvent,
+		ptr:       nil,
+		undoLine:  "",
+		undoNote:  nil,
+		redoLine:  "",
+		redoNote:  nil,
 	}
 	return &DBListRepo{
-		rootPath:    rootPath,
-		notesPath:   notesPath,
-		eventLogger: &DbEventLogger{0, []eventLog{el}},
+		rootPath:           rootPath,
+		notesPath:          notesPath,
+		eventLogger:        &DbEventLogger{0, []eventLog{el}},
+		nextID:             1,
+		latestFileSchemaID: LatestFileSchemaID,
 	}
 }
 
@@ -107,129 +94,115 @@ func (r *DBListRepo) Load() error {
 	}
 	defer f.Close()
 
-	// Retrieve first line from the file, which will be the oldest (and therefore bottom) entry
-	var cur, oldest *ListItem
+	// TODO remove this temp measure once all users are on file schema >= 1
+	// The first version did not have a file schema. To detemine if a file is of the original schema,
+	// we rely on the likely fact that no-one has generated enough listItems (>65535) to use the right two
+	// bytes of the initial uint32 assigned for the first listItemID. E.g. if the second uint16 (bytes 3/4)
+	// are 0, then it's likely the original schema.
+	// With the above in mind, we can infer the correct file schema and file offset as follows:
+	//
+	// if first uint16 == 0:
+	//   fileSchemaId = 0
+	//   fileOffset = 2
+	// else if second uint16 == 0:
+	//   fileSchemaId = 0
+	//   fileOffset = 0
+	// else:
+	//   fileSchemaId = first uint16
+	//   fileOffset = 2
+	//
+	var firstTwo, secondTwo uint16
+	err = binary.Read(f, binary.LittleEndian, &firstTwo)
+	err = binary.Read(f, binary.LittleEndian, &secondTwo)
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		log.Fatal(err)
+		return err
+	}
+	// NOTE: File offset now at 4
 
-	r.nextID = 1
+	fileHeader := fileHeader{}
+	wasUnversionedFile := false
+	if firstTwo == 0 {
+		// File schema is explicitly set to 0
+		fileHeader.FileSchemaID = 0
+		f.Seek(2, io.SeekStart)
+	} else if secondTwo == 0 {
+		wasUnversionedFile = true
+		// Fileschema not set (assuming no lineItem with ID > 65535)
+		fileHeader.FileSchemaID = 0
+		f.Seek(0, io.SeekStart)
+	} else {
+		fileHeader.FileSchemaID = firstTwo
+		f.Seek(2, io.SeekStart)
+	}
 
-OuterLoop:
+	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
+	var cur *ListItem
+
 	for {
-
-		header := ItemHeader{}
-		err := binary.Read(f, binary.LittleEndian, &header)
-
+		nextItem := ListItem{}
+		cont, err := r.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
 		if err != nil {
-			switch err {
-			case io.EOF:
-				break OuterLoop
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
-				return err
-			}
-		}
-
-		// Initially we need to find the next available index for the ENTIRE dataset
-		if header.PageID >= r.nextID {
-			r.nextID = header.PageID + 1
-		}
-
-		data := make([]byte, header.DataLength)
-		err = binary.Read(f, binary.LittleEndian, &data)
-
-		if err != nil {
-			switch err {
-			case io.EOF:
-				break OuterLoop
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
-				return err
-			}
-		}
-
-		dat, err := r.loadPage(header.PageID)
-		if err != nil {
+			//log.Fatal(err)
 			return err
 		}
+		// TODO: 2020-12-05 remove once everyone using file schema >= 1
+		// Under normal circumstances, the first item read from the file will be youngest.
+		// However, due to annoying historical "reasons", the first non-versioned file schema
+		// wrote the listItems in reverse order, so we need to add an awful TEMP hack in here
+		// to join the doubly linked list in the reverse order
+		if wasUnversionedFile {
+			// This bit will be removed
+			nextItem.parent = cur
+			if !cont {
+				r.root = cur
+				return nil
+			}
+			if cur != nil {
+				cur.child = &nextItem
+			}
+			cur = &nextItem
+		} else {
+			// This bit will stay
+			nextItem.child = cur
+			if !cont {
+				return nil
+			}
+			if cur == nil {
+				r.root = &nextItem
+			} else {
+				cur.parent = &nextItem
+			}
+			cur = &nextItem
+		}
 
-		nextItem := ListItem{
-			Line:     string(data),
-			parent:   cur,
-			id:       header.PageID,
-			Note:     dat,
-			IsHidden: has(header.Metadata, hidden),
+		// We need to find the next available index for the entire dataset
+		if nextItem.id >= r.nextID {
+			r.nextID = nextItem.id + 1
 		}
-		if cur == nil {
-			// `cur` will only be nil on the first iteration, therefore we can assign the oldest node here for idx assignment below
-			oldest = &nextItem
-		}
-		cur = &nextItem
 	}
-
-	// Handle empty file
-	if cur == nil {
-		return nil
-	}
-
-	// Now we have know the global nextID (to account for unordered IDs), iterate through (from oldest to youngest) and assign any indexes where required.
-	for {
-		if oldest.child == nil {
-			break
-		}
-		if oldest.id == 0 {
-			oldest.id = r.nextID
-			r.nextID++
-		}
-		oldest = oldest.child
-	}
-
-	r.root = cur
-
-	// `cur` is now a ptr to the most recent ListItem
-	for {
-		if cur.parent == nil {
-			break
-		}
-		cur.parent.child = cur
-		cur = cur.parent
-	}
-
-	return nil
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Save() error {
+	// TODO remove all files starting with `bak_*`, these are no longer needed
+
+	// Delete any files that need clearing up
 	for _, item := range r.pendingDeletions {
-		// Because I don't yet trust the app, rather than deleting notes (which could be unintentionally
-		// deleted with lots of data), append them with `_bak_{line}_{timestamp}`, so we know the context
-		// of the line, and the timestamp at which it was deleted. We need to remove the originally named
-		// notes file to prevent orphaned files being used with future notes (due to current idx logic)
 		strID := fmt.Sprint(item.id)
 		oldPath := path.Join(r.notesPath, strID)
-
-		reg, err := regexp.Compile("[^a-zA-Z0-9]+")
+		err := os.Remove(oldPath)
 		if err != nil {
-			log.Fatal(err)
-		}
-		alphanumline := reg.ReplaceAllString(item.Line, "")
-
-		newPath := path.Join(r.notesPath, fmt.Sprintf("bak_%d_%s_%s", item.id, alphanumline, fmt.Sprint(time.Now().Unix())))
-		err = os.Rename(oldPath, newPath)
-		if err != nil {
+			// TODO is this required?
 			if !os.IsNotExist(err) {
 				log.Fatal(err)
 				return err
 			}
 		}
 	}
-
-	r.pendingDeletions = []*ListItem{}
-	// Account for edge condition where Load hasn't been run, and the id is incorrectly set to 0
-	if r.nextID == 0 {
-		r.nextID = 1
-	}
-
-	// TODO when appending individual item rather than overwriting
-	//f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
 	f, err := os.Create(r.rootPath)
 	if err != nil {
@@ -238,66 +211,33 @@ func (r *DBListRepo) Save() error {
 	}
 	defer f.Close()
 
-	listItem := r.root
-
-	// Write empty file if no listItems exist
-	if listItem == nil {
-		err := binary.Write(f, binary.LittleEndian, []byte{})
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
-			return err
-		}
+	// Return if no files to write. os.Create truncates by default so the file will
+	// have been overwritten
+	if r.root == nil {
 		return nil
 	}
 
-	r.root = listItem
-
-	// TODO store oldest item on Load
-	// Get oldest listItem
-	for {
-		if listItem.parent == nil {
-			break
-		}
-		listItem = listItem.parent
+	// Write the file schema id to the start of the file
+	err = binary.Write(f, binary.LittleEndian, r.latestFileSchemaID)
+	if err != nil {
+		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
+		log.Fatal(err)
+		return err
 	}
 
+	cur := r.root
+
 	for {
-		if listItem.id == 0 {
-			listItem.id = r.nextID
-			r.nextID++
-		}
-		var metadata bits = 0
-		if listItem.IsHidden {
-			metadata = set(metadata, hidden)
-		}
-		header := ItemHeader{
-			PageID:     listItem.id,
-			Metadata:   metadata,
-			FileID:     listItem.id, // TODO
-			DataLength: uint64(len(listItem.Line)),
-		}
-
-		// TODO the below writes need to be atomic
-		err := binary.Write(f, binary.LittleEndian, &header)
+		err := r.writeFileFromListItem(f, cur)
 		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
+			//log.Fatal(err)
 			return err
 		}
-		data := []byte(listItem.Line)
-		err = binary.Write(f, binary.LittleEndian, &data)
-		if err != nil {
-			fmt.Println("binary.Write failed:", err)
-			log.Fatal(err)
-			return err
-		}
-		r.savePage(listItem.id, listItem.Note)
 
-		if listItem.child == nil {
+		if cur.parent == nil {
 			break
 		}
-		listItem = listItem.child
+		cur = cur.parent
 	}
 	return nil
 }
