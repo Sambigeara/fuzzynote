@@ -47,7 +47,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 			case io.EOF:
 				return false, nil
 			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
+				fmt.Println("binary.Read failed on listItem header:", err)
 				return false, err
 			}
 		}
@@ -55,7 +55,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 		line := make([]byte, s.LineLength)
 		err = binary.Read(f, binary.LittleEndian, &line)
 		if err != nil {
-			fmt.Println("binary.Read failed on page header:", err)
+			fmt.Println("binary.Read failed on listItem line:", err)
 			return false, err
 		}
 
@@ -76,7 +76,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 			case io.EOF:
 				return false, nil
 			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on page header:", err)
+				fmt.Println("binary.Read failed on listItem header:", err)
 				return false, err
 			}
 		}
@@ -84,14 +84,14 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 		line := make([]byte, s.LineLength)
 		err = binary.Read(f, binary.LittleEndian, &line)
 		if err != nil {
-			fmt.Println("binary.Read failed on page header:", err)
+			fmt.Println("binary.Read failed on listItem line:", err)
 			return false, err
 		}
 
 		note := make([]byte, s.NoteLength)
 		err = binary.Read(f, binary.LittleEndian, &note)
 		if err != nil {
-			fmt.Println("binary.Read failed on page header:", err)
+			fmt.Println("binary.Read failed on listItem note:", err)
 			return false, err
 		}
 
@@ -105,7 +105,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, fileSchemaID uint16, newI
 }
 
 func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
-	i, ok := listItemSchemaMap[LatestFileSchemaID]
+	i, ok := listItemSchemaMap[r.latestFileSchemaID]
 	if !ok {
 		fmt.Printf("KAPOW   %v\n", i)
 		i, _ = listItemSchemaMap[0]
@@ -132,7 +132,7 @@ func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) erro
 		for _, v := range data {
 			err = binary.Write(f, binary.LittleEndian, v)
 			if err != nil {
-				fmt.Println("binary.Write failed:", err)
+				fmt.Printf("binary.Write failed when writing %v: %s\n", v, err)
 				log.Fatal(err)
 				return err
 			}
@@ -161,7 +161,7 @@ func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) erro
 		for _, v := range data {
 			err = binary.Write(f, binary.LittleEndian, v)
 			if err != nil {
-				fmt.Println("binary.Write failed:", err)
+				fmt.Printf("binary.Write failed when writing %v: %s\n", v, err)
 				log.Fatal(err)
 				return err
 			}

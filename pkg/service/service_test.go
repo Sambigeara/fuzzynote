@@ -11,6 +11,9 @@ import (
 
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file schema 0", func(t *testing.T) {
+		// When loading from file schema 0 for the first time, it reverses the order
+		// of the list items for historical reasons
+
 		// Run for both schema type
 		rootPath := "file_to_delete"
 		repo0 := NewDBListRepo(rootPath, "")
@@ -57,23 +60,23 @@ func TestServiceStoreLoad(t *testing.T) {
 		for i, repo := range repos {
 			err = repo.Load()
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Load failed when loading to file schema %d: %s", i, err)
 			}
 
-			if repo.root.Line != expectedLines[0] {
-				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[0], repo.root.Line)
+			if repo.root.Line != expectedLines[1] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[1], repo.root.Line)
 			}
 
-			expectedID := uint32(1)
+			expectedID := uint32(2)
 			if repo.root.id != expectedID {
 				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.id)
 			}
 
-			if repo.root.parent.Line != expectedLines[1] {
-				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[1], repo.root.Line)
+			if repo.root.parent.Line != expectedLines[0] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[0], repo.root.Line)
 			}
 
-			expectedID = 2
+			expectedID = 1
 			if repo.root.parent.id != expectedID {
 				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.parent.id)
 			}
@@ -126,7 +129,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		for i, repo := range repos {
 			err = repo.Load()
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Load failed when loading to file schema %d: %s", i, err)
 			}
 
 			if repo.root.Line != expectedLines[0] {
@@ -155,6 +158,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		defer os.Remove(rootPath0)
 		defer os.Remove(rootPath1)
 		repo0 := NewDBListRepo(rootPath0, "")
+		repo0.latestFileSchemaID = 0
 		repo1 := NewDBListRepo(rootPath1, "")
 		repos := []*DBListRepo{repo0, repo1}
 
@@ -175,6 +179,15 @@ func TestServiceStoreLoad(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			// Check file schema version has been written correctly
+			f, _ := os.OpenFile(repo.rootPath, os.O_CREATE, 0644)
+			var fileSchema uint16
+			binary.Read(f, binary.LittleEndian, &fileSchema)
+			if fileSchema != uint16(i) {
+				t.Errorf("Incorrect set file schema. Expected %d but got %d", i, fileSchema)
+			}
+			f.Close()
 
 			repo.Load()
 

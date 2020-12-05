@@ -94,17 +94,26 @@ func (r *DBListRepo) Load() error {
 	}
 	defer f.Close()
 
-	// Read the file schema to retrieve the listItemSchema ID.
-	fileHeader := fileHeader{}
-
 	// TODO remove this temp measure once all users are on file schema >= 1
 	// The first version did not have a file schema. To detemine if a file is of the original schema,
-	// we rely on the likely fact that no-one has generated enough listItems to use the left two
-	// bytes of the initial uint32 assigned for the first listItemID.
-	// Therefore, if the second uint16 == 0, we're most probably using file schema 0...
-	var checkBytes uint16
-	f.Seek(2, io.SeekStart)
-	err = binary.Read(f, binary.LittleEndian, &checkBytes)
+	// we rely on the likely fact that no-one has generated enough listItems (>65535) to use the right two
+	// bytes of the initial uint32 assigned for the first listItemID. E.g. if the second uint16 (bytes 3/4)
+	// are 0, then it's likely the original schema.
+	// With the above in mind, we can infer the correct file schema and file offset as follows:
+	//
+	// if first uint16 == 0:
+	//   fileSchemaId = 0
+	//   fileOffset = 2
+	// else if second uint16 == 0:
+	//   fileSchemaId = 0
+	//   fileOffset = 0
+	// else:
+	//   fileSchemaId = first uint16
+	//   fileOffset = 2
+	//
+	var firstTwo, secondTwo uint16
+	err = binary.Read(f, binary.LittleEndian, &firstTwo)
+	err = binary.Read(f, binary.LittleEndian, &secondTwo)
 	if err != nil {
 		if err == io.EOF {
 			return nil
@@ -112,19 +121,22 @@ func (r *DBListRepo) Load() error {
 		log.Fatal(err)
 		return err
 	}
+	// NOTE: File offset now at 4
 
-	f.Seek(0, io.SeekStart)
-	if checkBytes == 0 {
+	fileHeader := fileHeader{}
+	wasUnversionedFile := false
+	if firstTwo == 0 {
+		// File schema is explicitly set to 0
 		fileHeader.FileSchemaID = 0
+		f.Seek(2, io.SeekStart)
+	} else if secondTwo == 0 {
+		wasUnversionedFile = true
+		// Fileschema not set (assuming no lineItem with ID > 65535)
+		fileHeader.FileSchemaID = 0
+		f.Seek(0, io.SeekStart)
 	} else {
-		err = binary.Read(f, binary.LittleEndian, &fileHeader)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			log.Fatal(err)
-			return err
-		}
+		fileHeader.FileSchemaID = firstTwo
+		f.Seek(2, io.SeekStart)
 	}
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
@@ -132,17 +144,40 @@ func (r *DBListRepo) Load() error {
 
 	for {
 		nextItem := ListItem{}
-		cont, _ := r.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
-		nextItem.child = cur
-		if !cont {
-			return nil
+		cont, err := r.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
+		if err != nil {
+			//log.Fatal(err)
+			return err
 		}
-		if cur == nil {
-			r.root = &nextItem
+		// TODO: 2020-12-05 remove once everyone using file schema >= 1
+		// Under normal circumstances, the first item read from the file will be youngest.
+		// However, due to annoying historical "reasons", the first non-versioned file schema
+		// wrote the listItems in reverse order, so we need to add an awful TEMP hack in here
+		// to join the doubly linked list in the reverse order
+		if wasUnversionedFile {
+			// This bit will be removed
+			nextItem.parent = cur
+			if !cont {
+				r.root = cur
+				return nil
+			}
+			if cur != nil {
+				cur.child = &nextItem
+			}
+			cur = &nextItem
 		} else {
-			cur.parent = &nextItem
+			// This bit will stay
+			nextItem.child = cur
+			if !cont {
+				return nil
+			}
+			if cur == nil {
+				r.root = &nextItem
+			} else {
+				cur.parent = &nextItem
+			}
+			cur = &nextItem
 		}
-		cur = &nextItem
 
 		// We need to find the next available index for the entire dataset
 		if nextItem.id >= r.nextID {
@@ -185,7 +220,7 @@ func (r *DBListRepo) Save() error {
 	// Write the file schema id to the start of the file
 	err = binary.Write(f, binary.LittleEndian, r.latestFileSchemaID)
 	if err != nil {
-		fmt.Println("binary.Write failed:", err)
+		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
 		log.Fatal(err)
 		return err
 	}
@@ -193,7 +228,11 @@ func (r *DBListRepo) Save() error {
 	cur := r.root
 
 	for {
-		r.writeFileFromListItem(f, cur)
+		err := r.writeFileFromListItem(f, cur)
+		if err != nil {
+			//log.Fatal(err)
+			return err
+		}
 
 		if cur.parent == nil {
 			break
