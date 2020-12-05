@@ -33,12 +33,13 @@ type ListRepo interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	rootPath         string
-	notesPath        string
-	root             *ListItem
-	nextID           uint32
-	pendingDeletions []*ListItem
-	eventLogger      *DbEventLogger
+	rootPath           string
+	notesPath          string
+	root               *ListItem
+	nextID             uint32
+	pendingDeletions   []*ListItem
+	eventLogger        *DbEventLogger
+	latestFileSchemaID uint16
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -75,10 +76,11 @@ func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
 		redoNote:  nil,
 	}
 	return &DBListRepo{
-		rootPath:    rootPath,
-		notesPath:   notesPath,
-		eventLogger: &DbEventLogger{0, []eventLog{el}},
-		nextID:      1,
+		rootPath:           rootPath,
+		notesPath:          notesPath,
+		eventLogger:        &DbEventLogger{0, []eventLog{el}},
+		nextID:             1,
+		latestFileSchemaID: LatestFileSchemaID,
 	}
 }
 
@@ -181,7 +183,7 @@ func (r *DBListRepo) Save() error {
 	}
 
 	// Write the file schema id to the start of the file
-	err = binary.Write(f, binary.LittleEndian, LatestFileSchemaID)
+	err = binary.Write(f, binary.LittleEndian, r.latestFileSchemaID)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 		log.Fatal(err)

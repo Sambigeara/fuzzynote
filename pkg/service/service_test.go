@@ -11,8 +11,12 @@ import (
 
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file schema 0", func(t *testing.T) {
+		// Run for both schema type
 		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
+		repo0 := NewDBListRepo(rootPath, "")
+		repo0.latestFileSchemaID = 0
+		repo1 := NewDBListRepo(rootPath, "")
+		repos := []*DBListRepo{repo0, repo1}
 
 		f, err := os.Create(rootPath)
 		if err != nil {
@@ -24,24 +28,16 @@ func TestServiceStoreLoad(t *testing.T) {
 		expectedLines[0] = "Test ListItem"
 		expectedLines[1] = "Another test ListItem"
 
-		// TODO use schema from db.go
-		// Schema 0
-		type fileItem struct {
-			PageID     uint32
-			Metadata   bits
-			FileID     uint32
-			LineLength uint64
-		}
-
 		data := []interface{}{
-			fileItem{
+			// No file schema defined
+			listItemSchema0{
 				1,
 				0,
 				1,
 				uint64(len([]byte(expectedLines[0]))),
 			},
 			[]byte(expectedLines[0]),
-			fileItem{
+			listItemSchema0{
 				2,
 				0,
 				2,
@@ -58,32 +54,38 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		f.Close()
 
-		err = mockListRepo.Load()
-		if err != nil {
-			t.Fatal(err)
-		}
+		for i, repo := range repos {
+			err = repo.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		if mockListRepo.root.Line != expectedLines[0] {
-			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.root.Line)
-		}
+			if repo.root.Line != expectedLines[0] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[0], repo.root.Line)
+			}
 
-		expectedID := uint32(1)
-		if mockListRepo.root.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
-		}
+			expectedID := uint32(1)
+			if repo.root.id != expectedID {
+				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.id)
+			}
 
-		if mockListRepo.root.parent.Line != expectedLines[1] {
-			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
-		}
+			if repo.root.parent.Line != expectedLines[1] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[1], repo.root.Line)
+			}
 
-		expectedID = 2
-		if mockListRepo.root.parent.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
+			expectedID = 2
+			if repo.root.parent.id != expectedID {
+				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.parent.id)
+			}
 		}
 	})
 	t.Run("Loads from file schema 1", func(t *testing.T) {
+		// Run for both schema type
 		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
+		repo0 := NewDBListRepo(rootPath, "")
+		repo0.latestFileSchemaID = 0
+		repo1 := NewDBListRepo(rootPath, "")
+		repos := []*DBListRepo{repo0, repo1}
 
 		f, err := os.Create(rootPath)
 		if err != nil {
@@ -95,24 +97,16 @@ func TestServiceStoreLoad(t *testing.T) {
 		expectedLines[0] = "Test ListItem"
 		expectedLines[1] = "Another test ListItem"
 
-		// Schema 1
-		type fileItem struct {
-			PageID     uint32
-			Metadata   bits
-			LineLength uint64
-			NoteLength uint64
-		}
-
 		data := []interface{}{
 			uint16(1), // Schema type 1
-			fileItem{
+			listItemSchema1{
 				1,
 				0,
 				uint64(len([]byte(expectedLines[0]))),
 				0,
 			},
 			[]byte(expectedLines[0]),
-			fileItem{
+			listItemSchema1{
 				2,
 				0,
 				uint64(len([]byte(expectedLines[1]))),
@@ -129,111 +123,78 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		f.Close()
 
-		err = mockListRepo.Load()
-		if err != nil {
-			t.Fatal(err)
-		}
+		for i, repo := range repos {
+			err = repo.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		if mockListRepo.root.Line != expectedLines[0] {
-			t.Errorf("Expected %s but got %s", expectedLines[0], mockListRepo.root.Line)
-		}
+			if repo.root.Line != expectedLines[0] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[0], repo.root.Line)
+			}
 
-		expectedID := uint32(1)
-		if mockListRepo.root.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
-		}
+			expectedID := uint32(1)
+			if repo.root.id != expectedID {
+				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.id)
+			}
 
-		if mockListRepo.root.parent.Line != expectedLines[1] {
-			t.Errorf("Expected %s but got %s", expectedLines[1], mockListRepo.root.Line)
-		}
+			if repo.root.parent.Line != expectedLines[1] {
+				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[1], repo.root.Line)
+			}
 
-		expectedID = 2
-		if mockListRepo.root.parent.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
-		}
-	})
-	t.Run("Stores to new file and loads back", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
-
-		oldItem := ListItem{
-			Line: "Old newly created line",
-			id:   uint32(1),
-		}
-		newItem := ListItem{
-			Line:   "New newly created line",
-			parent: &oldItem,
-			id:     uint32(2),
-		}
-		oldItem.child = &newItem
-
-		mockListRepo.root = &newItem
-		err := mockListRepo.Save()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		mockListRepo.Load()
-
-		if mockListRepo.root.Line != newItem.Line {
-			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.root.Line)
-		}
-
-		expectedID := uint32(2)
-		if mockListRepo.root.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
-		}
-
-		if mockListRepo.root.parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.root.parent.Line, oldItem.Line)
-		}
-
-		expectedID = uint32(1)
-		if mockListRepo.root.parent.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
+			expectedID = 2
+			if repo.root.parent.id != expectedID {
+				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.root.parent.id)
+			}
 		}
 	})
-	t.Run("Stores to new file and loads back", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+	t.Run("Stores to file and loads back", func(t *testing.T) {
+		// Run for both schema type
+		rootPath0 := "temp0"
+		rootPath1 := "temp1"
+		defer os.Remove(rootPath0)
+		defer os.Remove(rootPath1)
+		repo0 := NewDBListRepo(rootPath0, "")
+		repo1 := NewDBListRepo(rootPath1, "")
+		repos := []*DBListRepo{repo0, repo1}
 
-		oldItem := ListItem{
-			Line: "Old newly created line",
-			id:   2,
-		}
-		newItem := ListItem{
-			Line:   "New newly created line",
-			parent: &oldItem,
-			id:     1,
-		}
-		oldItem.child = &newItem
+		for i, repo := range repos {
+			oldItem := ListItem{
+				Line: "Old newly created line",
+				id:   uint32(1),
+			}
+			newItem := ListItem{
+				Line:   "New newly created line",
+				parent: &oldItem,
+				id:     uint32(2),
+			}
+			oldItem.child = &newItem
 
-		mockListRepo.root = &newItem
-		err := mockListRepo.Save()
-		if err != nil {
-			t.Fatal(err)
-		}
+			repo.root = &newItem
+			err := repo.Save()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		mockListRepo.Load()
+			repo.Load()
 
-		if mockListRepo.root.Line != newItem.Line {
-			t.Errorf("Expected %s but got %s", newItem.Line, mockListRepo.root.Line)
-		}
+			if repo.root.Line != newItem.Line {
+				t.Errorf("File schema %d: Expected %s but got %s", i, newItem.Line, repo.root.Line)
+			}
 
-		expectedID := uint32(1)
-		if mockListRepo.root.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.id)
-		}
+			expectedID := uint32(2)
+			if repo.root.id != expectedID {
+				t.Errorf("File schema %d: Expected %d but got %d", i, expectedID, repo.root.id)
+			}
 
-		if mockListRepo.root.parent.Line != oldItem.Line {
-			t.Errorf("Expected %s but got %s", mockListRepo.root.parent.Line, oldItem.Line)
-		}
+			if repo.root.parent.Line != oldItem.Line {
+				t.Errorf("File schema %d: Expected %s but got %s", i, repo.root.parent.Line, oldItem.Line)
+			}
 
-		expectedID = uint32(2)
-		if mockListRepo.root.parent.id != expectedID {
-			t.Errorf("Expected %d but got %d", expectedID, mockListRepo.root.parent.id)
+			expectedID = uint32(1)
+			if repo.root.parent.id != expectedID {
+				t.Errorf("File schema %d: Expected %d but got %d", i, expectedID, repo.root.parent.id)
+			}
 		}
 	})
 }
