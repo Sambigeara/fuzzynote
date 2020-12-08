@@ -42,6 +42,19 @@ type DbEventLogger struct {
 	log    []eventLog
 }
 
+// NewDbEventLogger Returns a new instance of DbEventLogger
+func NewDbEventLogger() *DbEventLogger {
+	el := eventLog{
+		eventType: nullEvent,
+		ptr:       nil,
+		undoLine:  "",
+		undoNote:  nil,
+		redoLine:  "",
+		redoNote:  nil,
+	}
+	return &DbEventLogger{0, []eventLog{el}}
+}
+
 func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
 	ev := eventLog{
 		eventType: e,
@@ -56,5 +69,28 @@ func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newN
 	// Append to log
 	l.log = append(l.log, ev)
 	//fmt.Println(l.log)
+
+	l.curIdx++
+	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
+	// are overwritten
+	l.log = l.log[:l.curIdx+1]
+
 	return nil
+}
+
+func (r *DBListRepo) callFunctionForEventLog(ev eventType, ptr *ListItem, line string, note *[]byte) error {
+	var err error
+	switch ev {
+	case addEvent:
+		_, err = r.add(ptr.Line, ptr.Note, ptr.child, ptr)
+	case deleteEvent:
+		err = r.del(ptr)
+	case updateEvent:
+		err = r.update(line, note, ptr)
+	case moveUpEvent:
+		_, err = r.moveUp(ptr)
+	case moveDownEvent:
+		_, err = r.moveDown(ptr)
+	}
+	return err
 }
