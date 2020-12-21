@@ -57,12 +57,6 @@ func walk(db service.ListRepo, oldItem *service.ListItem, nodes []Node, chain []
 }
 
 func importLines(db service.ListRepo) error {
-	err := db.Load() // Instantiate db
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-
 	dat, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -91,12 +85,6 @@ func importLines(db service.ListRepo) error {
 		return false
 	})
 
-	err = db.Save()
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-
 	return nil
 }
 
@@ -116,9 +104,27 @@ func main() {
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	listRepo := service.NewDBListRepo(rootPath, notesDir)
+	fileDS := service.NewFileDataStore(rootPath, notesDir)
 
-	err := importLines(listRepo)
+	// List instantiation
+	root, nextID, err := fileDS.Load()
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(0)
+	}
+
+	// Get DbEventLogger
+	eventLogger := service.NewDbEventLogger()
+
+	listRepo := service.NewDBListRepo(root, nextID, eventLogger)
+
+	err = importLines(listRepo)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
+	}
+
+	err = fileDS.Save(listRepo.Root, listRepo.PendingDeletions)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)

@@ -24,6 +24,7 @@ func main() {
 		}
 		rootDir = path.Join(home, ".fzn/")
 	}
+	// TODO remove
 	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
 		notesSubDir = "notes"
 	}
@@ -31,10 +32,23 @@ func main() {
 	rootPath := path.Join(rootDir, rootFileName)
 	notesDir := path.Join(rootDir, notesSubDir)
 
+	// TODO remove
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	listRepo := service.NewDBListRepo(rootPath, notesDir)
+	fileDS := service.NewFileDataStore(rootPath, notesDir)
+
+	// List instantiation
+	root, nextID, err := fileDS.Load()
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(0)
+	}
+
+	// Get DbEventLogger
+	eventLogger := service.NewDbEventLogger()
+
+	listRepo := service.NewDBListRepo(root, nextID, eventLogger)
 
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
@@ -44,8 +58,14 @@ func main() {
 
 	term := client.NewTerm(listRepo, fznColour)
 
-	err := term.RunClient()
+	err = term.RunClient()
 	if err != nil {
 		log.Fatal(err)
+	} else {
+		err := fileDS.Save(listRepo.Root, listRepo.PendingDeletions)
+		if err != nil {
+			log.Fatal(err)
+		}
+		os.Exit(0)
 	}
 }
