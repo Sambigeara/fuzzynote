@@ -1,16 +1,13 @@
 package service
 
 import (
-	//"fmt"
-	"os"
 	"testing"
 )
 
 func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo on empty db", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+		eventLogger := NewDbEventLogger()
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
 
 		err := mockListRepo.Undo()
 		if err != nil {
@@ -28,9 +25,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+		eventLogger := NewDbEventLogger()
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -62,7 +58,7 @@ func TestTransactionUndo(t *testing.T) {
 		if len(matches) != 0 {
 			t.Errorf("Undo should have removed the only item")
 		}
-		if mockListRepo.root != nil {
+		if mockListRepo.Root != nil {
 			t.Errorf("The root should have been cleared")
 		}
 
@@ -74,9 +70,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+		eventLogger := NewDbEventLogger()
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -146,14 +141,13 @@ func TestTransactionUndo(t *testing.T) {
 		if len(matches) != 0 {
 			t.Errorf("Second undo should have deleted the item")
 		}
-		if mockListRepo.root != nil {
+		if mockListRepo.Root != nil {
 			t.Errorf("Undo should have removed the root")
 		}
 	})
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+		eventLogger := NewDbEventLogger()
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -311,9 +305,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
-		rootPath := "file_to_delete"
-		mockListRepo := NewDBListRepo(rootPath, "")
-		defer os.Remove(rootPath)
+		eventLogger := NewDbEventLogger()
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
 
 		mockListRepo.Add("", nil, nil, nil)
 

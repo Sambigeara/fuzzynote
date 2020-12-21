@@ -1,13 +1,6 @@
 package service
 
 import (
-	"encoding/binary"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"log"
-	"os"
-	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -16,10 +9,8 @@ import (
 // This is THE date that Golang needs to determine custom formatting
 const dateFormat string = "Mon, Jan 2, 2006"
 
-// ListRepo represents the main interface to the data store backend
+// ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Load() error
-	Save() error
 	Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
@@ -33,13 +24,10 @@ type ListRepo interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	rootPath           string
-	notesPath          string
-	root               *ListItem
-	nextID             uint32
-	pendingDeletions   []*ListItem
-	eventLogger        *DbEventLogger
-	latestFileSchemaID uint16
+	Root             *ListItem
+	nextID           uint32
+	PendingDeletions []*ListItem
+	eventLogger      *DbEventLogger
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -66,180 +54,12 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootPath string, notesPath string) *DBListRepo {
-	el := eventLog{
-		eventType: nullEvent,
-		ptr:       nil,
-		undoLine:  "",
-		undoNote:  nil,
-		redoLine:  "",
-		redoNote:  nil,
-	}
+func NewDBListRepo(root *ListItem, nextID uint32, eventLogger *DbEventLogger) *DBListRepo {
 	return &DBListRepo{
-		rootPath:           rootPath,
-		notesPath:          notesPath,
-		eventLogger:        &DbEventLogger{0, []eventLog{el}},
-		nextID:             1,
-		latestFileSchemaID: LatestFileSchemaID,
+		Root:        root,
+		eventLogger: eventLogger,
+		nextID:      nextID,
 	}
-}
-
-// Load is called on initial startup. It instantiates the app, and deserialises and displays
-// default LineItems
-func (r *DBListRepo) Load() error {
-	f, err := os.OpenFile(r.rootPath, os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-	defer f.Close()
-
-	// TODO remove this temp measure once all users are on file schema >= 1
-	// The first version did not have a file schema. To detemine if a file is of the original schema,
-	// we rely on the likely fact that no-one has generated enough listItems (>65535) to use the right two
-	// bytes of the initial uint32 assigned for the first listItemID. E.g. if the second uint16 (bytes 3/4)
-	// are 0, then it's likely the original schema.
-	// With the above in mind, we can infer the correct file schema and file offset as follows:
-	//
-	// if first uint16 == 0:
-	//   fileSchemaId = 0
-	//   fileOffset = 2
-	// else if second uint16 == 0:
-	//   fileSchemaId = 0
-	//   fileOffset = 0
-	// else:
-	//   fileSchemaId = first uint16
-	//   fileOffset = 2
-	//
-	var firstTwo, secondTwo uint16
-	err = binary.Read(f, binary.LittleEndian, &firstTwo)
-	err = binary.Read(f, binary.LittleEndian, &secondTwo)
-	if err != nil {
-		if err == io.EOF {
-			return nil
-		}
-		log.Fatal(err)
-		return err
-	}
-	// NOTE: File offset now at 4
-
-	fileHeader := fileHeader{}
-	wasUnversionedFile := false
-	if firstTwo == 0 {
-		// File schema is explicitly set to 0
-		fileHeader.FileSchemaID = 0
-		f.Seek(2, io.SeekStart)
-	} else if secondTwo == 0 {
-		wasUnversionedFile = true
-		// Fileschema not set (assuming no lineItem with ID > 65535)
-		fileHeader.FileSchemaID = 0
-		f.Seek(0, io.SeekStart)
-	} else {
-		fileHeader.FileSchemaID = firstTwo
-		f.Seek(2, io.SeekStart)
-	}
-
-	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
-	var cur *ListItem
-
-	for {
-		nextItem := ListItem{}
-		cont, err := r.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
-		if err != nil {
-			//log.Fatal(err)
-			return err
-		}
-		// TODO: 2020-12-05 remove once everyone using file schema >= 1
-		// Under normal circumstances, the first item read from the file will be youngest.
-		// However, due to annoying historical "reasons", the first non-versioned file schema
-		// wrote the listItems in reverse order, so we need to add an awful TEMP hack in here
-		// to join the doubly linked list in the reverse order
-		if wasUnversionedFile {
-			// This bit will be removed
-			nextItem.parent = cur
-			if !cont {
-				r.root = cur
-				return nil
-			}
-			if cur != nil {
-				cur.child = &nextItem
-			}
-			cur = &nextItem
-		} else {
-			// This bit will stay
-			nextItem.child = cur
-			if !cont {
-				return nil
-			}
-			if cur == nil {
-				r.root = &nextItem
-			} else {
-				cur.parent = &nextItem
-			}
-			cur = &nextItem
-		}
-
-		// We need to find the next available index for the entire dataset
-		if nextItem.id >= r.nextID {
-			r.nextID = nextItem.id + 1
-		}
-	}
-}
-
-// Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save() error {
-	// TODO remove all files starting with `bak_*`, these are no longer needed
-
-	// Delete any files that need clearing up
-	for _, item := range r.pendingDeletions {
-		strID := fmt.Sprint(item.id)
-		oldPath := path.Join(r.notesPath, strID)
-		err := os.Remove(oldPath)
-		if err != nil {
-			// TODO is this required?
-			if !os.IsNotExist(err) {
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
-
-	f, err := os.Create(r.rootPath)
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-	defer f.Close()
-
-	// Return if no files to write. os.Create truncates by default so the file will
-	// have been overwritten
-	if r.root == nil {
-		return nil
-	}
-
-	// Write the file schema id to the start of the file
-	err = binary.Write(f, binary.LittleEndian, r.latestFileSchemaID)
-	if err != nil {
-		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
-		log.Fatal(err)
-		return err
-	}
-
-	cur := r.root
-
-	for {
-		err := r.writeFileFromListItem(f, cur)
-		if err != nil {
-			//log.Fatal(err)
-			return err
-		}
-
-		if cur.parent == nil {
-			break
-		}
-		cur = cur.parent
-	}
-	return nil
 }
 
 func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) (*ListItem, error) {
@@ -258,8 +78,8 @@ func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, newItem
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {
-		oldRoot := r.root
-		r.root = newItem
+		oldRoot := r.Root
+		r.Root = newItem
 		if oldRoot != nil {
 			newItem.parent = oldRoot
 			oldRoot.child = newItem
@@ -289,14 +109,14 @@ func (r *DBListRepo) del(item *ListItem) error {
 		item.child.parent = item.parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.root = item.parent
+		r.Root = item.parent
 	}
 
 	if item.parent != nil {
 		item.parent.child = item.child
 	}
 
-	r.pendingDeletions = append(r.pendingDeletions, item)
+	r.PendingDeletions = append(r.PendingDeletions, item)
 
 	return nil
 }
@@ -323,8 +143,8 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 	}
 
 	// Update root if required
-	for r.root.child != nil {
-		r.root = r.root.child
+	for r.Root.child != nil {
+		r.Root = r.Root.child
 	}
 	return nil
 }
@@ -353,32 +173,22 @@ func (r *DBListRepo) moveDown(item *ListItem) (bool, error) {
 	return true, err
 }
 
-func (r *DBListRepo) incrementEventLog() {
-	r.eventLogger.curIdx++
-	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
-	// are overwritten
-	r.eventLogger.log = r.eventLogger.log[:r.eventLogger.curIdx+1]
-}
-
 // Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
 func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
 	newItem, err := r.add(line, note, childItem, newItem)
 	r.eventLogger.addLog(addEvent, newItem, "", nil)
-	r.incrementEventLog()
 	return err
 }
 
 // Update will update the line or note of an existing ListItem
 func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
 	r.eventLogger.addLog(updateEvent, listItem, line, note)
-	r.incrementEventLog()
 	return r.update(line, note, listItem)
 }
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) error {
 	r.eventLogger.addLog(deleteEvent, item, "", nil)
-	r.incrementEventLog()
 	return r.del(item)
 }
 
@@ -386,7 +196,6 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 // current matches into account.
 func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 	r.eventLogger.addLog(moveUpEvent, item, "", nil)
-	r.incrementEventLog()
 	return r.moveUp(item)
 }
 
@@ -394,25 +203,7 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 // current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	r.eventLogger.addLog(moveDownEvent, item, "", nil)
-	r.incrementEventLog()
 	return r.moveDown(item)
-}
-
-func (r *DBListRepo) callFunctionForEventLog(ev eventType, ptr *ListItem, line string, note *[]byte) error {
-	var err error
-	switch ev {
-	case addEvent:
-		_, err = r.add(ptr.Line, ptr.Note, ptr.child, ptr)
-	case deleteEvent:
-		err = r.del(ptr)
-	case updateEvent:
-		err = r.update(line, note, ptr)
-	case moveUpEvent:
-		_, err = r.moveUp(ptr)
-	case moveDownEvent:
-		_, err = r.moveDown(ptr)
-	}
-	return err
 }
 
 func (r *DBListRepo) Undo() error {
@@ -547,7 +338,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		keys[i] = group
 	}
 
-	cur := r.root
+	cur := r.Root
 	var lastCur *ListItem
 
 	res := []*ListItem{}
@@ -595,52 +386,4 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 
 		cur = cur.parent
 	}
-}
-
-func (r *DBListRepo) loadPage(id uint32) (*[]byte, error) {
-	strID := fmt.Sprint(id)
-	filePath := path.Join(r.notesPath, strID)
-
-	dat := make([]byte, 0)
-	// If file does not exist, return nil
-	if _, err := os.Stat(filePath); err != nil {
-		if os.IsNotExist(err) {
-			return &dat, nil
-		} else {
-			return nil, err
-		}
-	}
-
-	// Read whole file
-	dat, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		log.Fatal(err)
-		return nil, err
-	}
-	return &dat, nil
-}
-
-func (r *DBListRepo) savePage(id uint32, data *[]byte) error {
-	strID := fmt.Sprint(id)
-	filePath := path.Join(r.notesPath, strID)
-
-	// If data has been removed or is empty, delete the file and return
-	if data == nil || len(*data) == 0 {
-		_ = os.Remove(filePath)
-		// TODO handle failure more gracefully? AFAIK os.Remove just returns a *PathError on failure
-		// which is mostly indicative of a noneexistent file, so good enough for now...
-		return nil
-	}
-
-	// Open or create a file in the `/notes/` subdir using the listItem id as the file name
-	// This needs to be before the ReadFile below to ensure the file exists
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
-	defer f.Close()
-
-	_, err = f.Write(*data)
-	if err != nil {
-		fmt.Println("binary.Write failed:", err)
-		return err
-	}
-	return nil
 }
