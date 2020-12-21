@@ -373,4 +373,84 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Redo should have added the line back in")
 		}
 	})
+	t.Run("Delete line, Undo, delete character, Undo", func(t *testing.T) {
+		originalLine := "Original line"
+		item1 := ListItem{
+			Line: originalLine,
+			id:   1,
+		}
+		mockListRepo := NewDBListRepo(&item1, 2, NewDbEventLogger())
+
+		if len(mockListRepo.eventLogger.log) != 1 {
+			t.Errorf("Event log should have only the nullEvent in it")
+		}
+		if mockListRepo.eventLogger.curIdx != 0 {
+			t.Errorf("Event logger should be set to zero")
+		}
+
+		mockListRepo.Delete(&item1)
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+		if len(matches) != 0 {
+			t.Errorf("Item should have been deleted")
+		}
+
+		if len(mockListRepo.eventLogger.log) != 2 {
+			t.Errorf("Event log should have the nullEvent and one Delete event in it")
+		}
+		if mockListRepo.eventLogger.curIdx != 1 {
+			t.Errorf("Event logger should have incremented to one")
+		}
+
+		err := mockListRepo.Undo()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ = mockListRepo.Match([][]rune{}, nil, true)
+		if len(matches) != 1 {
+			t.Errorf("Item should have been added back in")
+		}
+
+		if len(mockListRepo.eventLogger.log) != 2 {
+			t.Errorf("Event log should still have one Delete event in it")
+		}
+		if mockListRepo.eventLogger.curIdx != 0 {
+			t.Errorf("Event logger should have decremented to zero")
+		}
+
+		newLine := "Updated line"
+		mockListRepo.Update(newLine, &[]byte{}, matches[0])
+
+		if len(mockListRepo.eventLogger.log) != 2 {
+			t.Errorf("Event log should have been overidden with the nullEvent and the single Update event now")
+		}
+		if mockListRepo.eventLogger.log[1].eventType != updateEvent {
+			t.Errorf("Event logger item should be of type updateEvent")
+		}
+		if mockListRepo.eventLogger.curIdx != 1 {
+			t.Errorf("Event logger should have incremented to one")
+		}
+
+		err = mockListRepo.Undo()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matches, _ = mockListRepo.Match([][]rune{}, nil, true)
+		if len(matches) != 1 {
+			t.Errorf("There should still be one match")
+		}
+
+		if len(mockListRepo.eventLogger.log) != 2 {
+			t.Errorf("Event log should still have one Insert event in it")
+		}
+		if mockListRepo.eventLogger.curIdx != 0 {
+			t.Errorf("Event logger should have incremented to one")
+		}
+
+		if matches[0].Line != originalLine {
+			t.Errorf("The line should have reverted back to the original")
+		}
+	})
 }

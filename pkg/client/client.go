@@ -377,7 +377,10 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					t.showHidden = !t.showHidden
 				} else {
-					t.curItem.IsHidden = !t.curItem.IsHidden
+					err = t.db.ToggleVisibility(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
 				}
 			case tcell.KeyCtrlU:
 				err := t.db.Undo()
