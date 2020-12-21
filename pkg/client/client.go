@@ -298,13 +298,6 @@ func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, p
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
-	// List instantiation
-	err := t.db.Load()
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(0)
-	}
-
 	matches, err := t.db.Match([][]rune{}, nil, t.showHidden)
 	if err != nil {
 		log.Fatal(err)
@@ -323,12 +316,8 @@ func (t *Terminal) RunClient() error {
 		case *tcell.EventKey:
 			switch ev.Key() {
 			case tcell.KeyCtrlUnderscore:
-				err := t.db.Save()
-				if err != nil {
-					log.Fatal(err)
-				}
 				t.s.Fini()
-				os.Exit(0)
+				return nil
 			case tcell.KeyEnter:
 				// Add a new item below current cursor position
 				// This will insert the contents of the current search string (omitting search args like `#`)
