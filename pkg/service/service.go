@@ -16,6 +16,7 @@ type ListRepo interface {
 	Delete(listItem *ListItem) error
 	MoveUp(listItem *ListItem) (bool, error)
 	MoveDown(listItem *ListItem) (bool, error)
+	ToggleVisibility(listItem *ListItem) error
 	Undo() error
 	Redo() error
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
@@ -173,6 +174,11 @@ func (r *DBListRepo) moveDown(item *ListItem) (bool, error) {
 	return true, err
 }
 
+func (r *DBListRepo) toggleVisibility(item *ListItem) error {
+	item.IsHidden = !item.IsHidden
+	return nil
+}
+
 // Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
 func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
 	newItem, err := r.add(line, note, childItem, newItem)
@@ -204,6 +210,12 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	r.eventLogger.addLog(moveDownEvent, item, "", nil)
 	return r.moveDown(item)
+}
+
+// ToggleVisibility will toggle an item to be visible or invisible
+func (r *DBListRepo) ToggleVisibility(item *ListItem) error {
+	r.eventLogger.addLog(visibilityEvent, item, "", nil)
+	return r.toggleVisibility(item)
 }
 
 func (r *DBListRepo) Undo() error {

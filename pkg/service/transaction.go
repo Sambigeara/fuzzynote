@@ -9,21 +9,23 @@ type TransactionLogger interface {
 type eventType string
 
 const (
-	nullEvent     eventType = "null"
-	addEvent      eventType = "add"
-	deleteEvent   eventType = "delete"
-	updateEvent   eventType = "update"
-	moveUpEvent   eventType = "moveUp"
-	moveDownEvent eventType = "moveDown"
+	nullEvent       eventType = "null"
+	addEvent        eventType = "add"
+	deleteEvent     eventType = "delete"
+	updateEvent     eventType = "update"
+	moveUpEvent     eventType = "moveUp"
+	moveDownEvent   eventType = "moveDown"
+	visibilityEvent eventType = "toggleVisibility"
 )
 
 // OppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
 var oppositeEvent = map[eventType]eventType{
-	addEvent:      deleteEvent,
-	deleteEvent:   addEvent,
-	updateEvent:   updateEvent,
-	moveUpEvent:   moveDownEvent,
-	moveDownEvent: moveUpEvent,
+	addEvent:        deleteEvent,
+	deleteEvent:     addEvent,
+	updateEvent:     updateEvent,
+	moveUpEvent:     moveDownEvent,
+	moveDownEvent:   moveUpEvent,
+	visibilityEvent: visibilityEvent,
 }
 
 // logFuncs represent the undo and redo functions related to a particular transaction event
@@ -64,16 +66,14 @@ func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newN
 		redoLine:  newLine,
 		redoNote:  newNote,
 	}
-	// PREPEND newest items to the log
-	//l.log = append([]eventLog{ev}, l.log...)
-	// Append to log
-	l.log = append(l.log, ev)
-	//fmt.Println(l.log)
-
-	l.curIdx++
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten
 	l.log = l.log[:l.curIdx+1]
+
+	// Append to log
+	l.log = append(l.log, ev)
+
+	l.curIdx++
 
 	return nil
 }
@@ -91,6 +91,8 @@ func (r *DBListRepo) callFunctionForEventLog(ev eventType, ptr *ListItem, line s
 		_, err = r.moveUp(ptr)
 	case moveDownEvent:
 		_, err = r.moveDown(ptr)
+	case visibilityEvent:
+		err = r.toggleVisibility(ptr)
 	}
 	return err
 }
