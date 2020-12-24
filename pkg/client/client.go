@@ -24,18 +24,19 @@ const (
 )
 
 type Terminal struct {
-	db          service.ListRepo
-	search      [][]rune
-	curItem     *service.ListItem // The currently selected item
-	s           tcell.Screen
-	style       tcell.Style
-	w           int
-	h           int
-	curX        int // Cur "screen" index, not related to matched item lists
-	curY        int // Cur "screen" index, not related to matched item lists
-	vertOffset  int // The index of the first displayed item in the match set
-	horizOffset int // The index of the first displayed char in the curItem
-	showHidden  bool
+	db                service.ListRepo
+	search            [][]rune
+	curItem           *service.ListItem // The currently selected item
+	s                 tcell.Screen
+	style             tcell.Style
+	w                 int
+	h                 int
+	curX              int // Cur "screen" index, not related to matched item lists
+	curY              int // Cur "screen" index, not related to matched item lists
+	vertOffset        int // The index of the first displayed item in the match set
+	horizOffset       int // The index of the first displayed char in the curItem
+	showHidden        bool
+	hiddenMatchPrefix string // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -228,6 +229,11 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		}
 
 		line := r.Line
+
+		// Truncate the full search string from any lines matching the entire thing,
+		// treating search group separators as spaces and ignoring search operators
+		line = strings.TrimPrefix(line, t.hiddenMatchPrefix)
+
 		// Account for horizontal offset if on curItem
 		if r == t.curItem {
 			line = line[t.horizOffset:]
@@ -251,6 +257,25 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 
 	t.s.ShowCursor(t.curX, t.curY)
 	return nil
+}
+
+func (t *Terminal) getHiddenLinePrefix(keys [][]rune) string {
+	keyArray := []string{}
+	for _, key := range keys {
+		_, nChars := t.db.GetMatchPattern(key)
+		key = key[nChars:]
+		keyArray = append(keyArray, string(key))
+	}
+
+	// Only apply the trunaction on "closed" search groups (e.g. when the user has tabbed to
+	// the next one.
+	// The second boolean clause covers the edge case where there are no search terms, but
+	// there is only 1 empty search group (an empty one hangs around after deleting characters from it)
+	if len(keyArray) > 0 && !(len(keyArray) == 1 && len(keyArray[0]) == 0) {
+		// We append an empty space to save an empty character being added to the front of the line
+		return fmt.Sprintf("%s ", strings.Join(keyArray[:len(keyArray)-1], " "))
+	}
+	return ""
 }
 
 func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
@@ -310,7 +335,8 @@ func (t *Terminal) RunClient() error {
 		t.s.Show()
 		ev := t.s.PollEvent()
 
-		offsetX := t.horizOffset + t.curX
+		// offsetX represents the position in the underying curItem.Line
+		offsetX := t.horizOffset + t.curX + t.getLenSearchBox()
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
@@ -324,15 +350,14 @@ func (t *Terminal) RunClient() error {
 				var searchStrings []string
 				for _, group := range t.search {
 					_, nChars := t.db.GetMatchPattern(group)
-					if len(group) > 0 {
-						searchStrings = append(searchStrings, string(group[nChars:]))
-					}
+					searchStrings = append(searchStrings, string(group[nChars:]))
 				}
 				newString := strings.Join(searchStrings, " ")
 
 				var err error
 				if t.curY == reservedTopLines-1 {
 					err = t.db.Add(newString, nil, nil, nil)
+					posDiff[0] -= t.getLenSearchBox()
 				} else {
 					err = t.db.Add(newString, nil, t.curItem, nil)
 				}
@@ -445,15 +470,14 @@ func (t *Terminal) RunClient() error {
 							log.Fatal(err)
 						}
 						posDiff[0]--
-					} else if offsetX == 0 && len(newLine) == 0 {
+					} else if (offsetX-t.getLenSearchBox()) == 0 && (len(newLine)-t.getLenSearchBox()) == 0 {
 						err := t.db.Delete(t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
-						// If we haven't just deleted the top most item, move cursor up and go to
-						// end of line
+						// Move up a cursor position
+						posDiff[1]--
 						if t.curY > reservedTopLines {
-							posDiff[1]--
 							// TODO setting to the max width isn't completely robust as other
 							// decrements will affect, but it's good enough for now as the cursor
 							// repositioning logic will take care of over-increments
@@ -553,11 +577,7 @@ func (t *Terminal) RunClient() error {
 		}
 		t.s.Clear()
 
-		// NOTE this is useful for debugging curItem setting
-		//if t.curItem != nil {
-		//    strID := fmt.Sprint(t.curItem.ID)
-		//    emitStr(t.s, 0, t.h-1, t.style, strID)
-		//}
+		t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
 		var cur *service.ListItem
 		if t.curItem != nil {
@@ -632,7 +652,7 @@ func (t *Terminal) RunClient() error {
 			t.horizOffset = 0
 		}
 
-		// Some logic above do forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
+		// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
 		// Therefore ensure we do not go < 0
 		t.horizOffset = max(0, t.horizOffset)
 
@@ -646,14 +666,14 @@ func (t *Terminal) RunClient() error {
 				if t.horizOffset > 0 {
 					t.horizOffset--
 				}
-				t.curX = max(0, newXIdx) // Prevent index < 0
+				t.curX = 0 // Prevent index < 0
 			} else {
 				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 					t.horizOffset++
 				}
 				// len([]rune) rather than len(string) as some string chars are >1 bytes
-				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset) // Prevent going out of range of the line
-				t.curX = min(newXIdx, t.w-1)                                      // Prevent going out of range of the page
+				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-t.getLenSearchBox()) // Prevent going out of range of the line
+				t.curX = min(newXIdx, t.w-1)                                                          // Prevent going out of range of the page
 			}
 		}
 
