@@ -24,18 +24,20 @@ const (
 )
 
 type Terminal struct {
-	db          service.ListRepo
-	search      [][]rune
-	curItem     *service.ListItem // The currently selected item
-	s           tcell.Screen
-	style       tcell.Style
-	w           int
-	h           int
-	curX        int // Cur "screen" index, not related to matched item lists
-	curY        int // Cur "screen" index, not related to matched item lists
-	vertOffset  int // The index of the first displayed item in the match set
-	horizOffset int // The index of the first displayed char in the curItem
-	showHidden  bool
+	db                    service.ListRepo
+	search                [][]rune
+	curItem               *service.ListItem // The currently selected item
+	s                     tcell.Screen
+	style                 tcell.Style
+	w                     int
+	h                     int
+	curX                  int // Cur "screen" index, not related to matched item lists
+	curY                  int // Cur "screen" index, not related to matched item lists
+	vertOffset            int // The index of the first displayed item in the match set
+	horizOffset           int // The index of the first displayed char in the curItem
+	showHidden            bool
+	hiddenMatchPrefix     string // The common string that we want to truncate from each line
+	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -228,6 +230,17 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		}
 
 		line := r.Line
+
+		// Truncate the full search string from any lines matching the entire thing,
+		// ignoring search operators
+		// Op needs to be case-insensitive, but must not mutate underlying line
+		if strings.HasPrefix(strings.ToLower(line), t.hiddenMatchPrefix) {
+			line = string([]rune(line)[len(t.hiddenMatchPrefix):])
+		}
+		//line = strings.TrimPrefix(line, t.hiddenMatchPrefix)
+		// If we strip the match prefix, and there is a space remaining, trim that too
+		line = strings.TrimPrefix(line, " ")
+
 		// Account for horizontal offset if on curItem
 		if r == t.curItem {
 			line = line[t.horizOffset:]
@@ -251,6 +264,44 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 
 	t.s.ShowCursor(t.curX, t.curY)
 	return nil
+}
+
+func (t *Terminal) getHiddenLinePrefix(keys [][]rune) (string, string) {
+	// Only apply the trunaction on "closed" search groups (e.g. when the user has tabbed to
+	// the next one).
+
+	if len(keys) == 0 || (len(keys) == 1 && len(keys[0]) == 0) {
+		return "", ""
+	}
+
+	//keyArray := []string{}
+	//// We keep an array with the modifiers as well to allow us to return true lengths
+	//fullKeyArray := []string{}
+	//for _, key := range keys {
+	//    // Strip all trailing and leading spaces
+	//    // Ignore empty keys
+	//    key = []rune(strings.TrimSpace(string(key)))
+	//    if len(key) > 0 {
+	//        _, nChars := t.db.GetMatchPattern(key)
+	//        keyArray = append(keyArray, string(key[nChars:]))
+	//        fullKeyArray = append(fullKeyArray, string(key))
+	//    }
+	//}
+
+	//shortenedPrefix := fmt.Sprintf("%s ", strings.Join(keyArray, " "))
+	//fullPrefix := fmt.Sprintf("%s ", strings.Join(fullKeyArray, " "))
+
+	// The above joins all keys in the search group, but this causes numerous strange behaviours.
+	// For now, only operate on the first key.
+	key := keys[0]
+	_, nChars := t.db.GetMatchPattern(key)
+	trimmedKey := string(key[nChars:])
+	fullKey := string(key)
+
+	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
+	fullPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(fullKey)))
+
+	return shortenedPrefix, fullPrefix
 }
 
 func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
@@ -310,7 +361,9 @@ func (t *Terminal) RunClient() error {
 		t.s.Show()
 		ev := t.s.PollEvent()
 
-		offsetX := t.horizOffset + t.curX
+		// offsetX represents the position in the underying curItem.Line
+		lenHiddenMatchPrefix := len([]byte(t.hiddenMatchPrefix))
+		offsetX := t.horizOffset + t.curX + lenHiddenMatchPrefix
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
@@ -322,6 +375,7 @@ func (t *Terminal) RunClient() error {
 				// Add a new item below current cursor position
 				// This will insert the contents of the current search string (omitting search args like `#`)
 				var searchStrings []string
+				// We can't use t.hiddenMatchPrefix as it only includes the first group at present
 				for _, group := range t.search {
 					_, nChars := t.db.GetMatchPattern(group)
 					if len(group) > 0 {
@@ -333,6 +387,7 @@ func (t *Terminal) RunClient() error {
 				var err error
 				if t.curY == reservedTopLines-1 {
 					err = t.db.Add(newString, nil, nil, nil)
+					posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
 				} else {
 					err = t.db.Add(newString, nil, t.curItem, nil)
 				}
@@ -438,22 +493,21 @@ func (t *Terminal) RunClient() error {
 					// If cursor in 0 position and current line is empty, delete current line and go
 					// to end of previous line (if present)
 					newLine := []rune(t.curItem.Line)
-					if offsetX > 0 && len(newLine) > 0 {
+					if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
 						posDiff[0]--
-					} else if offsetX == 0 && len(newLine) == 0 {
+					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
 						err := t.db.Delete(t.curItem)
 						if err != nil {
 							log.Fatal(err)
 						}
-						// If we haven't just deleted the top most item, move cursor up and go to
-						// end of line
+						// Move up a cursor position
+						posDiff[1]--
 						if t.curY > reservedTopLines {
-							posDiff[1]--
 							// TODO setting to the max width isn't completely robust as other
 							// decrements will affect, but it's good enough for now as the cursor
 							// repositioning logic will take care of over-increments
@@ -553,11 +607,7 @@ func (t *Terminal) RunClient() error {
 		}
 		t.s.Clear()
 
-		// NOTE this is useful for debugging curItem setting
-		//if t.curItem != nil {
-		//    strID := fmt.Sprint(t.curItem.ID)
-		//    emitStr(t.s, 0, t.h-1, t.style, strID)
-		//}
+		t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
 
 		var cur *service.ListItem
 		if t.curItem != nil {
@@ -632,7 +682,7 @@ func (t *Terminal) RunClient() error {
 			t.horizOffset = 0
 		}
 
-		// Some logic above do forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
+		// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
 		// Therefore ensure we do not go < 0
 		t.horizOffset = max(0, t.horizOffset)
 
@@ -646,14 +696,14 @@ func (t *Terminal) RunClient() error {
 				if t.horizOffset > 0 {
 					t.horizOffset--
 				}
-				t.curX = max(0, newXIdx) // Prevent index < 0
+				t.curX = 0 // Prevent index < 0
 			} else {
 				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 					t.horizOffset++
 				}
 				// len([]rune) rather than len(string) as some string chars are >1 bytes
-				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset) // Prevent going out of range of the line
-				t.curX = min(newXIdx, t.w-1)                                      // Prevent going out of range of the page
+				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
+				t.curX = min(newXIdx, t.w-1)                                                           // Prevent going out of range of the page
 			}
 		}
 
