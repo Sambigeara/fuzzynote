@@ -386,8 +386,13 @@ func (t *Terminal) RunClient() error {
 		ev := t.s.PollEvent()
 
 		// offsetX represents the position in the underying curItem.Line
+		// Only apply the prefix offset if the line starts with the prefix, other lines will
+		// match but not have the prefix truncated
+		offsetX := t.horizOffset + t.curX
 		lenHiddenMatchPrefix := len([]byte(t.hiddenMatchPrefix))
-		offsetX := t.horizOffset + t.curX + lenHiddenMatchPrefix
+		if t.curItem != nil && strings.HasPrefix(strings.ToLower(t.curItem.Line), strings.ToLower(t.hiddenMatchPrefix)) {
+			offsetX += lenHiddenMatchPrefix
+		}
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
