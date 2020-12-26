@@ -37,6 +37,7 @@ Examples:
 - `Enter`: Add new line below (prepends search line to new line)
 - `Ctrl-d`: Delete line or clear search groups
 - `Alt-]/Alt-[`: Moves the current item up or down in the list
+- `Ctrl-s`: Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items.
 
 ### State
 
