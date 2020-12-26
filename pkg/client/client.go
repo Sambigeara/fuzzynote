@@ -411,7 +411,7 @@ func (t *Terminal) RunClient() error {
 							searchStrings = append(searchStrings, string(group[nChars:]))
 						}
 					}
-					newString := strings.Join(searchStrings, " ")
+					newString := fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
 
 					var err error
 					if t.curY == reservedTopLines-1 {
