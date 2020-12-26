@@ -13,6 +13,7 @@ import (
 
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
+	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
 	"github.com/micmonay/keybd_event"
 )
@@ -36,8 +37,9 @@ type Terminal struct {
 	vertOffset            int // The index of the first displayed item in the match set
 	horizOffset           int // The index of the first displayed char in the curItem
 	showHidden            bool
-	hiddenMatchPrefix     string // The common string that we want to truncate from each line
-	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
+	selectedItems         map[*service.ListItem]struct{} // struct{} is more space efficient than bool
+	hiddenMatchPrefix     string                         // The common string that we want to truncate from each line
+	hiddenFullMatchPrefix string                         // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -217,13 +219,20 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		Background(tcell.ColorGrey).
 		Foreground(tcell.ColorWhite)
 
+	selectedStyle := tcell.StyleDefault.
+		Background(tcell.ColorMaroon).
+		Foreground(tcell.ColorWhite)
+
 	// Fill lineItems
 	var offset int
 	var style tcell.Style
 	for i, r := range matches[t.vertOffset:] {
 		offset = i + reservedTopLines
-		// If note is present, indicate with a different style
-		if len(*(r.Note)) > 0 {
+		// If item is highlighted, indicate accordingly
+		if _, ok := t.selectedItems[r]; ok {
+			style = selectedStyle
+		} else if len(*(r.Note)) > 0 {
+			// If note is present, indicate with a different style
 			style = noteStyle
 		} else {
 			style = t.style
@@ -346,6 +355,18 @@ func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, p
 	(*posDiff)[0] += endLenFunc() - startLen
 }
 
+func getCommonSearchPrefix(selectedItems map[*service.ListItem]struct{}) [][]rune {
+	var lines []string
+	for item := range selectedItems {
+		lines = append(lines, item.Line)
+	}
+	prefix := strings.TrimSpace(longestcommon.Prefix(lines))
+	if len(prefix) == 0 {
+		return [][]rune{}
+	}
+	return [][]rune{[]rune(fmt.Sprintf("#%s", prefix))}
+}
+
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
@@ -353,6 +374,9 @@ func (t *Terminal) RunClient() error {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Pre-instantiate the selectedItems map
+	t.selectedItems = make(map[*service.ListItem]struct{})
 
 	t.paint(matches, false)
 
@@ -372,29 +396,35 @@ func (t *Terminal) RunClient() error {
 				t.s.Fini()
 				return nil
 			case tcell.KeyEnter:
-				// Add a new item below current cursor position
-				// This will insert the contents of the current search string (omitting search args like `#`)
-				var searchStrings []string
-				// We can't use t.hiddenMatchPrefix as it only includes the first group at present
-				for _, group := range t.search {
-					_, nChars := t.db.GetMatchPattern(group)
-					if len(group) > 0 {
-						searchStrings = append(searchStrings, string(group[nChars:]))
-					}
-				}
-				newString := strings.Join(searchStrings, " ")
-
-				var err error
-				if t.curY == reservedTopLines-1 {
-					err = t.db.Add(newString, nil, nil, nil)
-					posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
+				if len(t.selectedItems) > 0 {
+					// Add common search prefix to search groups
+					t.search = getCommonSearchPrefix(t.selectedItems)
+					t.selectedItems = make(map[*service.ListItem]struct{})
 				} else {
-					err = t.db.Add(newString, nil, t.curItem, nil)
+					// Add a new item below current cursor position
+					// This will insert the contents of the current search string (omitting search args like `#`)
+					var searchStrings []string
+					// We can't use t.hiddenMatchPrefix as it only includes the first group at present
+					for _, group := range t.search {
+						_, nChars := t.db.GetMatchPattern(group)
+						if len(group) > 0 {
+							searchStrings = append(searchStrings, string(group[nChars:]))
+						}
+					}
+					newString := strings.Join(searchStrings, " ")
+
+					var err error
+					if t.curY == reservedTopLines-1 {
+						err = t.db.Add(newString, nil, nil, nil)
+						posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
+					} else {
+						err = t.db.Add(newString, nil, t.curItem, nil)
+					}
+					if err != nil {
+						log.Fatal(err)
+					}
+					posDiff[1]++
 				}
-				if err != nil {
-					log.Fatal(err)
-				}
-				posDiff[1]++
 			case tcell.KeyCtrlD:
 				if t.curY == reservedTopLines-1 {
 					t.search = [][]rune{}
@@ -447,8 +477,19 @@ func (t *Terminal) RunClient() error {
 				if err != nil {
 					log.Fatal(err)
 				}
+			case tcell.KeyCtrlS:
+				// If exists, clear, otherwise set
+				if _, ok := t.selectedItems[t.curItem]; ok {
+					delete(t.selectedItems, t.curItem)
+				} else {
+					t.selectedItems[t.curItem] = struct{}{}
+				}
 			case tcell.KeyEscape:
-				t.curY = 0 // TODO
+				if len(t.selectedItems) > 0 {
+					t.selectedItems = make(map[*service.ListItem]struct{})
+				} else {
+					t.curY = 0 // TODO
+				}
 			case tcell.KeyTab:
 				if t.curY == reservedTopLines-1 {
 					// If no search groups exist, rely on separate new char insertion elsewhere
