@@ -37,9 +37,9 @@ type Terminal struct {
 	vertOffset            int // The index of the first displayed item in the match set
 	horizOffset           int // The index of the first displayed char in the curItem
 	showHidden            bool
-	selectedItems         map[*service.ListItem]struct{} // struct{} is more space efficient than bool
-	hiddenMatchPrefix     string                         // The common string that we want to truncate from each line
-	hiddenFullMatchPrefix string                         // The common string that we want to truncate from each line
+	selectedItems         map[service.ListItem]struct{} // struct{} is more space efficient than bool
+	hiddenMatchPrefix     string                        // The common string that we want to truncate from each line
+	hiddenFullMatchPrefix string                        // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -229,7 +229,7 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	for i, r := range matches[t.vertOffset:] {
 		offset = i + reservedTopLines
 		// If item is highlighted, indicate accordingly
-		if _, ok := t.selectedItems[r]; ok {
+		if _, ok := t.selectedItems[*r]; ok {
 			style = selectedStyle
 		} else if len(*(r.Note)) > 0 {
 			// If note is present, indicate with a different style
@@ -355,7 +355,7 @@ func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, p
 	(*posDiff)[0] += endLenFunc() - startLen
 }
 
-func getCommonSearchPrefix(selectedItems map[*service.ListItem]struct{}) [][]rune {
+func getCommonSearchPrefix(selectedItems map[service.ListItem]struct{}) [][]rune {
 	var lines []string
 	for item := range selectedItems {
 		lines = append(lines, item.Line)
@@ -376,7 +376,7 @@ func (t *Terminal) RunClient() error {
 	}
 
 	// Pre-instantiate the selectedItems map
-	t.selectedItems = make(map[*service.ListItem]struct{})
+	t.selectedItems = make(map[service.ListItem]struct{})
 
 	t.paint(matches, false)
 
@@ -399,7 +399,8 @@ func (t *Terminal) RunClient() error {
 				if len(t.selectedItems) > 0 {
 					// Add common search prefix to search groups
 					t.search = getCommonSearchPrefix(t.selectedItems)
-					t.selectedItems = make(map[*service.ListItem]struct{})
+					t.selectedItems = make(map[service.ListItem]struct{})
+					t.curY = 0
 				} else {
 					// Add a new item below current cursor position
 					// This will insert the contents of the current search string (omitting search args like `#`)
@@ -479,14 +480,14 @@ func (t *Terminal) RunClient() error {
 				}
 			case tcell.KeyCtrlS:
 				// If exists, clear, otherwise set
-				if _, ok := t.selectedItems[t.curItem]; ok {
-					delete(t.selectedItems, t.curItem)
+				if _, ok := t.selectedItems[*t.curItem]; ok {
+					delete(t.selectedItems, *t.curItem)
 				} else {
-					t.selectedItems[t.curItem] = struct{}{}
+					t.selectedItems[*t.curItem] = struct{}{}
 				}
 			case tcell.KeyEscape:
 				if len(t.selectedItems) > 0 {
-					t.selectedItems = make(map[*service.ListItem]struct{})
+					t.selectedItems = make(map[service.ListItem]struct{})
 				} else {
 					t.curY = 0 // TODO
 				}
