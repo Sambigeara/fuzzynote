@@ -479,11 +479,13 @@ func (t *Terminal) RunClient() error {
 					log.Fatal(err)
 				}
 			case tcell.KeyCtrlS:
-				// If exists, clear, otherwise set
-				if _, ok := t.selectedItems[*t.curItem]; ok {
-					delete(t.selectedItems, *t.curItem)
-				} else {
-					t.selectedItems[*t.curItem] = struct{}{}
+				if t.curY != reservedTopLines-1 {
+					// If exists, clear, otherwise set
+					if _, ok := t.selectedItems[*t.curItem]; ok {
+						delete(t.selectedItems, *t.curItem)
+					} else {
+						t.selectedItems[*t.curItem] = struct{}{}
+					}
 				}
 			case tcell.KeyEscape:
 				if len(t.selectedItems) > 0 {
