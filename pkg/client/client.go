@@ -446,18 +446,18 @@ func (t *Terminal) RunClient() error {
 				}
 			case tcell.KeyCtrlA:
 				// Go to beginning of line
-				if t.curY != reservedTopLines-1 {
-					// TODO decouple cursor mutation from key handling
-					t.curX = 0
-					t.horizOffset = 0
-				}
+				// TODO decouple cursor mutation from key handling
+				t.curX = 0
+				t.horizOffset = 0
 			case tcell.KeyCtrlE:
 				// Go to end of line
-				if t.curY != reservedTopLines-1 {
+				if t.curY == reservedTopLines-1 {
+					t.curX = t.getLenSearchBox()
+				} else {
 					// TODO
 					t.curX = len([]rune(t.curItem.Line))
-					t.horizOffset = len([]rune(t.curItem.Line)) - t.w
 				}
+				t.horizOffset = t.curX - t.w
 			case tcell.KeyCtrlV:
 				// Toggle hidden item visibility
 				if t.curY == reservedTopLines-1 {
