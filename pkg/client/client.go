@@ -624,23 +624,8 @@ func (t *Terminal) RunClient() error {
 						}
 					}
 				}
-			case tcell.KeyDown:
-				// TODO remove duplication once key combos are sorted (also handled on `Alt-[`)
-				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
-					// Move the current item down and follow with cursor
-					moved, err := t.db.MoveDown(t.curItem)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if moved {
-						posDiff[1]++
-					}
-				} else {
-					posDiff[1]++
-				}
-			case tcell.KeyUp:
-				// TODO remove duplication once key combos are sorted (also handled on `Alt-]`)
-				if ev.Modifiers()&tcell.ModAlt != 0 && t.curY > reservedTopLines-1 {
+			case tcell.KeyPgUp:
+				if t.curY > reservedTopLines-1 {
 					// Move the current item up and follow with cursor
 					moved, err := t.db.MoveUp(t.curItem)
 					if err != nil {
@@ -649,9 +634,22 @@ func (t *Terminal) RunClient() error {
 					if moved {
 						posDiff[1]--
 					}
-				} else {
-					posDiff[1]--
 				}
+			case tcell.KeyPgDn:
+				if t.curY > reservedTopLines-1 {
+					// Move the current item down and follow with cursor
+					moved, err := t.db.MoveDown(t.curItem)
+					if err != nil {
+						log.Fatal(err)
+					}
+					if moved {
+						posDiff[1]++
+					}
+				}
+			case tcell.KeyDown:
+				posDiff[1]++
+			case tcell.KeyUp:
+				posDiff[1]--
 			case tcell.KeyRight:
 				posDiff[0]++
 			case tcell.KeyLeft:
@@ -673,44 +671,24 @@ func (t *Terminal) RunClient() error {
 					}
 					posDiff[0]++
 				} else {
-					if ev.Rune() == '[' && ev.Modifiers()&tcell.ModAlt != 0 {
-						// Move the current item down and follow with cursor
-						moved, err := t.db.MoveDown(t.curItem)
-						if err != nil {
-							log.Fatal(err)
-						}
-						if moved {
-							posDiff[1]++
-						}
-					} else if ev.Rune() == ']' && ev.Modifiers()&tcell.ModAlt != 0 {
-						// Move the current item up and follow with cursor
-						moved, err := t.db.MoveUp(t.curItem)
-						if err != nil {
-							log.Fatal(err)
-						}
-						if moved {
-							posDiff[1]--
-						}
+					newLine := []rune(t.curItem.Line)
+					// Insert characters at position
+					if len(newLine) == 0 || len(newLine) == offsetX {
+						newLine = append(newLine, ev.Rune())
 					} else {
-						newLine := []rune(t.curItem.Line)
-						// Insert characters at position
-						if len(newLine) == 0 || len(newLine) == offsetX {
-							newLine = append(newLine, ev.Rune())
-						} else {
-							newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
-						}
-
-						lenFunc := func() int {
-							return len([]rune(t.curItem.Line))
-						}
-						updateFunc := func() error {
-							return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
-						}
-						// len([]rune) rather than len(string) as some string chars are >1 bytes
-						t.handleTextLengthChange(len([]rune(newLine)), lenFunc, &posDiff, updateFunc)
-
-						posDiff[0]++
+						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 					}
+
+					lenFunc := func() int {
+						return len([]rune(t.curItem.Line))
+					}
+					updateFunc := func() error {
+						return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+					}
+					// len([]rune) rather than len(string) as some string chars are >1 bytes
+					t.handleTextLengthChange(len([]rune(newLine)), lenFunc, &posDiff, updateFunc)
+
+					posDiff[0]++
 				}
 			}
 		}

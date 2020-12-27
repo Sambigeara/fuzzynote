@@ -201,15 +201,21 @@ func (r *DBListRepo) Delete(item *ListItem) error {
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
 func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
-	r.eventLogger.addLog(moveUpEvent, item, "", nil)
-	return r.moveUp(item)
+	moved, err := r.moveUp(item)
+	if moved {
+		r.eventLogger.addLog(moveUpEvent, item, "", nil)
+	}
+	return moved, err
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
-	r.eventLogger.addLog(moveDownEvent, item, "", nil)
-	return r.moveDown(item)
+	moved, err := r.moveDown(item)
+	if moved {
+		r.eventLogger.addLog(moveDownEvent, item, "", nil)
+	}
+	return moved, err
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
