@@ -38,8 +38,9 @@ type Terminal struct {
 	horizOffset           int // The index of the first displayed char in the curItem
 	showHidden            bool
 	selectedItems         map[service.ListItem]struct{} // struct{} is more space efficient than bool
-	hiddenMatchPrefix     string                        // The common string that we want to truncate from each line
-	hiddenFullMatchPrefix string                        // The common string that we want to truncate from each line
+	copiedItem            *service.ListItem
+	hiddenMatchPrefix     string // The common string that we want to truncate from each line
+	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -483,6 +484,20 @@ func (t *Terminal) RunClient() error {
 				err := t.db.Redo()
 				if err != nil {
 					log.Fatal(err)
+				}
+			case tcell.KeyCtrlC:
+				// Copy functionality
+				if t.curY != reservedTopLines-1 {
+					t.copiedItem = t.curItem
+				}
+			case tcell.KeyCtrlP:
+				// Paste functionality
+				if t.copiedItem != nil {
+					err := t.db.Add(t.copiedItem.Line, nil, t.curItem, nil)
+					if err != nil {
+						log.Fatal(err)
+					}
+					posDiff[1]++
 				}
 			case tcell.KeyCtrlS:
 				if t.curY != reservedTopLines-1 {
