@@ -214,12 +214,13 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.s)
 
-	// Style for highlighting notes
-	noteStyle := tcell.StyleDefault.
+	// Style for highlighting currnetly selected items
+	selectedStyle := tcell.StyleDefault.
 		Background(tcell.ColorGrey).
 		Foreground(tcell.ColorWhite)
 
-	selectedStyle := tcell.StyleDefault.
+	// Style for highlighting notes
+	noteStyle := tcell.StyleDefault.
 		Background(tcell.ColorMaroon).
 		Foreground(tcell.ColorWhite)
 
