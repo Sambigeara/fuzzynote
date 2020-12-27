@@ -540,7 +540,7 @@ func (t *Terminal) RunClient() error {
 						newGroup := []rune(t.search[grpIdx])
 
 						// If charOffset == 0 we are acting on the previous separator
-						if charOffset <= 0 {
+						if charOffset == 0 {
 							// If we are operating on a middle (or initial) separator, we need to merge
 							// previous and next search groups before cleaning up the search group
 							if grpIdx > 0 {
@@ -565,6 +565,50 @@ func (t *Terminal) RunClient() error {
 							log.Fatal(err)
 						}
 						posDiff[0]--
+					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
+						err := t.db.Delete(t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
+						// Move up a cursor position
+						posDiff[1]--
+						if t.curY > reservedTopLines {
+							// TODO setting to the max width isn't completely robust as other
+							// decrements will affect, but it's good enough for now as the cursor
+							// repositioning logic will take care of over-increments
+							posDiff[0] += t.w
+						}
+					}
+				}
+			case tcell.KeyDelete:
+				// TODO this is very similar to the Backspace logic above, refactor to avoid duplication
+				if t.curY == reservedTopLines-1 {
+					if len(t.search) > 0 {
+						grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+						newGroup := []rune(t.search[grpIdx])
+
+						// If charOffset == len(t.search[grpIdx]) we need to merge with the next group (if present)
+						if charOffset == len(t.search[grpIdx]) {
+							if grpIdx < len(t.search)-1 {
+								newGroup = append(t.search[grpIdx], t.search[grpIdx+1]...)
+								t.search[grpIdx] = newGroup
+								t.search = append(t.search[:grpIdx+1], t.search[grpIdx+2:]...)
+							}
+						} else {
+							newGroup = append(newGroup[:charOffset], newGroup[charOffset+1:]...)
+							t.search[grpIdx] = newGroup
+						}
+					}
+				} else {
+					// If cursor in 0 position and current line is empty, delete current line and go
+					// to end of previous line (if present)
+					newLine := []rune(t.curItem.Line)
+					if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
+						newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						if err != nil {
+							log.Fatal(err)
+						}
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
 						err := t.db.Delete(t.curItem)
 						if err != nil {
