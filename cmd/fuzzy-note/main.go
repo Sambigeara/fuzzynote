@@ -12,7 +12,10 @@ import (
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
 )
 
-const rootFileName = "primary.db"
+const (
+	rootFileName   = "primary.db"
+	walFilePattern = "wal_%d.db"
+)
 
 func main() {
 	var rootDir, notesSubDir string
@@ -31,12 +34,14 @@ func main() {
 
 	rootPath := path.Join(rootDir, rootFileName)
 	notesDir := path.Join(rootDir, notesSubDir)
+	walDir := path.Join(rootDir, walFilePattern)
 
 	// TODO remove
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	fileDS := service.NewFileDataStore(rootPath, notesDir)
+	fileWal := service.NewFileWal(rootPath, walDir)
+	fileDS := service.NewFileDataStore(rootPath, notesDir, fileWal)
 
 	// List instantiation
 	root, nextID, err := fileDS.Load()

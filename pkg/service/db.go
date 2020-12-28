@@ -32,10 +32,10 @@ type FileDataStore struct {
 	notesPath          string
 	latestFileSchemaID fileSchemaID
 	uuid               uuid
+	fileWal            *FileWal
 }
 
-// LatestFileSchemaID will be the id used when saving files
-const LatestFileSchemaID fileSchemaID = 2
+const latestFileSchemaID fileSchemaID = 2
 
 func (d *FileDataStore) generateUUID() uuid {
 	return uuid(rand.Uint32())
@@ -46,11 +46,12 @@ func init() {
 }
 
 // NewFileDataStore instantiates a new FileDataStore
-func NewFileDataStore(rootPath string, notesPath string) *FileDataStore {
+func NewFileDataStore(rootPath string, notesPath string, fileWal *FileWal) *FileDataStore {
 	return &FileDataStore{
 		rootPath:           rootPath,
 		notesPath:          notesPath,
-		latestFileSchemaID: LatestFileSchemaID,
+		latestFileSchemaID: latestFileSchemaID,
+		fileWal:            fileWal,
 	}
 }
 
@@ -144,6 +145,9 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 				return nil, nextID, err
 			}
 			d.uuid = fileHeader.uuid
+
+			// Load the WAL into memory
+			d.fileWal.Load(d.uuid)
 		}
 	}
 
@@ -219,12 +223,6 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 	}
 	defer f.Close()
 
-	// Return if no files to write. os.Create truncates by default so the file will
-	// have been overwritten
-	if root == nil {
-		return nil
-	}
-
 	// If UUID has not been set (e.g. file schema migration 1 -> 2, generate and set on Save
 	if d.uuid == 0 {
 		d.uuid = d.generateUUID()
@@ -239,6 +237,15 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
 		log.Fatal(err)
 		return err
+	}
+
+	// Load the WAL into memory
+	d.fileWal.Save(d.uuid)
+
+	// Return if no files to write. os.Create truncates by default so the file will
+	// be empty, with just the file header (including verion id and UUID)
+	if root == nil {
+		return nil
 	}
 
 	cur := root
