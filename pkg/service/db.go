@@ -6,14 +6,22 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"path"
+	"time"
 )
 
 const firstListItemID uint32 = 1
 
+type (
+	fileSchemaID uint16
+	uuid         uint32
+)
+
 // DataStore represents the interface between the ListRepo and physical storage
 type DataStore interface {
+	generateUUID() uuid
 	Load() error
 	Save() error
 }
@@ -22,12 +30,22 @@ type DataStore interface {
 type FileDataStore struct {
 	rootPath           string
 	notesPath          string
-	latestFileSchemaID uint16
+	latestFileSchemaID fileSchemaID
+	uuid               uuid
 }
 
 // LatestFileSchemaID will be the id used when saving files
-const LatestFileSchemaID uint16 = 1
+const LatestFileSchemaID fileSchemaID = 2
 
+func (d *FileDataStore) generateUUID() uuid {
+	return uuid(rand.Uint32())
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+// NewFileDataStore instantiates a new FileDataStore
 func NewFileDataStore(rootPath string, notesPath string) *FileDataStore {
 	return &FileDataStore{
 		rootPath:           rootPath,
@@ -37,7 +55,8 @@ func NewFileDataStore(rootPath string, notesPath string) *FileDataStore {
 }
 
 type fileHeader struct {
-	FileSchemaID uint16
+	schemaID fileSchemaID
+	uuid     uuid
 }
 
 type listItemSchema0 struct {
@@ -53,9 +72,11 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-var listItemSchemaMap = map[uint16]interface{}{
+var listItemSchemaMap = map[fileSchemaID]interface{}{
 	0: listItemSchema0{},
 	1: listItemSchema1{},
+	// 2 maps to 1 to allow for addition of UUID to file header, which is handled as a special case
+	2: listItemSchema1{},
 }
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
@@ -102,16 +123,28 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 	wasUnversionedFile := false
 	if firstTwo == 0 {
 		// File schema is explicitly set to 0
-		fileHeader.FileSchemaID = 0
+		fileHeader.schemaID = 0
 		f.Seek(2, io.SeekStart)
 	} else if secondTwo == 0 {
 		wasUnversionedFile = true
 		// Fileschema not set (assuming no lineItem with ID > 65535)
-		fileHeader.FileSchemaID = 0
+		fileHeader.schemaID = 0
 		f.Seek(0, io.SeekStart)
 	} else {
-		fileHeader.FileSchemaID = firstTwo
+		fileHeader.schemaID = fileSchemaID(firstTwo)
 		f.Seek(2, io.SeekStart)
+		// NOTE Special case handling for introduction of UUID in fileSchema 2
+		if fileHeader.schemaID >= 2 {
+			err = binary.Read(f, binary.LittleEndian, &fileHeader.uuid)
+			if err != nil {
+				if err == io.EOF {
+					return nil, nextID, nil
+				}
+				log.Fatal(err)
+				return nil, nextID, err
+			}
+			d.uuid = fileHeader.uuid
+		}
 	}
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
@@ -119,7 +152,7 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 
 	for {
 		nextItem := ListItem{}
-		cont, err := d.readListItemFromFile(f, fileHeader.FileSchemaID, &nextItem)
+		cont, err := d.readListItemFromFile(f, fileHeader.schemaID, &nextItem)
 		if err != nil {
 			//log.Fatal(err)
 			return nil, nextID, err
@@ -192,8 +225,16 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 		return nil
 	}
 
-	// Write the file schema id to the start of the file
-	err = binary.Write(f, binary.LittleEndian, d.latestFileSchemaID)
+	// If UUID has not been set (e.g. file schema migration 1 -> 2, generate and set on Save
+	if d.uuid == 0 {
+		d.uuid = d.generateUUID()
+	}
+	// Write the file header to the start of the file
+	fileHeader := fileHeader{
+		schemaID: d.latestFileSchemaID,
+		uuid:     d.uuid,
+	}
+	err = binary.Write(f, binary.LittleEndian, fileHeader)
 	if err != nil {
 		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
 		log.Fatal(err)
@@ -217,8 +258,8 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 	return nil
 }
 
-func (d *FileDataStore) readListItemFromFile(f io.Reader, fileSchemaID uint16, newItem *ListItem) (bool, error) {
-	i, ok := listItemSchemaMap[fileSchemaID]
+func (d *FileDataStore) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {
+	i, ok := listItemSchemaMap[schemaID]
 	if !ok {
 		i, _ = listItemSchemaMap[0]
 	}
@@ -292,7 +333,6 @@ func (d *FileDataStore) readListItemFromFile(f io.Reader, fileSchemaID uint16, n
 func (d *FileDataStore) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
 	i, ok := listItemSchemaMap[d.latestFileSchemaID]
 	if !ok {
-		fmt.Printf("KAPOW   %v\n", i)
 		i, _ = listItemSchemaMap[0]
 	}
 
