@@ -116,10 +116,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Get DbEventLogger
-	eventLogger := service.NewDbEventLogger()
-
-	listRepo := service.NewDBListRepo(root, nextID, eventLogger)
+	listRepo := service.NewDBListRepo(
+		root,
+		nextID,
+		service.NewDbEventLogger(),
+		service.NewWalEventLogger(),
+	)
 
 	err = importLines(listRepo)
 	if err != nil {

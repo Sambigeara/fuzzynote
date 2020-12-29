@@ -50,10 +50,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Get DbEventLogger
-	eventLogger := service.NewDbEventLogger()
-
-	listRepo := service.NewDBListRepo(root, nextID, eventLogger)
+	listRepo := service.NewDBListRepo(
+		root,
+		nextID,
+		service.NewDbEventLogger(),
+		service.NewWalEventLogger(),
+	)
 
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))

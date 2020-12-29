@@ -29,6 +29,7 @@ type DBListRepo struct {
 	NextID           uint64
 	PendingDeletions []*ListItem
 	eventLogger      *DbEventLogger
+	walLogger        *WalEventLogger
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -55,10 +56,11 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(root *ListItem, nextID uint64, eventLogger *DbEventLogger) *DBListRepo {
+func NewDBListRepo(root *ListItem, nextID uint64, eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBListRepo {
 	return &DBListRepo{
 		Root:        root,
 		eventLogger: eventLogger,
+		walLogger:   walLogger,
 		NextID:      nextID,
 	}
 }
@@ -183,18 +185,21 @@ func (r *DBListRepo) toggleVisibility(item *ListItem) error {
 func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
 	newItem, err := r.add(line, note, childItem, newItem)
 	r.eventLogger.addLog(addEvent, newItem, "", nil)
+	r.walLogger.addLog(addEvent, newItem, "", nil)
 	return err
 }
 
 // Update will update the line or note of an existing ListItem
 func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
 	r.eventLogger.addLog(updateEvent, listItem, line, note)
+	r.walLogger.addLog(updateEvent, listItem, line, note)
 	return r.update(line, note, listItem)
 }
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) error {
 	r.eventLogger.addLog(deleteEvent, item, "", nil)
+	r.walLogger.addLog(deleteEvent, item, "", nil)
 	return r.del(item)
 }
 
@@ -204,6 +209,7 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 	moved, err := r.moveUp(item)
 	if moved {
 		r.eventLogger.addLog(moveUpEvent, item, "", nil)
+		r.walLogger.addLog(moveUpEvent, item, "", nil)
 	}
 	return moved, err
 }
@@ -214,6 +220,7 @@ func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 	moved, err := r.moveDown(item)
 	if moved {
 		r.eventLogger.addLog(moveDownEvent, item, "", nil)
+		r.walLogger.addLog(moveDownEvent, item, "", nil)
 	}
 	return moved, err
 }
@@ -221,6 +228,7 @@ func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 // ToggleVisibility will toggle an item to be visible or invisible
 func (r *DBListRepo) ToggleVisibility(item *ListItem) error {
 	r.eventLogger.addLog(visibilityEvent, item, "", nil)
+	r.walLogger.addLog(visibilityEvent, item, "", nil)
 	return r.toggleVisibility(item)
 }
 

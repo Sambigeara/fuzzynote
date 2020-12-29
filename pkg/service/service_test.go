@@ -60,13 +60,13 @@ func TestServiceStoreLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS0.latestFileSchemaID, err)
 		}
-		repo0 := NewDBListRepo(root, nextID, nil)
+		repo0 := NewDBListRepo(root, nextID, nil, nil)
 
 		root, nextID, err = fileDS1.Load()
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS1.latestFileSchemaID, err)
 		}
-		repo1 := NewDBListRepo(root, nextID, nil)
+		repo1 := NewDBListRepo(root, nextID, nil, nil)
 
 		repos := []*DBListRepo{repo0, repo1}
 
@@ -139,13 +139,13 @@ func TestServiceStoreLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS0.latestFileSchemaID, err)
 		}
-		repo0 := NewDBListRepo(root, nextID, nil)
+		repo0 := NewDBListRepo(root, nextID, nil, nil)
 
 		root, nextID, err = fileDS1.Load()
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS1.latestFileSchemaID, err)
 		}
-		repo1 := NewDBListRepo(root, nextID, nil)
+		repo1 := NewDBListRepo(root, nextID, nil, nil)
 
 		repos := []*DBListRepo{repo0, repo1}
 
@@ -266,7 +266,7 @@ func TestServiceAdd(t *testing.T) {
 	}
 	item2.child = &item1
 
-	mockListRepo := NewDBListRepo(&item1, 3, NewDbEventLogger())
+	mockListRepo := NewDBListRepo(&item1, 3, NewDbEventLogger(), NewWalEventLogger())
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
@@ -401,7 +401,7 @@ func TestServiceDelete(t *testing.T) {
 		item3.child = &item2
 		item2.child = &item1
 
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		err := mockListRepo.Delete(&item1)
 		if err != nil {
@@ -446,7 +446,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		err := mockListRepo.Delete(&item3)
 		if err != nil {
@@ -487,7 +487,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		err := mockListRepo.Delete(&item2)
 		if err != nil {
@@ -534,7 +534,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -591,7 +591,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -648,7 +648,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -688,7 +688,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -745,7 +745,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -802,7 +802,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -842,7 +842,7 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -910,7 +910,7 @@ func TestServiceUpdate(t *testing.T) {
 	}
 	item3.child = &item2
 	item2.child = &item1
-	mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+	mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 	expectedLine := "Oooo I'm new"
 	err := mockListRepo.Update(expectedLine, &[]byte{}, &item2)
@@ -955,7 +955,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
 
 		search := [][]rune{
 			[]rune{'#', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -1041,7 +1041,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil)
+		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
 
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
@@ -1127,7 +1127,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil)
+		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
 
 		search := [][]rune{
 			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
@@ -1183,7 +1183,7 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil)
+		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
 
 		search := [][]rune{
 			[]rune{'#', '!', 's', 'e', 'c', 'o', 'n', 'd'},

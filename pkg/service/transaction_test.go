@@ -7,7 +7,7 @@ import (
 func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo on empty db", func(t *testing.T) {
 		eventLogger := NewDbEventLogger()
-		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger, NewWalEventLogger())
 
 		err := mockListRepo.Undo()
 		if err != nil {
@@ -26,7 +26,7 @@ func TestTransactionUndo(t *testing.T) {
 	})
 	t.Run("Undo single item Add", func(t *testing.T) {
 		eventLogger := NewDbEventLogger()
-		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger, NewWalEventLogger())
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -71,7 +71,7 @@ func TestTransactionUndo(t *testing.T) {
 	})
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
 		eventLogger := NewDbEventLogger()
-		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger, NewWalEventLogger())
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -147,7 +147,7 @@ func TestTransactionUndo(t *testing.T) {
 	})
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
 		eventLogger := NewDbEventLogger()
-		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger, NewWalEventLogger())
 
 		line := "New item"
 		mockListRepo.Add(line, nil, nil, nil)
@@ -306,7 +306,7 @@ func TestTransactionUndo(t *testing.T) {
 	})
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
 		eventLogger := NewDbEventLogger()
-		mockListRepo := NewDBListRepo(nil, 1, eventLogger)
+		mockListRepo := NewDBListRepo(nil, 1, eventLogger, NewWalEventLogger())
 
 		mockListRepo.Add("", nil, nil, nil)
 
@@ -379,7 +379,7 @@ func TestTransactionUndo(t *testing.T) {
 			Line: originalLine,
 			id:   1,
 		}
-		mockListRepo := NewDBListRepo(&item1, 2, NewDbEventLogger())
+		mockListRepo := NewDBListRepo(&item1, 2, NewDbEventLogger(), NewWalEventLogger())
 
 		if len(mockListRepo.eventLogger.log) != 1 {
 			t.Errorf("Event log should have only the nullEvent in it")
