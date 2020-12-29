@@ -6,16 +6,16 @@ type TransactionLogger interface {
 	addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error
 }
 
-type eventType string
+type eventType uint16
 
 const (
-	nullEvent       eventType = "null"
-	addEvent        eventType = "add"
-	deleteEvent     eventType = "delete"
-	updateEvent     eventType = "update"
-	moveUpEvent     eventType = "moveUp"
-	moveDownEvent   eventType = "moveDown"
-	visibilityEvent eventType = "toggleVisibility"
+	nullEvent eventType = iota
+	addEvent
+	deleteEvent
+	updateEvent
+	moveUpEvent
+	moveDownEvent
+	visibilityEvent
 )
 
 // OppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
@@ -31,7 +31,8 @@ var oppositeEvent = map[eventType]eventType{
 // logFuncs represent the undo and redo functions related to a particular transaction event
 type eventLog struct {
 	ID        uint64 // auto-incrementing ID, unique for a given DB UUID
-	dbUUID    uuid   // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
+	unixTime  uint32
+	uuid      uuid // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
 	eventType eventType
 	ptr       *ListItem
 	undoLine  string

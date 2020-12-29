@@ -80,6 +80,7 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	1: listItemSchema1{},
 	// 2 maps to 1 to allow for addition of UUID to file header, which is handled as a special case
 	2: listItemSchema1{},
+	3: listItemSchema1{},
 }
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays

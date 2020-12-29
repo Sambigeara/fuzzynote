@@ -189,8 +189,8 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		}()
 
-		walFile0 := NewWalFile(rootPath0, walDirPattern)
-		walFile1 := NewWalFile(rootPath0, walDirPattern)
+		walFile0 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
+		walFile1 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
 
 		fileDS0 := NewFileDataStore(rootPath0, "", walFile0)
 		fileDS0.latestFileSchemaID = 0

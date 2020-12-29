@@ -106,7 +106,9 @@ func main() {
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	walFile := service.NewWalFile(rootPath, walDir)
+	walEventLogger := service.NewWalEventLogger()
+
+	walFile := service.NewWalFile(rootPath, walDir, walEventLogger)
 	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
 
 	// List instantiation
@@ -116,12 +118,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	listRepo := service.NewDBListRepo(
-		root,
-		nextID,
-		service.NewDbEventLogger(),
-		service.NewWalEventLogger(),
-	)
+	listRepo := service.NewDBListRepo(root, nextID, service.NewDbEventLogger(), walEventLogger)
 
 	err = importLines(listRepo)
 	if err != nil {
