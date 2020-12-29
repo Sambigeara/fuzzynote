@@ -30,6 +30,8 @@ var oppositeEvent = map[eventType]eventType{
 
 // logFuncs represent the undo and redo functions related to a particular transaction event
 type eventLog struct {
+	ID        uint64 // auto-incrementing ID, unique for a given DB UUID
+	dbUUID    uuid   // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
 	eventType eventType
 	ptr       *ListItem
 	undoLine  string
@@ -38,10 +40,16 @@ type eventLog struct {
 	redoNote  *[]byte
 }
 
-// DbEventLogger implements the TransactionLogger interface
+// DbEventLogger implements the TransactionLogger interface for the in-mem undo/redo mechanism
 type DbEventLogger struct {
 	curIdx int // Last index is latest/most recent in history (appends on new events)
 	log    []eventLog
+}
+
+// WalEventLogger implements the TransactionLogger interface for the write-ahead log
+type WalEventLogger struct {
+	uuid uuid
+	log  []eventLog
 }
 
 // NewDbEventLogger Returns a new instance of DbEventLogger
@@ -55,6 +63,11 @@ func NewDbEventLogger() *DbEventLogger {
 		redoNote:  nil,
 	}
 	return &DbEventLogger{0, []eventLog{el}}
+}
+
+// NewWalEventLogger Returns a new instance of WalEventLogger
+func NewWalEventLogger() *WalEventLogger {
+	return &WalEventLogger{}
 }
 
 func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
@@ -77,6 +90,25 @@ func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newN
 
 	return nil
 }
+
+func (l *WalEventLogger) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
+	ev := eventLog{
+		eventType: e,
+		ptr:       item,
+		// Undo attributes are unimportant here
+		undoLine: item.Line,
+		undoNote: item.Note,
+		redoLine: newLine,
+		redoNote: newNote,
+	}
+
+	// Append to log
+	l.log = append(l.log, ev)
+
+	return nil
+}
+
+// TODO func getListItemFromKey()
 
 func (r *DBListRepo) callFunctionForEventLog(ev eventType, ptr *ListItem, line string, note *[]byte) error {
 	var err error
