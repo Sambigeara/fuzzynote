@@ -26,7 +26,7 @@ type ListRepo interface {
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root             *ListItem
-	nextID           uint32
+	NextID           uint64
 	PendingDeletions []*ListItem
 	eventLogger      *DbEventLogger
 }
@@ -38,7 +38,7 @@ type ListItem struct {
 	IsHidden    bool
 	child       *ListItem
 	parent      *ListItem
-	id          uint32
+	id          uint64
 	matchChild  *ListItem
 	matchParent *ListItem
 }
@@ -55,11 +55,11 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(root *ListItem, nextID uint32, eventLogger *DbEventLogger) *DBListRepo {
+func NewDBListRepo(root *ListItem, nextID uint64, eventLogger *DbEventLogger) *DBListRepo {
 	return &DBListRepo{
 		Root:        root,
 		eventLogger: eventLogger,
-		nextID:      nextID,
+		NextID:      nextID,
 	}
 }
 
@@ -70,12 +70,12 @@ func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, newItem
 	if newItem == nil {
 		newItem = &ListItem{
 			Line:  line,
-			id:    r.nextID,
+			id:    r.NextID,
 			child: childItem,
 			Note:  note,
 		}
 	}
-	r.nextID++
+	r.NextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {

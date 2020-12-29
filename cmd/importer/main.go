@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	fileName     = "workflowy_source.xml"
-	nodeTitle    = "outline"
-	rootFileName = "primary.db"
+	fileName       = "workflowy_source.xml"
+	nodeTitle      = "outline"
+	rootFileName   = "primary.db"
+	walFilePattern = "wal_%d.db"
 )
 
 type Time struct {
@@ -100,11 +101,13 @@ func main() {
 
 	rootPath := path.Join(rootDir, rootFileName)
 	notesDir := path.Join(rootDir, notesSubDir)
+	walDir := path.Join(rootDir, walFilePattern)
 
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	fileDS := service.NewFileDataStore(rootPath, notesDir)
+	walFile := service.NewWalFile(rootPath, walDir)
+	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
 
 	// List instantiation
 	root, nextID, err := fileDS.Load()
@@ -124,7 +127,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = fileDS.Save(listRepo.Root, listRepo.PendingDeletions)
+	err = fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)

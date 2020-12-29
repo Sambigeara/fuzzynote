@@ -67,7 +67,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		err := fileDS.Save(listRepo.Root, listRepo.PendingDeletions)
+		err := fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
 		if err != nil {
 			log.Fatal(err)
 		}

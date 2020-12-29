@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const firstListItemID uint32 = 1
+const firstListItemID uint64 = 1
 
 type (
 	fileSchemaID uint16
@@ -33,9 +33,10 @@ type FileDataStore struct {
 	latestFileSchemaID fileSchemaID
 	uuid               uuid
 	walFile            *WalFile
+	nextListItemID     uint64
 }
 
-const latestFileSchemaID fileSchemaID = 2
+const latestFileSchemaID fileSchemaID = 3
 
 func (d *FileDataStore) generateUUID() uuid {
 	return uuid(rand.Uint32())
@@ -56,8 +57,9 @@ func NewFileDataStore(rootPath string, notesPath string, walFile *WalFile) *File
 }
 
 type fileHeader struct {
-	schemaID fileSchemaID
-	uuid     uuid
+	schemaID       fileSchemaID
+	uuid           uuid
+	nextListItemID uint64
 }
 
 type listItemSchema0 struct {
@@ -82,7 +84,7 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (d *FileDataStore) Load() (*ListItem, uint32, error) {
+func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 	nextID := firstListItemID
 	f, err := os.OpenFile(d.rootPath, os.O_CREATE, 0644)
 	if err != nil {
@@ -120,6 +122,7 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 	}
 	// NOTE: File offset now at 4
 
+	// TODO no real reason for using fileHeader here due to all the weird case handling
 	fileHeader := fileHeader{}
 	wasUnversionedFile := false
 	if firstTwo == 0 {
@@ -148,6 +151,18 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 
 			// Load the WAL into memory
 			d.walFile.Load(d.uuid)
+
+			// NOTE special case handling for introduction of persisted nextId in file
+			if fileHeader.schemaID >= 3 {
+				err = binary.Read(f, binary.LittleEndian, &nextID)
+				if err != nil {
+					if err == io.EOF {
+						return nil, nextID, nil
+					}
+					log.Fatal(err)
+					return nil, nextID, err
+				}
+			}
 		}
 	}
 
@@ -190,7 +205,8 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 			cur = &nextItem
 		}
 
-		// TODO
+		// TODO REMOVE THIS ONCE ALL REMOTES ARE USING v3 or higher
+		// This is only relevant on the first instance of moving from v < 3 to v >= 3
 		// We need to find the next available index for the entire dataset
 		if nextItem.id >= nextID {
 			nextID = nextItem.id + 1
@@ -199,7 +215,7 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error {
+func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID uint64) error {
 	// TODO remove all files starting with `bak_*`, these are no longer needed
 
 	// Delete any files that need clearing up
@@ -227,16 +243,37 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 	if d.uuid == 0 {
 		d.uuid = d.generateUUID()
 	}
+
+	// TODO use fileHeader once earlier versions are gone
 	// Write the file header to the start of the file
-	fileHeader := fileHeader{
-		schemaID: d.latestFileSchemaID,
-		uuid:     d.uuid,
-	}
-	err = binary.Write(f, binary.LittleEndian, fileHeader)
+	//fileHeader := fileHeader{
+	//    schemaID:       d.latestFileSchemaID,
+	//    uuid:           d.uuid,
+	//    nextListItemID: nextListItemID,
+	//}
+	err = binary.Write(f, binary.LittleEndian, d.latestFileSchemaID)
 	if err != nil {
 		fmt.Println("binary.Write failed when writing fileSchemaID:", err)
 		log.Fatal(err)
 		return err
+	}
+
+	if d.latestFileSchemaID >= 2 {
+		err = binary.Write(f, binary.LittleEndian, d.uuid)
+		if err != nil {
+			fmt.Println("binary.Write failed when writing uuid:", err)
+			log.Fatal(err)
+			return err
+		}
+
+		if d.latestFileSchemaID >= 3 {
+			err = binary.Write(f, binary.LittleEndian, nextListItemID)
+			if err != nil {
+				fmt.Println("binary.Write failed when writing nextListItemID:", err)
+				log.Fatal(err)
+				return err
+			}
+		}
 	}
 
 	// Load the WAL into memory
@@ -298,7 +335,7 @@ func (d *FileDataStore) readListItemFromFile(f io.Reader, schemaID fileSchemaID,
 		}
 
 		newItem.Line = string(line)
-		newItem.id = s.PageID
+		newItem.id = uint64(s.PageID) // TODO this is awful
 		newItem.Note = note
 		newItem.IsHidden = has(s.Metadata, hidden)
 		return true, nil
@@ -329,7 +366,7 @@ func (d *FileDataStore) readListItemFromFile(f io.Reader, schemaID fileSchemaID,
 		}
 
 		newItem.Line = string(line)
-		newItem.id = s.PageID
+		newItem.id = uint64(s.PageID)
 		newItem.Note = &note
 		newItem.IsHidden = has(s.Metadata, hidden)
 		return true, nil
@@ -351,9 +388,9 @@ func (d *FileDataStore) writeFileFromListItem(f io.Writer, listItem *ListItem) e
 			metadata = set(metadata, hidden)
 		}
 
-		s.PageID = listItem.id
+		s.PageID = uint32(listItem.id)
 		s.Metadata = metadata
-		s.FileID = listItem.id
+		s.FileID = uint32(listItem.id)
 		s.LineLength = uint64(len([]byte(listItem.Line)))
 
 		byteLine := []byte(listItem.Line)
@@ -378,7 +415,7 @@ func (d *FileDataStore) writeFileFromListItem(f io.Writer, listItem *ListItem) e
 		}
 		byteLine := []byte(listItem.Line)
 
-		s.PageID = listItem.id
+		s.PageID = uint32(listItem.id)
 		s.Metadata = metadata
 		s.LineLength = uint64(len([]byte(listItem.Line)))
 		s.NoteLength = 0
@@ -425,7 +462,7 @@ func (d *FileDataStore) loadPage(id uint32) (*[]byte, error) {
 	return &dat, nil
 }
 
-func (d *FileDataStore) savePage(id uint32, data *[]byte) error {
+func (d *FileDataStore) savePage(id uint64, data *[]byte) error {
 	strID := fmt.Sprint(id)
 	filePath := path.Join(d.notesPath, strID)
 

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/binary"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -14,10 +15,10 @@ func TestServiceStoreLoad(t *testing.T) {
 		// Run for both schema type
 		rootPath := "file_to_delete"
 
-		fileDS0 := NewFileDataStore(rootPath, "")
+		fileDS0 := NewFileDataStore(rootPath, "", nil)
 		fileDS0.latestFileSchemaID = 0
 
-		fileDS1 := NewFileDataStore(rootPath, "")
+		fileDS1 := NewFileDataStore(rootPath, "", nil)
 
 		f, err := os.Create(rootPath)
 		if err != nil {
@@ -74,7 +75,7 @@ func TestServiceStoreLoad(t *testing.T) {
 				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[1], repo.Root.Line)
 			}
 
-			expectedID := uint32(2)
+			expectedID := uint64(2)
 			if repo.Root.id != expectedID {
 				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.Root.id)
 			}
@@ -93,10 +94,10 @@ func TestServiceStoreLoad(t *testing.T) {
 		// Run for both schema type
 		rootPath := "file_to_delete"
 
-		fileDS0 := NewFileDataStore(rootPath, "")
+		fileDS0 := NewFileDataStore(rootPath, "", nil)
 		fileDS0.latestFileSchemaID = 0
 
-		fileDS1 := NewFileDataStore(rootPath, "")
+		fileDS1 := NewFileDataStore(rootPath, "", nil)
 
 		f, err := os.Create(rootPath)
 		if err != nil {
@@ -153,7 +154,7 @@ func TestServiceStoreLoad(t *testing.T) {
 				t.Errorf("Repo file schema %d: Expected %s but got %s", i, expectedLines[0], repo.Root.Line)
 			}
 
-			expectedID := uint32(1)
+			expectedID := uint64(1)
 			if repo.Root.id != expectedID {
 				t.Errorf("Repo file schema %d: Expected %d but got %d", i, expectedID, repo.Root.id)
 			}
@@ -172,28 +173,48 @@ func TestServiceStoreLoad(t *testing.T) {
 		// Run for both schema type
 		rootPath0 := "temp0"
 		rootPath1 := "temp1"
+		walDirPattern := "wal_temp_%d.db"
 		defer os.Remove(rootPath0)
 		defer os.Remove(rootPath1)
+		defer func() {
+			files, err := filepath.Glob("wal_temp*")
+			if err != nil {
+				panic(err)
+			}
+			for _, f := range files {
+				if err := os.Remove(f); err != nil {
+					panic(err)
+				}
+			}
 
-		fileDS0 := NewFileDataStore(rootPath0, "")
+		}()
+
+		walFile0 := NewWalFile(rootPath0, walDirPattern)
+		walFile1 := NewWalFile(rootPath0, walDirPattern)
+
+		fileDS0 := NewFileDataStore(rootPath0, "", walFile0)
 		fileDS0.latestFileSchemaID = 0
-		fileDS1 := NewFileDataStore(rootPath1, "")
+		fileDS1 := NewFileDataStore(rootPath1, "", walFile1)
 
 		fileDSs := []*FileDataStore{fileDS0, fileDS1}
+
+		schemaIDMap := make(map[int]uint16)
+		schemaIDMap[0] = 0
+		schemaIDMap[1] = 3
 
 		for i, fileDS := range fileDSs {
 			oldItem := ListItem{
 				Line: "Old newly created line",
-				id:   uint32(1),
+				id:   uint64(1),
 			}
 			newItem := ListItem{
 				Line:   "New newly created line",
 				parent: &oldItem,
-				id:     uint32(2),
+				id:     uint64(2),
 			}
 			oldItem.child = &newItem
 
-			err := fileDS.Save(&newItem, []*ListItem{})
+			err := fileDS.Save(&newItem, []*ListItem{}, 3)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -202,7 +223,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			f, _ := os.OpenFile(fileDS.rootPath, os.O_CREATE, 0644)
 			var fileSchema uint16
 			binary.Read(f, binary.LittleEndian, &fileSchema)
-			if fileSchema != uint16(i) {
+			if fileSchema != schemaIDMap[i] {
 				t.Errorf("Incorrect set file schema. Expected %d but got %d", i, fileSchema)
 			}
 			f.Close()
@@ -216,7 +237,7 @@ func TestServiceStoreLoad(t *testing.T) {
 				t.Errorf("File schema %d: Expected %s but got %s", i, newItem.Line, root.Line)
 			}
 
-			expectedID := uint32(2)
+			expectedID := uint64(2)
 			if root.id != expectedID {
 				t.Errorf("File schema %d: Expected %d but got %d", i, expectedID, root.id)
 			}
@@ -225,7 +246,7 @@ func TestServiceStoreLoad(t *testing.T) {
 				t.Errorf("File schema %d: Expected %s but got %s", i, root.parent.Line, oldItem.Line)
 			}
 
-			expectedID = uint32(1)
+			expectedID = uint64(1)
 			if root.parent.id != expectedID {
 				t.Errorf("File schema %d: Expected %d but got %d", i, expectedID, root.parent.id)
 			}
@@ -266,7 +287,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("New item should be original root's child")
 		}
 
-		expectedID := uint32(3)
+		expectedID := uint64(3)
 		if newItem.id != expectedID {
 			t.Errorf("Expected id %d but got %d", expectedID, newItem.id)
 		}
