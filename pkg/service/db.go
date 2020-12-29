@@ -32,7 +32,7 @@ type FileDataStore struct {
 	notesPath          string
 	latestFileSchemaID fileSchemaID
 	uuid               uuid
-	fileWal            *FileWal
+	walFile            *WalFile
 }
 
 const latestFileSchemaID fileSchemaID = 2
@@ -46,12 +46,12 @@ func init() {
 }
 
 // NewFileDataStore instantiates a new FileDataStore
-func NewFileDataStore(rootPath string, notesPath string, fileWal *FileWal) *FileDataStore {
+func NewFileDataStore(rootPath string, notesPath string, walFile *WalFile) *FileDataStore {
 	return &FileDataStore{
 		rootPath:           rootPath,
 		notesPath:          notesPath,
 		latestFileSchemaID: latestFileSchemaID,
-		fileWal:            fileWal,
+		walFile:            walFile,
 	}
 }
 
@@ -147,7 +147,7 @@ func (d *FileDataStore) Load() (*ListItem, uint32, error) {
 			d.uuid = fileHeader.uuid
 
 			// Load the WAL into memory
-			d.fileWal.Load(d.uuid)
+			d.walFile.Load(d.uuid)
 		}
 	}
 
@@ -240,7 +240,7 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem) error
 	}
 
 	// Load the WAL into memory
-	d.fileWal.Save(d.uuid)
+	d.walFile.Save(d.uuid)
 
 	// Return if no files to write. os.Create truncates by default so the file will
 	// be empty, with just the file header (including verion id and UUID)

@@ -40,8 +40,8 @@ func main() {
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
-	fileWal := service.NewFileWal(rootPath, walDir)
-	fileDS := service.NewFileDataStore(rootPath, notesDir, fileWal)
+	walFile := service.NewWalFile(rootPath, walDir)
+	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
 
 	// List instantiation
 	root, nextID, err := fileDS.Load()

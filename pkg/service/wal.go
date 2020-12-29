@@ -12,8 +12,8 @@ type Wal interface {
 	Save() error
 }
 
-// FileWal is a file representation of the Wal interface
-type FileWal struct {
+// WalFile is a file representation of the Wal interface
+type WalFile struct {
 	rootPath          string
 	walPathPattern    string
 	latestWalSchemaID uint16
@@ -21,9 +21,9 @@ type FileWal struct {
 
 const latestWalSchemaID uint16 = 1
 
-// NewFileWal instantiates and returns a new FileWal instance
-func NewFileWal(rootPath string, walPathPattern string) *FileWal {
-	return &FileWal{
+// NewWalFile instantiates and returns a new WalFile instance
+func NewWalFile(rootPath string, walPathPattern string) *WalFile {
+	return &WalFile{
 		rootPath:          rootPath,
 		walPathPattern:    walPathPattern,
 		latestWalSchemaID: latestWalSchemaID,
@@ -45,7 +45,7 @@ type walItemSchema1 struct {
 	noteLength  uint64
 }
 
-func (w *FileWal) Load(uuid uuid) error {
+func (w *WalFile) Load(uuid uuid) error {
 	walFilePath := fmt.Sprintf(w.walPathPattern, uuid)
 
 	f, err := os.OpenFile(walFilePath, os.O_CREATE, 0644)
@@ -58,7 +58,7 @@ func (w *FileWal) Load(uuid uuid) error {
 	return nil
 }
 
-func (w *FileWal) Save(uuid uuid) error {
+func (w *WalFile) Save(uuid uuid) error {
 	if uuid == 0 {
 		return nil
 	}
