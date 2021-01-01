@@ -7,24 +7,39 @@ import (
 	"testing"
 )
 
+const walDirPattern = "wal_%d.db"
+
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file schema 0", func(t *testing.T) {
 		// When loading from file schema 0 for the first time, it reverses the order
 		// of the list items for historical reasons
 
 		// Run for both schema type
-		rootPath := "file_to_delete"
 
-		fileDS0 := NewFileDataStore(rootPath, "", nil)
+		rootPath0 := "file_to_delete0"
+		repo0 := NewDBListRepo(nil, nil)
+		walFile0 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
+		fileDS0 := NewFileDataStore(rootPath0, "", walFile0)
 		fileDS0.latestFileSchemaID = 0
 
-		fileDS1 := NewFileDataStore(rootPath, "", nil)
-
-		f, err := os.Create(rootPath)
+		f0, err := os.Create(rootPath0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer os.Remove(rootPath)
+		defer f0.Close()
+		defer os.Remove(rootPath0)
+
+		rootPath1 := "file_to_delete1"
+		repo1 := NewDBListRepo(nil, nil)
+		walFile1 := NewWalFile(rootPath1, walDirPattern, NewWalEventLogger())
+		fileDS1 := NewFileDataStore(rootPath1, "", walFile1)
+
+		f1, err := os.Create(rootPath1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f1.Close()
+		defer os.Remove(rootPath1)
 
 		expectedLines := make([]string, 2)
 		expectedLines[0] = "Test ListItem"
@@ -47,26 +62,25 @@ func TestServiceStoreLoad(t *testing.T) {
 			},
 			[]byte(expectedLines[1]),
 		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				t.Fatal(err)
+
+		for _, f := range []*os.File{f0, f1} {
+			for _, v := range data {
+				err = binary.Write(f, binary.LittleEndian, v)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 
-		f.Close()
-
-		root, nextID, err := fileDS0.Load()
+		err = fileDS0.Load(repo0)
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS0.latestFileSchemaID, err)
 		}
-		repo0 := NewDBListRepo(root, nextID, nil, nil)
 
-		root, nextID, err = fileDS1.Load()
+		err = fileDS1.Load(repo1)
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS1.latestFileSchemaID, err)
 		}
-		repo1 := NewDBListRepo(root, nextID, nil, nil)
 
 		repos := []*DBListRepo{repo0, repo1}
 
@@ -92,18 +106,31 @@ func TestServiceStoreLoad(t *testing.T) {
 	})
 	t.Run("Loads from file schema 1", func(t *testing.T) {
 		// Run for both schema type
-		rootPath := "file_to_delete"
+		rootPath0 := "file_to_delete0"
+		rootPath1 := "file_to_delete1"
 
-		fileDS0 := NewFileDataStore(rootPath, "", nil)
+		repo0 := NewDBListRepo(nil, nil)
+		walFile0 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
+		fileDS0 := NewFileDataStore(rootPath0, "", walFile0)
 		fileDS0.latestFileSchemaID = 0
 
-		fileDS1 := NewFileDataStore(rootPath, "", nil)
+		repo1 := NewDBListRepo(nil, nil)
+		walFile1 := NewWalFile(rootPath1, walDirPattern, NewWalEventLogger())
+		fileDS1 := NewFileDataStore(rootPath1, "", walFile1)
 
-		f, err := os.Create(rootPath)
+		f0, err := os.Create(rootPath0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer os.Remove(rootPath)
+		defer os.Remove(rootPath0)
+		defer f0.Close()
+
+		f1, err := os.Create(rootPath1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f1.Close()
+		defer os.Remove(rootPath1)
 
 		expectedLines := make([]string, 2)
 		expectedLines[0] = "Test ListItem"
@@ -126,26 +153,24 @@ func TestServiceStoreLoad(t *testing.T) {
 			},
 			[]byte(expectedLines[1]),
 		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				t.Fatal(err)
+		for _, f := range []*os.File{f0, f1} {
+			for _, v := range data {
+				err = binary.Write(f, binary.LittleEndian, v)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 
-		f.Close()
-
-		root, nextID, err := fileDS0.Load()
+		err = fileDS0.Load(repo0)
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS0.latestFileSchemaID, err)
 		}
-		repo0 := NewDBListRepo(root, nextID, nil, nil)
 
-		root, nextID, err = fileDS1.Load()
+		err = fileDS1.Load(repo1)
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", fileDS1.latestFileSchemaID, err)
 		}
-		repo1 := NewDBListRepo(root, nextID, nil, nil)
 
 		repos := []*DBListRepo{repo0, repo1}
 
@@ -171,13 +196,12 @@ func TestServiceStoreLoad(t *testing.T) {
 	})
 	t.Run("Stores to file and loads back", func(t *testing.T) {
 		// Run for both schema type
-		rootPath0 := "temp0"
-		rootPath1 := "temp1"
-		walDirPattern := "wal_temp_%d.db"
+		rootPath0 := "file_to_delete0"
+		rootPath1 := "file_to_delete1"
 		defer os.Remove(rootPath0)
 		defer os.Remove(rootPath1)
 		defer func() {
-			files, err := filepath.Glob("wal_temp*")
+			files, err := filepath.Glob("wal_*.db")
 			if err != nil {
 				panic(err)
 			}
@@ -186,23 +210,31 @@ func TestServiceStoreLoad(t *testing.T) {
 					panic(err)
 				}
 			}
-
 		}()
 
 		walFile0 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
-		walFile1 := NewWalFile(rootPath0, walDirPattern, NewWalEventLogger())
+		walFile1 := NewWalFile(rootPath1, walDirPattern, NewWalEventLogger())
 
+		repo0 := NewDBListRepo(nil, nil)
 		fileDS0 := NewFileDataStore(rootPath0, "", walFile0)
 		fileDS0.latestFileSchemaID = 0
+
+		repo1 := NewDBListRepo(nil, nil)
 		fileDS1 := NewFileDataStore(rootPath1, "", walFile1)
+		// generateUUID() is usually called on Load so we need to manually set it here for
+		// the latest file schema version
+		fileDS1.uuid = fileDS1.generateUUID()
 
 		fileDSs := []*FileDataStore{fileDS0, fileDS1}
+		repos := []*DBListRepo{repo0, repo1}
 
 		schemaIDMap := make(map[int]uint16)
 		schemaIDMap[0] = 0
 		schemaIDMap[1] = 3
 
 		for i, fileDS := range fileDSs {
+			repo := repos[i]
+
 			oldItem := ListItem{
 				Line: "Old newly created line",
 				id:   uint64(1),
@@ -228,10 +260,12 @@ func TestServiceStoreLoad(t *testing.T) {
 			}
 			f.Close()
 
-			root, _, err := fileDS.Load()
+			err = fileDS.Load(repo)
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			root := repo.Root
 
 			if root.Line != newItem.Line {
 				t.Errorf("File schema %d: Expected %s but got %s", i, newItem.Line, root.Line)
@@ -266,7 +300,9 @@ func TestServiceAdd(t *testing.T) {
 	}
 	item2.child = &item1
 
-	mockListRepo := NewDBListRepo(&item1, 3, NewDbEventLogger(), NewWalEventLogger())
+	mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+	mockListRepo.Root = &item1
+	mockListRepo.NextID = 3
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
@@ -401,7 +437,8 @@ func TestServiceDelete(t *testing.T) {
 		item3.child = &item2
 		item2.child = &item1
 
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		err := mockListRepo.Delete(&item1)
 		if err != nil {
@@ -446,7 +483,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		err := mockListRepo.Delete(&item3)
 		if err != nil {
@@ -487,7 +525,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		err := mockListRepo.Delete(&item2)
 		if err != nil {
@@ -534,7 +573,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -591,7 +631,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -648,7 +689,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -688,7 +730,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -745,7 +788,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -802,7 +846,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -842,7 +887,8 @@ func TestServiceMove(t *testing.T) {
 		}
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
 		mockListRepo.Match([][]rune{}, nil, true)
@@ -910,7 +956,8 @@ func TestServiceUpdate(t *testing.T) {
 	}
 	item3.child = &item2
 	item2.child = &item1
-	mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+	mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+	mockListRepo.Root = &item1
 
 	expectedLine := "Oooo I'm new"
 	err := mockListRepo.Update(expectedLine, &[]byte{}, &item2)
@@ -955,7 +1002,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+		mockListRepo.Root = &item1
 
 		search := [][]rune{
 			[]rune{'#', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -1041,7 +1089,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
+		mockListRepo := NewDBListRepo(nil, nil)
+		mockListRepo.Root = &item1
 
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
@@ -1127,7 +1176,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
+		mockListRepo := NewDBListRepo(nil, nil)
+		mockListRepo.Root = &item1
 
 		search := [][]rune{
 			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
@@ -1183,7 +1233,8 @@ func TestServiceMatch(t *testing.T) {
 		item4.child = &item3
 		item3.child = &item2
 		item2.child = &item1
-		mockListRepo := NewDBListRepo(&item1, 1, nil, nil)
+		mockListRepo := NewDBListRepo(nil, nil)
+		mockListRepo.Root = &item1
 
 		search := [][]rune{
 			[]rune{'#', '!', 's', 'e', 'c', 'o', 'n', 'd'},

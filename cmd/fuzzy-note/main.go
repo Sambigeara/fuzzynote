@@ -4,17 +4,16 @@ import (
 	"log"
 	"os"
 	"path"
+	//"runtime"
 	"strings"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
-	//"github.com/Sambigeara/fuzzy-note/pkg/client"
-	//"github.com/Sambigeara/fuzzy-note/pkg/service"
 )
 
 const (
 	rootFileName   = "primary.db"
-	walFilePattern = "wal_%d.db"
+	walFilePattern = "wal_%v.db"
 )
 
 func main() {
@@ -34,25 +33,24 @@ func main() {
 
 	rootPath := path.Join(rootDir, rootFileName)
 	notesDir := path.Join(rootDir, notesSubDir)
-	walDir := path.Join(rootDir, walFilePattern)
+	walDirPattern := path.Join(rootDir, walFilePattern)
 
 	// TODO remove
 	// Create (if not exists) the notes subdirectory
 	os.MkdirAll(notesDir, os.ModePerm)
 
 	walEventLogger := service.NewWalEventLogger()
-
-	walFile := service.NewWalFile(rootPath, walDir, walEventLogger)
+	walFile := service.NewWalFile(rootPath, walDirPattern, walEventLogger)
 	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
+	listRepo := service.NewDBListRepo(service.NewDbEventLogger(), walEventLogger)
 
+	//runtime.Breakpoint()
 	// List instantiation
-	root, nextID, err := fileDS.Load()
+	err := fileDS.Load(listRepo)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
-
-	listRepo := service.NewDBListRepo(root, nextID, service.NewDbEventLogger(), walEventLogger)
 
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
@@ -72,4 +70,18 @@ func main() {
 		}
 		os.Exit(0)
 	}
+
+	//listRepo.Add("H", nil, nil, nil)
+	//listRepo.Add("e", nil, listRepo.Root, nil)
+	//matches, _ := listRepo.Match([][]rune{}, nil, false)
+	//runtime.Breakpoint()
+	//fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
+
+	//_, walEventLog, nextID, _ = fileDS.Load()
+	//listRepo = service.NewDBListRepo(nil, nextID, service.NewDbEventLogger(), walEventLogger)
+	//listRepo.ReplayWalEvents(walEventLog)
+
+	//matches, _ = listRepo.Match([][]rune{}, nil, false)
+	//listRepo.Delete(matches[len(matches)-1])
+	//err = fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
 }

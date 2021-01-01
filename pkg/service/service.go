@@ -1,6 +1,7 @@
 package service
 
 import (
+	//"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -23,13 +24,19 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
+type listItemKey string
+
+const listItemKeyPattern = "%v_%v"
+
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
+	uuid             uuid
 	Root             *ListItem
 	NextID           uint64
 	PendingDeletions []*ListItem
 	eventLogger      *DbEventLogger
 	walLogger        *WalEventLogger
+	listItemMap      map[listItemKey]*ListItem
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -56,136 +63,20 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(root *ListItem, nextID uint64, eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBListRepo {
+func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBListRepo {
 	return &DBListRepo{
-		Root:        root,
 		eventLogger: eventLogger,
 		walLogger:   walLogger,
-		NextID:      nextID,
+		NextID:      1,
+		listItemMap: make(map[listItemKey]*ListItem),
 	}
-}
-
-func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) (*ListItem, error) {
-	if note == nil {
-		note = &[]byte{}
-	}
-	if newItem == nil {
-		newItem = &ListItem{
-			Line:  line,
-			id:    r.NextID,
-			child: childItem,
-			Note:  note,
-		}
-	}
-	r.NextID++
-
-	// If `child` is nil, it's the first item in the list so set as root and return
-	if childItem == nil {
-		oldRoot := r.Root
-		r.Root = newItem
-		if oldRoot != nil {
-			newItem.parent = oldRoot
-			oldRoot.child = newItem
-		}
-		return newItem, nil
-	}
-
-	if childItem.parent != nil {
-		childItem.parent.child = newItem
-		newItem.parent = childItem.parent
-	}
-	childItem.parent = newItem
-
-	return newItem, nil
-}
-
-// Update will update the line or note of an existing ListItem
-func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) error {
-	line = r.parseOperatorGroups(line)
-	listItem.Line = line
-	listItem.Note = note
-	return nil
-}
-
-func (r *DBListRepo) del(item *ListItem) error {
-	if item.child != nil {
-		item.child.parent = item.parent
-	} else {
-		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.parent
-	}
-
-	if item.parent != nil {
-		item.parent.child = item.child
-	}
-
-	r.PendingDeletions = append(r.PendingDeletions, item)
-
-	return nil
-}
-
-func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *ListItem) error {
-	// Close off gap from source location (for whole dataset)
-	if item.child != nil {
-		item.child.parent = item.parent
-	}
-	if item.parent != nil {
-		item.parent.child = item.child
-	}
-
-	// Insert item into new position based on Matched pointers
-	item.child = newChild
-	item.parent = newParent
-
-	// Update pointers at target location
-	if newParent != nil {
-		newParent.child = item
-	}
-	if newChild != nil {
-		newChild.parent = item
-	}
-
-	// Update root if required
-	for r.Root.child != nil {
-		r.Root = r.Root.child
-	}
-	return nil
-}
-
-func (r *DBListRepo) moveUp(item *ListItem) (bool, error) {
-	targetItem := item.matchChild
-	if targetItem == nil {
-		return false, nil
-	}
-
-	newChild := targetItem.child
-	newParent := targetItem
-	err := r.moveItem(item, newChild, newParent)
-	return true, err
-}
-
-func (r *DBListRepo) moveDown(item *ListItem) (bool, error) {
-	targetItem := item.matchParent
-	if targetItem == nil {
-		return false, nil
-	}
-
-	newChild := targetItem
-	newParent := targetItem.parent
-	err := r.moveItem(item, newChild, newParent)
-	return true, err
-}
-
-func (r *DBListRepo) toggleVisibility(item *ListItem) error {
-	item.IsHidden = !item.IsHidden
-	return nil
 }
 
 // Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
 func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
-	newItem, err := r.add(line, note, childItem, newItem)
-	r.eventLogger.addLog(addEvent, newItem, "", nil)
-	r.walLogger.addLog(addEvent, newItem, "", nil)
+	newItem, err := add(r, line, note, childItem, newItem)
+	r.eventLogger.addLog(addEvent, newItem, line, note)
+	r.walLogger.addLog(addEvent, newItem, line, note)
 	return err
 }
 
@@ -193,20 +84,20 @@ func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem
 func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
 	r.eventLogger.addLog(updateEvent, listItem, line, note)
 	r.walLogger.addLog(updateEvent, listItem, line, note)
-	return r.update(line, note, listItem)
+	return update(r, line, note, listItem)
 }
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) error {
 	r.eventLogger.addLog(deleteEvent, item, "", nil)
 	r.walLogger.addLog(deleteEvent, item, "", nil)
-	return r.del(item)
+	return del(r, item)
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
 func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
-	moved, err := r.moveUp(item)
+	moved, err := moveUp(r, item)
 	if moved {
 		r.eventLogger.addLog(moveUpEvent, item, "", nil)
 		r.walLogger.addLog(moveUpEvent, item, "", nil)
@@ -217,7 +108,7 @@ func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
-	moved, err := r.moveDown(item)
+	moved, err := moveDown(r, item)
 	if moved {
 		r.eventLogger.addLog(moveDownEvent, item, "", nil)
 		r.walLogger.addLog(moveDownEvent, item, "", nil)
@@ -229,7 +120,7 @@ func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
 func (r *DBListRepo) ToggleVisibility(item *ListItem) error {
 	r.eventLogger.addLog(visibilityEvent, item, "", nil)
 	r.walLogger.addLog(visibilityEvent, item, "", nil)
-	return r.toggleVisibility(item)
+	return toggleVisibility(r, item)
 }
 
 func (r *DBListRepo) Undo() error {
@@ -238,7 +129,7 @@ func (r *DBListRepo) Undo() error {
 		// callFunctionForEventLog needs to call the appropriate function with the
 		// necessary parameters to reverse the operation
 		opEv := oppositeEvent[eventLog.eventType]
-		err := r.callFunctionForEventLog(opEv, eventLog.ptr, eventLog.undoLine, eventLog.undoNote)
+		_, err := callFunctionForEventLog(r, opEv, eventLog.ptr, eventLog.ptr.child, eventLog.undoLine, eventLog.undoNote)
 		r.eventLogger.curIdx--
 		return err
 	}
@@ -249,7 +140,7 @@ func (r *DBListRepo) Redo() error {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		eventLog := r.eventLogger.log[r.eventLogger.curIdx+1]
-		err := r.callFunctionForEventLog(eventLog.eventType, eventLog.ptr, eventLog.redoLine, eventLog.redoNote)
+		_, err := callFunctionForEventLog(r, eventLog.eventType, eventLog.ptr, eventLog.ptr.child, eventLog.redoLine, eventLog.redoNote)
 		r.eventLogger.curIdx++
 		return err
 	}

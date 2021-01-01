@@ -107,18 +107,16 @@ func main() {
 	os.MkdirAll(notesDir, os.ModePerm)
 
 	walEventLogger := service.NewWalEventLogger()
-
 	walFile := service.NewWalFile(rootPath, walDir, walEventLogger)
 	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
+	listRepo := service.NewDBListRepo(service.NewDbEventLogger(), walEventLogger)
 
 	// List instantiation
-	root, nextID, err := fileDS.Load()
+	err := fileDS.Load(listRepo)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
 	}
-
-	listRepo := service.NewDBListRepo(root, nextID, service.NewDbEventLogger(), walEventLogger)
 
 	err = importLines(listRepo)
 	if err != nil {

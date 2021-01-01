@@ -9,10 +9,9 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	//"runtime"
 	"time"
 )
-
-const firstListItemID uint64 = 1
 
 type (
 	fileSchemaID uint16
@@ -85,12 +84,18 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (d *FileDataStore) Load() (*ListItem, uint64, error) {
-	nextID := firstListItemID
+func (d *FileDataStore) Load(r *DBListRepo) error {
+	// Preset UUID in case we're running an old schema and bypass the UUID gen below
+	// This is required because any event logs require the UUID, so it needs to be handled prior to Save()
+	d.uuid = d.generateUUID()
+	d.walFile.logger.uuid = d.uuid
+	// TODO sort out this horrendous double reference
+	r.uuid = d.uuid
+
 	f, err := os.OpenFile(d.rootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
-		return nil, nextID, err
+		return err
 	}
 	defer f.Close()
 
@@ -116,10 +121,10 @@ func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 	err = binary.Read(f, binary.LittleEndian, &secondTwo)
 	if err != nil {
 		if err == io.EOF {
-			return nil, nextID, nil
+			return nil
 		}
 		log.Fatal(err)
-		return nil, nextID, err
+		return err
 	}
 	// NOTE: File offset now at 4
 
@@ -143,40 +148,46 @@ func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 			err = binary.Read(f, binary.LittleEndian, &fileHeader.uuid)
 			if err != nil {
 				if err == io.EOF {
-					return nil, nextID, nil
+					return nil
 				}
 				log.Fatal(err)
-				return nil, nextID, err
+				return err
 			}
-			d.uuid = fileHeader.uuid
-
-			// Load the WAL into memory
-			d.walFile.Load(d.uuid)
+			// We can now override uuid as it's been read from the file
+			if fileHeader.uuid != 0 {
+				d.uuid = fileHeader.uuid
+				d.walFile.logger.uuid = d.uuid
+				r.uuid = d.uuid
+			}
 
 			// NOTE special case handling for introduction of persisted nextId in file
 			if fileHeader.schemaID >= 3 {
-				err = binary.Read(f, binary.LittleEndian, &nextID)
+				err = binary.Read(f, binary.LittleEndian, &r.NextID)
 				if err != nil {
 					if err == io.EOF {
-						return nil, nextID, nil
+						return nil
 					}
 					log.Fatal(err)
-					return nil, nextID, err
+					return err
 				}
 			}
 		}
 	}
+	//runtime.Breakpoint()
+
+	var cur *ListItem
+	// primaryRoot is the root built from primary.db rather than from the WAL
+	var primaryRoot *ListItem
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
-	var root, cur *ListItem
-
 	for {
 		nextItem := ListItem{}
 		cont, err := d.readListItemFromFile(f, fileHeader.schemaID, &nextItem)
 		if err != nil {
 			//log.Fatal(err)
-			return nil, nextID, err
+			return err
 		}
+
 		// TODO: 2020-12-05 remove once everyone using file schema >= 1
 		// Under normal circumstances, the first item read from the file will be youngest.
 		// However, due to annoying historical "reasons", the first non-versioned file schema
@@ -186,7 +197,13 @@ func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 			// This bit will be removed
 			nextItem.parent = cur
 			if !cont {
-				return cur, nextID, nil
+				// Load the WAL into memory
+				primaryRoot = cur
+				if err := d.walFile.Load(); err != nil {
+					return err
+				}
+				d.walFile.logger.replayWalEvents(r, primaryRoot)
+				return nil
 			}
 			if cur != nil {
 				cur.child = &nextItem
@@ -196,10 +213,16 @@ func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 			// This bit will stay
 			nextItem.child = cur
 			if !cont {
-				return root, nextID, nil
+				// Load the WAL into memory
+				if err := d.walFile.Load(); err != nil {
+					return err
+				}
+				d.walFile.logger.replayWalEvents(r, primaryRoot)
+				return nil
 			}
 			if cur == nil {
-				root = &nextItem
+				// TODO
+				primaryRoot = &nextItem
 			} else {
 				cur.parent = &nextItem
 			}
@@ -209,8 +232,8 @@ func (d *FileDataStore) Load() (*ListItem, uint64, error) {
 		// TODO REMOVE THIS ONCE ALL REMOTES ARE USING v3 or higher
 		// This is only relevant on the first instance of moving from v < 3 to v >= 3
 		// We need to find the next available index for the entire dataset
-		if nextItem.id >= nextID {
-			nextID = nextItem.id + 1
+		if nextItem.id >= r.NextID {
+			r.NextID = nextItem.id + 1
 		}
 	}
 }
@@ -239,11 +262,6 @@ func (d *FileDataStore) Save(root *ListItem, pendingDeletions []*ListItem, nextL
 		return err
 	}
 	defer f.Close()
-
-	// If UUID has not been set (e.g. file schema migration 1 -> 2, generate and set on Save
-	if d.uuid == 0 {
-		d.uuid = d.generateUUID()
-	}
 
 	// TODO use fileHeader once earlier versions are gone
 	// Write the file header to the start of the file
