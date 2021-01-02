@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const walDirPattern = "wal_%d.db"
+const walDirPattern = "wal_%v.db"
 
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file schema 0", func(t *testing.T) {
