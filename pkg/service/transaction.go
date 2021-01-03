@@ -145,11 +145,11 @@ func (l *WalEventLogger) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) e
 		return nil
 	}
 
-	//runtime.Breakpoint()
 	listItemTracker := make(map[string]*ListItem)
 	//if *l.log == nil {
 	//    return nil
 	//}
+	//runtime.Breakpoint()
 	for i, e := range *l.log {
 		//runtime.Breakpoint()
 		item := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
@@ -158,15 +158,18 @@ func (l *WalEventLogger) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) e
 		item, _ = callFunctionForEventLog(r, e.eventType, item, child, e.redoLine, e.redoNote)
 
 		// TODO figure out a better method than this hack
-		item.id = e.listItemID
+		//item.id = e.listItemID
 
 		// Update tracker for any newly created listItems
 		listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)] = item
 
 		// Update underlying event log with item for when we come to Save the file later on
 		// We have to act on the array as `range` returns a copy
-		(*l.log)[i].listItemID = e.listItemID
-		(*l.log)[i].childListItemID = e.childListItemID
+		//(*l.log)[i].listItemID = e.listItemID
+		//(*l.log)[i].childListItemID = e.childListItemID
+
+		// Update event log to match listItemID of item (these are independently rebuilt after WAL merge)
+		(*l.log)[i].listItemID = item.id
 	}
 	return nil
 }

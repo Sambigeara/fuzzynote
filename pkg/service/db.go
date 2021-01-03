@@ -217,6 +217,7 @@ func (d *FileDataStore) Load(r *DBListRepo) error {
 				if err := d.walFile.Load(); err != nil {
 					return err
 				}
+				//runtime.Breakpoint()
 				d.walFile.logger.replayWalEvents(r, primaryRoot)
 				return nil
 			}

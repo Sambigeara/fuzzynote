@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	//"runtime"
 	"time"
 	//"path"
 	"path/filepath"
@@ -123,6 +124,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 
 func (w *WalFile) Load() error {
 	// TODO
+	//runtime.Breakpoint()
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.logger.uuid)
 
 	// Initially, we want to create a single merged eventLog for all non-local WAL files
@@ -177,7 +179,7 @@ func (w *WalFile) Load() error {
 		oldest := eventLog{}
 
 		for f := range remoteFiles {
-			if oldest.unixTime == 0 {
+			if oldest.eventType == nullEvent {
 				// Deal with initial iteration
 				oldest = curEventLogs[f]
 				curFile = f
@@ -204,18 +206,20 @@ func (w *WalFile) Load() error {
 		// Because we have guaranteed ordering by unixTime -> uuid -> logID, we can compare the current "oldest"
 		// against the head of the mergedRemoteLogs - if they share the three attributes above (strictly only uuid
 		// and rowID) we can ignore. Otherwise, we append to the logs
-		if len(mergedRemoteLogs) > 0 {
-			head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
-			if head.uuid == oldest.uuid && head.logID == oldest.logID {
-				if head.unixTime != oldest.unixTime {
-					panic(errors.New("Log item's should have the same unixTime"))
+		if oldest.eventType != nullEvent {
+			if len(mergedRemoteLogs) > 0 {
+				head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
+				if head.uuid == oldest.uuid && head.logID == oldest.logID {
+					if head.unixTime != oldest.unixTime {
+						panic(errors.New("Log item's should have the same unixTime"))
+					}
+				} else {
+					// TODO deal with duplication
+					mergedRemoteLogs = append(mergedRemoteLogs, oldest)
 				}
 			} else {
-				// TODO deal with duplication
 				mergedRemoteLogs = append(mergedRemoteLogs, oldest)
 			}
-		} else {
-			mergedRemoteLogs = append(mergedRemoteLogs, oldest)
 		}
 
 		// Retrieve the next log from that file. If EOF, remove it from the list of remoteFiles
@@ -228,11 +232,14 @@ func (w *WalFile) Load() error {
 				return err
 			}
 		} else {
-			curEventLogs[curFile] = nextEvent
+			if nextEvent.eventType != nullEvent {
+				curEventLogs[curFile] = nextEvent
+			}
 		}
 	}
 
 	w.logger.log = &mergedRemoteLogs
+	//runtime.Breakpoint()
 
 	return nil
 

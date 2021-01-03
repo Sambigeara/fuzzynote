@@ -274,17 +274,37 @@ func TestWalMerge(t *testing.T) {
 				ChildListItemID: 0,
 				UnixTime:        now0,
 				EventType:       addEvent,
+				LineLength:      0,
+				NoteLength:      0,
+			},
+			walItemSchema1{
+				UUID:            fileDS.uuid,
+				LogID:           2,
+				ListItemID:      1,
+				ChildListItemID: 0,
+				UnixTime:        now0,
+				EventType:       updateEvent,
 				LineLength:      uint64(len(line0)),
 				NoteLength:      0,
 			},
 			line0,
 			walItemSchema1{
 				UUID:            fileDS.uuid,
-				LogID:           2,
+				LogID:           3,
 				ListItemID:      2,
 				ChildListItemID: 1,
 				UnixTime:        now2,
 				EventType:       addEvent,
+				LineLength:      0,
+				NoteLength:      0,
+			},
+			walItemSchema1{
+				UUID:            fileDS.uuid,
+				LogID:           4,
+				ListItemID:      2,
+				ChildListItemID: 1,
+				UnixTime:        now2,
+				EventType:       updateEvent,
 				LineLength:      uint64(len(line2)),
 				NoteLength:      0,
 			},
@@ -315,17 +335,37 @@ func TestWalMerge(t *testing.T) {
 				ChildListItemID: 0,
 				UnixTime:        now1,
 				EventType:       addEvent,
+				LineLength:      0,
+				NoteLength:      0,
+			},
+			walItemSchema1{
+				UUID:            remoteUUID,
+				LogID:           2,
+				ListItemID:      1,
+				ChildListItemID: 0,
+				UnixTime:        now1,
+				EventType:       updateEvent,
 				LineLength:      uint64(len(line1)),
 				NoteLength:      0,
 			},
 			line1,
 			walItemSchema1{
 				UUID:            remoteUUID,
-				LogID:           2,
+				LogID:           3,
 				ListItemID:      2,
 				ChildListItemID: 1,
 				UnixTime:        now3,
 				EventType:       addEvent,
+				LineLength:      0,
+				NoteLength:      0,
+			},
+			walItemSchema1{
+				UUID:            remoteUUID,
+				LogID:           4,
+				ListItemID:      2,
+				ChildListItemID: 1,
+				UnixTime:        now3,
+				EventType:       updateEvent,
 				LineLength:      uint64(len(line3)),
 				NoteLength:      0,
 			},
@@ -344,10 +384,11 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
+		//runtime.Breakpoint()
 		fileDS.Load(listRepo)
 
-		if len(*walEventLogger.log) != 4 {
-			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*walEventLogger.log))
+		if len(*walEventLogger.log) != 8 {
+			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*walEventLogger.log))
 		}
 
 		matches, _ := listRepo.Match([][]rune{}, nil, true)
@@ -355,16 +396,16 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 4 matches items but had %d", len(*walEventLogger.log))
 		}
 
-		if (*walEventLogger.log)[0].redoLine != string(line0) {
+		if (*walEventLogger.log)[1].redoLine != string(line0) {
 			t.Fatal("First match line should match first eventLog")
 		}
-		if (*walEventLogger.log)[1].redoLine != string(line1) {
+		if (*walEventLogger.log)[3].redoLine != string(line1) {
 			t.Fatal("Second match line should match second eventLog")
 		}
-		if (*walEventLogger.log)[2].redoLine != string(line2) {
+		if (*walEventLogger.log)[5].redoLine != string(line2) {
 			t.Fatal("Third match line should match third eventLog")
 		}
-		if (*walEventLogger.log)[3].redoLine != string(line3) {
+		if (*walEventLogger.log)[7].redoLine != string(line3) {
 			t.Fatal("Fourth match line should match fourth eventLog")
 		}
 	})
