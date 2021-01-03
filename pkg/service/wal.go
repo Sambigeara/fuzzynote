@@ -79,6 +79,7 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 
 		if item.IsHidden {
 			el.eventType = visibilityEvent
+			el.logID = nextLogID
 			primaryLogs = append(primaryLogs, el)
 			nextLogID++
 		}
