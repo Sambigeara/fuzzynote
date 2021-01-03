@@ -145,32 +145,33 @@ func (l *WalEventLogger) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) e
 		return nil
 	}
 
+	// TODO sort this out
+	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
+	// and then set the global NextID afterwards, to avoid wastage.
+	nextID := uint64(1)
+
 	listItemTracker := make(map[string]*ListItem)
-	//if *l.log == nil {
-	//    return nil
-	//}
 	//runtime.Breakpoint()
-	for i, e := range *l.log {
-		//runtime.Breakpoint()
+	for _, e := range *l.log {
 		item := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
 		child := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
 
 		item, _ = callFunctionForEventLog(r, e.eventType, item, child, e.redoLine, e.redoNote)
 
-		// TODO figure out a better method than this hack
-		//item.id = e.listItemID
+		// This only applies when we Add a new event and want the ID to be consistent with the incoming
+		// events - required for retrieving the correct listItem from the listItemTracker map
+		item.id = e.listItemID
 
 		// Update tracker for any newly created listItems
-		listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)] = item
+		listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 
-		// Update underlying event log with item for when we come to Save the file later on
-		// We have to act on the array as `range` returns a copy
-		//(*l.log)[i].listItemID = e.listItemID
-		//(*l.log)[i].childListItemID = e.childListItemID
-
-		// Update event log to match listItemID of item (these are independently rebuilt after WAL merge)
-		(*l.log)[i].listItemID = item.id
+		if nextID <= item.id {
+			nextID = item.id + 1
+		}
 	}
+
+	r.NextID = nextID
+
 	return nil
 }
 

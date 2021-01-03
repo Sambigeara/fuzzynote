@@ -124,7 +124,6 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 
 func (w *WalFile) Load() error {
 	// TODO
-	//runtime.Breakpoint()
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.logger.uuid)
 
 	// Initially, we want to create a single merged eventLog for all non-local WAL files
