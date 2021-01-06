@@ -113,12 +113,14 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	}
 	el.redoLine = string(line)
 
-	note := make([]byte, item.NoteLength)
-	err = binary.Read(f, binary.LittleEndian, &note)
-	if err != nil {
-		return el, err
+	if item.NoteLength > 0 {
+		note := make([]byte, item.NoteLength)
+		err = binary.Read(f, binary.LittleEndian, &note)
+		if err != nil {
+			return el, err
+		}
+		el.redoNote = &note
 	}
-	el.redoNote = &note
 
 	return el, nil
 }

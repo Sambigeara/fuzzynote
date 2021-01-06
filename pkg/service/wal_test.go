@@ -7,6 +7,8 @@ import (
 	//"runtime"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 const (
@@ -407,6 +409,171 @@ func TestWalMerge(t *testing.T) {
 		}
 		if (*walEventLogger.log)[7].redoLine != string(line3) {
 			t.Fatal("Fourth match line should match fourth eventLog")
+		}
+	})
+	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
+		walEventLogger := NewWalEventLogger()
+		walFile := NewWalFile(rootPath, walDirPattern, walEventLogger)
+		fileDS := NewFileDataStore(rootPath, "", walFile)
+		listRepo := NewDBListRepo(NewDbEventLogger(), walEventLogger)
+		defer os.Remove(rootPath)
+
+		// Load and Save the fileDS to instantiate
+		fileDS.Load(listRepo)
+		fileDS.Save(nil, []*ListItem{}, listRepo.NextID)
+
+		now0 := time.Now().Unix() - 10 // `-10` Otherwise delete "happens" before these times
+		now1 := now0 + 1
+
+		line0 := []byte("First item")
+		localData := []interface{}{
+			walItemSchema1{
+				UUID:            fileDS.uuid,
+				LogID:           1,
+				ListItemID:      1,
+				ChildListItemID: 0,
+				UnixTime:        now0,
+				EventType:       addEvent,
+				LineLength:      uint64(len(line0)),
+				NoteLength:      0,
+			},
+			line0,
+		}
+
+		walPath := fmt.Sprintf(walDirPattern, fileDS.uuid)
+		f, _ := os.Create(walPath)
+		defer os.Remove(walPath)
+
+		for _, v := range localData {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Close()
+
+		remoteUUID := fileDS.generateUUID()
+
+		line1 := []byte("Second item")
+		remoteData := []interface{}{
+			walItemSchema1{
+				UUID:            remoteUUID,
+				LogID:           2,
+				ListItemID:      1,
+				ChildListItemID: 0,
+				UnixTime:        now1,
+				EventType:       addEvent,
+				LineLength:      uint64(len(line1)),
+				NoteLength:      0,
+			},
+			line1,
+		}
+
+		walPath = fmt.Sprintf(walDirPattern, remoteUUID)
+		f, _ = os.Create(walPath)
+		defer os.Remove(walPath)
+
+		for _, v := range remoteData {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Close()
+
+		fileDS.Load(listRepo)
+
+		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		if len(matches) != 2 {
+			t.Fatalf("Expected 2 matches items but had %d", len(*walEventLogger.log))
+		}
+
+		if listRepo.Root.child != nil {
+			t.Fatal("Root should have no child")
+		}
+		if listRepo.Root.parent.parent != nil {
+			t.Fatal("Oldest item should have no parent")
+		}
+		if listRepo.Root != listRepo.Root.parent.child {
+			t.Fatal("Root shoud equal Root.parent.child")
+		}
+
+		preSaveLog := *walEventLogger.log
+
+		// Save and reload to ensure consistency in event log after write and read to/from disk
+		//runtime.Breakpoint()
+		fileDS.Save(nil, []*ListItem{}, listRepo.NextID)
+		listRepo = NewDBListRepo(NewDbEventLogger(), walEventLogger)
+		fileDS.Load(listRepo)
+
+		matches, _ = listRepo.Match([][]rune{}, nil, true)
+		if len(matches) != 2 {
+			t.Fatalf("Expected 2 matches items but had %d", len(matches))
+		}
+
+		if len(*walEventLogger.log) != 2 {
+			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*walEventLogger.log))
+		}
+
+		for i := range [2]int{} {
+			oldLogItem := preSaveLog[i]
+			newLogItem := (*walEventLogger.log)[i]
+			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
+				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
+			}
+		}
+
+		if listRepo.Root.child != nil {
+			t.Fatal("Root should have no child")
+		}
+		if listRepo.Root.parent.parent != nil {
+			t.Fatal("Oldest item should have no parent")
+		}
+		if listRepo.Root != listRepo.Root.parent.child {
+			t.Fatal("Root shoud equal Root.parent.child")
+		}
+
+		listRepo.Delete(matches[1])
+
+		preSaveLog = *walEventLogger.log
+
+		// Flush the merged WAL to disk
+		fileDS.Save(nil, []*ListItem{}, listRepo.NextID)
+
+		// Re-write the same remote WAL
+		f, _ = os.Create(walPath)
+		for _, v := range remoteData {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Close()
+
+		//runtime.Breakpoint()
+		fileDS.Load(listRepo)
+
+		for i := range [3]int{} {
+			oldLogItem := preSaveLog[i]
+			newLogItem := (*walEventLogger.log)[i]
+			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
+				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
+			}
+		}
+
+		// Event log should still be len == 3 as the second log was pre-existing
+		if len(*walEventLogger.log) != 3 {
+			t.Fatalf("Expected 3 events in WAL eventLog but had %d", len(*walEventLogger.log))
+		}
+
+		if listRepo.Root.child != nil {
+			t.Fatal("Root should have no child")
+		}
+		if listRepo.Root.parent.parent != nil {
+			t.Fatal("Oldest item should have no parent")
+		}
+		if listRepo.Root != listRepo.Root.parent.child {
+			t.Fatal("Root shoud equal Root.parent.child")
 		}
 	})
 }
