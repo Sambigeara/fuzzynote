@@ -164,7 +164,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update(t.curItem.Line, &newDat, t.curItem)
+	err = t.db.Update(t.curItem.Line, &newDat, t.curY-1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -603,7 +603,7 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 						newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						err := t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -681,7 +681,7 @@ func (t *Terminal) RunClient() error {
 						return len([]rune(t.curItem.Line))
 					}
 					updateFunc := func() error {
-						return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						return t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
 					}
 					// len([]rune) rather than len(string) as some string chars are >1 bytes
 					t.handleTextLengthChange(len([]rune(newLine)), lenFunc, &posDiff, updateFunc)

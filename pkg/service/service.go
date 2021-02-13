@@ -14,7 +14,7 @@ const dateFormat string = "Mon, Jan 2, 2006"
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
-	Update(line string, note *[]byte, listItem *ListItem) error
+	Update(line string, note *[]byte, idx int) error
 	Delete(listItem *ListItem) error
 	MoveUp(listItem *ListItem) (bool, error)
 	MoveDown(listItem *ListItem) (bool, error)
@@ -91,7 +91,13 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, listItem *ListItem) error {
+func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
+	if idx < 0 || idx >= len(r.matchListItems) {
+		return errors.New("ListItem idx out of bounds")
+	}
+
+	listItem := r.matchListItems[idx]
+
 	r.eventLogger.addLog(updateEvent, listItem, line, note)
 	r.walLogger.addLog(updateEvent, listItem, line, note)
 	return update(r, line, note, listItem)

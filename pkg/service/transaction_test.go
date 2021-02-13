@@ -79,7 +79,7 @@ func TestTransactionUndo(t *testing.T) {
 
 		updatedLine := "Updated item"
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
-		mockListRepo.Update(updatedLine, &[]byte{}, matches[0])
+		mockListRepo.Update(updatedLine, &[]byte{}, 0)
 
 		if len(mockListRepo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -320,7 +320,7 @@ func TestTransactionUndo(t *testing.T) {
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
 
 		newLine := "a"
-		mockListRepo.Update(newLine, &[]byte{}, matches[0])
+		mockListRepo.Update(newLine, &[]byte{}, 0)
 
 		if len(mockListRepo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -424,7 +424,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		newLine := "Updated line"
-		mockListRepo.Update(newLine, &[]byte{}, matches[0])
+		mockListRepo.Update(newLine, &[]byte{}, 0)
 
 		if len(mockListRepo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have been overidden with the nullEvent and the single Update event now")

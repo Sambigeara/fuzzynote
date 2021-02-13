@@ -992,8 +992,11 @@ func TestServiceUpdate(t *testing.T) {
 	mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 	mockListRepo.Root = &item1
 
+	// Call matches to trigger matchListItems creation
+	mockListRepo.Match([][]rune{}, nil, true)
+
 	expectedLine := "Oooo I'm new"
-	err := mockListRepo.Update(expectedLine, &[]byte{}, &item2)
+	err := mockListRepo.Update(expectedLine, &[]byte{}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
