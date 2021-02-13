@@ -468,7 +468,7 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					t.showHidden = !t.showHidden
 				} else {
-					err = t.db.ToggleVisibility(t.curItem)
+					err = t.db.ToggleVisibility(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}

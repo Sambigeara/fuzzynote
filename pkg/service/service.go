@@ -18,7 +18,7 @@ type ListRepo interface {
 	Delete(idx int) error
 	MoveUp(idx int) (bool, error)
 	MoveDown(idx int) (bool, error)
-	ToggleVisibility(listItem *ListItem) error
+	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
 	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
@@ -151,10 +151,16 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
-func (r *DBListRepo) ToggleVisibility(item *ListItem) error {
-	r.eventLogger.addLog(visibilityEvent, item, "", nil)
-	r.walLogger.addLog(visibilityEvent, item, "", nil)
-	return toggleVisibility(r, item)
+func (r *DBListRepo) ToggleVisibility(idx int) error {
+	if idx < 0 || idx >= len(r.matchListItems) {
+		return errors.New("ListItem idx out of bounds")
+	}
+
+	listItem := r.matchListItems[idx]
+
+	r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
+	r.walLogger.addLog(visibilityEvent, listItem, "", nil)
+	return toggleVisibility(r, listItem)
 }
 
 func (r *DBListRepo) Undo() error {
