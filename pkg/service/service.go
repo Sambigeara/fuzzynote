@@ -16,8 +16,8 @@ type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
 	Update(line string, note *[]byte, idx int) error
 	Delete(idx int) error
-	MoveUp(listItem *ListItem) (bool, error)
-	MoveDown(listItem *ListItem) (bool, error)
+	MoveUp(idx int) (bool, error)
+	MoveDown(idx int) (bool, error)
 	ToggleVisibility(listItem *ListItem) error
 	Undo() error
 	Redo() error
@@ -118,22 +118,34 @@ func (r *DBListRepo) Delete(idx int) error {
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveUp(item *ListItem) (bool, error) {
-	moved, err := moveUp(r, item)
+func (r *DBListRepo) MoveUp(idx int) (bool, error) {
+	if idx < 0 || idx >= len(r.matchListItems) {
+		return false, errors.New("ListItem idx out of bounds")
+	}
+
+	listItem := r.matchListItems[idx]
+
+	moved, err := moveUp(r, listItem)
 	if moved {
-		r.eventLogger.addLog(moveUpEvent, item, "", nil)
-		r.walLogger.addLog(moveUpEvent, item, "", nil)
+		r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
+		r.walLogger.addLog(moveUpEvent, listItem, "", nil)
 	}
 	return moved, err
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveDown(item *ListItem) (bool, error) {
-	moved, err := moveDown(r, item)
+func (r *DBListRepo) MoveDown(idx int) (bool, error) {
+	if idx < 0 || idx >= len(r.matchListItems) {
+		return false, errors.New("ListItem idx out of bounds")
+	}
+
+	listItem := r.matchListItems[idx]
+
+	moved, err := moveDown(r, listItem)
 	if moved {
-		r.eventLogger.addLog(moveDownEvent, item, "", nil)
-		r.walLogger.addLog(moveDownEvent, item, "", nil)
+		r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
+		r.walLogger.addLog(moveDownEvent, listItem, "", nil)
 	}
 	return moved, err
 }

@@ -625,7 +625,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyPgUp:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item up and follow with cursor
-					moved, err := t.db.MoveUp(t.curItem)
+					moved, err := t.db.MoveUp(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -636,7 +636,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyPgDn:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item down and follow with cursor
-					moved, err := t.db.MoveDown(t.curItem)
+					moved, err := t.db.MoveDown(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
