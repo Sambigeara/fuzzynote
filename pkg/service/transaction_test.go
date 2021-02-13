@@ -30,7 +30,7 @@ func TestTransactionUndo(t *testing.T) {
 		mockListRepo := NewDBListRepo(eventLogger, NewWalEventLogger())
 
 		line := "New item"
-		mockListRepo.Add(line, nil, nil, nil)
+		mockListRepo.Add(line, nil, 0)
 
 		if len(mockListRepo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
@@ -75,7 +75,7 @@ func TestTransactionUndo(t *testing.T) {
 		mockListRepo := NewDBListRepo(eventLogger, NewWalEventLogger())
 
 		line := "New item"
-		mockListRepo.Add(line, nil, nil, nil)
+		mockListRepo.Add(line, nil, 0)
 
 		updatedLine := "Updated item"
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
@@ -151,7 +151,7 @@ func TestTransactionUndo(t *testing.T) {
 		mockListRepo := NewDBListRepo(eventLogger, NewWalEventLogger())
 
 		line := "New item"
-		mockListRepo.Add(line, nil, nil, nil)
+		mockListRepo.Add(line, nil, 0)
 
 		if len(mockListRepo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
@@ -175,7 +175,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		line2 := "Another item"
-		mockListRepo.Add(line2, nil, listItem, nil)
+		mockListRepo.Add(line2, nil, 1)
 		matches, _ = mockListRepo.Match([][]rune{}, nil, true)
 		listItem2 := matches[1]
 
@@ -310,7 +310,7 @@ func TestTransactionUndo(t *testing.T) {
 		eventLogger := NewDbEventLogger()
 		mockListRepo := NewDBListRepo(eventLogger, NewWalEventLogger())
 
-		mockListRepo.Add("", nil, nil, nil)
+		mockListRepo.Add("", nil, 0)
 
 		logItem := mockListRepo.eventLogger.log[1]
 		if logItem.eventType != addEvent {

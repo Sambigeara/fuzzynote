@@ -233,7 +233,7 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		// If item is highlighted, indicate accordingly
 		if _, ok := t.selectedItems[*r]; ok {
 			style = selectedStyle
-		} else if len(*(r.Note)) > 0 {
+		} else if r.Note != nil && len(*(r.Note)) > 0 {
 			// If note is present, indicate with a different style
 			style = noteStyle
 		} else {
@@ -423,11 +423,9 @@ func (t *Terminal) RunClient() error {
 
 					var err error
 					if t.curY == reservedTopLines-1 {
-						err = t.db.Add(newString, nil, nil, nil)
 						posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
-					} else {
-						err = t.db.Add(newString, nil, t.curItem, nil)
 					}
+					err = t.db.Add(newString, nil, t.curY)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -493,7 +491,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlP:
 				// Paste functionality
 				if t.copiedItem != nil {
-					err := t.db.Add(t.copiedItem.Line, nil, t.curItem, nil)
+					err := t.db.Add(t.copiedItem.Line, nil, t.curY)
 					if err != nil {
 						log.Fatal(err)
 					}

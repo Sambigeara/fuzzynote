@@ -306,7 +306,7 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		err := mockListRepo.Add(newLine, nil, nil, nil)
+		err := mockListRepo.Add(newLine, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -354,8 +354,9 @@ func TestServiceAdd(t *testing.T) {
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
 		oldLen := len(matches)
+		oldParent := matches[len(matches)-1]
 
-		err := mockListRepo.Add(newLine, nil, &item2, nil)
+		err := mockListRepo.Add(newLine, nil, oldLen)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +369,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if newItem != item2.parent {
+		if newItem != oldParent.parent {
 			t.Errorf("Returned item should be new bottom item")
 		}
 
@@ -381,7 +382,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Newly generated listItem should have a nil parent")
 		}
 
-		if matches[expectedIdx].child != &item2 {
+		if matches[expectedIdx].child != oldParent {
 			t.Errorf("Newly generated listItem has incorrect child")
 		}
 
@@ -393,21 +394,22 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item in middle of list", func(t *testing.T) {
 		newLine := "I'm somewhere in the middle"
 
-		oldparent := item1.parent
+		oldParent := item1.parent
 
-		err := mockListRepo.Add(newLine, nil, &item1, nil)
+		newIdx := 2
+		err := mockListRepo.Add(newLine, nil, newIdx)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
 
-		expectedItem := matches[2]
+		expectedItem := matches[newIdx]
 		if expectedItem.Line != newLine {
 			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
 		}
 
-		if expectedItem.parent != oldparent {
+		if expectedItem.parent != oldParent {
 			t.Errorf("New item should have inherit old child's parent")
 		}
 
@@ -415,10 +417,41 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 
-		if oldparent.child != expectedItem {
+		if oldParent.child != expectedItem {
 			t.Errorf("Original old parent has incorrect child")
 		}
 	})
+
+	t.Run("Add new item to empty list", func(t *testing.T) {
+		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
+
+		newLine := "First item in list"
+		mockListRepo.Add(newLine, nil, 0)
+
+		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
+
+		if len(matches) != 1 {
+			t.Errorf("Matches should only have 1 item")
+		}
+
+		expectedItem := matches[0]
+		if expectedItem.Line != newLine {
+			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
+		}
+
+		if expectedItem.child != nil {
+			t.Errorf("New item should have no child")
+		}
+
+		if expectedItem.parent != nil {
+			t.Errorf("New item should have no parent")
+		}
+
+		if mockListRepo.Root != expectedItem {
+			t.Errorf("New item should be new root")
+		}
+	})
+
 }
 
 func TestServiceDelete(t *testing.T) {

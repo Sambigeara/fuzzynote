@@ -2,6 +2,7 @@ package service
 
 import (
 	//"fmt"
+	"errors"
 	"strings"
 	"time"
 	"unicode"
@@ -12,7 +13,7 @@ const dateFormat string = "Mon, Jan 2, 2006"
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error
+	Add(line string, note *[]byte, idx int) error
 	Update(line string, note *[]byte, listItem *ListItem) error
 	Delete(listItem *ListItem) error
 	MoveUp(listItem *ListItem) (bool, error)
@@ -37,6 +38,7 @@ type DBListRepo struct {
 	eventLogger      *DbEventLogger
 	walLogger        *WalEventLogger
 	listItemMap      map[listItemKey]*ListItem
+	matchListItems   []*ListItem
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -72,9 +74,17 @@ func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBLis
 	}
 }
 
-// Add adds a new LineItem with string, note and a pointer to the child LineItem for positioning
-func (r *DBListRepo) Add(line string, note *[]byte, childItem *ListItem, newItem *ListItem) error {
-	newItem, err := add(r, line, note, childItem, newItem)
+// Add adds a new LineItem with string, note and a position to insert the item into the matched list
+func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+	if idx < 0 || idx > len(r.matchListItems) {
+		return errors.New("ListItem idx out of bounds")
+	}
+
+	var childItem *ListItem
+	if idx > 0 {
+		childItem = r.matchListItems[idx-1]
+	}
+	newItem, err := add(r, line, note, childItem, nil)
 	r.eventLogger.addLog(addEvent, newItem, line, note)
 	r.walLogger.addLog(addEvent, newItem, line, note)
 	return err
@@ -258,10 +268,10 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 	cur := r.Root
 	var lastCur *ListItem
 
-	res := []*ListItem{}
+	r.matchListItems = []*ListItem{}
 
 	if cur == nil {
-		return res, nil
+		return r.matchListItems, nil
 	}
 
 	for {
@@ -287,7 +297,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 				}
 			}
 			if matched {
-				res = append(res, cur)
+				r.matchListItems = append(r.matchListItems, cur)
 
 				if lastCur != nil {
 					lastCur.matchParent = cur
@@ -298,7 +308,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		}
 
 		if cur.parent == nil {
-			return res, nil
+			return r.matchListItems, nil
 		}
 
 		cur = cur.parent
