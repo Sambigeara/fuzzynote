@@ -533,7 +533,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatal("Root shoud equal Root.parent.child")
 		}
 
-		listRepo.Delete(matches[1])
+		listRepo.Delete(1)
 
 		preSaveLog = *walEventLogger.log
 

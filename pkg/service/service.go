@@ -15,7 +15,7 @@ const dateFormat string = "Mon, Jan 2, 2006"
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
 	Update(line string, note *[]byte, idx int) error
-	Delete(listItem *ListItem) error
+	Delete(idx int) error
 	MoveUp(listItem *ListItem) (bool, error)
 	MoveDown(listItem *ListItem) (bool, error)
 	ToggleVisibility(listItem *ListItem) error
@@ -104,10 +104,16 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 }
 
 // Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(item *ListItem) error {
-	r.eventLogger.addLog(deleteEvent, item, "", nil)
-	r.walLogger.addLog(deleteEvent, item, "", nil)
-	return del(r, item)
+func (r *DBListRepo) Delete(idx int) error {
+	if idx < 0 || idx >= len(r.matchListItems) {
+		return errors.New("ListItem idx out of bounds")
+	}
+
+	listItem := r.matchListItems[idx]
+
+	r.eventLogger.addLog(deleteEvent, listItem, "", nil)
+	r.walLogger.addLog(deleteEvent, listItem, "", nil)
+	return del(r, listItem)
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and

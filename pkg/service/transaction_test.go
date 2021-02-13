@@ -177,7 +177,8 @@ func TestTransactionUndo(t *testing.T) {
 		line2 := "Another item"
 		mockListRepo.Add(line2, nil, 1)
 		matches, _ = mockListRepo.Match([][]rune{}, nil, true)
-		listItem2 := matches[1]
+		idx := 1
+		listItem2 := matches[idx]
 
 		if mockListRepo.eventLogger.log[1] != logItem {
 			t.Errorf("Original log item should still be in the first position in the log")
@@ -202,7 +203,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		mockListRepo.Delete(listItem2)
+		mockListRepo.Delete(idx)
 
 		if len(mockListRepo.eventLogger.log) != 4 {
 			t.Errorf("Event log should have one null and three real events in it")
@@ -223,7 +224,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		mockListRepo.Delete(matches[0])
+		mockListRepo.Delete(0)
 		matches, _ = mockListRepo.Match([][]rune{}, nil, true)
 
 		if len(mockListRepo.eventLogger.log) != 5 {
@@ -392,7 +393,9 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should be set to zero")
 		}
 
-		mockListRepo.Delete(&item1)
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		mockListRepo.Delete(0)
 
 		matches, _ := mockListRepo.Match([][]rune{}, nil, true)
 		if len(matches) != 0 {

@@ -435,7 +435,7 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					t.search = [][]rune{}
 				} else {
-					err := t.db.Delete(t.curItem)
+					err := t.db.Delete(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -564,7 +564,7 @@ func (t *Terminal) RunClient() error {
 						}
 						posDiff[0]--
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curItem)
+						err := t.db.Delete(t.curY - 1)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -608,7 +608,7 @@ func (t *Terminal) RunClient() error {
 							log.Fatal(err)
 						}
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curItem)
+						err := t.db.Delete(t.curY - 1)
 						if err != nil {
 							log.Fatal(err)
 						}

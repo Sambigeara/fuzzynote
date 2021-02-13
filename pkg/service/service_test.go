@@ -473,7 +473,9 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		err := mockListRepo.Delete(&item1)
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		err := mockListRepo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -519,7 +521,9 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		err := mockListRepo.Delete(&item3)
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		err := mockListRepo.Delete(2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -561,7 +565,9 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		err := mockListRepo.Delete(&item2)
+		mockListRepo.Match([][]rune{}, nil, true)
+
+		err := mockListRepo.Delete(1)
 		if err != nil {
 			t.Fatal(err)
 		}
