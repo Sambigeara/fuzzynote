@@ -183,7 +183,7 @@ func callFunctionForEventLog(r *DBListRepo, ev eventType, item *ListItem, child 
 	case deleteEvent:
 		err = del(r, item)
 	case updateEvent:
-		err = update(r, line, note, item)
+		_, err = update(r, line, note, item)
 	case moveUpEvent:
 		_, err = moveUp(r, item)
 	case moveDownEvent:
@@ -236,11 +236,11 @@ func add(r *DBListRepo, line string, note *[]byte, childItem *ListItem, newItem 
 }
 
 // Update will update the line or note of an existing ListItem
-func update(r *DBListRepo, line string, note *[]byte, listItem *ListItem) error {
+func update(r *DBListRepo, line string, note *[]byte, listItem *ListItem) (string, error) {
 	line = r.parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
-	return nil
+	return line, nil
 }
 
 func del(r *DBListRepo, item *ListItem) error {

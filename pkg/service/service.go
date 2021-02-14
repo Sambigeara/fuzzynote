@@ -14,14 +14,14 @@ const dateFormat string = "Mon, Jan 2, 2006"
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
-	Update(line string, note *[]byte, idx int) error
+	Update(line string, note *[]byte, idx int) (string, error)
 	Delete(idx int) error
 	MoveUp(idx int) (bool, error)
 	MoveDown(idx int) (bool, error)
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, activeIdx int, showHidden bool) ([]*ListItem, error)
+	Match(keys [][]rune, activeIdx int, showHidden bool) ([]MatchItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
@@ -91,9 +91,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return "", errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -281,9 +281,16 @@ func isMatch(sub []rune, full string, pattern matchPattern) bool {
 	}
 }
 
+// MatchItem holds all data required by the client
+type MatchItem struct {
+	Line     string
+	Note     *[]byte
+	IsHidden bool
+}
+
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]*ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]MatchItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
@@ -299,9 +306,10 @@ func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]*Li
 	var lastCur *ListItem
 
 	r.matchListItems = []*ListItem{}
+	res := []MatchItem{}
 
 	if cur == nil {
-		return r.matchListItems, nil
+		return res, nil
 	}
 
 	idx := 0
@@ -330,6 +338,11 @@ func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]*Li
 			idx++
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
+				res = append(res, MatchItem{
+					cur.Line,
+					cur.Note,
+					cur.IsHidden,
+				})
 
 				if lastCur != nil {
 					lastCur.matchParent = cur
@@ -340,7 +353,7 @@ func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]*Li
 		}
 
 		if cur.parent == nil {
-			return r.matchListItems, nil
+			return res, nil
 		}
 
 		cur = cur.parent
