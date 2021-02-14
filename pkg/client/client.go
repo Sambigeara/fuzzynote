@@ -372,7 +372,7 @@ func getCommonSearchPrefix(selectedItems map[service.ListItem]struct{}) [][]rune
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
-	matches, err := t.db.Match([][]rune{}, nil, t.showHidden)
+	matches, err := t.db.Match([][]rune{}, -1, t.showHidden)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -694,14 +694,9 @@ func (t *Terminal) RunClient() error {
 
 		t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-		var cur *service.ListItem
-		if t.curItem != nil {
-			cur = t.curItem
-		}
-
 		matches := []*service.ListItem{}
 		updateFunc := func() error {
-			matches, err = t.db.Match(t.search, cur, t.showHidden)
+			matches, err = t.db.Match(t.search, t.curY-1, t.showHidden)
 			return err
 		}
 		t.handleTextLengthChange(t.getLenSearchBox(), t.getLenSearchBox, &posDiff, updateFunc)

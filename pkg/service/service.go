@@ -21,7 +21,7 @@ type ListRepo interface {
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error)
+	Match(keys [][]rune, activeIdx int, showHidden bool) ([]*ListItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
@@ -283,7 +283,7 @@ func isMatch(sub []rune, full string, pattern matchPattern) bool {
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]*ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, activeIdx int, showHidden bool) ([]*ListItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
@@ -304,6 +304,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 		return r.matchListItems, nil
 	}
 
+	idx := 0
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -316,7 +317,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 			for _, group := range keys {
 				// Match any items with empty Lines (this accounts for lines added when search is active)
 				// "active" listItems pass automatically to allow mid-search item editing
-				if len(cur.Line) == 0 || cur == active {
+				if len(cur.Line) == 0 || activeIdx == idx {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
@@ -326,6 +327,7 @@ func (r *DBListRepo) Match(keys [][]rune, active *ListItem, showHidden bool) ([]
 					break
 				}
 			}
+			idx++
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
 

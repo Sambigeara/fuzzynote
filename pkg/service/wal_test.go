@@ -83,7 +83,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*walEventLogger.log))
 		}
 
-		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		matches, _ := listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*walEventLogger.log))
 		}
@@ -148,7 +148,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 3 events in WAL eventLog but had %d", len(*walEventLogger.log))
 		}
 
-		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		matches, _ := listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*walEventLogger.log))
 		}
@@ -231,7 +231,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*walEventLogger.log))
 		}
 
-		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		matches, _ := listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*walEventLogger.log))
 		}
@@ -393,7 +393,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*walEventLogger.log))
 		}
 
-		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		matches, _ := listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 4 {
 			t.Fatalf("Expected 4 matches items but had %d", len(*walEventLogger.log))
 		}
@@ -483,7 +483,7 @@ func TestWalMerge(t *testing.T) {
 
 		fileDS.Load(listRepo)
 
-		matches, _ := listRepo.Match([][]rune{}, nil, true)
+		matches, _ := listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*walEventLogger.log))
 		}
@@ -506,7 +506,7 @@ func TestWalMerge(t *testing.T) {
 		listRepo = NewDBListRepo(NewDbEventLogger(), walEventLogger)
 		fileDS.Load(listRepo)
 
-		matches, _ = listRepo.Match([][]rune{}, nil, true)
+		matches, _ = listRepo.Match([][]rune{}, -1, true)
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(matches))
 		}
