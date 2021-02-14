@@ -76,6 +76,7 @@ func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBLis
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
 		return errors.New("ListItem idx out of bounds")
 	}

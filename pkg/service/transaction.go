@@ -291,7 +291,14 @@ func moveItem(r *DBListRepo, item *ListItem, newChild *ListItem, newParent *List
 }
 
 func moveUp(r *DBListRepo, item *ListItem) (bool, error) {
-	targetItem := item.matchChild
+	var targetItem *ListItem
+	if item.matchChild != nil {
+		targetItem = item.matchChild
+	} else {
+		// matchChild will only be null in this context on initial startup with loading
+		// from the WAL
+		targetItem = item.child
+	}
 	if targetItem == nil {
 		return false, nil
 	}
@@ -303,7 +310,14 @@ func moveUp(r *DBListRepo, item *ListItem) (bool, error) {
 }
 
 func moveDown(r *DBListRepo, item *ListItem) (bool, error) {
-	targetItem := item.matchParent
+	var targetItem *ListItem
+	if item.matchParent != nil {
+		targetItem = item.matchParent
+	} else {
+		// matchParent will only be null in this context on initial startup with loading
+		// from the WAL
+		targetItem = item.parent
+	}
 	if targetItem == nil {
 		return false, nil
 	}
