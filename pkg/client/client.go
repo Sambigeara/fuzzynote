@@ -344,19 +344,6 @@ func (t *Terminal) getLenSearchBox() int {
 	return lenSearchBox
 }
 
-func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, posDiff *[]int, updateFunc func() error) {
-	// Certain search character combo's are interpreted as special operators by the backend
-	// This means that the length of the search string might unpredictably change when calling
-	// `Match` leaving the cursor in an undesired location. To combat this, we need to take
-	// note of the length of the search string prior to a key press and after, and apply the diff.
-	// We wrap this around the `Match` call
-	err := updateFunc()
-	if err != nil {
-		log.Fatal(err)
-	}
-	(*posDiff)[0] += endLenFunc() - startLen
-}
-
 func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	var lines []string
 	for _, line := range selectedItems {
@@ -500,10 +487,12 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlS:
 				if t.curY != reservedTopLines-1 {
 					// If exists, clear, otherwise set
-					if _, ok := t.selectedItems[t.curY]; ok {
-						delete(t.selectedItems, t.curY)
+					if _, ok := t.selectedItems[t.curY-1]; ok {
+						delete(t.selectedItems, t.curY-1)
 					} else {
-						t.selectedItems[t.curY] = matches[t.curY].Line
+						//fmt.Printf("BOOM %v\n", matches[t.curY-1].Line)
+						//os.Exit(1)
+						t.selectedItems[t.curY-1] = matches[t.curY-1].Line
 					}
 				}
 			case tcell.KeyEscape:
@@ -690,13 +679,11 @@ func (t *Terminal) RunClient() error {
 
 		t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-		matches := []service.MatchItem{}
-		updateFunc := func() error {
-			matches, err = t.db.Match(t.search, t.curY-1, t.showHidden)
-			return err
-		}
-		// TODO remove this once mutation functions are returning new string (rather than relying on background state changes)
-		t.handleTextLengthChange(t.getLenSearchBox(), t.getLenSearchBox, &posDiff, updateFunc)
+		// Handle any offsets that need to be accounted for due to unexpected search line mutations
+		// behind the scenes
+		oldSearchLen := t.getLenSearchBox()
+		matches, err = t.db.Match(t.search, t.curY-1, t.showHidden)
+		posDiff[0] += t.getLenSearchBox() - oldSearchLen
 
 		// N available item slots
 		nItemSlots := t.h - reservedTopLines
