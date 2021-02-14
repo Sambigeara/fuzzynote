@@ -311,7 +311,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 		newItem := matches[0]
 
@@ -353,7 +353,7 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item at end of list", func(t *testing.T) {
 		newLine := "I should be last"
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 		oldLen := len(matches)
 		oldParent := matches[len(matches)-1]
@@ -363,7 +363,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches = mockListRepo.matchListItems
 		newItem := matches[len(matches)-1]
 
@@ -405,7 +405,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		expectedItem := matches[newIdx]
@@ -432,7 +432,7 @@ func TestServiceAdd(t *testing.T) {
 		newLine := "First item in list"
 		mockListRepo.Add(newLine, nil, 0)
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if len(matches) != 1 {
@@ -478,14 +478,14 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		err := mockListRepo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if matches[0] != &item2 {
@@ -527,14 +527,14 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		err := mockListRepo.Delete(2)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		expectedLen := 2
@@ -572,14 +572,14 @@ func TestServiceDelete(t *testing.T) {
 		mockListRepo := NewDBListRepo(NewDbEventLogger(), NewWalEventLogger())
 		mockListRepo.Root = &item1
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		err := mockListRepo.Delete(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if matches[0] != &item1 {
@@ -624,7 +624,7 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		_, err := mockListRepo.MoveUp(len(matches) - 1)
@@ -632,7 +632,7 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches = mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item1 {
@@ -684,14 +684,14 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		_, err := mockListRepo.MoveUp(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item2 {
@@ -743,14 +743,14 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		_, err := mockListRepo.MoveUp(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item1 {
@@ -785,14 +785,14 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		_, err := mockListRepo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item2 {
@@ -844,14 +844,14 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		_, err := mockListRepo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item1 {
@@ -903,7 +903,7 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		_, err := mockListRepo.MoveDown(len(matches) - 1)
@@ -911,7 +911,7 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches = mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item1 {
@@ -946,7 +946,7 @@ func TestServiceMove(t *testing.T) {
 		mockListRepo.Root = &item1
 
 		// Preset Match pointers with Match call
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 
 		_, err := mockListRepo.MoveDown(0)
 		if err != nil {
@@ -954,13 +954,13 @@ func TestServiceMove(t *testing.T) {
 		}
 
 		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		_, err = mockListRepo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		mockListRepo.Match([][]rune{}, -1, true)
+		mockListRepo.Match([][]rune{}, true)
 		matches := mockListRepo.matchListItems
 
 		if mockListRepo.Root != &item2 {
@@ -1016,7 +1016,7 @@ func TestServiceUpdate(t *testing.T) {
 	mockListRepo.Root = &item1
 
 	// Call matches to trigger matchListItems creation
-	mockListRepo.Match([][]rune{}, -1, true)
+	mockListRepo.Match([][]rune{}, true)
 
 	expectedLine := "Oooo I'm new"
 	_, err := mockListRepo.Update(expectedLine, &[]byte{}, 1)
@@ -1024,7 +1024,7 @@ func TestServiceUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mockListRepo.Match([][]rune{}, -1, true)
+	mockListRepo.Match([][]rune{}, true)
 	matches := mockListRepo.matchListItems
 
 	expectedLen := 3
@@ -1068,7 +1068,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'#', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, err := mockListRepo.Match(search, -1, true)
+		_, err := mockListRepo.Match(search, true)
 		matches := mockListRepo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -1156,7 +1156,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
 		}
-		_, err := mockListRepo.Match(search, -1, true)
+		_, err := mockListRepo.Match(search, true)
 		matches := mockListRepo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -1214,64 +1214,6 @@ func TestServiceMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("Match items in list with active", func(t *testing.T) {
-		item5 := ListItem{
-			Line: "Also not second",
-		}
-		item4 := ListItem{
-			Line:   "Not second",
-			parent: &item5,
-		}
-		item3 := ListItem{
-			Line:   "Third",
-			parent: &item4,
-		}
-		item2 := ListItem{
-			Line:   "Second",
-			parent: &item3,
-		}
-		item1 := ListItem{
-			Line:   "First",
-			parent: &item2,
-		}
-		item5.child = &item4
-		item4.child = &item3
-		item3.child = &item2
-		item2.child = &item1
-		mockListRepo := NewDBListRepo(nil, nil)
-		mockListRepo.Root = &item1
-
-		search := [][]rune{
-			[]rune{'s', 'e', 'c', 'o', 'n', 'd'},
-		}
-		_, err := mockListRepo.Match(search, 2, true)
-		matches := mockListRepo.matchListItems
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if matches[0] != &item2 {
-			t.Errorf("First match is incorrect")
-		}
-
-		if matches[1] != &item3 {
-			t.Errorf("Active item should be returned even with no string match")
-		}
-
-		if matches[2] != &item4 {
-			t.Errorf("Third match is incorrect")
-		}
-
-		if matches[3] != &item5 {
-			t.Errorf("Fourth match is incorrect")
-		}
-
-		expectedLen := 4
-		if len(matches) != expectedLen {
-			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
-		}
-	})
-
 	t.Run("Inverse match items in list", func(t *testing.T) {
 		item5 := ListItem{
 			Line: "Also not second",
@@ -1302,7 +1244,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'#', '!', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, err := mockListRepo.Match(search, -1, true)
+		_, err := mockListRepo.Match(search, true)
 		matches := mockListRepo.matchListItems
 		if err != nil {
 			t.Fatal(err)

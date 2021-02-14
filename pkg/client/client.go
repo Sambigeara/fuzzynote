@@ -359,7 +359,7 @@ func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
-	matches, err := t.db.Match([][]rune{}, -1, t.showHidden)
+	matches, err := t.db.Match([][]rune{}, t.showHidden)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -682,7 +682,7 @@ func (t *Terminal) RunClient() error {
 		// Handle any offsets that need to be accounted for due to unexpected search line mutations
 		// behind the scenes
 		oldSearchLen := t.getLenSearchBox()
-		matches, err = t.db.Match(t.search, t.curY-1, t.showHidden)
+		matches, err = t.db.Match(t.search, t.showHidden)
 		posDiff[0] += t.getLenSearchBox() - oldSearchLen
 
 		// N available item slots
