@@ -1,8 +1,8 @@
 package service
 
 import (
-	//"fmt"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -25,6 +25,28 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
+func NewWal(rootPath string, walPathPattern string) *Wal {
+	return &Wal{
+		rootPath:          rootPath,
+		walPathPattern:    walPathPattern,
+		latestWalSchemaID: latestWalSchemaID,
+		log:               &[]eventLog{},
+		listItemTracker:   make(map[string]*ListItem),
+	}
+}
+
+// Wal manages the state of the WAL, via all update functions and replay functionality
+type Wal struct {
+	uuid            uuid
+	log             *[]eventLog
+	listItemTracker map[string]*ListItem
+
+	// Legacy
+	rootPath          string
+	walPathPattern    string
+	latestWalSchemaID uint16
+}
+
 type listItemKey string
 
 const listItemKeyPattern = "%v_%v"
@@ -37,8 +59,10 @@ type DBListRepo struct {
 	PendingDeletions []*ListItem
 	eventLogger      *DbEventLogger
 	walLogger        *WalEventLogger
-	listItemMap      map[listItemKey]*ListItem
-	matchListItems   []*ListItem
+	wal              *Wal
+	// TODO remove
+	listItemMap    map[listItemKey]*ListItem
+	matchListItems []*ListItem
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -65,13 +89,62 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBListRepo {
+func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger, wal *Wal) *DBListRepo {
 	return &DBListRepo{
 		eventLogger: eventLogger,
 		walLogger:   walLogger,
+		wal:         wal,
 		NextID:      1,
 		listItemMap: make(map[listItemKey]*ListItem),
 	}
+}
+
+func (w *Wal) addLog(e eventType, id uint64, childID uint64, newLine string, newNote *[]byte) (eventLog, error) {
+	// Base next id off of previous. It's a bit brute-force, but will enforce uniqueness in a single WAL
+	// which is our end goal here
+	nextID := uint64(1)
+	if len(*w.log) > 0 {
+		nextID = (*w.log)[len(*w.log)-1].logID + 1
+	}
+
+	el := eventLog{
+		logID:           nextID,
+		uuid:            w.uuid,
+		unixTime:        time.Now().Unix(),
+		eventType:       e,
+		listItemID:      id,
+		childListItemID: childID,
+		redoLine:        newLine,
+		redoNote:        newNote,
+	}
+
+	// Append to log
+	*w.log = append(*w.log, el)
+
+	return el, nil
+}
+
+func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
+	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
+	child := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
+
+	var err error
+	switch e.eventType {
+	case addEvent:
+		item, err = add(r, e.redoLine, e.redoNote, child, item)
+		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+	case deleteEvent:
+		err = del(r, item)
+	case updateEvent:
+		item, err = update(r, e.redoLine, e.redoNote, item)
+	case moveUpEvent:
+		_, err = moveUp(r, item)
+	case moveDownEvent:
+		_, err = moveDown(r, item)
+	case visibilityEvent:
+		err = toggleVisibility(r, item)
+	}
+	return item, err
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
@@ -81,13 +154,15 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 		return errors.New("ListItem idx out of bounds")
 	}
 
-	var childItem *ListItem
+	var childID uint64
 	if idx > 0 {
-		childItem = r.matchListItems[idx-1]
+		childID = r.matchListItems[idx-1].id
 	}
-	newItem, err := add(r, line, note, childItem, nil)
-	r.eventLogger.addLog(addEvent, newItem, line, note)
-	r.walLogger.addLog(addEvent, newItem, line, note)
+	//newItem, err := add(r, line, note, childItem, nil)
+	//r.eventLogger.addLog(addEvent, newItem, line, note)
+	//r.walLogger.addLog(addEvent, newItem, line, note)
+	el, err := r.wal.addLog(addEvent, 0, childID, line, note)
+	r.callFunctionForEventLog(el)
 	return err
 }
 
@@ -99,9 +174,11 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(updateEvent, listItem, line, note)
-	r.walLogger.addLog(updateEvent, listItem, line, note)
-	return update(r, line, note, listItem)
+	//r.eventLogger.addLog(updateEvent, listItem, line, note)
+	//r.walLogger.addLog(updateEvent, listItem, line, note)
+	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note)
+	listItem, err = r.callFunctionForEventLog(el)
+	return listItem.Line, err
 }
 
 // Delete will remove an existing ListItem
@@ -112,9 +189,11 @@ func (r *DBListRepo) Delete(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(deleteEvent, listItem, "", nil)
-	r.walLogger.addLog(deleteEvent, listItem, "", nil)
-	return del(r, listItem)
+	//r.eventLogger.addLog(deleteEvent, listItem, "", nil)
+	//r.walLogger.addLog(deleteEvent, listItem, "", nil)
+	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil)
+	r.callFunctionForEventLog(el)
+	return err
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -125,13 +204,16 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	}
 
 	listItem := r.matchListItems[idx]
+	oldChild := listItem.child
 
-	moved, err := moveUp(r, listItem)
-	if moved {
-		r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
-		r.walLogger.addLog(moveUpEvent, listItem, "", nil)
-	}
-	return moved, err
+	//moved, err := moveUp(r, listItem)
+	//if moved {
+	//    r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
+	//    r.walLogger.addLog(moveUpEvent, listItem, "", nil)
+	//}
+	el, err := r.wal.addLog(moveUpEvent, listItem.id, 0, "", nil)
+	listItem, err = r.callFunctionForEventLog(el)
+	return listItem.child != oldChild, err
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
@@ -142,13 +224,16 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	}
 
 	listItem := r.matchListItems[idx]
+	oldParent := listItem.parent
 
-	moved, err := moveDown(r, listItem)
-	if moved {
-		r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
-		r.walLogger.addLog(moveDownEvent, listItem, "", nil)
-	}
-	return moved, err
+	//moved, err := moveDown(r, listItem)
+	//if moved {
+	//    r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
+	//    r.walLogger.addLog(moveDownEvent, listItem, "", nil)
+	//}
+	el, err := r.wal.addLog(moveDownEvent, listItem.id, 0, "", nil)
+	listItem, err = r.callFunctionForEventLog(el)
+	return listItem.parent != oldParent, err
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
@@ -159,9 +244,11 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
-	r.walLogger.addLog(visibilityEvent, listItem, "", nil)
-	return toggleVisibility(r, listItem)
+	//r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
+	//r.walLogger.addLog(visibilityEvent, listItem, "", nil)
+	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil)
+	r.callFunctionForEventLog(el)
+	return err
 }
 
 func (r *DBListRepo) Undo() error {

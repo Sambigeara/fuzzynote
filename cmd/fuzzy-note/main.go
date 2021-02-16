@@ -41,8 +41,9 @@ func main() {
 
 	walEventLogger := service.NewWalEventLogger()
 	walFile := service.NewWalFile(rootPath, walDirPattern, walEventLogger)
+	wal := service.NewWal(rootPath, walDirPattern)
 	fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
-	listRepo := service.NewDBListRepo(service.NewDbEventLogger(), walEventLogger)
+	listRepo := service.NewDBListRepo(service.NewDbEventLogger(), walEventLogger, wal)
 
 	//runtime.Breakpoint()
 	// List instantiation

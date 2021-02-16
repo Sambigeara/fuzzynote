@@ -14,10 +14,10 @@ import (
 )
 
 // Wal represents the interface between the in-mem and persisted WAL
-type Wal interface {
-	Load() error
-	Save() error
-}
+//type Wal interface {
+//    Load() error
+//    Save() error
+//}
 
 // WalFile is a file representation of the Wal interface
 type WalFile struct {

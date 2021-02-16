@@ -236,11 +236,11 @@ func add(r *DBListRepo, line string, note *[]byte, childItem *ListItem, newItem 
 }
 
 // Update will update the line or note of an existing ListItem
-func update(r *DBListRepo, line string, note *[]byte, listItem *ListItem) (string, error) {
+func update(r *DBListRepo, line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	line = r.parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
-	return line, nil
+	return listItem, nil
 }
 
 func del(r *DBListRepo, item *ListItem) error {
