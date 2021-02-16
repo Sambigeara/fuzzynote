@@ -162,7 +162,8 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	//r.eventLogger.addLog(addEvent, newItem, line, note)
 	//r.walLogger.addLog(addEvent, newItem, line, note)
 	el, err := r.wal.addLog(addEvent, 0, childID, line, note)
-	r.callFunctionForEventLog(el)
+	listItem, _ := r.callFunctionForEventLog(el)
+	r.eventLogger.addLog(addEvent, listItem, line, note)
 	return err
 }
 
@@ -174,10 +175,10 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 
 	listItem := r.matchListItems[idx]
 
-	//r.eventLogger.addLog(updateEvent, listItem, line, note)
 	//r.walLogger.addLog(updateEvent, listItem, line, note)
 	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note)
 	listItem, err = r.callFunctionForEventLog(el)
+	r.eventLogger.addLog(updateEvent, listItem, line, note)
 	return listItem.Line, err
 }
 
@@ -189,10 +190,10 @@ func (r *DBListRepo) Delete(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	//r.eventLogger.addLog(deleteEvent, listItem, "", nil)
 	//r.walLogger.addLog(deleteEvent, listItem, "", nil)
 	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil)
 	r.callFunctionForEventLog(el)
+	r.eventLogger.addLog(deleteEvent, listItem, "", nil)
 	return err
 }
 
@@ -213,7 +214,11 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	//}
 	el, err := r.wal.addLog(moveUpEvent, listItem.id, 0, "", nil)
 	listItem, err = r.callFunctionForEventLog(el)
-	return listItem.child != oldChild, err
+	moved := listItem.child != oldChild
+	if moved {
+		r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
+	}
+	return moved, err
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
@@ -233,7 +238,11 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	//}
 	el, err := r.wal.addLog(moveDownEvent, listItem.id, 0, "", nil)
 	listItem, err = r.callFunctionForEventLog(el)
-	return listItem.parent != oldParent, err
+	moved := listItem.parent != oldParent
+	if moved {
+		r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
+	}
+	return moved, err
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
@@ -245,9 +254,9 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 	listItem := r.matchListItems[idx]
 
 	//r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
-	//r.walLogger.addLog(visibilityEvent, listItem, "", nil)
 	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil)
 	r.callFunctionForEventLog(el)
+	r.walLogger.addLog(visibilityEvent, listItem, "", nil)
 	return err
 }
 
