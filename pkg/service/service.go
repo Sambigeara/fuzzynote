@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 	"unicode"
@@ -25,16 +26,6 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
-func NewWal(rootPath string, walPathPattern string) *Wal {
-	return &Wal{
-		rootPath:          rootPath,
-		walPathPattern:    walPathPattern,
-		latestWalSchemaID: latestWalSchemaID,
-		log:               &[]eventLog{},
-		listItemTracker:   make(map[string]*ListItem),
-	}
-}
-
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
 	uuid            uuid
@@ -47,13 +38,27 @@ type Wal struct {
 	latestWalSchemaID uint16
 }
 
+func generateUUID() uuid {
+	return uuid(rand.Uint32())
+}
+
+func NewWal(rootPath string, walPathPattern string) *Wal {
+	return &Wal{
+		uuid:              generateUUID(),
+		rootPath:          rootPath,
+		walPathPattern:    walPathPattern,
+		latestWalSchemaID: latestWalSchemaID,
+		log:               &[]eventLog{},
+		listItemTracker:   make(map[string]*ListItem),
+	}
+}
+
 type listItemKey string
 
 const listItemKeyPattern = "%v_%v"
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	uuid             uuid
 	Root             *ListItem
 	NextID           uint64
 	PendingDeletions []*ListItem
@@ -131,7 +136,9 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	var err error
 	switch e.eventType {
 	case addEvent:
+		// TODO item probably never needs to be passed down now
 		item, err = add(r, e.redoLine, e.redoNote, child, item)
+		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 	case deleteEvent:
 		err = del(r, item)
@@ -161,7 +168,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	//newItem, err := add(r, line, note, childItem, nil)
 	//r.eventLogger.addLog(addEvent, newItem, line, note)
 	//r.walLogger.addLog(addEvent, newItem, line, note)
-	el, err := r.wal.addLog(addEvent, 0, childID, line, note)
+	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note)
 	listItem, _ := r.callFunctionForEventLog(el)
 	r.eventLogger.addLog(addEvent, listItem, line, note)
 	return err

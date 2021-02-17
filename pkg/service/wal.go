@@ -13,12 +13,6 @@ import (
 	"path/filepath"
 )
 
-// Wal represents the interface between the in-mem and persisted WAL
-//type Wal interface {
-//    Load() error
-//    Save() error
-//}
-
 // WalFile is a file representation of the Wal interface
 type WalFile struct {
 	rootPath          string
@@ -125,9 +119,8 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	return el, nil
 }
 
-func (w *WalFile) Load() error {
-	// TODO
-	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.logger.uuid)
+func (w *Wal) loadWal() error {
+	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
 	// Initially, we want to create a single merged eventLog for all non-local WAL files
 	// To do this, we find and open each file, and traverse through each simultaneously with an N-pointer approach
@@ -240,20 +233,15 @@ func (w *WalFile) Load() error {
 		}
 	}
 
-	w.logger.log = &mergedRemoteLogs
-	//runtime.Breakpoint()
+	w.log = &mergedRemoteLogs
 
 	return nil
 
 	// Then we want to merge with the local WAL. There are two scenarios to handle here... TODO
 }
 
-func (w *WalFile) Save(uuid uuid) error {
-	if uuid == 0 {
-		return nil
-	}
-
-	walFilePath := fmt.Sprintf(w.walPathPattern, uuid)
+func (w *Wal) saveWal() error {
+	walFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
 	f, err := os.Create(walFilePath)
 	if err != nil {
@@ -262,7 +250,7 @@ func (w *WalFile) Save(uuid uuid) error {
 	}
 	defer f.Close()
 
-	for _, item := range *w.logger.log {
+	for _, item := range *w.log {
 		lenLine := uint64(len([]byte(item.redoLine)))
 		var lenNote uint64
 		if item.redoNote != nil {
