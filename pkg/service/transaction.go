@@ -80,8 +80,9 @@ func NewWalEventLogger() *WalEventLogger {
 	return &WalEventLogger{log: &[]eventLog{}}
 }
 
-func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
+func (r *DBListRepo) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
 	ev := eventLog{
+		uuid:      r.wal.uuid,
 		eventType: e,
 		ptr:       item,
 		undoLine:  item.Line,
@@ -91,12 +92,12 @@ func (l *DbEventLogger) addLog(e eventType, item *ListItem, newLine string, newN
 	}
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten
-	l.log = l.log[:l.curIdx+1]
+	r.eventLogger.log = r.eventLogger.log[:r.eventLogger.curIdx+1]
 
 	// Append to log
-	l.log = append(l.log, ev)
+	r.eventLogger.log = append(r.eventLogger.log, ev)
 
-	l.curIdx++
+	r.eventLogger.curIdx++
 
 	return nil
 }
@@ -174,26 +175,6 @@ func (w *Wal) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) error {
 	r.NextID = nextID
 
 	return nil
-}
-
-func callFunctionForEventLog(r *DBListRepo, ev eventType, item *ListItem, child *ListItem, line string, note *[]byte) (*ListItem, error) {
-	var err error
-	switch ev {
-	case addEvent:
-		item, err = add(r, line, note, child, item)
-	case deleteEvent:
-		err = del(r, item)
-	case updateEvent:
-		_, err = update(r, line, note, item)
-	case moveUpEvent:
-		_, err = moveUp(r, item)
-	case moveDownEvent:
-		_, err = moveDown(r, item)
-	case visibilityEvent:
-		err = toggleVisibility(r, item)
-	}
-	// Return item only relevant for Add()
-	return item, err
 }
 
 func getListItemKey(uuid uuid, listItemID uint64) listItemKey {

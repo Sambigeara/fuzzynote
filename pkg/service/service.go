@@ -165,12 +165,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	if idx > 0 {
 		childID = r.matchListItems[idx-1].id
 	}
-	//newItem, err := add(r, line, note, childItem, nil)
-	//r.eventLogger.addLog(addEvent, newItem, line, note)
-	//r.walLogger.addLog(addEvent, newItem, line, note)
 	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note)
 	listItem, _ := r.callFunctionForEventLog(el)
-	r.eventLogger.addLog(addEvent, listItem, line, note)
+	r.addLog(addEvent, listItem, line, note)
 	return err
 }
 
@@ -182,10 +179,12 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 
 	listItem := r.matchListItems[idx]
 
-	//r.walLogger.addLog(updateEvent, listItem, line, note)
+	// Need to add to Undo/Redo log before mutating, because the addLog
+	// function requires previous state
+	r.addLog(updateEvent, listItem, line, note)
+
 	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note)
 	listItem, err = r.callFunctionForEventLog(el)
-	r.eventLogger.addLog(updateEvent, listItem, line, note)
 	return listItem.Line, err
 }
 
@@ -197,10 +196,9 @@ func (r *DBListRepo) Delete(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	//r.walLogger.addLog(deleteEvent, listItem, "", nil)
 	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil)
 	r.callFunctionForEventLog(el)
-	r.eventLogger.addLog(deleteEvent, listItem, "", nil)
+	r.addLog(deleteEvent, listItem, "", nil)
 	return err
 }
 
@@ -223,7 +221,7 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	listItem, err = r.callFunctionForEventLog(el)
 	moved := listItem.child != oldChild
 	if moved {
-		r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
+		r.addLog(moveUpEvent, listItem, "", nil)
 	}
 	return moved, err
 }
@@ -247,7 +245,7 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	listItem, err = r.callFunctionForEventLog(el)
 	moved := listItem.parent != oldParent
 	if moved {
-		r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
+		r.addLog(moveDownEvent, listItem, "", nil)
 	}
 	return moved, err
 }
@@ -260,20 +258,24 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	//r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
+	r.addLog(visibilityEvent, listItem, "", nil)
 	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil)
 	r.callFunctionForEventLog(el)
-	r.walLogger.addLog(visibilityEvent, listItem, "", nil)
+	//r.walLogger.addLog(visibilityEvent, listItem, "", nil)
 	return err
 }
 
 func (r *DBListRepo) Undo() error {
 	if r.eventLogger.curIdx > 0 {
-		eventLog := r.eventLogger.log[r.eventLogger.curIdx]
-		// callFunctionForEventLog needs to call the appropriate function with the
-		// necessary parameters to reverse the operation
-		opEv := oppositeEvent[eventLog.eventType]
-		_, err := callFunctionForEventLog(r, opEv, eventLog.ptr, eventLog.ptr.child, eventLog.undoLine, eventLog.undoNote)
+		el := r.eventLogger.log[r.eventLogger.curIdx]
+
+		childListItemID := uint64(0)
+		if el.ptr.child != nil {
+			childListItemID = el.ptr.child.id
+		}
+
+		el, err := r.wal.addLog(oppositeEvent[el.eventType], el.ptr.id, childListItemID, el.undoLine, el.undoNote)
+		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx--
 		return err
 	}
@@ -283,8 +285,15 @@ func (r *DBListRepo) Undo() error {
 func (r *DBListRepo) Redo() error {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
-		eventLog := r.eventLogger.log[r.eventLogger.curIdx+1]
-		_, err := callFunctionForEventLog(r, eventLog.eventType, eventLog.ptr, eventLog.ptr.child, eventLog.redoLine, eventLog.redoNote)
+		el := r.eventLogger.log[r.eventLogger.curIdx+1]
+
+		childListItemID := uint64(0)
+		if el.ptr.child != nil {
+			childListItemID = el.ptr.child.id
+		}
+
+		el, err := r.wal.addLog(el.eventType, el.ptr.id, childListItemID, el.redoLine, el.redoNote)
+		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx++
 		return err
 	}
