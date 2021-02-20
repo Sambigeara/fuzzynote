@@ -46,7 +46,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		err := listRepo.Save(listRepo.Root, listRepo.NextID)
+		err := listRepo.Save()
 		if err != nil {
 			log.Fatal(err)
 		}

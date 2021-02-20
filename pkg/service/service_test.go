@@ -113,7 +113,9 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		oldItem.child = &newItem
 
-		err := repo.Save(&newItem, 3)
+		repo.Root = &newItem
+		repo.NextID = 3
+		err := repo.Save()
 		if err != nil {
 			t.Fatal(err)
 		}

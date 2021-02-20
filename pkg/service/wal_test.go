@@ -23,7 +23,7 @@ func TestWalMerge(t *testing.T) {
 		defer clearUp(repo)
 
 		repo.Load()
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 
 		if len(*repo.wal.log) != 0 {
 			t.Fatalf("Expected no events in WAL eventLog but had %d", len(*repo.wal.log))
@@ -172,7 +172,7 @@ func TestWalMerge(t *testing.T) {
 
 		// Load and Save the fileDS to instantiate
 		repo.Load()
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 
 		now := time.Now().Unix()
 
@@ -251,7 +251,7 @@ func TestWalMerge(t *testing.T) {
 
 		// Load and Save the fileDS to instantiate
 		repo.Load()
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 
 		now0 := time.Now().Unix()
 		now1 := now0 + 1
@@ -413,7 +413,7 @@ func TestWalMerge(t *testing.T) {
 
 		// Load and Save the repo to instantiate
 		repo.Load()
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 
 		now0 := time.Now().Unix() - 10 // `-10` Otherwise delete "happens" before these times
 		now1 := now0 + 1
@@ -497,7 +497,7 @@ func TestWalMerge(t *testing.T) {
 		preSaveLog := *repo.wal.log
 
 		// Save and reload to ensure consistency in event log after write and read to/from disk
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 		repo = NewDBListRepo(rootDir)
 		repo.Load()
 
@@ -534,7 +534,7 @@ func TestWalMerge(t *testing.T) {
 		preSaveLog = *repo.wal.log
 
 		// Flush the merged WAL to disk
-		repo.Save(nil, repo.NextID)
+		repo.Save()
 
 		// Re-write the same remote WAL
 		f, _ = os.Create(walPath)

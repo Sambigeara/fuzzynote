@@ -125,7 +125,7 @@ func (r *DBListRepo) Load() error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
+func (r *DBListRepo) Save() error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -137,7 +137,7 @@ func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
 	fileHeader := fileHeader{
 		schemaID:       r.latestFileSchemaID,
 		uuid:           r.wal.uuid,
-		nextListItemID: nextListItemID,
+		nextListItemID: r.NextID,
 	}
 	err = binary.Write(f, binary.LittleEndian, &fileHeader)
 	if err != nil {
@@ -153,11 +153,11 @@ func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
 
 	// Return if no files to write. os.Create truncates by default so the file will
 	// be empty, with just the file header (including verion id and UUID)
-	if root == nil {
+	if r.Root == nil {
 		return nil
 	}
 
-	cur := root
+	cur := r.Root
 
 	for {
 		err := r.writeFileFromListItem(f, cur)
