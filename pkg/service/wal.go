@@ -11,13 +11,10 @@ import (
 	"time"
 	//"path"
 	"path/filepath"
+	"unsafe"
 )
 
 const latestWalSchemaID uint16 = 1
-
-type walHeader struct {
-	schemaID fileSchemaID
-}
 
 type walItemSchema1 struct {
 	UUID            uuid
@@ -324,6 +321,11 @@ func (w *Wal) load() error {
 		if err != nil {
 			panic(err)
 		}
+
+		// The first two bytes of each file represents the file schema ID. For now this means nothing
+		// so we can seek forwards 2 bytes
+		f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
+
 		remoteFiles[f] = struct{}{}
 		defer f.Close()
 		if fileName != localWalFilePath {
@@ -438,6 +440,9 @@ func (w *Wal) save() error {
 		return err
 	}
 	defer f.Close()
+
+	// Write the schema ID
+	err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
 
 	for _, item := range *w.log {
 		lenLine := uint64(len([]byte(item.line)))
