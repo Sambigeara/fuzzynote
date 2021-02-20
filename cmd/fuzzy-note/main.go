@@ -11,11 +11,6 @@ import (
 	"fuzzy-note/pkg/service"
 )
 
-const (
-	rootFileName   = "primary.db"
-	walFilePattern = "wal_%v.db"
-)
-
 func main() {
 	var rootDir string
 	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
@@ -29,11 +24,7 @@ func main() {
 
 	os.Mkdir(rootDir, os.ModePerm)
 
-	rootPath := path.Join(rootDir, rootFileName)
-	walDirPattern := path.Join(rootDir, walFilePattern)
-
-	wal := service.NewWal(walDirPattern)
-	listRepo := service.NewDBListRepo(rootPath, service.NewDbEventLogger(), wal)
+	listRepo := service.NewDBListRepo(rootDir)
 
 	// List instantiation
 	err := listRepo.Load()
@@ -54,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		err := listRepo.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
+		err := listRepo.Save(listRepo.Root, listRepo.NextID)
 		if err != nil {
 			log.Fatal(err)
 		}

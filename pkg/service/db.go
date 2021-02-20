@@ -132,7 +132,7 @@ func (r *DBListRepo) Load() error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID uint64) error {
+func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -140,7 +140,6 @@ func (r *DBListRepo) Save(root *ListItem, pendingDeletions []*ListItem, nextList
 	}
 	defer f.Close()
 
-	// TODO use fileHeader once earlier versions are gone
 	// Write the file header to the start of the file
 	fileHeader := fileHeader{
 		schemaID:       latestFileSchemaID,
@@ -154,30 +153,32 @@ func (r *DBListRepo) Save(root *ListItem, pendingDeletions []*ListItem, nextList
 		return err
 	}
 
-	// Load the WAL into memory
 	r.wal.save()
 
-	// Return if no files to write. os.Create truncates by default so the file will
-	// be empty, with just the file header (including verion id and UUID)
-	if root == nil {
-		return nil
-	}
-
-	cur := root
-
-	for {
-		err := r.writeFileFromListItem(f, cur)
-		if err != nil {
-			//log.Fatal(err)
-			return err
-		}
-
-		if cur.parent == nil {
-			break
-		}
-		cur = cur.parent
-	}
+	// We don't care about the primary.db for now, so return nil here
 	return nil
+
+	//// Return if no files to write. os.Create truncates by default so the file will
+	//// be empty, with just the file header (including verion id and UUID)
+	//if root == nil {
+	//	return nil
+	//}
+
+	//cur := root
+
+	//for {
+	//	err := r.writeFileFromListItem(f, cur)
+	//	if err != nil {
+	//		//log.Fatal(err)
+	//		return err
+	//	}
+
+	//	if cur.parent == nil {
+	//		break
+	//	}
+	//	cur = cur.parent
+	//}
+	//return nil
 }
 
 func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {

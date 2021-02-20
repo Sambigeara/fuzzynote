@@ -30,6 +30,28 @@ type walItemSchema1 struct {
 	NoteLength      uint64
 }
 
+const (
+	nullEvent eventType = iota
+	addEvent
+	deleteEvent
+	updateEvent
+	moveUpEvent
+	moveDownEvent
+	visibilityEvent
+)
+
+type eventLog struct {
+	uuid            uuid
+	listItemID      uint64 // auto-incrementing ID, unique for a given DB UUID
+	childListItemID uint64
+	logID           uint64 // auto-incrementing ID, unique for a given WAL
+	unixTime        int64
+	eventType       eventType
+	ptr             *ListItem
+	line            string
+	note            *[]byte
+}
+
 func (w *Wal) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) error {
 	// TODO remove this temp measure
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based

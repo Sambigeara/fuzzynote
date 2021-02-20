@@ -8,16 +8,6 @@ import (
 
 type eventType uint16
 
-const (
-	nullEvent eventType = iota
-	addEvent
-	deleteEvent
-	updateEvent
-	moveUpEvent
-	moveDownEvent
-	visibilityEvent
-)
-
 // OppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
 var oppositeEvent = map[eventType]eventType{
 	addEvent:        deleteEvent,
@@ -26,18 +16,6 @@ var oppositeEvent = map[eventType]eventType{
 	moveUpEvent:     moveDownEvent,
 	moveDownEvent:   moveUpEvent,
 	visibilityEvent: visibilityEvent,
-}
-
-type eventLog struct {
-	uuid            uuid
-	listItemID      uint64 // auto-incrementing ID, unique for a given DB UUID
-	childListItemID uint64
-	logID           uint64 // auto-incrementing ID, unique for a given WAL
-	unixTime        int64
-	eventType       eventType
-	ptr             *ListItem
-	line            string
-	note            *[]byte
 }
 
 type undoEventLog struct {
@@ -91,6 +69,7 @@ func (r *DBListRepo) addUndoLog(e eventType, item *ListItem, newLine string, new
 	return nil
 }
 
+// TODO use this
 func getListItemKey(uuid uuid, listItemID uint64) listItemKey {
 	return listItemKey(fmt.Sprintf(listItemKeyPattern, uuid, listItemID))
 }
@@ -124,8 +103,6 @@ func add(r *DBListRepo, line string, note *[]byte, childItem *ListItem) (*ListIt
 	}
 	childItem.parent = newItem
 
-	r.listItemMap[getListItemKey(r.wal.uuid, newItem.id)] = newItem
-
 	return newItem, nil
 }
 
@@ -148,10 +125,6 @@ func del(r *DBListRepo, item *ListItem) error {
 	if item.parent != nil {
 		item.parent.child = item.child
 	}
-
-	r.PendingDeletions = append(r.PendingDeletions, item)
-
-	delete(r.listItemMap, getListItemKey(r.wal.uuid, item.id))
 
 	return nil
 }

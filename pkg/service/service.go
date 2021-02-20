@@ -4,13 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"path"
 	"strings"
 	"time"
 	"unicode"
 )
 
-// This is THE date that Golang needs to determine custom formatting
-const dateFormat string = "Mon, Jan 2, 2006"
+const (
+	// This is THE date that Golang needs to determine custom formatting
+	dateFormat     = "Mon, Jan 2, 2006"
+	rootFileName   = "primary.db"
+	walFilePattern = "wal_%v.db"
+)
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
@@ -57,14 +62,11 @@ const listItemKeyPattern = "%v_%v"
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root             *ListItem
-	NextID           uint64
-	PendingDeletions []*ListItem
-	rootPath         string
-	eventLogger      *DbEventLogger
-	wal              *Wal
-	// TODO remove
-	listItemMap    map[listItemKey]*ListItem
+	Root           *ListItem
+	NextID         uint64
+	rootPath       string
+	eventLogger    *DbEventLogger
+	wal            *Wal
 	matchListItems []*ListItem
 }
 
@@ -92,13 +94,14 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootPath string, eventLogger *DbEventLogger, wal *Wal) *DBListRepo {
+func NewDBListRepo(rootDir string) *DBListRepo {
+	rootPath := path.Join(rootDir, rootFileName)
+	walDirPattern := path.Join(rootDir, walFilePattern)
 	return &DBListRepo{
 		rootPath:    rootPath,
-		eventLogger: eventLogger,
-		wal:         wal,
+		eventLogger: NewDbEventLogger(),
+		wal:         NewWal(walDirPattern),
 		NextID:      1,
-		listItemMap: make(map[listItemKey]*ListItem),
 	}
 }
 
