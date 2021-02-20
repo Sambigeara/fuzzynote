@@ -13,25 +13,7 @@ import (
 	"path/filepath"
 )
 
-// WalFile is a file representation of the Wal interface
-type WalFile struct {
-	rootPath          string
-	walPathPattern    string
-	latestWalSchemaID uint16
-	logger            *WalEventLogger
-}
-
 const latestWalSchemaID uint16 = 1
-
-// NewWalFile instantiates and returns a new WalFile instance
-func NewWalFile(rootPath string, walPathPattern string, logger *WalEventLogger) *WalFile {
-	return &WalFile{
-		rootPath:          rootPath,
-		walPathPattern:    walPathPattern,
-		latestWalSchemaID: latestWalSchemaID,
-		logger:            logger,
-	}
-}
 
 type walHeader struct {
 	schemaID fileSchemaID
@@ -46,6 +28,55 @@ type walItemSchema1 struct {
 	EventType       eventType
 	LineLength      uint64
 	NoteLength      uint64
+}
+
+func (w *Wal) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) error {
+	// TODO remove this temp measure
+	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
+	// on the state of the `primary.db` and return that. It will involve a number of Add and toggleVisibility
+	// events
+	if len(*w.log) == 0 {
+		var err error
+		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
+		if err != nil {
+			return err
+		}
+	}
+
+	// If still no events, return nil
+	if len(*w.log) == 0 {
+		return nil
+	}
+
+	// TODO sort this out
+	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
+	// and then set the global NextID afterwards, to avoid wastage.
+	nextID := uint64(1)
+
+	//listItemTracker := make(map[string]*ListItem)
+	//runtime.Breakpoint()
+	for _, e := range *w.log {
+		//item := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
+		//child := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
+
+		//r.callFunctionForEventLog(e)
+		item, _ := r.callFunctionForEventLog(e)
+
+		// This only applies when we Add a new event and want the ID to be consistent with the incoming
+		// events - required for retrieving the correct listItem from the listItemTracker map
+		//item.id = e.listItemID
+
+		// Update tracker for any newly created listItems
+		//listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+
+		if nextID <= item.id {
+			nextID = item.id + 1
+		}
+	}
+
+	r.NextID = nextID
+
+	return nil
 }
 
 func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
@@ -119,7 +150,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	return el, nil
 }
 
-func (w *Wal) loadWal() error {
+func (w *Wal) load() error {
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
 	// Initially, we want to create a single merged eventLog for all non-local WAL files
@@ -240,7 +271,7 @@ func (w *Wal) loadWal() error {
 	// Then we want to merge with the local WAL. There are two scenarios to handle here... TODO
 }
 
-func (w *Wal) saveWal() error {
+func (w *Wal) save() error {
 	walFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
 	f, err := os.Create(walFilePath)

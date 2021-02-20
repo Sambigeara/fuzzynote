@@ -33,7 +33,6 @@ type Wal struct {
 	listItemTracker map[string]*ListItem
 
 	// Legacy
-	rootPath          string
 	walPathPattern    string
 	latestWalSchemaID uint16
 }
@@ -42,10 +41,9 @@ func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(rootPath string, walPathPattern string) *Wal {
+func NewWal(walPathPattern string) *Wal {
 	return &Wal{
 		uuid:              generateUUID(),
-		rootPath:          rootPath,
 		walPathPattern:    walPathPattern,
 		latestWalSchemaID: latestWalSchemaID,
 		log:               &[]eventLog{},
@@ -62,8 +60,8 @@ type DBListRepo struct {
 	Root             *ListItem
 	NextID           uint64
 	PendingDeletions []*ListItem
+	rootPath         string
 	eventLogger      *DbEventLogger
-	walLogger        *WalEventLogger
 	wal              *Wal
 	// TODO remove
 	listItemMap    map[listItemKey]*ListItem
@@ -94,10 +92,10 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger, wal *Wal) *DBListRepo {
+func NewDBListRepo(rootPath string, eventLogger *DbEventLogger, wal *Wal) *DBListRepo {
 	return &DBListRepo{
+		rootPath:    rootPath,
 		eventLogger: eventLogger,
-		walLogger:   walLogger,
 		wal:         wal,
 		NextID:      1,
 		listItemMap: make(map[listItemKey]*ListItem),

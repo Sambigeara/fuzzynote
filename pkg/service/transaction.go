@@ -4,14 +4,7 @@ import (
 	"fmt"
 	//"runtime"
 	//"os"
-	"time"
 )
-
-// TransactionLogger represents an interface to log and changes to the state in the application
-// This enables use-cases such as undo/redo and a write-ahead log
-type TransactionLogger interface {
-	addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error
-}
 
 type eventType uint16
 
@@ -36,7 +29,7 @@ var oppositeEvent = map[eventType]eventType{
 }
 
 type eventLog struct {
-	uuid            uuid   // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
+	uuid            uuid
 	listItemID      uint64 // auto-incrementing ID, unique for a given DB UUID
 	childListItemID uint64
 	logID           uint64 // auto-incrementing ID, unique for a given WAL
@@ -48,7 +41,7 @@ type eventLog struct {
 }
 
 type undoEventLog struct {
-	uuid      uuid // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
+	uuid      uuid
 	eventType eventType
 	ptr       *ListItem
 	undoLine  string
@@ -57,16 +50,10 @@ type undoEventLog struct {
 	redoNote  *[]byte
 }
 
-// DbEventLogger implements the TransactionLogger interface for the in-mem undo/redo mechanism
+// DbEventLogger is used for in-mem undo/redo mechanism
 type DbEventLogger struct {
 	curIdx int // Last index is latest/most recent in history (appends on new events)
 	log    []undoEventLog
-}
-
-// WalEventLogger implements the TransactionLogger interface for the write-ahead log
-type WalEventLogger struct {
-	uuid uuid
-	log  *[]eventLog
 }
 
 // NewDbEventLogger Returns a new instance of DbEventLogger
@@ -80,11 +67,6 @@ func NewDbEventLogger() *DbEventLogger {
 		redoNote:  nil,
 	}
 	return &DbEventLogger{0, []undoEventLog{el}}
-}
-
-// NewWalEventLogger Returns a new instance of WalEventLogger
-func NewWalEventLogger() *WalEventLogger {
-	return &WalEventLogger{log: &[]eventLog{}}
 }
 
 func (r *DBListRepo) addUndoLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
@@ -105,32 +87,6 @@ func (r *DBListRepo) addUndoLog(e eventType, item *ListItem, newLine string, new
 	r.eventLogger.log = append(r.eventLogger.log, ev)
 
 	r.eventLogger.curIdx++
-
-	return nil
-}
-
-func (l *WalEventLogger) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
-	// Base next id off of previous. It's a bit brute-force, but will enforce uniqueness in a single WAL
-	// which is our end goal here
-	nextID := uint64(1)
-	if len(*l.log) > 0 {
-		nextID = (*l.log)[len(*l.log)-1].logID + 1
-	}
-	ev := eventLog{
-		logID:      nextID,
-		uuid:       l.uuid,
-		unixTime:   time.Now().Unix(),
-		eventType:  e,
-		listItemID: item.id,
-		line:       newLine,
-		note:       newNote,
-	}
-	if item.child != nil {
-		ev.childListItemID = item.child.id
-	}
-
-	// Append to log
-	*l.log = append(*l.log, ev)
 
 	return nil
 }
@@ -195,7 +151,7 @@ func del(r *DBListRepo, item *ListItem) error {
 
 	r.PendingDeletions = append(r.PendingDeletions, item)
 
-	delete(r.listItemMap, getListItemKey(r.walLogger.uuid, item.id))
+	delete(r.listItemMap, getListItemKey(r.wal.uuid, item.id))
 
 	return nil
 }

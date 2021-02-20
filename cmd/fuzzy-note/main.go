@@ -17,7 +17,7 @@ const (
 )
 
 func main() {
-	var rootDir, notesSubDir string
+	var rootDir string
 	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -26,28 +26,17 @@ func main() {
 		}
 		rootDir = path.Join(home, ".fzn/")
 	}
-	// TODO remove
-	if notesSubDir = os.Getenv("FZN_NOTES_SUBDIR"); notesSubDir == "" {
-		notesSubDir = "notes"
-	}
+
+	os.Mkdir(rootDir, os.ModePerm)
 
 	rootPath := path.Join(rootDir, rootFileName)
-	notesDir := path.Join(rootDir, notesSubDir)
 	walDirPattern := path.Join(rootDir, walFilePattern)
 
-	// TODO remove
-	// Create (if not exists) the notes subdirectory
-	os.MkdirAll(notesDir, os.ModePerm)
+	wal := service.NewWal(walDirPattern)
+	listRepo := service.NewDBListRepo(rootPath, service.NewDbEventLogger(), wal)
 
-	walEventLogger := service.NewWalEventLogger()
-	//walFile := service.NewWalFile(rootPath, walDirPattern, walEventLogger)
-	wal := service.NewWal(rootPath, walDirPattern)
-	//fileDS := service.NewFileDataStore(rootPath, notesDir, walFile)
-	listRepo := service.NewDBListRepo(service.NewDbEventLogger(), walEventLogger, wal)
-
-	//runtime.Breakpoint()
 	// List instantiation
-	err := wal.Load(listRepo)
+	err := listRepo.Load()
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(0)
@@ -65,24 +54,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		err := wal.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
+		err := listRepo.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
 		if err != nil {
 			log.Fatal(err)
 		}
 		os.Exit(0)
 	}
-
-	//listRepo.Add("H", nil, nil, nil)
-	//listRepo.Add("e", nil, listRepo.Root, nil)
-	//matches, _ := listRepo.Match([][]rune{}, nil, false)
-	//runtime.Breakpoint()
-	//fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
-
-	//_, walEventLog, nextID, _ = fileDS.Load()
-	//listRepo = service.NewDBListRepo(nil, nextID, service.NewDbEventLogger(), walEventLogger)
-	//listRepo.ReplayWalEvents(walEventLog)
-
-	//matches, _ = listRepo.Match([][]rune{}, nil, false)
-	//listRepo.Delete(matches[len(matches)-1])
-	//err = fileDS.Save(listRepo.Root, listRepo.PendingDeletions, listRepo.NextID)
 }

@@ -16,41 +16,10 @@ type (
 	uuid         uint32
 )
 
-// DataStore represents the interface between the ListRepo and physical storage
-type DataStore interface {
-	generateUUID() uuid
-	Load() error
-	Save() error
-}
-
-// FileDataStore is an implementation of the DataStore interface
-type FileDataStore struct {
-	rootPath           string
-	notesPath          string
-	latestFileSchemaID fileSchemaID
-	uuid               uuid
-	walFile            *WalFile
-	nextListItemID     uint64
-}
-
 const latestFileSchemaID fileSchemaID = 3
-
-func (d *FileDataStore) generateUUID() uuid {
-	return uuid(rand.Uint32())
-}
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-}
-
-// NewFileDataStore instantiates a new FileDataStore
-func NewFileDataStore(rootPath string, notesPath string, walFile *WalFile) *FileDataStore {
-	return &FileDataStore{
-		rootPath:           rootPath,
-		notesPath:          notesPath,
-		latestFileSchemaID: latestFileSchemaID,
-		walFile:            walFile,
-	}
 }
 
 type fileHeader struct {
@@ -73,59 +42,10 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
-func (w *Wal) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) error {
-	// TODO remove this temp measure
-	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
-	// on the state of the `primary.db` and return that. It will involve a number of Add and toggleVisibility
-	// events
-	if len(*w.log) == 0 {
-		var err error
-		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
-		if err != nil {
-			return err
-		}
-	}
-
-	// If still no events, return nil
-	if len(*w.log) == 0 {
-		return nil
-	}
-
-	// TODO sort this out
-	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
-	// and then set the global NextID afterwards, to avoid wastage.
-	nextID := uint64(1)
-
-	//listItemTracker := make(map[string]*ListItem)
-	//runtime.Breakpoint()
-	for _, e := range *w.log {
-		//item := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-		//child := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
-
-		//r.callFunctionForEventLog(e)
-		item, _ := r.callFunctionForEventLog(e)
-
-		// This only applies when we Add a new event and want the ID to be consistent with the incoming
-		// events - required for retrieving the correct listItem from the listItemTracker map
-		//item.id = e.listItemID
-
-		// Update tracker for any newly created listItems
-		//listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
-
-		if nextID <= item.id {
-			nextID = item.id + 1
-		}
-	}
-
-	r.NextID = nextID
-
-	return nil
-}
-
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (w *Wal) Load(r *DBListRepo) error {
-	f, err := os.OpenFile(w.rootPath, os.O_CREATE, 0644)
+func (r *DBListRepo) Load() error {
+	f, err := os.OpenFile(r.rootPath, os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -133,7 +53,6 @@ func (w *Wal) Load(r *DBListRepo) error {
 	defer f.Close()
 
 	fileHeader := fileHeader{}
-	//fileHeader.schemaID = fileSchemaID(firstTwo)
 	err = binary.Read(f, binary.LittleEndian, &fileHeader.schemaID)
 	if err != nil {
 		if err == io.EOF {
@@ -156,7 +75,7 @@ func (w *Wal) Load(r *DBListRepo) error {
 		// TODO get rid of this
 		// We can now override uuid as it's been read from the file
 		if fileHeader.uuid != 0 {
-			w.uuid = fileHeader.uuid
+			r.wal.uuid = fileHeader.uuid
 		}
 
 		// NOTE special case handling for introduction of persisted nextId in file
@@ -179,7 +98,7 @@ func (w *Wal) Load(r *DBListRepo) error {
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	for {
 		nextItem := ListItem{}
-		cont, err := w.readListItemFromFile(f, fileHeader.schemaID, &nextItem)
+		cont, err := r.readListItemFromFile(f, fileHeader.schemaID, &nextItem)
 		if err != nil {
 			//log.Fatal(err)
 			return err
@@ -188,11 +107,11 @@ func (w *Wal) Load(r *DBListRepo) error {
 		nextItem.child = cur
 		if !cont {
 			// Load the WAL into memory
-			if err := w.loadWal(); err != nil {
+			if err := r.wal.load(); err != nil {
 				return err
 			}
 			//runtime.Breakpoint()
-			w.replayWalEvents(r, primaryRoot)
+			r.wal.replayWalEvents(r, primaryRoot)
 			return nil
 		}
 		if cur == nil {
@@ -213,8 +132,8 @@ func (w *Wal) Load(r *DBListRepo) error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (w *Wal) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID uint64) error {
-	f, err := os.Create(w.rootPath)
+func (r *DBListRepo) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID uint64) error {
+	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -225,7 +144,7 @@ func (w *Wal) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID 
 	// Write the file header to the start of the file
 	fileHeader := fileHeader{
 		schemaID:       latestFileSchemaID,
-		uuid:           w.uuid,
+		uuid:           r.wal.uuid,
 		nextListItemID: nextListItemID,
 	}
 	err = binary.Write(f, binary.LittleEndian, &fileHeader)
@@ -236,7 +155,7 @@ func (w *Wal) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID 
 	}
 
 	// Load the WAL into memory
-	w.saveWal()
+	r.wal.save()
 
 	// Return if no files to write. os.Create truncates by default so the file will
 	// be empty, with just the file header (including verion id and UUID)
@@ -247,7 +166,7 @@ func (w *Wal) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID 
 	cur := root
 
 	for {
-		err := w.writeFileFromListItem(f, cur)
+		err := r.writeFileFromListItem(f, cur)
 		if err != nil {
 			//log.Fatal(err)
 			return err
@@ -261,7 +180,7 @@ func (w *Wal) Save(root *ListItem, pendingDeletions []*ListItem, nextListItemID 
 	return nil
 }
 
-func (w *Wal) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {
+func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {
 	i, ok := listItemSchemaMap[schemaID]
 	if !ok {
 		i, _ = listItemSchemaMap[0]
@@ -304,7 +223,7 @@ func (w *Wal) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *
 	return false, err
 }
 
-func (w *Wal) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
+func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
 	// TODO this doesn't need to be a map now
 	i, ok := listItemSchemaMap[latestFileSchemaID]
 	if !ok {
