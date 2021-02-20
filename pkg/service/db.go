@@ -5,22 +5,17 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	//"math/rand"
 	"os"
 	//"runtime"
-	"time"
-)
-
-type (
-	fileSchemaID uint16
-	uuid         uint32
+	//"time"
 )
 
 const latestFileSchemaID fileSchemaID = 3
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
+//func init() {
+//    rand.Seed(time.Now().UnixNano())
+//}
 
 type fileHeader struct {
 	schemaID       fileSchemaID

@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+type (
+	uuid         uint32
+	fileSchemaID uint16
+)
+
 const (
 	// This is THE date that Golang needs to determine custom formatting
 	dateFormat     = "Mon, Jan 2, 2006"
