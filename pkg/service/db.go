@@ -111,7 +111,7 @@ func (r *DBListRepo) Load() error {
 				return err
 			}
 			//runtime.Breakpoint()
-			r.wal.replayWalEvents(r, primaryRoot)
+			r.wal.replay(r, primaryRoot)
 			return nil
 		}
 		if cur == nil {
