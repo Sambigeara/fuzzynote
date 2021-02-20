@@ -35,7 +35,6 @@ var oppositeEvent = map[eventType]eventType{
 	visibilityEvent: visibilityEvent,
 }
 
-// logFuncs represent the undo and redo functions related to a particular transaction event
 type eventLog struct {
 	uuid            uuid   // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
 	listItemID      uint64 // auto-incrementing ID, unique for a given DB UUID
@@ -44,16 +43,24 @@ type eventLog struct {
 	unixTime        int64
 	eventType       eventType
 	ptr             *ListItem
-	undoLine        string
-	undoNote        *[]byte
-	redoLine        string
-	redoNote        *[]byte
+	line            string
+	note            *[]byte
+}
+
+type undoEventLog struct {
+	uuid      uuid // only relevant for the WalEventLogger, but store in generic eventLog in-mem for consistency
+	eventType eventType
+	ptr       *ListItem
+	undoLine  string
+	undoNote  *[]byte
+	redoLine  string
+	redoNote  *[]byte
 }
 
 // DbEventLogger implements the TransactionLogger interface for the in-mem undo/redo mechanism
 type DbEventLogger struct {
 	curIdx int // Last index is latest/most recent in history (appends on new events)
-	log    []eventLog
+	log    []undoEventLog
 }
 
 // WalEventLogger implements the TransactionLogger interface for the write-ahead log
@@ -64,7 +71,7 @@ type WalEventLogger struct {
 
 // NewDbEventLogger Returns a new instance of DbEventLogger
 func NewDbEventLogger() *DbEventLogger {
-	el := eventLog{
+	el := undoEventLog{
 		eventType: nullEvent,
 		ptr:       nil,
 		undoLine:  "",
@@ -72,7 +79,7 @@ func NewDbEventLogger() *DbEventLogger {
 		redoLine:  "",
 		redoNote:  nil,
 	}
-	return &DbEventLogger{0, []eventLog{el}}
+	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
 // NewWalEventLogger Returns a new instance of WalEventLogger
@@ -80,8 +87,8 @@ func NewWalEventLogger() *WalEventLogger {
 	return &WalEventLogger{log: &[]eventLog{}}
 }
 
-func (r *DBListRepo) addLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
-	ev := eventLog{
+func (r *DBListRepo) addUndoLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
+	ev := undoEventLog{
 		uuid:      r.wal.uuid,
 		eventType: e,
 		ptr:       item,
@@ -115,8 +122,8 @@ func (l *WalEventLogger) addLog(e eventType, item *ListItem, newLine string, new
 		unixTime:   time.Now().Unix(),
 		eventType:  e,
 		listItemID: item.id,
-		redoLine:   newLine,
-		redoNote:   newNote,
+		line:       newLine,
+		note:       newNote,
 	}
 	if item.child != nil {
 		ev.childListItemID = item.child.id
@@ -181,19 +188,17 @@ func getListItemKey(uuid uuid, listItemID uint64) listItemKey {
 	return listItemKey(fmt.Sprintf(listItemKeyPattern, uuid, listItemID))
 }
 
-func add(r *DBListRepo, line string, note *[]byte, childItem *ListItem, newItem *ListItem) (*ListItem, error) {
+func add(r *DBListRepo, line string, note *[]byte, childItem *ListItem) (*ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
-	if newItem == nil {
-		newItem = &ListItem{
-			Line:  line,
-			id:    r.NextID,
-			child: childItem,
-			Note:  note,
-		}
-		r.NextID++
+	newItem := &ListItem{
+		Line:  line,
+		id:    r.NextID,
+		child: childItem,
+		Note:  note,
 	}
+	r.NextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {

@@ -65,8 +65,8 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 			logID:           nextLogID,
 			unixTime:        now,
 			eventType:       addEvent,
-			redoLine:        item.Line,
-			redoNote:        item.Note,
+			line:            item.Line,
+			note:            item.Note,
 		}
 		primaryLogs = append(primaryLogs, el)
 		nextLogID++
@@ -105,7 +105,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	if err != nil {
 		return el, err
 	}
-	el.redoLine = string(line)
+	el.line = string(line)
 
 	if item.NoteLength > 0 {
 		note := make([]byte, item.NoteLength)
@@ -113,7 +113,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 		if err != nil {
 			return el, err
 		}
-		el.redoNote = &note
+		el.note = &note
 	}
 
 	return el, nil
@@ -251,10 +251,10 @@ func (w *Wal) saveWal() error {
 	defer f.Close()
 
 	for _, item := range *w.log {
-		lenLine := uint64(len([]byte(item.redoLine)))
+		lenLine := uint64(len([]byte(item.line)))
 		var lenNote uint64
-		if item.redoNote != nil {
-			lenNote = uint64(len(*(item.redoNote)))
+		if item.note != nil {
+			lenNote = uint64(len(*(item.note)))
 		}
 		i := walItemSchema1{
 			UUID:            item.uuid,
@@ -268,10 +268,10 @@ func (w *Wal) saveWal() error {
 		}
 		data := []interface{}{
 			i,
-			[]byte(item.redoLine),
+			[]byte(item.line),
 		}
-		if item.redoNote != nil {
-			data = append(data, item.redoNote)
+		if item.note != nil {
+			data = append(data, item.note)
 		}
 		for _, v := range data {
 			err = binary.Write(f, binary.LittleEndian, v)
