@@ -136,7 +136,6 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	var err error
 	switch e.eventType {
 	case addEvent:
-		// TODO item probably never needs to be passed down now
 		item, err = add(r, e.line, e.note, child)
 		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item

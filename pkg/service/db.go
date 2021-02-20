@@ -73,6 +73,55 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
+func (w *Wal) replayWalEvents(r *DBListRepo, primaryRoot *ListItem) error {
+	// TODO remove this temp measure
+	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
+	// on the state of the `primary.db` and return that. It will involve a number of Add and toggleVisibility
+	// events
+	if len(*w.log) == 0 {
+		var err error
+		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
+		if err != nil {
+			return err
+		}
+	}
+
+	// If still no events, return nil
+	if len(*w.log) == 0 {
+		return nil
+	}
+
+	// TODO sort this out
+	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
+	// and then set the global NextID afterwards, to avoid wastage.
+	nextID := uint64(1)
+
+	//listItemTracker := make(map[string]*ListItem)
+	//runtime.Breakpoint()
+	for _, e := range *w.log {
+		//item := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
+		//child := listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
+
+		//r.callFunctionForEventLog(e)
+		item, _ := r.callFunctionForEventLog(e)
+
+		// This only applies when we Add a new event and want the ID to be consistent with the incoming
+		// events - required for retrieving the correct listItem from the listItemTracker map
+		//item.id = e.listItemID
+
+		// Update tracker for any newly created listItems
+		//listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+
+		if nextID <= item.id {
+			nextID = item.id + 1
+		}
+	}
+
+	r.NextID = nextID
+
+	return nil
+}
+
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
 func (w *Wal) Load(r *DBListRepo) error {
