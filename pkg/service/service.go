@@ -64,12 +64,13 @@ const listItemKeyPattern = "%v_%v"
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root           *ListItem
-	NextID         uint64
-	rootPath       string
-	eventLogger    *DbEventLogger
-	wal            *Wal
-	matchListItems []*ListItem
+	Root               *ListItem
+	NextID             uint64
+	rootPath           string
+	eventLogger        *DbEventLogger
+	wal                *Wal
+	matchListItems     []*ListItem
+	latestFileSchemaID fileSchemaID
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -100,10 +101,11 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
 	walDirPattern := path.Join(rootDir, walFilePattern)
 	return &DBListRepo{
-		rootPath:    rootPath,
-		eventLogger: NewDbEventLogger(),
-		wal:         NewWal(walDirPattern),
-		NextID:      1,
+		rootPath:           rootPath,
+		eventLogger:        NewDbEventLogger(),
+		wal:                NewWal(walDirPattern),
+		NextID:             1,
+		latestFileSchemaID: fileSchemaID(3),
 	}
 }
 

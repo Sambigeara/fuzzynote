@@ -22,6 +22,7 @@ func main() {
 		rootDir = path.Join(home, ".fzn/")
 	}
 
+	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
 	listRepo := service.NewDBListRepo(rootDir)

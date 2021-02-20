@@ -11,8 +11,6 @@ import (
 	//"time"
 )
 
-const latestFileSchemaID fileSchemaID = 3
-
 //func init() {
 //    rand.Seed(time.Now().UnixNano())
 //}
@@ -137,7 +135,7 @@ func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
 
 	// Write the file header to the start of the file
 	fileHeader := fileHeader{
-		schemaID:       latestFileSchemaID,
+		schemaID:       r.latestFileSchemaID,
 		uuid:           r.wal.uuid,
 		nextListItemID: nextListItemID,
 	}
@@ -151,29 +149,29 @@ func (r *DBListRepo) Save(root *ListItem, nextListItemID uint64) error {
 	r.wal.save()
 
 	// We don't care about the primary.db for now, so return nil here
-	return nil
-
-	//// Return if no files to write. os.Create truncates by default so the file will
-	//// be empty, with just the file header (including verion id and UUID)
-	//if root == nil {
-	//	return nil
-	//}
-
-	//cur := root
-
-	//for {
-	//	err := r.writeFileFromListItem(f, cur)
-	//	if err != nil {
-	//		//log.Fatal(err)
-	//		return err
-	//	}
-
-	//	if cur.parent == nil {
-	//		break
-	//	}
-	//	cur = cur.parent
-	//}
 	//return nil
+
+	// Return if no files to write. os.Create truncates by default so the file will
+	// be empty, with just the file header (including verion id and UUID)
+	if root == nil {
+		return nil
+	}
+
+	cur := root
+
+	for {
+		err := r.writeFileFromListItem(f, cur)
+		if err != nil {
+			//log.Fatal(err)
+			return err
+		}
+
+		if cur.parent == nil {
+			break
+		}
+		cur = cur.parent
+	}
+	return nil
 }
 
 func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {
@@ -221,7 +219,7 @@ func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, ne
 
 func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
 	// TODO this doesn't need to be a map now
-	i, ok := listItemSchemaMap[latestFileSchemaID]
+	i, ok := listItemSchemaMap[r.latestFileSchemaID]
 	if !ok {
 		i, _ = listItemSchemaMap[0]
 	}
