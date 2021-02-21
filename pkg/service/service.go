@@ -1,15 +1,23 @@
 package service
 
 import (
-	//"fmt"
 	"errors"
-	"strings"
+	"math/rand"
+	"path"
 	"time"
-	"unicode"
 )
 
-// This is THE date that Golang needs to determine custom formatting
-const dateFormat string = "Mon, Jan 2, 2006"
+type (
+	uuid         uint32
+	fileSchemaID uint16
+)
+
+const (
+	// This is THE date that Golang needs to determine custom formatting
+	dateFormat     = "Mon, Jan 2, 2006"
+	rootFileName   = "primary.db"
+	walFilePattern = "wal_%v.db"
+)
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
@@ -25,27 +33,53 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
+// Wal manages the state of the WAL, via all update functions and replay functionality
+type Wal struct {
+	uuid            uuid
+	log             *[]eventLog
+	listItemTracker map[string]*ListItem
+
+	// Legacy
+	walPathPattern    string
+	latestWalSchemaID uint16
+}
+
+func generateUUID() uuid {
+	return uuid(rand.Uint32())
+}
+
+func NewWal(walPathPattern string) *Wal {
+	return &Wal{
+		uuid:              generateUUID(),
+		walPathPattern:    walPathPattern,
+		latestWalSchemaID: latestWalSchemaID,
+		log:               &[]eventLog{},
+		listItemTracker:   make(map[string]*ListItem),
+	}
+}
+
 type listItemKey string
 
 const listItemKeyPattern = "%v_%v"
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	uuid             uuid
-	Root             *ListItem
-	NextID           uint64
-	PendingDeletions []*ListItem
-	eventLogger      *DbEventLogger
-	walLogger        *WalEventLogger
-	listItemMap      map[listItemKey]*ListItem
-	matchListItems   []*ListItem
+	Root               *ListItem
+	NextID             uint64
+	rootPath           string
+	eventLogger        *DbEventLogger
+	wal                *Wal
+	matchListItems     []*ListItem
+	latestFileSchemaID fileSchemaID
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
+	// TODO these can all be private now
 	Line        string
 	Note        *[]byte
 	IsHidden    bool
+	originUUID  uuid
 	child       *ListItem
 	parent      *ListItem
 	id          uint64
@@ -65,13 +99,33 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(eventLogger *DbEventLogger, walLogger *WalEventLogger) *DBListRepo {
+func NewDBListRepo(rootDir string) *DBListRepo {
+	rootPath := path.Join(rootDir, rootFileName)
+	walDirPattern := path.Join(rootDir, walFilePattern)
 	return &DBListRepo{
-		eventLogger: eventLogger,
-		walLogger:   walLogger,
-		NextID:      1,
-		listItemMap: make(map[listItemKey]*ListItem),
+		rootPath:           rootPath,
+		eventLogger:        NewDbEventLogger(),
+		wal:                NewWal(walDirPattern),
+		NextID:             1,
+		latestFileSchemaID: fileSchemaID(3),
 	}
+}
+
+func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid) (eventLog, error) {
+	el := eventLog{
+		uuid:             originUUID,
+		unixNanoTime:     time.Now().UnixNano(),
+		eventType:        e,
+		listItemID:       id,
+		targetListItemID: targetID,
+		line:             newLine,
+		note:             newNote,
+	}
+
+	// Append to log
+	*w.log = append(*w.log, el)
+
+	return el, nil
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
@@ -81,13 +135,20 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 		return errors.New("ListItem idx out of bounds")
 	}
 
-	var childItem *ListItem
+	var childID uint64
+	// In order to be able to resolve child node from the tracker mapping, we need UUIDs to be consistent
+	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
+	// This is (conveniently) in line with intended behaviour for now. If we merge a remote, it makes sense
+	// to attribute new items to that WAL when adding below focused items.
+	newUUID := r.wal.uuid
 	if idx > 0 {
-		childItem = r.matchListItems[idx-1]
+		childItem := r.matchListItems[idx-1]
+		childID = childItem.id
+		newUUID = childItem.originUUID
 	}
-	newItem, err := add(r, line, note, childItem, nil)
-	r.eventLogger.addLog(addEvent, newItem, line, note)
-	r.walLogger.addLog(addEvent, newItem, line, note)
+	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note, newUUID)
+	listItem, _ := r.callFunctionForEventLog(el)
+	r.addUndoLog(addEvent, listItem, line, note)
 	return err
 }
 
@@ -99,9 +160,13 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(updateEvent, listItem, line, note)
-	r.walLogger.addLog(updateEvent, listItem, line, note)
-	return update(r, line, note, listItem)
+	// Need to add to Undo/Redo log before mutating, because the addLog
+	// function requires previous state
+	r.addUndoLog(updateEvent, listItem, line, note)
+
+	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID)
+	listItem, err = r.callFunctionForEventLog(el)
+	return listItem.Line, err
 }
 
 // Delete will remove an existing ListItem
@@ -112,9 +177,10 @@ func (r *DBListRepo) Delete(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(deleteEvent, listItem, "", nil)
-	r.walLogger.addLog(deleteEvent, listItem, "", nil)
-	return del(r, listItem)
+	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID)
+	r.callFunctionForEventLog(el)
+	r.addUndoLog(deleteEvent, listItem, "", nil)
+	return err
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -126,12 +192,25 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 
 	listItem := r.matchListItems[idx]
 
-	moved, err := moveUp(r, listItem)
-	if moved {
-		r.eventLogger.addLog(moveUpEvent, listItem, "", nil)
-		r.walLogger.addLog(moveUpEvent, listItem, "", nil)
+	var targetItemID uint64
+	if listItem.matchChild != nil {
+		targetItemID = listItem.matchChild.id
+	} else if listItem.child != nil {
+		// Cover nil child case (e.g. attempting to move top of list up)
+
+		// matchChild will only be null in this context on initial startup with loading
+		// from the WAL
+		targetItemID = listItem.child.id
 	}
-	return moved, err
+
+	// There's no point in moving if there's nothing to move to
+	if targetItemID != 0 {
+		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
+		listItem, err = r.callFunctionForEventLog(el)
+		r.addUndoLog(moveUpEvent, listItem, "", nil)
+		return true, err
+	}
+	return false, nil
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
@@ -143,12 +222,20 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 
 	listItem := r.matchListItems[idx]
 
-	moved, err := moveDown(r, listItem)
-	if moved {
-		r.eventLogger.addLog(moveDownEvent, listItem, "", nil)
-		r.walLogger.addLog(moveDownEvent, listItem, "", nil)
+	var targetItemID uint64
+	if listItem.matchParent != nil {
+		targetItemID = listItem.matchParent.id
+	} else if listItem.parent != nil {
+		targetItemID = listItem.parent.id
 	}
-	return moved, err
+
+	if targetItemID != 0 {
+		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
+		listItem, err = r.callFunctionForEventLog(el)
+		r.addUndoLog(moveDownEvent, listItem, "", nil)
+		return true, err
+	}
+	return false, nil
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
@@ -159,18 +246,30 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	r.eventLogger.addLog(visibilityEvent, listItem, "", nil)
-	r.walLogger.addLog(visibilityEvent, listItem, "", nil)
-	return toggleVisibility(r, listItem)
+	var evType eventType
+	if listItem.IsHidden {
+		evType = showEvent
+	} else {
+		evType = hideEvent
+	}
+	r.addUndoLog(evType, listItem, "", nil)
+	el, err := r.wal.addLog(evType, listItem.id, 0, "", nil, listItem.originUUID)
+	r.callFunctionForEventLog(el)
+	return err
 }
 
 func (r *DBListRepo) Undo() error {
 	if r.eventLogger.curIdx > 0 {
-		eventLog := r.eventLogger.log[r.eventLogger.curIdx]
-		// callFunctionForEventLog needs to call the appropriate function with the
-		// necessary parameters to reverse the operation
-		opEv := oppositeEvent[eventLog.eventType]
-		_, err := callFunctionForEventLog(r, opEv, eventLog.ptr, eventLog.ptr.child, eventLog.undoLine, eventLog.undoNote)
+		// undo event log
+		uel := r.eventLogger.log[r.eventLogger.curIdx]
+
+		targetListItemID := uint64(0)
+		if uel.ptr.child != nil {
+			targetListItemID = uel.ptr.child.id
+		}
+
+		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid)
+		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx--
 		return err
 	}
@@ -180,106 +279,19 @@ func (r *DBListRepo) Undo() error {
 func (r *DBListRepo) Redo() error {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
-		eventLog := r.eventLogger.log[r.eventLogger.curIdx+1]
-		_, err := callFunctionForEventLog(r, eventLog.eventType, eventLog.ptr, eventLog.ptr.child, eventLog.redoLine, eventLog.redoNote)
+		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
+
+		targetListItemID := uint64(0)
+		if uel.ptr.child != nil {
+			targetListItemID = uel.ptr.child.id
+		}
+
+		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid)
+		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx++
 		return err
 	}
 	return nil
-}
-
-// Search functionality
-
-func isSubString(sub string, full string) bool {
-	if strings.Contains(strings.ToLower(full), strings.ToLower(sub)) {
-		return true
-	}
-	return false
-}
-
-// Iterate through the full string, when you match the "head" of the sub rune slice,
-// pop it and continue through. If you clear sub, return true. Searches in O(n)
-func isFuzzyMatch(sub []rune, full string) bool {
-	for _, c := range full {
-		if unicode.ToLower(c) == unicode.ToLower(sub[0]) {
-			_, sub = sub[0], sub[1:]
-		}
-		if len(sub) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-const (
-	openOp  rune = '{'
-	closeOp rune = '}'
-)
-
-type matchPattern int
-
-const (
-	fullMatchPattern matchPattern = iota
-	inverseMatchPattern
-	fuzzyMatchPattern
-	noMatchPattern
-)
-
-// matchChars represents the number of characters at the start of the string
-// which are attributed to the match pattern.
-// This is used elsewhere to strip the characters where appropriate
-var matchChars = map[matchPattern]int{
-	fullMatchPattern:    1,
-	inverseMatchPattern: 2,
-	fuzzyMatchPattern:   0,
-	noMatchPattern:      0,
-}
-
-// GetMatchPattern will return the matchPattern of a given string, if any, plus the number
-// of chars that can be omitted to leave only the relevant text
-func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
-	if len(sub) == 0 {
-		return noMatchPattern, 0
-	}
-	pattern := fuzzyMatchPattern
-	if sub[0] == '#' {
-		pattern = fullMatchPattern
-		if len(sub) > 1 {
-			// Inverse string match if a search group begins with `#!`
-			if sub[1] == '!' {
-				pattern = inverseMatchPattern
-			}
-		}
-	}
-	nChars, _ := matchChars[pattern]
-	return pattern, nChars
-}
-
-func (r *DBListRepo) parseOperatorGroups(sub string) string {
-	// Match the op against any known operator (e.g. date) and parse if applicable.
-	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
-	now := time.Now()
-	dateString := now.Format(dateFormat)
-	sub = strings.ReplaceAll(sub, "{d}", dateString)
-	return sub
-}
-
-// If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
-func isMatch(sub []rune, full string, pattern matchPattern) bool {
-	if len(sub) == 0 {
-		return true
-	}
-	switch pattern {
-	case fullMatchPattern:
-		return isSubString(string(sub), full)
-	case inverseMatchPattern:
-		return !isSubString(string(sub), full)
-	case fuzzyMatchPattern:
-		return isFuzzyMatch(sub, full)
-	default:
-		// Shouldn't reach here
-		return false
-	}
 }
 
 // MatchItem holds all data required by the client
