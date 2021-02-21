@@ -10,12 +10,13 @@ type eventType uint16
 
 // OppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
 var oppositeEvent = map[eventType]eventType{
-	addEvent:        deleteEvent,
-	deleteEvent:     addEvent,
-	updateEvent:     updateEvent,
-	moveUpEvent:     moveDownEvent,
-	moveDownEvent:   moveUpEvent,
-	visibilityEvent: visibilityEvent,
+	addEvent:      deleteEvent,
+	deleteEvent:   addEvent,
+	updateEvent:   updateEvent,
+	moveUpEvent:   moveDownEvent,
+	moveDownEvent: moveUpEvent,
+	showEvent:     hideEvent,
+	hideEvent:     showEvent,
 }
 
 type undoEventLog struct {

@@ -160,8 +160,8 @@ func TestWalMerge(t *testing.T) {
 		if (*repo.wal.log)[1].eventType != addEvent {
 			t.Fatal("Second match item should be of type addEvent")
 		}
-		if (*repo.wal.log)[2].eventType != visibilityEvent {
-			t.Fatal("Third match item should be of type toggleVisibility")
+		if (*repo.wal.log)[2].eventType != hideEvent {
+			t.Fatal("Third match item should be of type hideEvent")
 		}
 	})
 	t.Run("Single local WAL merge", func(t *testing.T) {

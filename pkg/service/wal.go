@@ -38,7 +38,8 @@ const (
 	updateEvent
 	moveUpEvent
 	moveDownEvent
-	visibilityEvent
+	showEvent
+	hideEvent
 	deleteEvent
 )
 
@@ -91,8 +92,10 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 		newChild := targetItem
 		newParent := targetItem.parent
 		err = r.moveItem(item, newChild, newParent)
-	case visibilityEvent:
-		err = r.toggleVisibility(item)
+	case showEvent:
+		err = r.setVisibility(item, true)
+	case hideEvent:
+		err = r.setVisibility(item, false)
 	}
 	return item, err
 }
@@ -182,15 +185,15 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 	return nil
 }
 
-func (r *DBListRepo) toggleVisibility(item *ListItem) error {
-	item.IsHidden = !item.IsHidden
+func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
+	item.IsHidden = !isVisible
 	return nil
 }
 
 func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 	// TODO remove this temp measure
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
-	// on the state of the `primary.db` and return that. It will involve a number of Add and toggleVisibility
+	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
 	// events
 	if len(*w.log) == 0 {
 		var err error
@@ -224,7 +227,12 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 
 func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 	primaryLogs := []eventLog{}
-	now := time.Now().UnixNano()
+	// We need to implement a nasty and non-guaranteed hack here, but it's only super
+	// temporary. In order to ensure uniqueness, each record needs to have it's own UUID.
+	// We don't know how many records there will be without traversing, and because I'm
+	// lazy, it's easier just to preset `now` to 1 year ago and increment a nanosecond
+	// at a time
+	now := time.Now().AddDate(-1, 0, 0).UnixNano()
 
 	for item != nil {
 		var targetListItemID uint64
@@ -243,9 +251,12 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 		primaryLogs = append(primaryLogs, el)
 
 		if item.IsHidden {
-			el.eventType = visibilityEvent
+			now++
+			el.eventType = hideEvent
+			el.unixNanoTime = now
 			primaryLogs = append(primaryLogs, el)
 		}
+		now++
 		item = item.parent
 	}
 

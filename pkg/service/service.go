@@ -246,8 +246,14 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	r.addUndoLog(visibilityEvent, listItem, "", nil)
-	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil, listItem.originUUID)
+	var evType eventType
+	if listItem.IsHidden {
+		evType = showEvent
+	} else {
+		evType = hideEvent
+	}
+	r.addUndoLog(evType, listItem, "", nil)
+	el, err := r.wal.addLog(evType, listItem.id, 0, "", nil, listItem.originUUID)
 	r.callFunctionForEventLog(el)
 	return err
 }
