@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	//"runtime"
 	"path"
+	//"runtime"
 	"testing"
 	"time"
 
@@ -174,7 +174,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Load()
 		repo.Save()
 
-		now := time.Now().Unix()
+		now := time.Now().UnixNano()
 
 		line0 := []byte("First item")
 		line1 := []byte("Second item")
@@ -182,7 +182,6 @@ func TestWalMerge(t *testing.T) {
 			latestWalSchemaID,
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            1,
 				ListItemID:       1,
 				TargetListItemID: 0,
 				UnixTime:         now,
@@ -193,7 +192,6 @@ func TestWalMerge(t *testing.T) {
 			line0,
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            2,
 				ListItemID:       2,
 				TargetListItemID: 1,
 				UnixTime:         now + 1,
@@ -216,7 +214,6 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		//runtime.Breakpoint()
 		repo.Load()
 
 		if len(*repo.wal.log) != 2 {
@@ -253,10 +250,14 @@ func TestWalMerge(t *testing.T) {
 		repo.Load()
 		repo.Save()
 
-		now0 := time.Now().Unix()
+		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
 		now2 := now1 + 1
 		now3 := now2 + 1
+		now4 := now3 + 1
+		now5 := now4 + 1
+		now6 := now5 + 1
+		now7 := now6 + 1
 
 		line0 := []byte("First item")
 		line2 := []byte("Third item")
@@ -264,7 +265,6 @@ func TestWalMerge(t *testing.T) {
 			latestWalSchemaID,
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            1,
 				ListItemID:       1,
 				TargetListItemID: 0,
 				UnixTime:         now0,
@@ -274,10 +274,9 @@ func TestWalMerge(t *testing.T) {
 			},
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            2,
 				ListItemID:       1,
 				TargetListItemID: 0,
-				UnixTime:         now0,
+				UnixTime:         now1,
 				EventType:        updateEvent,
 				LineLength:       uint64(len(line0)),
 				NoteLength:       0,
@@ -285,20 +284,18 @@ func TestWalMerge(t *testing.T) {
 			line0,
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            3,
 				ListItemID:       2,
 				TargetListItemID: 1,
-				UnixTime:         now2,
+				UnixTime:         now4,
 				EventType:        addEvent,
 				LineLength:       0,
 				NoteLength:       0,
 			},
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            4,
 				ListItemID:       2,
 				TargetListItemID: 1,
-				UnixTime:         now2,
+				UnixTime:         now5,
 				EventType:        updateEvent,
 				LineLength:       uint64(len(line2)),
 				NoteLength:       0,
@@ -326,20 +323,18 @@ func TestWalMerge(t *testing.T) {
 			latestWalSchemaID,
 			walItemSchema1{
 				UUID:             remoteUUID,
-				LogID:            1,
 				ListItemID:       1,
 				TargetListItemID: 0,
-				UnixTime:         now1,
+				UnixTime:         now2,
 				EventType:        addEvent,
 				LineLength:       0,
 				NoteLength:       0,
 			},
 			walItemSchema1{
 				UUID:             remoteUUID,
-				LogID:            2,
 				ListItemID:       1,
 				TargetListItemID: 0,
-				UnixTime:         now1,
+				UnixTime:         now3,
 				EventType:        updateEvent,
 				LineLength:       uint64(len(line1)),
 				NoteLength:       0,
@@ -347,20 +342,18 @@ func TestWalMerge(t *testing.T) {
 			line1,
 			walItemSchema1{
 				UUID:             remoteUUID,
-				LogID:            3,
 				ListItemID:       2,
 				TargetListItemID: 1,
-				UnixTime:         now3,
+				UnixTime:         now6,
 				EventType:        addEvent,
 				LineLength:       0,
 				NoteLength:       0,
 			},
 			walItemSchema1{
 				UUID:             remoteUUID,
-				LogID:            4,
 				ListItemID:       2,
 				TargetListItemID: 1,
-				UnixTime:         now3,
+				UnixTime:         now7,
 				EventType:        updateEvent,
 				LineLength:       uint64(len(line3)),
 				NoteLength:       0,
@@ -380,6 +373,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
+		//runtime.Breakpoint()
 		repo.Load()
 
 		if len(*repo.wal.log) != 8 {
@@ -415,7 +409,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Load()
 		repo.Save()
 
-		now0 := time.Now().Unix() - 10 // `-10` Otherwise delete "happens" before these times
+		now0 := time.Now().UnixNano() - 10 // `-10` Otherwise delete "happens" before these times
 		now1 := now0 + 1
 
 		line0 := []byte("First item")
@@ -423,7 +417,6 @@ func TestWalMerge(t *testing.T) {
 			latestWalSchemaID,
 			walItemSchema1{
 				UUID:             repo.wal.uuid,
-				LogID:            1,
 				ListItemID:       1,
 				TargetListItemID: 0,
 				UnixTime:         now0,
@@ -453,7 +446,6 @@ func TestWalMerge(t *testing.T) {
 			latestWalSchemaID,
 			walItemSchema1{
 				UUID:             remoteUUID,
-				LogID:            2,
 				ListItemID:       1,
 				TargetListItemID: 0,
 				UnixTime:         now1,
@@ -569,6 +561,141 @@ func TestWalMerge(t *testing.T) {
 		}
 		if repo.Root != repo.Root.parent.child {
 			t.Fatal("Root shoud equal Root.parent.child")
+		}
+	})
+	t.Run("Two WAL file duplicate merge, Delete item in one, Update same in other", func(t *testing.T) {
+		repo := NewDBListRepo(rootDir)
+		os.Mkdir(rootDir, os.ModePerm)
+		os.Create(rootPath)
+		defer clearUp(repo)
+
+		// Load and Save the fileDS to instantiate
+		repo.Load()
+		repo.Save()
+
+		now0 := time.Now().UnixNano()
+		now1 := now0 + 1
+		now2 := now1 + 1
+		now3 := now2 + 1
+
+		line0 := []byte("First item")
+		line1 := []byte("Updated item")
+		localData := []interface{}{
+			latestWalSchemaID,
+			walItemSchema1{
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now0,
+				EventType:        addEvent,
+				LineLength:       0,
+				NoteLength:       0,
+			},
+			walItemSchema1{
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now1,
+				EventType:        updateEvent,
+				LineLength:       uint64(len(line0)),
+				NoteLength:       0,
+			},
+			line0,
+			// Deviates here
+			walItemSchema1{
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now2,
+				EventType:        deleteEvent,
+				LineLength:       0,
+				NoteLength:       0,
+			},
+		}
+
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		f, _ := os.Create(walPath)
+		defer os.Remove(walPath)
+
+		for _, v := range localData {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Close()
+
+		remoteData := []interface{}{
+			latestWalSchemaID,
+			walItemSchema1{
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now0,
+				EventType:        addEvent,
+				LineLength:       0,
+				NoteLength:       0,
+			},
+			walItemSchema1{
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now1,
+				EventType:        updateEvent,
+				LineLength:       uint64(len(line0)),
+				NoteLength:       0,
+			},
+			line0,
+			// Deviates here
+			walItemSchema1{
+				// UUID will be same as item.originUUID
+				UUID:             repo.wal.uuid,
+				ListItemID:       1,
+				TargetListItemID: 0,
+				UnixTime:         now3,
+				EventType:        updateEvent,
+				LineLength:       uint64(len(line1)),
+				NoteLength:       0,
+			},
+			line1,
+		}
+
+		remoteUUID := generateUUID()
+		walPath = path.Join(rootDir, fmt.Sprintf(walDirPattern, remoteUUID))
+		f, _ = os.Create(walPath)
+		defer os.Remove(walPath)
+
+		for _, v := range remoteData {
+			err := binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Close()
+
+		repo.Load()
+
+		if len(*repo.wal.log) != 4 {
+			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*repo.wal.log))
+		}
+
+		repo.Match([][]rune{}, true)
+		matches := repo.matchListItems
+		if len(matches) != 1 {
+			t.Fatalf("Expected 1 matches items but had %d", len(*repo.wal.log))
+		}
+
+		if (*repo.wal.log)[0].eventType != addEvent {
+			t.Fatal("First event should be of type addEvent")
+		}
+		if (*repo.wal.log)[1].eventType != updateEvent {
+			t.Fatal("First event should be of type addEvent")
+		}
+		if (*repo.wal.log)[2].eventType != deleteEvent {
+			t.Fatal("First event should be of type addEvent")
+		}
+		if (*repo.wal.log)[3].eventType != updateEvent {
+			t.Fatal("First event should be of type updateEvent")
 		}
 	})
 }

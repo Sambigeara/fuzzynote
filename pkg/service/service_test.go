@@ -1134,6 +1134,7 @@ func TestServiceMatch(t *testing.T) {
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
+		//runtime.Breakpoint()
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
@@ -1228,7 +1229,6 @@ func TestServiceMatch(t *testing.T) {
 
 		repo.Save()
 		repo = NewDBListRepo(rootDir)
-		//runtime.Breakpoint()
 		repo.Load()
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems

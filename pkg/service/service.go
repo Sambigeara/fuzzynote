@@ -112,17 +112,9 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 }
 
 func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid) (eventLog, error) {
-	// Base next id off of previous. It's a bit brute-force, but will enforce uniqueness in a single WAL
-	// which is our end goal here
-	nextID := uint64(1)
-	if len(*w.log) > 0 {
-		nextID = (*w.log)[len(*w.log)-1].logID + 1
-	}
-
 	el := eventLog{
-		logID:            nextID,
 		uuid:             originUUID,
-		unixTime:         time.Now().Unix(),
+		unixNanoTime:     time.Now().UnixNano(),
 		eventType:        e,
 		listItemID:       id,
 		targetListItemID: targetID,

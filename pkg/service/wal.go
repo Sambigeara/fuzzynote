@@ -2,13 +2,14 @@ package service
 
 import (
 	"encoding/binary"
-	"errors"
+	//"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
+	//"runtime"
 	"time"
 	"unsafe"
 )
@@ -21,7 +22,6 @@ const latestWalSchemaID uint16 = 1
 
 type walItemSchema1 struct {
 	UUID             uuid
-	LogID            uint64
 	ListItemID       uint64
 	TargetListItemID uint64
 	UnixTime         int64
@@ -30,22 +30,23 @@ type walItemSchema1 struct {
 	NoteLength       uint64
 }
 
+// Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
+// (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
 	nullEvent eventType = iota
 	addEvent
-	deleteEvent
 	updateEvent
 	moveUpEvent
 	moveDownEvent
 	visibilityEvent
+	deleteEvent
 )
 
 type eventLog struct {
 	uuid             uuid
 	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
 	targetListItemID uint64
-	logID            uint64 // auto-incrementing ID, unique for a given WAL
-	unixTime         int64
+	unixNanoTime     int64
 	eventType        eventType
 	line             string
 	note             *[]byte
@@ -63,8 +64,25 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 	case deleteEvent:
 		err = r.del(item)
+		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
 	case updateEvent:
-		item, err = r.update(e.line, e.note, item)
+		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
+		// - wal1 creates item A
+		// - wal2 copies wal1
+		// - wal2 deletes item A
+		// - wal1 updates item A
+		// - wal1 copies wal2
+		// We will end up with an attempted Update on a nonexistent item.
+		// In this case, we will Add an item back in with the updated content
+		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
+		// becomes tricky to deal with child IDs
+		if item != nil {
+			item, err = r.update(e.line, e.note, item)
+		} else {
+			addEl := e
+			addEl.eventType = addEvent
+			item, err = r.callFunctionForEventLog(addEl)
+		}
 	case moveUpEvent:
 		newChild := targetItem.child
 		newParent := targetItem
@@ -191,7 +209,6 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 	// and then set the global NextID afterwards, to avoid wastage.
 	nextID := uint64(1)
 
-	//runtime.Breakpoint()
 	for _, e := range *w.log {
 		item, _ := r.callFunctionForEventLog(e)
 
@@ -207,9 +224,8 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 
 func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 	primaryLogs := []eventLog{}
-	now := time.Now().Unix()
+	now := time.Now().UnixNano()
 
-	nextLogID := uint64(1)
 	for item != nil {
 		var targetListItemID uint64
 		if item.child != nil {
@@ -219,20 +235,16 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 			uuid:             uuid,
 			listItemID:       item.id,
 			targetListItemID: targetListItemID,
-			logID:            nextLogID,
-			unixTime:         now,
+			unixNanoTime:     now,
 			eventType:        addEvent,
 			line:             item.Line,
 			note:             item.Note,
 		}
 		primaryLogs = append(primaryLogs, el)
-		nextLogID++
 
 		if item.IsHidden {
 			el.eventType = visibilityEvent
-			el.logID = nextLogID
 			primaryLogs = append(primaryLogs, el)
-			nextLogID++
 		}
 		item = item.parent
 	}
@@ -252,8 +264,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
 	el.listItemID = item.ListItemID
 	el.targetListItemID = item.TargetListItemID
-	el.logID = item.LogID
-	el.unixTime = item.UnixTime
+	el.unixNanoTime = item.UnixTime
 	el.uuid = item.UUID
 	el.eventType = item.EventType
 
@@ -314,6 +325,7 @@ func (w *Wal) load() error {
 	// We then pop the oldest item and append it to the merged logs, and replace with another item from that file.
 	// We repeat this until end of file.
 	// When we close a file, we reduce remoteFiles so we know to compare on fewer items.
+	//runtime.Breakpoint()
 	for f := range remoteFiles {
 		e, err := getNextEventLogFromWalFile(f)
 		if err != nil {
@@ -342,16 +354,16 @@ func (w *Wal) load() error {
 				curFile = f
 			} else {
 				e := curEventLogs[f]
-				if e.unixTime < oldest.unixTime {
+				if e.unixNanoTime < oldest.unixNanoTime {
 					oldest = e
 					curFile = f
-				} else if e.unixTime == oldest.unixTime {
-					// If unixTime's are the same, order by uuid and then logID to ensure consistent ordering
+				} else if e.unixNanoTime == oldest.unixNanoTime {
+					// If unixNanoTime's are the same, order by uuid and then eventType to ensure consistent ordering
 					if e.uuid < oldest.uuid {
 						oldest = e
 						curFile = f
 					} else if e.uuid == oldest.uuid {
-						if e.logID < oldest.logID {
+						if e.eventType < oldest.eventType {
 							oldest = e
 							curFile = f
 						}
@@ -360,18 +372,14 @@ func (w *Wal) load() error {
 			}
 		}
 
-		// Because we have guaranteed ordering by unixTime -> uuid -> logID, we can compare the current "oldest"
+		// Because we have guaranteed ordering by unixNanoTime -> uuid -> eventType, we can compare the current "oldest"
 		// against the head of the mergedRemoteLogs - if they share the three attributes above (strictly only uuid
 		// and rowID) we can ignore. Otherwise, we append to the logs
 		if oldest.eventType != nullEvent {
 			if len(mergedRemoteLogs) > 0 {
 				head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
-				if head.uuid == oldest.uuid && head.logID == oldest.logID {
-					if head.unixTime != oldest.unixTime {
-						panic(errors.New("Log item's should have the same unixTime"))
-					}
-				} else {
-					// TODO deal with duplication
+				// This is an inverse (De Morgan's Law) of: IGNORE if UUIDs and unixNanoTime's are the same
+				if head.uuid != oldest.uuid || head.unixNanoTime != oldest.unixNanoTime {
 					mergedRemoteLogs = append(mergedRemoteLogs, oldest)
 				}
 			} else {
@@ -423,10 +431,9 @@ func (w *Wal) save() error {
 		}
 		i := walItemSchema1{
 			UUID:             item.uuid,
-			LogID:            item.logID,
 			ListItemID:       item.listItemID,
 			TargetListItemID: item.targetListItemID,
-			UnixTime:         item.unixTime,
+			UnixTime:         item.unixNanoTime,
 			EventType:        item.eventType,
 			LineLength:       lenLine,
 			NoteLength:       lenNote,
