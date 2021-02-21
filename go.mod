@@ -4,6 +4,7 @@ go 1.14
 
 require (
 	github.com/gdamore/tcell v1.3.0
+	github.com/google/go-cmp v0.5.4
 	github.com/jpillora/longestcommon v0.0.0-20161227235612-adb9d91ee629
 	github.com/kisielk/sqlstruct v0.0.0-20201105191214-5f3e10d3ab46 // indirect
 	github.com/mattn/go-runewidth v0.0.9

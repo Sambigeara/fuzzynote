@@ -27,7 +27,7 @@ const (
 type Terminal struct {
 	db                    service.ListRepo
 	search                [][]rune
-	curItem               *service.ListItem // The currently selected item
+	curItem               *service.MatchItem // The currently selected item
 	s                     tcell.Screen
 	style                 tcell.Style
 	w                     int
@@ -37,8 +37,8 @@ type Terminal struct {
 	vertOffset            int // The index of the first displayed item in the match set
 	horizOffset           int // The index of the first displayed char in the curItem
 	showHidden            bool
-	selectedItems         map[service.ListItem]struct{} // struct{} is more space efficient than bool
-	copiedItem            *service.ListItem
+	selectedItems         map[int]string // struct{} is more space efficient than bool
+	copiedItem            *service.MatchItem
 	hiddenMatchPrefix     string // The common string that we want to truncate from each line
 	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
 }
@@ -164,7 +164,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update(t.curItem.Line, &newDat, t.curItem)
+	_, err = t.db.Update(t.curItem.Line, &newDat, t.curY-1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func (t *Terminal) resizeScreen() {
 	t.h = h
 }
 
-func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
+func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.s)
 
@@ -231,9 +231,9 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 	for i, r := range matches[t.vertOffset:] {
 		offset = i + reservedTopLines
 		// If item is highlighted, indicate accordingly
-		if _, ok := t.selectedItems[*r]; ok {
+		if _, ok := t.selectedItems[i]; ok {
 			style = selectedStyle
-		} else if len(*(r.Note)) > 0 {
+		} else if r.Note != nil && len(*(r.Note)) > 0 {
 			// If note is present, indicate with a different style
 			style = noteStyle
 		} else {
@@ -253,7 +253,7 @@ func (t *Terminal) paint(matches []*service.ListItem, saveWarning bool) error {
 		line = strings.TrimPrefix(line, " ")
 
 		// Account for horizontal offset if on curItem
-		if r == t.curItem {
+		if i == t.curY {
 			line = line[t.horizOffset:]
 		}
 
@@ -344,23 +344,10 @@ func (t *Terminal) getLenSearchBox() int {
 	return lenSearchBox
 }
 
-func (t *Terminal) handleTextLengthChange(startLen int, endLenFunc func() int, posDiff *[]int, updateFunc func() error) {
-	// Certain search character combo's are interpreted as special operators by the backend
-	// This means that the length of the search string might unpredictably change when calling
-	// `Match` leaving the cursor in an undesired location. To combat this, we need to take
-	// note of the length of the search string prior to a key press and after, and apply the diff.
-	// We wrap this around the `Match` call
-	err := updateFunc()
-	if err != nil {
-		log.Fatal(err)
-	}
-	(*posDiff)[0] += endLenFunc() - startLen
-}
-
-func getCommonSearchPrefix(selectedItems map[service.ListItem]struct{}) [][]rune {
+func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	var lines []string
-	for item := range selectedItems {
-		lines = append(lines, item.Line)
+	for _, line := range selectedItems {
+		lines = append(lines, line)
 	}
 	prefix := strings.TrimSpace(longestcommon.Prefix(lines))
 	if len(prefix) == 0 {
@@ -372,13 +359,13 @@ func getCommonSearchPrefix(selectedItems map[service.ListItem]struct{}) [][]rune
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient() error {
 
-	matches, err := t.db.Match([][]rune{}, nil, t.showHidden)
+	matches, err := t.db.Match([][]rune{}, t.showHidden)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Pre-instantiate the selectedItems map
-	t.selectedItems = make(map[service.ListItem]struct{})
+	t.selectedItems = make(map[int]string)
 
 	t.paint(matches, false)
 
@@ -406,7 +393,7 @@ func (t *Terminal) RunClient() error {
 				if len(t.selectedItems) > 0 {
 					// Add common search prefix to search groups
 					t.search = getCommonSearchPrefix(t.selectedItems)
-					t.selectedItems = make(map[service.ListItem]struct{})
+					t.selectedItems = make(map[int]string)
 					t.curY = 0
 				} else {
 					// Add a new item below current cursor position
@@ -423,11 +410,9 @@ func (t *Terminal) RunClient() error {
 
 					var err error
 					if t.curY == reservedTopLines-1 {
-						err = t.db.Add(newString, nil, nil, nil)
 						posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
-					} else {
-						err = t.db.Add(newString, nil, t.curItem, nil)
 					}
+					err = t.db.Add(newString, nil, t.curY)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -437,7 +422,7 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					t.search = [][]rune{}
 				} else {
-					err := t.db.Delete(t.curItem)
+					err := t.db.Delete(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -470,7 +455,7 @@ func (t *Terminal) RunClient() error {
 				if t.curY == reservedTopLines-1 {
 					t.showHidden = !t.showHidden
 				} else {
-					err = t.db.ToggleVisibility(t.curItem)
+					err = t.db.ToggleVisibility(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -493,7 +478,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlP:
 				// Paste functionality
 				if t.copiedItem != nil {
-					err := t.db.Add(t.copiedItem.Line, nil, t.curItem, nil)
+					err := t.db.Add(t.copiedItem.Line, nil, t.curY)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -502,15 +487,17 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyCtrlS:
 				if t.curY != reservedTopLines-1 {
 					// If exists, clear, otherwise set
-					if _, ok := t.selectedItems[*t.curItem]; ok {
-						delete(t.selectedItems, *t.curItem)
+					if _, ok := t.selectedItems[t.curY-1]; ok {
+						delete(t.selectedItems, t.curY-1)
 					} else {
-						t.selectedItems[*t.curItem] = struct{}{}
+						//fmt.Printf("BOOM %v\n", matches[t.curY-1].Line)
+						//os.Exit(1)
+						t.selectedItems[t.curY-1] = matches[t.curY-1].Line
 					}
 				}
 			case tcell.KeyEscape:
 				if len(t.selectedItems) > 0 {
-					t.selectedItems = make(map[service.ListItem]struct{})
+					t.selectedItems = make(map[int]string)
 				} else {
 					t.curY = 0 // TODO
 				}
@@ -560,13 +547,13 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
 						if err != nil {
 							log.Fatal(err)
 						}
 						posDiff[0]--
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curItem)
+						err := t.db.Delete(t.curY - 1)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -605,12 +592,12 @@ func (t *Terminal) RunClient() error {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 						newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-						err := t.db.Update(string(newLine), t.curItem.Note, t.curItem)
+						t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
 						if err != nil {
 							log.Fatal(err)
 						}
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curItem)
+						err := t.db.Delete(t.curY - 1)
 						if err != nil {
 							log.Fatal(err)
 						}
@@ -627,7 +614,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyPgUp:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item up and follow with cursor
-					moved, err := t.db.MoveUp(t.curItem)
+					moved, err := t.db.MoveUp(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -638,7 +625,7 @@ func (t *Terminal) RunClient() error {
 			case tcell.KeyPgDn:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item down and follow with cursor
-					moved, err := t.db.MoveDown(t.curItem)
+					moved, err := t.db.MoveDown(t.curY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -678,17 +665,13 @@ func (t *Terminal) RunClient() error {
 					} else {
 						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 					}
-
-					lenFunc := func() int {
-						return len([]rune(t.curItem.Line))
+					oldLen := len(t.curItem.Line)
+					t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+					if err != nil {
+						log.Fatal(err)
+						return nil
 					}
-					updateFunc := func() error {
-						return t.db.Update(string(newLine), t.curItem.Note, t.curItem)
-					}
-					// len([]rune) rather than len(string) as some string chars are >1 bytes
-					t.handleTextLengthChange(len([]rune(newLine)), lenFunc, &posDiff, updateFunc)
-
-					posDiff[0]++
+					posDiff[0] += len(t.curItem.Line) - oldLen
 				}
 			}
 		}
@@ -696,17 +679,11 @@ func (t *Terminal) RunClient() error {
 
 		t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-		var cur *service.ListItem
-		if t.curItem != nil {
-			cur = t.curItem
-		}
-
-		matches := []*service.ListItem{}
-		updateFunc := func() error {
-			matches, err = t.db.Match(t.search, cur, t.showHidden)
-			return err
-		}
-		t.handleTextLengthChange(t.getLenSearchBox(), t.getLenSearchBox, &posDiff, updateFunc)
+		// Handle any offsets that need to be accounted for due to unexpected search line mutations
+		// behind the scenes
+		oldSearchLen := t.getLenSearchBox()
+		matches, err = t.db.Match(t.search, t.showHidden)
+		posDiff[0] += t.getLenSearchBox() - oldSearchLen
 
 		// N available item slots
 		nItemSlots := t.h - reservedTopLines
@@ -759,7 +736,7 @@ func (t *Terminal) RunClient() error {
 		if isSearchLine {
 			t.curItem = nil
 		} else {
-			t.curItem = matches[t.curY-reservedTopLines+t.vertOffset]
+			t.curItem = &matches[t.curY-reservedTopLines+t.vertOffset]
 		}
 
 		// Then refresh the X position based on vertical position and curItem
