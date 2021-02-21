@@ -75,9 +75,11 @@ type DBListRepo struct {
 
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
+	// TODO these can all be private now
 	Line        string
 	Note        *[]byte
 	IsHidden    bool
+	originUUID  uuid
 	child       *ListItem
 	parent      *ListItem
 	id          uint64
@@ -109,7 +111,7 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 	}
 }
 
-func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte) (eventLog, error) {
+func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid) (eventLog, error) {
 	// Base next id off of previous. It's a bit brute-force, but will enforce uniqueness in a single WAL
 	// which is our end goal here
 	nextID := uint64(1)
@@ -119,7 +121,7 @@ func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, ne
 
 	el := eventLog{
 		logID:            nextID,
-		uuid:             w.uuid,
+		uuid:             originUUID,
 		unixTime:         time.Now().Unix(),
 		eventType:        e,
 		listItemID:       id,
@@ -142,10 +144,17 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	}
 
 	var childID uint64
+	// In order to be able to resolve child node from the tracker mapping, we need UUIDs to be consistent
+	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
+	// This is (conveniently) in line with intended behaviour for now. If we merge a remote, it makes sense
+	// to attribute new items to that WAL when adding below focused items.
+	newUUID := r.wal.uuid
 	if idx > 0 {
-		childID = r.matchListItems[idx-1].id
+		childItem := r.matchListItems[idx-1]
+		childID = childItem.id
+		newUUID = childItem.originUUID
 	}
-	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note)
+	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note, newUUID)
 	listItem, _ := r.callFunctionForEventLog(el)
 	r.addUndoLog(addEvent, listItem, line, note)
 	return err
@@ -163,7 +172,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 	// function requires previous state
 	r.addUndoLog(updateEvent, listItem, line, note)
 
-	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note)
+	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID)
 	listItem, err = r.callFunctionForEventLog(el)
 	return listItem.Line, err
 }
@@ -176,7 +185,7 @@ func (r *DBListRepo) Delete(idx int) error {
 
 	listItem := r.matchListItems[idx]
 
-	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil)
+	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID)
 	r.callFunctionForEventLog(el)
 	r.addUndoLog(deleteEvent, listItem, "", nil)
 	return err
@@ -204,7 +213,7 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
-		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil)
+		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
 		listItem, err = r.callFunctionForEventLog(el)
 		r.addUndoLog(moveUpEvent, listItem, "", nil)
 		return true, err
@@ -229,7 +238,7 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	}
 
 	if targetItemID != 0 {
-		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil)
+		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
 		listItem, err = r.callFunctionForEventLog(el)
 		r.addUndoLog(moveDownEvent, listItem, "", nil)
 		return true, err
@@ -246,7 +255,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 	listItem := r.matchListItems[idx]
 
 	r.addUndoLog(visibilityEvent, listItem, "", nil)
-	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil)
+	el, err := r.wal.addLog(visibilityEvent, listItem.id, 0, "", nil, listItem.originUUID)
 	r.callFunctionForEventLog(el)
 	return err
 }
@@ -261,7 +270,7 @@ func (r *DBListRepo) Undo() error {
 			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote)
+		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid)
 		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx--
 		return err
@@ -279,7 +288,7 @@ func (r *DBListRepo) Redo() error {
 			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote)
+		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid)
 		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx++
 		return err

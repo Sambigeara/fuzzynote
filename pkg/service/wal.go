@@ -58,7 +58,7 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	var err error
 	switch e.eventType {
 	case addEvent:
-		item, err = r.add(e.line, e.note, targetItem)
+		item, err = r.add(e.line, e.note, targetItem, e.uuid)
 		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 	case deleteEvent:
@@ -79,15 +79,16 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	return item, err
 }
 
-func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
 	newItem := &ListItem{
-		Line:  line,
-		id:    r.NextID,
-		child: childItem,
-		Note:  note,
+		Line:       line,
+		id:         r.NextID,
+		child:      childItem,
+		Note:       note,
+		originUUID: uuid,
 	}
 	r.NextID++
 
