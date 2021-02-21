@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
-	//"runtime"
-	"time"
-	//"path"
 	"math/rand"
+	"os"
 	"path/filepath"
+	"time"
 	"unsafe"
 )
 
@@ -49,7 +47,6 @@ type eventLog struct {
 	logID            uint64 // auto-incrementing ID, unique for a given WAL
 	unixTime         int64
 	eventType        eventType
-	ptr              *ListItem
 	line             string
 	note             *[]byte
 }
