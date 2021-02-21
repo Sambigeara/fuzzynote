@@ -5,15 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	//"math/rand"
 	"os"
 	//"runtime"
-	//"time"
 )
-
-//func init() {
-//    rand.Seed(time.Now().UnixNano())
-//}
 
 type fileHeader struct {
 	schemaID       fileSchemaID

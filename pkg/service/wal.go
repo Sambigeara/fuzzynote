@@ -10,21 +10,26 @@ import (
 	//"runtime"
 	"time"
 	//"path"
+	"math/rand"
 	"path/filepath"
 	"unsafe"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 const latestWalSchemaID uint16 = 1
 
 type walItemSchema1 struct {
-	UUID            uuid
-	LogID           uint64
-	ListItemID      uint64
-	ChildListItemID uint64
-	UnixTime        int64
-	EventType       eventType
-	LineLength      uint64
-	NoteLength      uint64
+	UUID             uuid
+	LogID            uint64
+	ListItemID       uint64
+	TargetListItemID uint64
+	UnixTime         int64
+	EventType        eventType
+	LineLength       uint64
+	NoteLength       uint64
 }
 
 const (
@@ -38,25 +43,25 @@ const (
 )
 
 type eventLog struct {
-	uuid            uuid
-	listItemID      uint64 // auto-incrementing ID, unique for a given DB UUID
-	childListItemID uint64
-	logID           uint64 // auto-incrementing ID, unique for a given WAL
-	unixTime        int64
-	eventType       eventType
-	ptr             *ListItem
-	line            string
-	note            *[]byte
+	uuid             uuid
+	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
+	targetListItemID uint64
+	logID            uint64 // auto-incrementing ID, unique for a given WAL
+	unixTime         int64
+	eventType        eventType
+	ptr              *ListItem
+	line             string
+	note             *[]byte
 }
 
 func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	child := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.childListItemID)]
+	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
 
 	var err error
 	switch e.eventType {
 	case addEvent:
-		item, err = r.add(e.line, e.note, child)
+		item, err = r.add(e.line, e.note, targetItem)
 		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 	case deleteEvent:
@@ -64,9 +69,13 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	case updateEvent:
 		item, err = r.update(e.line, e.note, item)
 	case moveUpEvent:
-		_, err = r.moveUp(item)
+		newChild := targetItem.child
+		newParent := targetItem
+		err = r.moveItem(item, newChild, newParent)
 	case moveDownEvent:
-		_, err = r.moveDown(item)
+		newChild := targetItem
+		newParent := targetItem.parent
+		err = r.moveItem(item, newChild, newParent)
 	case visibilityEvent:
 		err = r.toggleVisibility(item)
 	}
@@ -150,48 +159,11 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 	}
 
 	// Update root if required
+	// for loop because it might have to traverse multiple times
 	for r.Root.child != nil {
 		r.Root = r.Root.child
 	}
 	return nil
-}
-
-func (r *DBListRepo) moveUp(item *ListItem) (bool, error) {
-	var targetItem *ListItem
-	if item.matchChild != nil {
-		targetItem = item.matchChild
-	} else {
-		// matchChild will only be null in this context on initial startup with loading
-		// from the WAL
-		targetItem = item.child
-	}
-	if targetItem == nil {
-		return false, nil
-	}
-
-	newChild := targetItem.child
-	newParent := targetItem
-	err := r.moveItem(item, newChild, newParent)
-	return true, err
-}
-
-func (r *DBListRepo) moveDown(item *ListItem) (bool, error) {
-	var targetItem *ListItem
-	if item.matchParent != nil {
-		targetItem = item.matchParent
-	} else {
-		// matchParent will only be null in this context on initial startup with loading
-		// from the WAL
-		targetItem = item.parent
-	}
-	if targetItem == nil {
-		return false, nil
-	}
-
-	newChild := targetItem
-	newParent := targetItem.parent
-	err := r.moveItem(item, newChild, newParent)
-	return true, err
 }
 
 func (r *DBListRepo) toggleVisibility(item *ListItem) error {
@@ -221,6 +193,7 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 	// and then set the global NextID afterwards, to avoid wastage.
 	nextID := uint64(1)
 
+	//runtime.Breakpoint()
 	for _, e := range *w.log {
 		item, _ := r.callFunctionForEventLog(e)
 
@@ -240,19 +213,19 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 
 	nextLogID := uint64(1)
 	for item != nil {
-		var childListItemID uint64
+		var targetListItemID uint64
 		if item.child != nil {
-			childListItemID = item.child.id
+			targetListItemID = item.child.id
 		}
 		el := eventLog{
-			uuid:            uuid,
-			listItemID:      item.id,
-			childListItemID: childListItemID,
-			logID:           nextLogID,
-			unixTime:        now,
-			eventType:       addEvent,
-			line:            item.Line,
-			note:            item.Note,
+			uuid:             uuid,
+			listItemID:       item.id,
+			targetListItemID: targetListItemID,
+			logID:            nextLogID,
+			unixTime:         now,
+			eventType:        addEvent,
+			line:             item.Line,
+			note:             item.Note,
 		}
 		primaryLogs = append(primaryLogs, el)
 		nextLogID++
@@ -280,7 +253,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 
 	// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
 	el.listItemID = item.ListItemID
-	el.childListItemID = item.ChildListItemID
+	el.targetListItemID = item.TargetListItemID
 	el.logID = item.LogID
 	el.unixTime = item.UnixTime
 	el.uuid = item.UUID
@@ -451,14 +424,14 @@ func (w *Wal) save() error {
 			lenNote = uint64(len(*(item.note)))
 		}
 		i := walItemSchema1{
-			UUID:            item.uuid,
-			LogID:           item.logID,
-			ListItemID:      item.listItemID,
-			ChildListItemID: item.childListItemID,
-			UnixTime:        item.unixTime,
-			EventType:       item.eventType,
-			LineLength:      lenLine,
-			NoteLength:      lenNote,
+			UUID:             item.uuid,
+			LogID:            item.logID,
+			ListItemID:       item.listItemID,
+			TargetListItemID: item.targetListItemID,
+			UnixTime:         item.unixTime,
+			EventType:        item.eventType,
+			LineLength:       lenLine,
+			NoteLength:       lenNote,
 		}
 		data := []interface{}{
 			i,

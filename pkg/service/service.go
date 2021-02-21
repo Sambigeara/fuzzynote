@@ -109,7 +109,7 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 	}
 }
 
-func (w *Wal) addLog(e eventType, id uint64, childID uint64, newLine string, newNote *[]byte) (eventLog, error) {
+func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte) (eventLog, error) {
 	// Base next id off of previous. It's a bit brute-force, but will enforce uniqueness in a single WAL
 	// which is our end goal here
 	nextID := uint64(1)
@@ -118,14 +118,14 @@ func (w *Wal) addLog(e eventType, id uint64, childID uint64, newLine string, new
 	}
 
 	el := eventLog{
-		logID:           nextID,
-		uuid:            w.uuid,
-		unixTime:        time.Now().Unix(),
-		eventType:       e,
-		listItemID:      id,
-		childListItemID: childID,
-		line:            newLine,
-		note:            newNote,
+		logID:            nextID,
+		uuid:             w.uuid,
+		unixTime:         time.Now().Unix(),
+		eventType:        e,
+		listItemID:       id,
+		targetListItemID: targetID,
+		line:             newLine,
+		note:             newNote,
 	}
 
 	// Append to log
@@ -190,15 +190,26 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	}
 
 	listItem := r.matchListItems[idx]
-	oldChild := listItem.child
 
-	el, err := r.wal.addLog(moveUpEvent, listItem.id, 0, "", nil)
-	listItem, err = r.callFunctionForEventLog(el)
-	moved := listItem.child != oldChild
-	if moved {
-		r.addUndoLog(moveUpEvent, listItem, "", nil)
+	var targetItemID uint64
+	if listItem.matchChild != nil {
+		targetItemID = listItem.matchChild.id
+	} else if listItem.child != nil {
+		// Cover nil child case (e.g. attempting to move top of list up)
+
+		// matchChild will only be null in this context on initial startup with loading
+		// from the WAL
+		targetItemID = listItem.child.id
 	}
-	return moved, err
+
+	// There's no point in moving if there's nothing to move to
+	if targetItemID != 0 {
+		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil)
+		listItem, err = r.callFunctionForEventLog(el)
+		r.addUndoLog(moveUpEvent, listItem, "", nil)
+		return true, err
+	}
+	return false, nil
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
@@ -209,15 +220,21 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	}
 
 	listItem := r.matchListItems[idx]
-	oldParent := listItem.parent
 
-	el, err := r.wal.addLog(moveDownEvent, listItem.id, 0, "", nil)
-	listItem, err = r.callFunctionForEventLog(el)
-	moved := listItem.parent != oldParent
-	if moved {
-		r.addUndoLog(moveDownEvent, listItem, "", nil)
+	var targetItemID uint64
+	if listItem.matchParent != nil {
+		targetItemID = listItem.matchParent.id
+	} else if listItem.parent != nil {
+		targetItemID = listItem.parent.id
 	}
-	return moved, err
+
+	if targetItemID != 0 {
+		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil)
+		listItem, err = r.callFunctionForEventLog(el)
+		r.addUndoLog(moveDownEvent, listItem, "", nil)
+		return true, err
+	}
+	return false, nil
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
@@ -239,12 +256,12 @@ func (r *DBListRepo) Undo() error {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
 
-		childListItemID := uint64(0)
+		targetListItemID := uint64(0)
 		if uel.ptr.child != nil {
-			childListItemID = uel.ptr.child.id
+			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, childListItemID, uel.undoLine, uel.undoNote)
+		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote)
 		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx--
 		return err
@@ -257,12 +274,12 @@ func (r *DBListRepo) Redo() error {
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
 
-		childListItemID := uint64(0)
+		targetListItemID := uint64(0)
 		if uel.ptr.child != nil {
-			childListItemID = uel.ptr.child.id
+			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, childListItemID, uel.redoLine, uel.redoNote)
+		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote)
 		_, err = r.callFunctionForEventLog(el)
 		r.eventLogger.curIdx++
 		return err

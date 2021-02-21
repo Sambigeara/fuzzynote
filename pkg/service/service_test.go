@@ -18,6 +18,16 @@ func clearUp(r *DBListRepo) {
 	os.Remove(rootPath)
 	os.Remove(fmt.Sprintf(r.wal.walPathPattern, r.wal.uuid))
 	os.Remove(rootDir)
+
+	files, err := filepath.Glob("wal_*.db")
+	if err != nil {
+		panic(err)
+	}
+	for _, f := range files {
+		if err := os.Remove(f); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func TestServiceStoreLoad(t *testing.T) {
@@ -84,19 +94,6 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 	})
 	t.Run("Stores to file and loads back", func(t *testing.T) {
-		// Run for both schema type
-		defer func() {
-			files, err := filepath.Glob("wal_*.db")
-			if err != nil {
-				panic(err)
-			}
-			for _, f := range files {
-				if err := os.Remove(f); err != nil {
-					panic(err)
-				}
-			}
-		}()
-
 		repo := NewDBListRepo(rootDir)
 
 		os.Mkdir(rootDir, os.ModePerm)
@@ -337,7 +334,6 @@ func TestServiceDelete(t *testing.T) {
 
 		repo.Match([][]rune{}, true)
 
-		//runtime.Breakpoint()
 		err := repo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
@@ -1037,6 +1033,253 @@ func TestServiceMatch(t *testing.T) {
 		expectedLen := 2
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+	})
+
+	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
+
+		item1 := repo.Root
+		item2 := repo.Root.parent
+		item3 := repo.Root.parent.parent
+
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp(repo)
+
+		repo.Match([][]rune{}, false)
+
+		// Hide middle item
+		repo.ToggleVisibility(1)
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, false)
+		matches := repo.matchListItems
+
+		_, err := repo.MoveUp(len(matches) - 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		repo.Match([][]rune{}, false)
+		matches = repo.matchListItems
+
+		if repo.Root != item3 {
+			t.Errorf("item3 should now be root")
+		}
+		if matches[0] != item3 {
+			t.Errorf("item3 should now be root")
+		}
+		if matches[1] != item1 {
+			t.Errorf("item1 should now be the lowest item")
+		}
+
+		if item3.child != nil {
+			t.Errorf("Moved item child should now be nil")
+		}
+		if item3.matchChild != nil {
+			t.Errorf("Moved item matchChild should now be nil")
+		}
+		if item3.parent != item1 {
+			t.Errorf("Moved item parent should be previous root")
+		}
+		if item3.matchParent != item1 {
+			t.Errorf("Moved item matchParent should be previous root")
+		}
+
+		if item1.child != item3 {
+			t.Errorf("Previous root child should be moved item")
+		}
+		if item1.matchChild != item3 {
+			t.Errorf("Previous root matchChild should be moved item")
+		}
+		if item1.parent != item2 {
+			t.Errorf("Previous root parent should be unchanged")
+		}
+		if item1.matchParent != nil {
+			t.Errorf("Previous root matchParent should be nil")
+		}
+
+		if item2.child != item1 {
+			t.Errorf("Should be item1")
+		}
+		if item2.matchChild != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.parent != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.matchParent != nil {
+			t.Errorf("Should be nil")
+		}
+	})
+
+	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
+
+		item1 := repo.Root
+		item2 := repo.Root.parent
+		item3 := repo.Root.parent.parent
+
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp(repo)
+
+		repo.Match([][]rune{}, false)
+
+		// Hide middle item
+		repo.ToggleVisibility(1)
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, false)
+		matches := repo.matchListItems
+
+		_, err := repo.MoveUp(len(matches) - 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		repo.Save()
+		repo = NewDBListRepo(rootDir)
+		repo.Load()
+		repo.Match([][]rune{}, false)
+		matches = repo.matchListItems
+
+		if repo.Root.Line != item3.Line {
+			t.Errorf("item3 should now be root")
+		}
+		if matches[0].Line != item3.Line {
+			t.Errorf("item3 should now be root")
+		}
+		if matches[1].Line != item1.Line {
+			t.Errorf("item1 should now be the lowest item")
+		}
+
+		if matches[0].child != nil {
+			t.Errorf("Moved item child should now be nil")
+		}
+		if matches[0].matchChild != nil {
+			t.Errorf("Moved item matchChild should now be nil")
+		}
+		if matches[0].parent.Line != item1.Line {
+			t.Errorf("Moved item parent should be previous root")
+		}
+		if matches[0].matchParent.Line != item1.Line {
+			t.Errorf("Moved item matchParent should be previous root")
+		}
+
+		if matches[1].child.Line != item3.Line {
+			t.Errorf("Previous root child should be moved item")
+		}
+		if matches[1].matchChild.Line != item3.Line {
+			t.Errorf("Previous root matchChild should be moved item")
+		}
+		if matches[1].parent.Line != item2.Line {
+			t.Errorf("Previous root parent should be unchanged")
+		}
+		if matches[1].matchParent != nil {
+			t.Errorf("Previous root matchParent should be nil")
+		}
+
+		if item2.child != item1 {
+			t.Errorf("Should be item1")
+		}
+		if item2.matchChild != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.parent != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.matchParent != nil {
+			t.Errorf("Should be nil")
+		}
+	})
+
+	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
+
+		item1 := repo.Root
+		item2 := repo.Root.parent
+		item3 := repo.Root.parent.parent
+
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp(repo)
+
+		repo.Match([][]rune{}, false)
+
+		// Hide middle item
+		repo.ToggleVisibility(1)
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, false)
+		matches := repo.matchListItems
+
+		_, err := repo.MoveDown(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		repo.Save()
+		repo = NewDBListRepo(rootDir)
+		//runtime.Breakpoint()
+		repo.Load()
+		repo.Match([][]rune{}, false)
+		matches = repo.matchListItems
+
+		if repo.Root.Line != item2.Line {
+			t.Errorf("item2 (hidden) should now be root")
+		}
+		if matches[0].Line != item3.Line {
+			t.Errorf("item3 should now be top match")
+		}
+		if matches[1].Line != item1.Line {
+			t.Errorf("item1 should now be the lowest item")
+		}
+
+		if matches[0].child == nil || matches[0].child.Line != item2.Line {
+			t.Errorf("Top match should still have child to hidden item")
+		}
+		if matches[0].matchChild != nil {
+			t.Errorf("Moved item matchChild should now be nil")
+		}
+		if matches[0].parent.Line != item1.Line {
+			t.Errorf("Moved item parent should be previous root")
+		}
+		if matches[0].matchParent.Line != item1.Line {
+			t.Errorf("Moved item matchParent should be previous root")
+		}
+
+		if matches[1].child.Line != item3.Line {
+			t.Errorf("Previous root child should be moved item")
+		}
+		if matches[1].matchChild.Line != item3.Line {
+			t.Errorf("Previous root matchChild should be moved item")
+		}
+		if matches[1].parent != nil {
+			t.Errorf("Previous root parent should be nil")
+		}
+		if matches[1].matchParent != nil {
+			t.Errorf("Previous root matchParent should be nil")
+		}
+
+		if item2.child != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.matchChild != nil {
+			t.Errorf("Should be nil")
+		}
+		if item2.parent != item3 {
+			t.Errorf("Should be item3")
+		}
+		if item2.matchParent != nil {
+			t.Errorf("Should be nil")
 		}
 	})
 }
