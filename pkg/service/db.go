@@ -92,12 +92,16 @@ func (r *DBListRepo) Load() error {
 
 		nextItem.child = cur
 		if !cont {
+			//runtime.Breakpoint()
 			// Load the WAL into memory
 			if err := r.wal.sync(); err != nil {
 				return err
 			}
-			//runtime.Breakpoint()
-			r.wal.replay(r, primaryRoot)
+			r.Root, r.NextID, err = r.wal.replay(r.Root, primaryRoot)
+			if err != nil {
+				//log.Fatal(err)
+				return err
+			}
 			return nil
 		}
 		if cur == nil {

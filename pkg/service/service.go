@@ -147,7 +147,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 		newUUID = childItem.originUUID
 	}
 	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note, newUUID)
-	listItem, _ := r.callFunctionForEventLog(el)
+	r.NextID++
+	var listItem *ListItem
+	r.Root, listItem, _ = r.wal.callFunctionForEventLog(r.Root, el)
 	r.addUndoLog(addEvent, listItem, line, note)
 	return err
 }
@@ -165,7 +167,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) 
 	r.addUndoLog(updateEvent, listItem, line, note)
 
 	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID)
-	listItem, err = r.callFunctionForEventLog(el)
+	_, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
 	return listItem.Line, err
 }
 
@@ -178,7 +180,7 @@ func (r *DBListRepo) Delete(idx int) error {
 	listItem := r.matchListItems[idx]
 
 	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID)
-	r.callFunctionForEventLog(el)
+	r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
 	r.addUndoLog(deleteEvent, listItem, "", nil)
 	return err
 }
@@ -206,7 +208,7 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
 		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
-		listItem, err = r.callFunctionForEventLog(el)
+		r.Root, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
 		r.addUndoLog(moveUpEvent, listItem, "", nil)
 		return true, err
 	}
@@ -231,7 +233,7 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 
 	if targetItemID != 0 {
 		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
-		listItem, err = r.callFunctionForEventLog(el)
+		r.Root, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
 		r.addUndoLog(moveDownEvent, listItem, "", nil)
 		return true, err
 	}
@@ -254,7 +256,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 	}
 	r.addUndoLog(evType, listItem, "", nil)
 	el, err := r.wal.addLog(evType, listItem.id, 0, "", nil, listItem.originUUID)
-	r.callFunctionForEventLog(el)
+	r.wal.callFunctionForEventLog(r.Root, el)
 	return err
 }
 
@@ -269,7 +271,7 @@ func (r *DBListRepo) Undo() error {
 		}
 
 		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid)
-		_, err = r.callFunctionForEventLog(el)
+		r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
 		r.eventLogger.curIdx--
 		return err
 	}
@@ -287,7 +289,7 @@ func (r *DBListRepo) Redo() error {
 		}
 
 		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid)
-		_, err = r.callFunctionForEventLog(el)
+		r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
 		r.eventLogger.curIdx++
 		return err
 	}
@@ -309,7 +311,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
 	// we have no matching lines, the parsing logic will not be reached, and things get messy
 	for i, group := range keys {
-		group = []rune(r.parseOperatorGroups(string(group)))
+		group = []rune(parseOperatorGroups(string(group)))
 		// TODO Confirm: The slices within the slice appear to be the same mem locations as those
 		// passed in so they mutate as needed
 		keys[i] = group

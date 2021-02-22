@@ -55,27 +55,27 @@ type eventLog struct {
 	note             *[]byte
 }
 
-func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
-	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
+func (w *Wal) callFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
+	item := w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
+	targetItem := w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
 	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var err error
 	switch e.eventType {
 	case addEvent:
-		item, err = r.add(e.line, e.note, targetItem, e.uuid)
+		root, item, err = w.add(root, e.line, e.note, targetItem, e.uuid)
 		item.id = e.listItemID
-		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+		w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
 	case deleteEvent:
-		err = r.del(item)
-		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
+		root, err = w.del(root, item)
+		delete(w.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -88,56 +88,54 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.line, e.note, item)
+			item, err = w.update(e.line, e.note, item)
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
-			item, err = r.callFunctionForEventLog(addEl)
+			root, item, err = w.callFunctionForEventLog(root, addEl)
 		}
 	case moveUpEvent:
 		if targetItem == nil {
-			return nil, nil
+			return nil, nil, nil
 		}
 		newChild := targetItem.child
 		newParent := targetItem
-		err = r.moveItem(item, newChild, newParent)
+		root, err = w.moveItem(root, item, newChild, newParent)
 	case moveDownEvent:
 		if targetItem == nil {
-			return nil, nil
+			return nil, nil, nil
 		}
 		newChild := targetItem
 		newParent := targetItem.parent
-		err = r.moveItem(item, newChild, newParent)
+		root, err = w.moveItem(root, item, newChild, newParent)
 	case showEvent:
-		err = r.setVisibility(item, true)
+		err = w.setVisibility(item, true)
 	case hideEvent:
-		err = r.setVisibility(item, false)
+		err = w.setVisibility(item, false)
 	}
-	return item, err
+	return root, item, err
 }
 
-func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, error) {
+func (w *Wal) add(root *ListItem, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
 	newItem := &ListItem{
 		Line:       line,
-		id:         r.NextID,
 		child:      childItem,
 		Note:       note,
 		originUUID: uuid,
 	}
-	r.NextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {
-		oldRoot := r.Root
-		r.Root = newItem
+		oldRoot := root
+		root = newItem
 		if oldRoot != nil {
 			newItem.parent = oldRoot
 			oldRoot.child = newItem
 		}
-		return newItem, nil
+		return root, newItem, nil
 	}
 
 	if childItem.parent != nil {
@@ -146,33 +144,33 @@ func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, uuid uu
 	}
 	childItem.parent = newItem
 
-	return newItem, nil
+	return root, newItem, nil
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	line = r.parseOperatorGroups(line)
+func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
+	line = parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
 	return listItem, nil
 }
 
-func (r *DBListRepo) del(item *ListItem) error {
+func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	if item.child != nil {
 		item.child.parent = item.parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.parent
+		root = item.parent
 	}
 
 	if item.parent != nil {
 		item.parent.child = item.child
 	}
 
-	return nil
+	return root, nil
 }
 
-func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *ListItem) error {
+func (w *Wal) moveItem(root *ListItem, item *ListItem, newChild *ListItem, newParent *ListItem) (*ListItem, error) {
 	// Close off gap from source location (for whole dataset)
 	if item.child != nil {
 		item.child.parent = item.parent
@@ -195,18 +193,22 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 
 	// Update root if required
 	// for loop because it might have to traverse multiple times
-	for r.Root.child != nil {
-		r.Root = r.Root.child
+	for root.child != nil {
+		root = root.child
 	}
-	return nil
+	return root, nil
 }
 
-func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
+func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	item.IsHidden = !isVisible
 	return nil
 }
 
-func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
+func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, error) {
+	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
+	// and then set the global NextID afterwards, to avoid wastage.
+	nextID := uint64(1)
+
 	// TODO remove this temp measure
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
 	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
@@ -215,21 +217,18 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 		var err error
 		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
 		if err != nil {
-			return err
+			return root, nextID, err
 		}
 	}
 
 	// If still no events, return nil
 	if len(*w.log) == 0 {
-		return nil
+		return root, nextID, nil
 	}
 
-	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
-	// and then set the global NextID afterwards, to avoid wastage.
-	nextID := uint64(1)
-
 	for _, e := range *w.log {
-		item, _ := r.callFunctionForEventLog(e)
+		var item *ListItem
+		root, item, _ = w.callFunctionForEventLog(root, e)
 
 		// Item can be nil in the distributed merge orphaned item cases
 		if item != nil {
@@ -239,9 +238,7 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 		}
 	}
 
-	r.NextID = nextID
-
-	return nil
+	return root, nextID, nil
 }
 
 func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
