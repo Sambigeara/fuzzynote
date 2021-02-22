@@ -2,16 +2,18 @@ package service
 
 import (
 	"encoding/binary"
-	//"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
-	//"runtime"
 	"time"
 	"unsafe"
+
+	"github.com/alexflint/go-filemutex"
+	//"errors"
+	//"runtime"
 )
 
 func init() {
@@ -57,6 +59,14 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
 	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
 
+	// When we're calling this function on initial WAL merge and load, we may come across
+	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
+	// is Update. Item will obviously never exist for Add. For all other eventTypes,
+	// we should just skip the event and return
+	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
+		return nil, nil
+	}
+
 	var err error
 	switch e.eventType {
 	case addEvent:
@@ -85,10 +95,16 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 			item, err = r.callFunctionForEventLog(addEl)
 		}
 	case moveUpEvent:
+		if targetItem == nil {
+			return nil, nil
+		}
 		newChild := targetItem.child
 		newParent := targetItem
 		err = r.moveItem(item, newChild, newParent)
 	case moveDownEvent:
+		if targetItem == nil {
+			return nil, nil
+		}
 		newChild := targetItem
 		newParent := targetItem.parent
 		err = r.moveItem(item, newChild, newParent)
@@ -215,8 +231,11 @@ func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
 	for _, e := range *w.log {
 		item, _ := r.callFunctionForEventLog(e)
 
-		if nextID <= item.id {
-			nextID = item.id + 1
+		// Item can be nil in the distributed merge orphaned item cases
+		if item != nil {
+			if nextID <= item.id {
+				nextID = item.id + 1
+			}
 		}
 	}
 
@@ -298,30 +317,100 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	return el, nil
 }
 
-func (w *Wal) load() error {
+func (w *Wal) flush(f *os.File) error {
+	// Write the schema ID
+	err := binary.Write(f, binary.LittleEndian, latestWalSchemaID)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range *w.log {
+		lenLine := uint64(len([]byte(item.line)))
+		var lenNote uint64
+		if item.note != nil {
+			lenNote = uint64(len(*(item.note)))
+		}
+		i := walItemSchema1{
+			UUID:             item.uuid,
+			ListItemID:       item.listItemID,
+			TargetListItemID: item.targetListItemID,
+			UnixTime:         item.unixNanoTime,
+			EventType:        item.eventType,
+			LineLength:       lenLine,
+			NoteLength:       lenNote,
+		}
+		data := []interface{}{
+			i,
+			[]byte(item.line),
+		}
+		if item.note != nil {
+			data = append(data, item.note)
+		}
+		for _, v := range data {
+			err = binary.Write(f, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+				log.Fatal(err)
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (w *Wal) sync() error {
+	//
+	// LOAD AND MERGE ALL WALs
+	//
+	//runtime.Breakpoint()
+
+	mut, err := filemutex.New(w.syncFilePath)
+	if err != nil {
+		log.Fatalln("Error creating wal sync lock")
+	}
+
+	mut.Lock()
+	defer mut.Unlock()
+
+	// We need to pre flush any events held in memory to a randomly generated WAL, prior to full sync
+	// (this will be empty on initial load, but full on close)
+	randomWalFile, err := os.Create(fmt.Sprintf(w.walPathPattern, generateUUID()))
+	if err != nil {
+		return err
+	}
+	err = w.flush(randomWalFile)
+	if err != nil {
+		return err
+	}
+
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
+	// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
+	localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer localWalFile.Close()
 
 	// Initially, we want to create a single merged eventLog for all non-local WAL files
 	// To do this, we find and open each file, and traverse through each simultaneously with an N-pointer approach
-	remoteFiles := make(map[*os.File]struct{}) // Effectively a set implementation (struct{} cheaper than bool}
+	//remoteFiles := make(map[*os.File]struct{}) // Effectively a set implementation (struct{} cheaper than bool}
+	remoteFiles := map[*os.File]struct{}{
+		localWalFile: struct{}{},
+	} // Effectively a set implementation (struct{} cheaper than bool}
+
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
-		panic(err)
+		return err
 	}
-
 	for _, fileName := range fileNames {
-		f, err := os.OpenFile(fileName, os.O_CREATE, 0644)
-		if err != nil {
-			panic(err)
-		}
-
-		// The first two bytes of each file represents the file schema ID. For now this means nothing
-		// so we can seek forwards 2 bytes
-		f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
-
-		remoteFiles[f] = struct{}{}
-		defer f.Close()
 		if fileName != localWalFilePath {
+			f, err := os.Open(fileName)
+			if err != nil {
+				return err
+			}
+
+			remoteFiles[f] = struct{}{}
+			defer f.Close()
 			defer os.Remove(fileName)
 		}
 	}
@@ -336,15 +425,21 @@ func (w *Wal) load() error {
 	// We then pop the oldest item and append it to the merged logs, and replace with another item from that file.
 	// We repeat this until end of file.
 	// When we close a file, we reduce remoteFiles so we know to compare on fewer items.
-	//runtime.Breakpoint()
 	for f := range remoteFiles {
+		// The first two bytes of each file represents the file schema ID. For now this means nothing
+		// so we can seek forwards 2 bytes
+		f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
+
 		e, err := getNextEventLogFromWalFile(f)
 		if err != nil {
 			switch err {
 			case io.EOF:
+				// We need to remove from remoteFiles here to prevent them being iterated
+				// over in the loop below (when pulling events from the file)
+				delete(remoteFiles, f)
 				continue
 			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on remote WAL merge:", err)
+				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return err
 			default:
 				return err
@@ -404,7 +499,7 @@ func (w *Wal) load() error {
 			if err == io.EOF {
 				delete(curEventLogs, curFile)
 			} else {
-				fmt.Println("binary.Read failed on remote WAL merge:", err)
+				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return err
 			}
 		} else {
@@ -416,55 +511,12 @@ func (w *Wal) load() error {
 
 	w.log = &mergedRemoteLogs
 
-	return nil
+	//
+	// SAVE AND FLUSH TO A SINGLE WAL
+	//
 
-	// Then we want to merge with the local WAL. There are two scenarios to handle here... TODO
-}
+	localWalFile.Truncate(io.SeekStart)
+	localWalFile.Seek(0, io.SeekStart)
 
-func (w *Wal) save() error {
-	walFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
-
-	f, err := os.Create(walFilePath)
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-	defer f.Close()
-
-	// Write the schema ID
-	err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
-
-	for _, item := range *w.log {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema1{
-			UUID:             item.uuid,
-			ListItemID:       item.listItemID,
-			TargetListItemID: item.targetListItemID,
-			UnixTime:         item.unixNanoTime,
-			EventType:        item.eventType,
-			LineLength:       lenLine,
-			NoteLength:       lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
-
-	return nil
+	return w.flush(localWalFile)
 }

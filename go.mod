@@ -3,6 +3,7 @@ module fuzzy-note
 go 1.14
 
 require (
+	github.com/alexflint/go-filemutex v1.1.0
 	github.com/gdamore/tcell v1.3.0
 	github.com/google/go-cmp v0.5.4
 	github.com/jpillora/longestcommon v0.0.0-20161227235612-adb9d91ee629
