@@ -18,6 +18,7 @@ func clearUp(r *DBListRepo) {
 	os.Remove(rootPath)
 	os.Remove(fmt.Sprintf(r.wal.walPathPattern, r.wal.uuid))
 	os.Remove(rootDir)
+	os.Remove(r.wal.syncFilePath)
 
 	files, err := filepath.Glob("wal_*.db")
 	if err != nil {

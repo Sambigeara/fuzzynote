@@ -17,6 +17,7 @@ const (
 	dateFormat     = "Mon, Jan 2, 2006"
 	rootFileName   = "primary.db"
 	walFilePattern = "wal_%v.db"
+	syncFile       = "_sync_lock.db"
 )
 
 // ListRepo represents the main interface to the in-mem ListItem store
@@ -35,26 +36,26 @@ type ListRepo interface {
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
-	uuid            uuid
-	log             *[]eventLog
-	listItemTracker map[string]*ListItem
-
-	// Legacy
+	uuid              uuid
+	log               *[]eventLog
+	listItemTracker   map[string]*ListItem
 	walPathPattern    string
 	latestWalSchemaID uint16
+	syncFilePath      string
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(walPathPattern string) *Wal {
+func NewWal(rootDir string) *Wal {
 	return &Wal{
 		uuid:              generateUUID(),
-		walPathPattern:    walPathPattern,
+		walPathPattern:    path.Join(rootDir, walFilePattern),
 		latestWalSchemaID: latestWalSchemaID,
 		log:               &[]eventLog{},
 		listItemTracker:   make(map[string]*ListItem),
+		syncFilePath:      path.Join(rootDir, syncFile),
 	}
 }
 
@@ -101,11 +102,10 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootDir string) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
-	walDirPattern := path.Join(rootDir, walFilePattern)
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(walDirPattern),
+		wal:                NewWal(rootDir),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 	}
