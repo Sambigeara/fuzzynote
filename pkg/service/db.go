@@ -29,6 +29,17 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
+func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem) error {
+	var err error
+	if err = r.wal.sync(); err != nil {
+		return err
+	}
+	if r.Root, r.NextID, err = r.wal.replay(root, primaryRoot); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
 func (r *DBListRepo) Load() error {
@@ -94,12 +105,7 @@ func (r *DBListRepo) Load() error {
 		if !cont {
 			//runtime.Breakpoint()
 			// Load the WAL into memory
-			if err := r.wal.sync(); err != nil {
-				return err
-			}
-			r.Root, r.NextID, err = r.wal.replay(r.Root, primaryRoot)
-			if err != nil {
-				//log.Fatal(err)
+			if err := r.Refresh(r.Root, primaryRoot); err != nil {
 				return err
 			}
 			return nil
