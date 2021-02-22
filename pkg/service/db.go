@@ -41,10 +41,9 @@ func (r *DBListRepo) Load() error {
 
 	fileHeader := fileHeader{}
 	err = binary.Read(f, binary.LittleEndian, &fileHeader.schemaID)
-	if err != nil {
-		if err == io.EOF {
-			return nil
-		}
+	// Don't return if the primary.db is empty - we need to pass through to the WAL creation
+	// stage to cover fresh app instantiation
+	if err != nil && err != io.EOF {
 		log.Fatal(err)
 		return err
 	}
@@ -94,7 +93,7 @@ func (r *DBListRepo) Load() error {
 		nextItem.child = cur
 		if !cont {
 			// Load the WAL into memory
-			if err := r.wal.load(); err != nil {
+			if err := r.wal.sync(); err != nil {
 				return err
 			}
 			//runtime.Breakpoint()
@@ -140,32 +139,32 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	r.wal.save()
+	r.wal.sync()
 
 	// We don't care about the primary.db for now, so return nil here
-	//return nil
-
-	// Return if no files to write. os.Create truncates by default so the file will
-	// be empty, with just the file header (including verion id and UUID)
-	if r.Root == nil {
-		return nil
-	}
-
-	cur := r.Root
-
-	for {
-		err := r.writeFileFromListItem(f, cur)
-		if err != nil {
-			//log.Fatal(err)
-			return err
-		}
-
-		if cur.parent == nil {
-			break
-		}
-		cur = cur.parent
-	}
 	return nil
+
+	//// Return if no files to write. os.Create truncates by default so the file will
+	//// be empty, with just the file header (including verion id and UUID)
+	//if r.Root == nil {
+	//	return nil
+	//}
+
+	//cur := r.Root
+
+	//for {
+	//	err := r.writeFileFromListItem(f, cur)
+	//	if err != nil {
+	//		//log.Fatal(err)
+	//		return err
+	//	}
+
+	//	if cur.parent == nil {
+	//		break
+	//	}
+	//	cur = cur.parent
+	//}
+	//return nil
 }
 
 func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {

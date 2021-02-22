@@ -373,7 +373,6 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		//runtime.Breakpoint()
 		repo.Load()
 
 		if len(*repo.wal.log) != 8 {
@@ -491,6 +490,7 @@ func TestWalMerge(t *testing.T) {
 		// Save and reload to ensure consistency in event log after write and read to/from disk
 		repo.Save()
 		repo = NewDBListRepo(rootDir)
+		//runtime.Breakpoint()
 		repo.Load()
 
 		repo.Match([][]rune{}, true)
