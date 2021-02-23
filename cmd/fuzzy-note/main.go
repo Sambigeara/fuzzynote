@@ -4,8 +4,10 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
 	"strings"
+	"time"
+
+	"github.com/gdamore/tcell"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
@@ -34,6 +36,28 @@ func main() {
 		os.Exit(0)
 	}
 
+	// https://golang.org/pkg/time/#NewTicker
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	refresh := make(chan bool)
+
+	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
+	// (and thus refresh the UI)
+	termCycle := make(chan tcell.Event)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				var listItem *service.ListItem
+				listRepo.Refresh(listItem, nil)
+				termCycle <- &client.RefreshKey{T: time.Now()}
+			case <-refresh:
+				ticker.Stop()
+			}
+		}
+	}()
+
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
 	if fznColour == "" || (fznColour != "light" && fznColour != "dark") {
@@ -42,7 +66,7 @@ func main() {
 
 	term := client.NewTerm(listRepo, fznColour)
 
-	err = term.RunClient()
+	err = term.RunClient(termCycle)
 	if err != nil {
 		log.Fatal(err)
 	} else {
@@ -50,6 +74,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		refresh <- true
 		os.Exit(0)
 	}
 }

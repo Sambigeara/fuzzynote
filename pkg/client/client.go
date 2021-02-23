@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
@@ -356,8 +357,17 @@ func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	return [][]rune{[]rune(fmt.Sprintf("#%s", prefix))}
 }
 
+type RefreshKey struct {
+	T time.Time
+}
+
+// Implementing When() to fulfil the tcell.Event interface
+func (ev *RefreshKey) When() time.Time {
+	return ev.T
+}
+
 // RunClient reads key presses on a loop
-func (t *Terminal) RunClient() error {
+func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 
 	matches, err := t.db.Match([][]rune{}, t.showHidden)
 	if err != nil {
@@ -372,7 +382,9 @@ func (t *Terminal) RunClient() error {
 	for {
 		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 		t.s.Show()
-		ev := t.s.PollEvent()
+
+		go func() { termCycle <- t.s.PollEvent() }()
+		ev := <-termCycle
 
 		// offsetX represents the position in the underying curItem.Line
 		// Only apply the prefix offset if the line starts with the prefix, other lines will

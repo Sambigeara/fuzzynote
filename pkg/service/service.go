@@ -147,11 +147,13 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 		newUUID = childItem.originUUID
 	}
 	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note, newUUID)
+	if err != nil {
+		return err
+	}
 	r.NextID++
 	var listItem *ListItem
 	r.Root, listItem, _ = r.wal.callFunctionForEventLog(r.Root, el)
-	r.addUndoLog(addEvent, listItem, line, note)
-	return err
+	return r.addUndoLog(addEvent, listItem, line, note)
 }
 
 // Update will update the line or note of an existing ListItem

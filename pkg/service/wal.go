@@ -314,14 +314,14 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	return el, nil
 }
 
-func (w *Wal) flush(f *os.File) error {
+func (w *Wal) flush(f *os.File, walLog *[]eventLog) error {
 	// Write the schema ID
 	err := binary.Write(f, binary.LittleEndian, latestWalSchemaID)
 	if err != nil {
 		return err
 	}
 
-	for _, item := range *w.log {
+	for _, item := range *walLog {
 		lenLine := uint64(len([]byte(item.line)))
 		var lenNote uint64
 		if item.note != nil {
@@ -355,7 +355,7 @@ func (w *Wal) flush(f *os.File) error {
 	return nil
 }
 
-func (w *Wal) sync() error {
+func (w *Wal) sync() (*[]eventLog, error) {
 	//
 	// LOAD AND MERGE ALL WALs
 	//
@@ -363,7 +363,7 @@ func (w *Wal) sync() error {
 
 	mut, err := filemutex.New(w.syncFilePath)
 	if err != nil {
-		log.Fatalln("Error creating wal sync lock")
+		log.Fatalf("Error creating wal sync lock: %s\n", err)
 	}
 
 	mut.Lock()
@@ -373,18 +373,18 @@ func (w *Wal) sync() error {
 	// (this will be empty on initial load, but full on close)
 	randomWalFile, err := os.Create(fmt.Sprintf(w.walPathPattern, generateUUID()))
 	if err != nil {
-		return err
+		return w.log, err
 	}
-	err = w.flush(randomWalFile)
+	err = w.flush(randomWalFile, w.log)
 	if err != nil {
-		return err
+		return w.log, err
 	}
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 	// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 	localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return err
+		return w.log, err
 	}
 	defer localWalFile.Close()
 
@@ -397,13 +397,13 @@ func (w *Wal) sync() error {
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
-		return err
+		return w.log, err
 	}
 	for _, fileName := range fileNames {
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
 			if err != nil {
-				return err
+				return w.log, err
 			}
 
 			remoteFiles[f] = struct{}{}
@@ -436,10 +436,9 @@ func (w *Wal) sync() error {
 				delete(remoteFiles, f)
 				continue
 			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return err
 			default:
-				return err
+				fmt.Println("binary.Read failed on remote WAL sync:", err)
+				return &mergedRemoteLogs, err
 			}
 		}
 		curEventLogs[f] = e
@@ -476,8 +475,8 @@ func (w *Wal) sync() error {
 		}
 
 		// Because we have guaranteed ordering by unixNanoTime -> uuid -> eventType, we can compare the current "oldest"
-		// against the head of the mergedRemoteLogs - if they share the three attributes above (strictly only uuid
-		// and rowID) we can ignore. Otherwise, we append to the logs
+		// against the head of the mergedRemoteLogs - if they share the attributes above (strictly only uuid and unixNanoTime)
+		// we can ignore. Otherwise, we append to the logs
 		if oldest.eventType != nullEvent {
 			if len(mergedRemoteLogs) > 0 {
 				head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
@@ -497,7 +496,7 @@ func (w *Wal) sync() error {
 				delete(curEventLogs, curFile)
 			} else {
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return err
+				return &mergedRemoteLogs, err
 			}
 		} else {
 			if nextEvent.eventType != nullEvent {
@@ -506,14 +505,13 @@ func (w *Wal) sync() error {
 		}
 	}
 
-	w.log = &mergedRemoteLogs
-
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
-	localWalFile.Truncate(io.SeekStart)
+	localWalFile.Truncate(0)
 	localWalFile.Seek(0, io.SeekStart)
 
-	return w.flush(localWalFile)
+	err = w.flush(localWalFile, &mergedRemoteLogs)
+	return &mergedRemoteLogs, err
 }
