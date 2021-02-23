@@ -53,6 +53,7 @@ type eventLog struct {
 	eventType        eventType
 	line             string
 	note             *[]byte
+	next             *eventLog
 }
 
 func (w *Wal) callFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
@@ -279,13 +280,13 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 	return &primaryLogs, nil
 }
 
-func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
+func getNextEventLogFromWalFile(f *os.File) (*eventLog, error) {
 	item := walItemSchema1{}
 	el := eventLog{}
 
 	err := binary.Read(f, binary.LittleEndian, &item)
 	if err != nil {
-		return el, err
+		return nil, err
 	}
 
 	// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
@@ -298,7 +299,7 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 	line := make([]byte, item.LineLength)
 	err = binary.Read(f, binary.LittleEndian, &line)
 	if err != nil {
-		return el, err
+		return nil, err
 	}
 	el.line = string(line)
 
@@ -306,12 +307,12 @@ func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
 		note := make([]byte, item.NoteLength)
 		err = binary.Read(f, binary.LittleEndian, &note)
 		if err != nil {
-			return el, err
+			return nil, err
 		}
 		el.note = &note
 	}
 
-	return el, nil
+	return &el, nil
 }
 
 func (w *Wal) flush(f *os.File, walLog *[]eventLog) error {
@@ -355,11 +356,94 @@ func (w *Wal) flush(f *os.File, walLog *[]eventLog) error {
 	return nil
 }
 
+func (w *Wal) buildFromFile(f *os.File) (*eventLog, error) {
+	// The first two bytes of each file represents the file schema ID. For now this means nothing
+	// so we can seek forwards 2 bytes
+	f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
+
+	// We will store and represent the root eventLog for each remote
+	root, err := getNextEventLogFromWalFile(f)
+	if err != nil {
+		switch err {
+		case io.EOF:
+			return root, nil
+		case io.ErrUnexpectedEOF:
+		default:
+			fmt.Println("binary.Read failed on remote WAL sync:", err)
+			return nil, err
+		}
+	}
+	cur := root
+	for cur != nil {
+		e, err := getNextEventLogFromWalFile(f)
+		if err != nil {
+			switch err {
+			case io.EOF:
+				break
+			case io.ErrUnexpectedEOF:
+			default:
+				fmt.Println("binary.Read failed on remote WAL sync:", err)
+				return root, err
+			}
+		}
+		cur.next = e
+		cur = cur.next
+	}
+	return root, nil
+}
+
+func (w *Wal) mergeAll(wal1 *eventLog, wal2 *eventLog) (*eventLog, error) {
+	if wal1 == nil {
+		return wal2, nil
+	} else if wal2 == nil {
+		return wal1, nil
+	}
+
+	var err error
+	// TODO I think BODMAS covers us here so remove the parantheses (check first)
+	if wal1.unixNanoTime < wal2.unixNanoTime ||
+		(wal1.unixNanoTime == wal2.unixNanoTime && wal1.uuid < wal2.uuid) ||
+		(wal1.unixNanoTime == wal2.unixNanoTime && wal1.uuid == wal2.uuid && wal1.eventType < wal2.eventType) {
+		wal1.next, err = w.merge(wal1.next, wal2)
+		return wal1, err
+	}
+	wal2.next, err = w.merge(wal2.next, wal1)
+	return wal2, err
+}
+
+func (w *Wal) dedup(root *eventLog) (*eventLog, error) {
+	if root == nil {
+		return nil, nil
+	}
+	cur := root
+	// For each log, inspect the next. If the next is equal to current, set next.next to next (to ignore the equal)
+	for cur != nil {
+		if cur.next != nil {
+			if cur.unixNanoTime == cur.next.unixNanoTime &&
+				cur.uuid == cur.next.uuid &&
+				cur.eventType == cur.eventType {
+				newEl := cur.next.next
+				cur.next = nil
+				cur.next = newEl
+			}
+		}
+		cur = cur.next
+	}
+	return root, nil
+}
+
+func (w *Wal) merge(wal1 *eventLog, wal2 *eventLog) (*eventLog, error) {
+	root, err := w.mergeAll(wal1, wal2)
+	if err != nil {
+		return nil, err
+	}
+	return w.dedup(root)
+}
+
 func (w *Wal) sync() (*[]eventLog, error) {
 	//
 	// LOAD AND MERGE ALL WALs
 	//
-	//runtime.Breakpoint()
 
 	mut, err := filemutex.New(w.syncFilePath)
 	if err != nil {
@@ -369,141 +453,84 @@ func (w *Wal) sync() (*[]eventLog, error) {
 	mut.Lock()
 	defer mut.Unlock()
 
-	// We need to pre flush any events held in memory to a randomly generated WAL, prior to full sync
-	// (this will be empty on initial load, but full on close)
-	randomWalFile, err := os.Create(fmt.Sprintf(w.walPathPattern, generateUUID()))
-	if err != nil {
-		return w.log, err
-	}
-	err = w.flush(randomWalFile, w.log)
-	if err != nil {
-		return w.log, err
-	}
-
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 	// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 	localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return w.log, err
+		return &[]eventLog{}, err
 	}
 	defer localWalFile.Close()
 
-	// Initially, we want to create a single merged eventLog for all non-local WAL files
-	// To do this, we find and open each file, and traverse through each simultaneously with an N-pointer approach
-	//remoteFiles := make(map[*os.File]struct{}) // Effectively a set implementation (struct{} cheaper than bool}
-	remoteFiles := map[*os.File]struct{}{
-		localWalFile: struct{}{},
-	} // Effectively a set implementation (struct{} cheaper than bool}
+	// Traverse through the current wal log to build a linked-list
+	var existingLocalRoot *eventLog
+	if len(*w.log) > 0 {
+		existingLocalRoot = &((*w.log)[0])
+		cur := existingLocalRoot
+		for i := 1; i < len(*w.log); i++ {
+			cur.next = &(*w.log)[i]
+			cur = cur.next
+		}
+	}
+
+	// We will store and represent the root eventLog for each remote
+	localWalRoot, err := w.buildFromFile(localWalFile)
+	if err != nil {
+		return &[]eventLog{}, err
+	}
+
+	// Merge the in-memory log state with the file state (for the local WAL)
+	localWalRoot, err = w.merge(localWalRoot, existingLocalRoot)
+	if err != nil {
+		return &[]eventLog{}, err
+	}
+
+	walRoots := []*eventLog{}
+	if localWalRoot != nil {
+		walRoots = append(walRoots, localWalRoot)
+	}
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
-		return w.log, err
+		return &[]eventLog{}, err
 	}
+
+	// Unpack all WAL files into linked-list WALs
 	for _, fileName := range fileNames {
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
 			if err != nil {
-				return w.log, err
+				return &[]eventLog{}, err
 			}
-
-			remoteFiles[f] = struct{}{}
-			defer f.Close()
-			defer os.Remove(fileName)
+			wal, err := w.buildFromFile(f)
+			if err != nil {
+				return &[]eventLog{}, err
+			}
+			walRoots = append(walRoots, wal)
+			f.Close()
+			os.Remove(fileName)
 		}
 	}
 
-	// This maps the open remote WAL file to the current head of that file, useful when comparing each head to
-	// determine order of single output
-	curEventLogs := make(map[*os.File]eventLog)
+	// Merge all WALs in place into localWal
+	for i := 1; i < len(walRoots); i++ {
+		localWalRoot, err = w.merge(localWalRoot, walRoots[i])
+		if err != nil {
+			return &[]eventLog{}, err
+		}
+	}
+
+	// TODO eventually we should operate on and merge lists, rather than reading into linked
+	// lists and coverting to arrays. This will give us some speedup. But for now, this works
+
+	// Generate a list of eventLogs by traversing through the linked lists
+	//runtime.Breakpoint()
 	mergedRemoteLogs := []eventLog{}
-
-	// We keep track of open files to determine how many current eventLogs to store in the map
-	// Initially, we grab the first item from each open file to populate curEventLogs
-	// We then pop the oldest item and append it to the merged logs, and replace with another item from that file.
-	// We repeat this until end of file.
-	// When we close a file, we reduce remoteFiles so we know to compare on fewer items.
-	for f := range remoteFiles {
-		// The first two bytes of each file represents the file schema ID. For now this means nothing
-		// so we can seek forwards 2 bytes
-		f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
-
-		e, err := getNextEventLogFromWalFile(f)
-		if err != nil {
-			switch err {
-			case io.EOF:
-				// We need to remove from remoteFiles here to prevent them being iterated
-				// over in the loop below (when pulling events from the file)
-				delete(remoteFiles, f)
-				continue
-			case io.ErrUnexpectedEOF:
-			default:
-				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return &mergedRemoteLogs, err
-			}
-		}
-		curEventLogs[f] = e
+	cur := localWalRoot
+	for cur != nil {
+		mergedRemoteLogs = append(mergedRemoteLogs, *cur)
+		cur = cur.next
 	}
-
-	for len(curEventLogs) > 0 {
-		// Get the current oldest item, and the file that it resides in
-		var curFile *os.File = nil
-		oldest := eventLog{}
-
-		for f := range remoteFiles {
-			if oldest.eventType == nullEvent {
-				// Deal with initial iteration
-				oldest = curEventLogs[f]
-				curFile = f
-			} else {
-				e := curEventLogs[f]
-				if e.unixNanoTime < oldest.unixNanoTime {
-					oldest = e
-					curFile = f
-				} else if e.unixNanoTime == oldest.unixNanoTime {
-					// If unixNanoTime's are the same, order by uuid and then eventType to ensure consistent ordering
-					if e.uuid < oldest.uuid {
-						oldest = e
-						curFile = f
-					} else if e.uuid == oldest.uuid {
-						if e.eventType < oldest.eventType {
-							oldest = e
-							curFile = f
-						}
-					}
-				}
-			}
-		}
-
-		// Because we have guaranteed ordering by unixNanoTime -> uuid -> eventType, we can compare the current "oldest"
-		// against the head of the mergedRemoteLogs - if they share the attributes above (strictly only uuid and unixNanoTime)
-		// we can ignore. Otherwise, we append to the logs
-		if oldest.eventType != nullEvent {
-			if len(mergedRemoteLogs) > 0 {
-				head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
-				// This is an inverse (De Morgan's Law) of: IGNORE if UUIDs and unixNanoTime's are the same
-				if head.uuid != oldest.uuid || head.unixNanoTime != oldest.unixNanoTime {
-					mergedRemoteLogs = append(mergedRemoteLogs, oldest)
-				}
-			} else {
-				mergedRemoteLogs = append(mergedRemoteLogs, oldest)
-			}
-		}
-
-		// Retrieve the next log from that file. If EOF, remove it from the list of remoteFiles
-		nextEvent, err := getNextEventLogFromWalFile(curFile)
-		if err != nil {
-			if err == io.EOF {
-				delete(curEventLogs, curFile)
-			} else {
-				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return &mergedRemoteLogs, err
-			}
-		} else {
-			if nextEvent.eventType != nullEvent {
-				curEventLogs[curFile] = nextEvent
-			}
-		}
-	}
+	//runtime.Breakpoint()
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL

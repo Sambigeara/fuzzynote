@@ -38,7 +38,6 @@ func main() {
 
 	// https://golang.org/pkg/time/#NewTicker
 	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	refresh := make(chan bool)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
