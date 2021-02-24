@@ -14,6 +14,40 @@ import (
 
 const walDirPattern = "wal_%v.db"
 
+func TestEventEquality(t *testing.T) {
+	t.Run("Check event comparisons", func(t *testing.T) {
+		time1 := time.Now().UnixNano()
+		uuid := uuid(1)
+		event1 := eventLog{
+			unixNanoTime: time1,
+			uuid:         uuid,
+			eventType:    addEvent,
+		}
+
+		time2 := time1 + 1
+		event2 := eventLog{
+			unixNanoTime: time2,
+			uuid:         uuid,
+			eventType:    addEvent,
+		}
+
+		equality := checkEquality(event1, event2)
+		if equality != leftEventOlder {
+			t.Fatalf("Expected left event to be older")
+		}
+
+		equality = checkEquality(event2, event1)
+		if equality != rightEventOlder {
+			t.Fatalf("Expected right event to be older")
+		}
+
+		equality = checkEquality(event1, event1)
+		if equality != eventsEqual {
+			t.Fatalf("Expected events to be equal")
+		}
+	})
+}
+
 func TestWalMerge(t *testing.T) {
 	t.Run("Start empty db", func(t *testing.T) {
 		repo := NewDBListRepo(rootDir)

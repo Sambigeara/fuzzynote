@@ -53,7 +53,6 @@ type eventLog struct {
 	eventType        eventType
 	line             string
 	note             *[]byte
-	next             *eventLog
 }
 
 func (w *Wal) callFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
@@ -356,88 +355,99 @@ func (w *Wal) flush(f *os.File, walLog *[]eventLog) error {
 	return nil
 }
 
-func (w *Wal) buildFromFile(f *os.File) (*eventLog, error) {
+func (w *Wal) buildFromFile(f *os.File) (*[]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
-	// We will store and represent the root eventLog for each remote
-	root, err := getNextEventLogFromWalFile(f)
-	if err != nil {
-		switch err {
-		case io.EOF:
-			return root, nil
-		case io.ErrUnexpectedEOF:
-		default:
-			fmt.Println("binary.Read failed on remote WAL sync:", err)
-			return nil, err
-		}
-	}
-	cur := root
-	for cur != nil {
+	el := []eventLog{}
+	for {
 		e, err := getNextEventLogFromWalFile(f)
 		if err != nil {
 			switch err {
 			case io.EOF:
-				break
+				return &el, nil
 			case io.ErrUnexpectedEOF:
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return root, err
+				return &el, err
 			}
 		}
-		cur.next = e
-		cur = cur.next
+		el = append(el, *e)
 	}
-	return root, nil
 }
 
-func (w *Wal) mergeAll(wal1 *eventLog, wal2 *eventLog) (*eventLog, error) {
-	if wal1 == nil {
-		return wal2, nil
-	} else if wal2 == nil {
-		return wal1, nil
-	}
+const (
+	eventsEqual int = iota
+	leftEventOlder
+	rightEventOlder
+)
 
-	var err error
+func checkEquality(event1 eventLog, event2 eventLog) int {
 	// TODO I think BODMAS covers us here so remove the parantheses (check first)
-	if wal1.unixNanoTime < wal2.unixNanoTime ||
-		(wal1.unixNanoTime == wal2.unixNanoTime && wal1.uuid < wal2.uuid) ||
-		(wal1.unixNanoTime == wal2.unixNanoTime && wal1.uuid == wal2.uuid && wal1.eventType < wal2.eventType) {
-		wal1.next, err = w.merge(wal1.next, wal2)
-		return wal1, err
+	if event1.unixNanoTime < event2.unixNanoTime ||
+		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
+		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
+		return leftEventOlder
+	} else if event2.unixNanoTime < event1.unixNanoTime ||
+		event2.unixNanoTime == event1.unixNanoTime && event2.uuid < event1.uuid ||
+		event2.unixNanoTime == event1.unixNanoTime && event2.uuid == event1.uuid && event2.eventType < event1.eventType {
+		return rightEventOlder
 	}
-	wal2.next, err = w.merge(wal2.next, wal1)
-	return wal2, err
+	return eventsEqual
 }
 
-func (w *Wal) dedup(root *eventLog) (*eventLog, error) {
-	if root == nil {
-		return nil, nil
+func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
+	if len(*wal1) == 0 {
+		return wal2
+	} else if len(*wal2) == 0 {
+		return wal1
 	}
-	cur := root
-	// For each log, inspect the next. If the next is equal to current, set next.next to next (to ignore the equal)
-	for cur != nil {
-		if cur.next != nil {
-			if cur.unixNanoTime == cur.next.unixNanoTime &&
-				cur.uuid == cur.next.uuid &&
-				cur.eventType == cur.eventType {
-				newEl := cur.next.next
-				cur.next = nil
-				cur.next = newEl
+
+	// Adopt a two pointer approach
+	i, j := 0, 0
+	mergedEl := []eventLog{}
+	// We can use an empty log here because it will never be equal to in the checkEquality calls below
+	lastEvent := eventLog{}
+	for i < len(*wal1) || j < len(*wal2) {
+		if len(mergedEl) > 0 {
+			lastEvent = mergedEl[len(mergedEl)-1]
+		}
+		if i == len(*wal1) {
+			// Ignore duplicates (compare with current head of the array
+			if len(mergedEl) == 0 || checkEquality((*wal2)[j], lastEvent) != eventsEqual {
+				mergedEl = append(mergedEl, (*wal2)[j])
+			}
+			j++
+		} else if j == len(*wal2) {
+			// Ignore duplicates (compare with current head of the array
+			if len(mergedEl) == 0 || checkEquality((*wal1)[i], lastEvent) != eventsEqual {
+				mergedEl = append(mergedEl, (*wal1)[i])
+			}
+			i++
+		} else {
+			switch checkEquality((*wal1)[i], (*wal2)[j]) {
+			case leftEventOlder:
+				if len(mergedEl) == 0 || checkEquality((*wal1)[i], lastEvent) != eventsEqual {
+					mergedEl = append(mergedEl, (*wal1)[i])
+				}
+				i++
+			case rightEventOlder:
+				if len(mergedEl) == 0 || checkEquality((*wal2)[j], lastEvent) != eventsEqual {
+					mergedEl = append(mergedEl, (*wal2)[j])
+				}
+				j++
+			case eventsEqual:
+				// At this point, we only want to guarantee an increment on ONE of the two pointers
+				if i < len(*wal1) {
+					i++
+				} else {
+					j++
+				}
 			}
 		}
-		cur = cur.next
 	}
-	return root, nil
-}
-
-func (w *Wal) merge(wal1 *eventLog, wal2 *eventLog) (*eventLog, error) {
-	root, err := w.mergeAll(wal1, wal2)
-	if err != nil {
-		return nil, err
-	}
-	return w.dedup(root)
+	return &mergedEl
 }
 
 func (w *Wal) sync() (*[]eventLog, error) {
@@ -464,32 +474,19 @@ func (w *Wal) sync() (*[]eventLog, error) {
 	}
 	defer localWalFile.Close()
 
-	// Traverse through the current wal log to build a linked-list
-	var existingLocalRoot *eventLog
-	if len(*w.log) > 0 {
-		existingLocalRoot = &((*w.log)[0])
-		cur := existingLocalRoot
-		for i := 1; i < len(*w.log); i++ {
-			cur.next = &(*w.log)[i]
-			cur = cur.next
-		}
-	}
-
 	// We will store and represent the root eventLog for each remote
-	localWalRoot, err := w.buildFromFile(localWalFile)
+	localWal, err := w.buildFromFile(localWalFile)
 	if err != nil {
 		return &[]eventLog{}, err
 	}
 
 	// Merge the in-memory log state with the file state (for the local WAL)
-	localWalRoot, err = w.merge(localWalRoot, existingLocalRoot)
-	if err != nil {
-		return &[]eventLog{}, err
-	}
+	//runtime.Breakpoint()
+	localWal = w.merge(localWal, w.log)
 
-	walRoots := []*eventLog{}
-	if localWalRoot != nil {
-		walRoots = append(walRoots, localWalRoot)
+	wals := []*[]eventLog{}
+	if len(*localWal) > 0 {
+		wals = append(wals, localWal)
 	}
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
@@ -497,7 +494,7 @@ func (w *Wal) sync() (*[]eventLog, error) {
 		return &[]eventLog{}, err
 	}
 
-	// Unpack all WAL files into linked-list WALs
+	// Load all WAL files into arrays
 	for _, fileName := range fileNames {
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
@@ -508,32 +505,16 @@ func (w *Wal) sync() (*[]eventLog, error) {
 			if err != nil {
 				return &[]eventLog{}, err
 			}
-			walRoots = append(walRoots, wal)
+			wals = append(wals, wal)
 			f.Close()
 			os.Remove(fileName)
 		}
 	}
 
-	// Merge all WALs in place into localWal
-	for i := 1; i < len(walRoots); i++ {
-		localWalRoot, err = w.merge(localWalRoot, walRoots[i])
-		if err != nil {
-			return &[]eventLog{}, err
-		}
+	// Merge all WALs
+	for i := 1; i < len(wals); i++ {
+		localWal = w.merge(localWal, wals[i])
 	}
-
-	// TODO eventually we should operate on and merge lists, rather than reading into linked
-	// lists and coverting to arrays. This will give us some speedup. But for now, this works
-
-	// Generate a list of eventLogs by traversing through the linked lists
-	//runtime.Breakpoint()
-	mergedRemoteLogs := []eventLog{}
-	cur := localWalRoot
-	for cur != nil {
-		mergedRemoteLogs = append(mergedRemoteLogs, *cur)
-		cur = cur.next
-	}
-	//runtime.Breakpoint()
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
@@ -542,6 +523,6 @@ func (w *Wal) sync() (*[]eventLog, error) {
 	localWalFile.Truncate(0)
 	localWalFile.Seek(0, io.SeekStart)
 
-	err = w.flush(localWalFile, &mergedRemoteLogs)
-	return &mergedRemoteLogs, err
+	err = w.flush(localWalFile, localWal)
+	return localWal, err
 }
