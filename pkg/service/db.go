@@ -29,9 +29,9 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
-func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem) error {
+func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem, fullSync bool) error {
 	var err error
-	if r.wal.log, err = r.wal.sync(); err != nil {
+	if err = r.wal.sync(fullSync); err != nil {
 		return err
 	}
 	if r.Root, r.NextID, err = r.wal.replay(root, primaryRoot); err != nil {
@@ -111,7 +111,7 @@ func (r *DBListRepo) Load() error {
 		if !cont {
 			//runtime.Breakpoint()
 			// Load the WAL into memory
-			if err := r.Refresh(r.Root, primaryRoot); err != nil {
+			if err := r.Refresh(r.Root, primaryRoot, true); err != nil {
 				return err
 			}
 			return nil
@@ -167,7 +167,7 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	r.wal.sync()
+	r.wal.sync(true)
 
 	// We don't care about the primary.db for now, so return nil here
 	return nil

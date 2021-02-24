@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// https://golang.org/pkg/time/#NewTicker
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	refresh := make(chan bool)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
@@ -49,7 +49,7 @@ func main() {
 			select {
 			case <-ticker.C:
 				var listItem *service.ListItem
-				listRepo.Refresh(listItem, nil)
+				listRepo.Refresh(listItem, nil, false)
 				termCycle <- &client.RefreshKey{T: time.Now()}
 			case <-refresh:
 				ticker.Stop()

@@ -37,8 +37,11 @@ type ListRepo interface {
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
-	uuid              uuid
-	log               *[]eventLog
+	uuid uuid
+	// log represents a fresh set of events (unique from the historical log below)
+	log *[]eventLog
+	// fullLog is a historical log of events
+	fullLog           *[]eventLog
 	listItemTracker   map[string]*ListItem
 	walPathPattern    string
 	latestWalSchemaID uint16

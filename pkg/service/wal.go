@@ -314,7 +314,7 @@ func getNextEventLogFromWalFile(f *os.File) (*eventLog, error) {
 	return &el, nil
 }
 
-func (w *Wal) flush(f *os.File, walLog *[]eventLog) error {
+func flush(f *os.File, walLog *[]eventLog) error {
 	// Write the schema ID
 	err := binary.Write(f, binary.LittleEndian, latestWalSchemaID)
 	if err != nil {
@@ -398,11 +398,11 @@ func checkEquality(event1 eventLog, event2 eventLog) int {
 }
 
 func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
-	if len(*wal1) == 0 {
-		return wal2
-	} else if len(*wal2) == 0 {
-		return wal1
-	}
+	//if len(*wal1) == 0 {
+	//    return wal2
+	//} else if len(*wal2) == 0 {
+	//    return wal1
+	//}
 
 	// Adopt a two pointer approach
 	i, j := 0, 0
@@ -450,7 +450,8 @@ func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-func (w *Wal) sync() (*[]eventLog, error) {
+func (w *Wal) sync(fullSync bool) error {
+
 	//
 	// LOAD AND MERGE ALL WALs
 	//
@@ -467,31 +468,32 @@ func (w *Wal) sync() (*[]eventLog, error) {
 	defer mut.Unlock()
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
-	// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
-	localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return &[]eventLog{}, err
-	}
-	defer localWalFile.Close()
-
-	// We will store and represent the root eventLog for each remote
-	localWal, err := w.buildFromFile(localWalFile)
-	if err != nil {
-		return &[]eventLog{}, err
-	}
-
-	// Merge the in-memory log state with the file state (for the local WAL)
-	//runtime.Breakpoint()
-	localWal = w.merge(localWal, w.log)
 
 	wals := []*[]eventLog{}
-	if len(*localWal) > 0 {
-		wals = append(wals, localWal)
+
+	var localWalFile *os.File
+	localWal := *w.log
+
+	//runtime.Breakpoint()
+	if fullSync {
+		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
+		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return err
+		}
+		defer localWalFile.Close()
+
+		w.fullLog, err = w.buildFromFile(localWalFile)
+		if err != nil {
+			return err
+		}
+
+		localWal = *(w.merge(w.fullLog, &localWal))
 	}
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
-		return &[]eventLog{}, err
+		return err
 	}
 
 	// Load all WAL files into arrays
@@ -499,30 +501,60 @@ func (w *Wal) sync() (*[]eventLog, error) {
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
 			if err != nil {
-				return &[]eventLog{}, err
+				return err
 			}
 			wal, err := w.buildFromFile(f)
 			if err != nil {
-				return &[]eventLog{}, err
+				return err
 			}
 			wals = append(wals, wal)
 			f.Close()
-			os.Remove(fileName)
+			if fullSync {
+				os.Remove(fileName)
+			}
 		}
 	}
 
+	mergedWal := []eventLog{}
 	// Merge all WALs
-	for i := 1; i < len(wals); i++ {
-		localWal = w.merge(localWal, wals[i])
+	for i := 0; i < len(wals); i++ {
+		mergedWal = *(w.merge(&mergedWal, wals[i]))
 	}
+
+	if !fullSync {
+		// Before we merge in the localWal, we should check to see if the merged logs are
+		// the same length the as recent local logs. If so, there's no point flushing any
+		// new random files as they'll add additional files to merge with no difference to
+		// the outcome
+		if len(localWal) == len(mergedWal) {
+			return nil
+		}
+	}
+
+	mergedWal = *(w.merge(&mergedWal, &localWal))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
-	localWalFile.Truncate(0)
-	localWalFile.Seek(0, io.SeekStart)
+	if fullSync {
+		// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
+		// full log of events, and named after the static UUID for the app/db
+		localWalFile.Truncate(0)
+		localWalFile.Seek(0, io.SeekStart)
+		err = flush(localWalFile, &mergedWal)
+	} else {
+		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
+		// to disk
+		randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
+		partialWalFile, err := os.Create(randomWal)
+		if err != nil {
+			return err
+		}
+		defer partialWalFile.Close()
+		err = flush(partialWalFile, w.log)
+	}
+	w.log = &mergedWal
 
-	err = w.flush(localWalFile, localWal)
-	return localWal, err
+	return err
 }
