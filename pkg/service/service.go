@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/rand"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,7 @@ type Wal struct {
 	walPathPattern    string
 	latestWalSchemaID uint16
 	syncFilePath      string
+	syncMutex         *sync.Mutex
 }
 
 func generateUUID() uuid {
@@ -56,6 +58,7 @@ func NewWal(rootDir string) *Wal {
 		log:               &[]eventLog{},
 		listItemTracker:   make(map[string]*ListItem),
 		syncFilePath:      path.Join(rootDir, syncFile),
+		syncMutex:         &sync.Mutex{},
 	}
 }
 
@@ -121,6 +124,12 @@ func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, ne
 		line:             newLine,
 		note:             newNote,
 	}
+
+	// This mutex (which also wraps the WAL sync) is a bit of an ugly hack to prevent us losing events
+	// that are added to the WAL log during the WAL sync process
+	// TODO queue events in a channel and only consume from them when a intra-process sync is not in progress
+	w.syncMutex.Lock()
+	defer w.syncMutex.Unlock()
 
 	// Append to log
 	*w.log = append(*w.log, el)

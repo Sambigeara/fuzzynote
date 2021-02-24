@@ -445,6 +445,9 @@ func (w *Wal) sync() (*[]eventLog, error) {
 	// LOAD AND MERGE ALL WALs
 	//
 
+	w.syncMutex.Lock()
+	defer w.syncMutex.Unlock()
+
 	mut, err := filemutex.New(w.syncFilePath)
 	if err != nil {
 		log.Fatalf("Error creating wal sync lock: %s\n", err)
