@@ -40,8 +40,7 @@ func main() {
 	}
 
 	partialRefreshTicker := time.NewTicker(time.Millisecond)
-	sync := make(chan bool)
-	refresh := make(chan bool)
+	fullRefreshTicker := time.NewTicker(time.Second * 10)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
 	// (and thus refresh the UI)
@@ -55,7 +54,6 @@ func main() {
 			log.Fatalf("Error creating wal refresh lock: %s\n", err)
 		}
 		defer mutFile.Close()
-		fullRefreshTicker := time.NewTicker(time.Second * 10)
 		go func() {
 			for {
 				select {
@@ -63,8 +61,6 @@ func main() {
 					var listItem *service.ListItem
 					listRepo.Refresh(listItem, nil, true)
 					termCycle <- &client.RefreshKey{T: time.Now()}
-				case <-refresh:
-					fullRefreshTicker.Stop()
 				}
 			}
 		}()
@@ -77,8 +73,6 @@ func main() {
 				var listItem *service.ListItem
 				listRepo.Refresh(listItem, nil, false)
 				termCycle <- &client.RefreshKey{T: time.Now()}
-			case <-sync:
-				partialRefreshTicker.Stop()
 			}
 		}
 	}()
@@ -99,8 +93,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		sync <- true
-		refresh <- true
+		partialRefreshTicker.Stop()
+		fullRefreshTicker.Stop()
 		os.Exit(0)
 	}
 }
