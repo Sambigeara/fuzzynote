@@ -213,7 +213,7 @@ func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, 
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
 	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
 	// events
-	if len(append(*w.fullLog, *w.log...)) == 0 {
+	if len(w.merge(w.fullLog, w.log)) == 0 {
 		var err error
 		w.fullLog, err = buildWalFromPrimary(w.uuid, primaryRoot)
 		if err != nil {
@@ -221,7 +221,7 @@ func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, 
 		}
 	}
 
-	fullLog := append(*w.fullLog, *w.log...)
+	fullLog := w.merge(w.fullLog, w.log)
 	// If still no events, return nil
 	if len(fullLog) == 0 {
 		return root, nextID, nil
@@ -468,6 +468,12 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		log.Fatalf("Error creating wal sync lock: %s\n", err)
 	}
 	defer mutFile.Close()
+	//mutFile := lockedfile.MutexAt(w.syncFilePath)
+	//unlockFunc, err := mutFile.Lock()
+	//defer unlockFunc()
+	//if err != nil {
+	//    log.Fatalf("Error creating wal sync lock: %s\n", err)
+	//}
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 

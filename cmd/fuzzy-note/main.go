@@ -55,7 +55,7 @@ func main() {
 			log.Fatalf("Error creating wal refresh lock: %s\n", err)
 		}
 		defer mutFile.Close()
-		fullRefreshTicker := time.NewTicker(time.Minute)
+		fullRefreshTicker := time.NewTicker(time.Second * 10)
 		go func() {
 			for {
 				select {
@@ -64,7 +64,7 @@ func main() {
 					listRepo.Refresh(listItem, nil, true)
 					termCycle <- &client.RefreshKey{T: time.Now()}
 				case <-refresh:
-					partialRefreshTicker.Stop()
+					fullRefreshTicker.Stop()
 				}
 			}
 		}()
