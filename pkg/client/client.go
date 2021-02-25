@@ -366,6 +366,101 @@ func (ev *RefreshKey) When() time.Time {
 	return ev.T
 }
 
+type offsetKey struct {
+	T       time.Time
+	X       int // X offset to move cursor
+	Y       int // Y offset to move cursor
+	matches []service.MatchItem
+}
+
+func (t *Terminal) handleCursorMovement(x int, y int, matches []service.MatchItem) {
+	// N available item slots
+	nItemSlots := t.h - reservedTopLines
+
+	// Before doing anything with vertical positioning, we need to automatically reduce available
+	// offset if there are unused visible lines
+	linesToClear := nItemSlots - len(matches) + t.vertOffset
+	if linesToClear > 0 {
+		t.vertOffset = max(0, t.vertOffset-linesToClear)
+	}
+
+	// Change vertical cursor position based on a number of constraints.
+	// This needs to happen after matches have been refreshed, but before setting a new curItem
+	newYIdx := t.curY + y // Apply diff from ops
+
+	// If there are hidden items above the top displayed item, shift all down 1
+	if newYIdx < reservedTopLines-1 {
+		if t.vertOffset > 0 {
+			t.vertOffset--
+		}
+	}
+
+	// Prevent index < 0
+	newYIdx = max(newYIdx, reservedTopLines-1)
+
+	// Cater for hidden items below
+	if newYIdx > t.h-1 {
+		// N items still available below the top offset (aka any hidden at the top of the list)
+		nItemsBelowOffset := len(matches) - t.vertOffset
+
+		// N items remaining BELOW the item slots (aka visible portion of the list)
+		nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
+
+		if nItemsBelowInvisible > 0 {
+			t.vertOffset++
+		}
+	}
+	// Prevent going out of range of screen
+	newYIdx = min(newYIdx, t.h-1)
+
+	// Prevent going out of range of returned matches
+	// This needs to knowledge of the vertOffset as we will never show empty lines at the bottom of the screen if there is an
+	// offset available at the top
+	t.curY = min(newYIdx, reservedTopLines+len(matches)-1)
+
+	isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
+
+	// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
+	// If on search line, just set to nil
+	if isSearchLine {
+		t.curItem = nil
+	} else {
+		t.curItem = &matches[t.curY-reservedTopLines+t.vertOffset]
+	}
+
+	// Then refresh the X position based on vertical position and curItem
+
+	// If we've moved up for down, clear the horizontal offset
+	if y > 0 || y < 0 {
+		t.horizOffset = 0
+	}
+
+	// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
+	// Therefore ensure we do not go < 0
+	t.horizOffset = max(0, t.horizOffset)
+
+	newXIdx := t.curX + x
+	if isSearchLine {
+		newXIdx = max(0, newXIdx) // Prevent index < 0
+		t.curX = min(newXIdx, t.getLenSearchBox())
+	} else {
+		// Deal with horizontal offset if applicable
+		if newXIdx < 0 {
+			if t.horizOffset > 0 {
+				t.horizOffset--
+			}
+			t.curX = 0 // Prevent index < 0
+		} else {
+			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
+				t.horizOffset++
+			}
+			// len([]rune) rather than len(string) as some string chars are >1 bytes
+			newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-len([]byte(t.hiddenMatchPrefix))) // Prevent going out of range of the line
+			t.curX = min(newXIdx, t.w-1)                                                                       // Prevent going out of range of the page
+		}
+	}
+}
+
 // RunClient reads key presses on a loop
 func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 
@@ -378,6 +473,15 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 	t.selectedItems = make(map[int]string)
 
 	t.paint(matches, false)
+
+	// Handle cursor movement events
+	cursorEvents := make(chan *offsetKey)
+	go func() {
+		for {
+			ev := <-cursorEvents
+			t.handleCursorMovement(ev.X, ev.Y, ev.matches)
+		}
+	}()
 
 	for {
 		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
@@ -697,89 +801,13 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 		matches, err = t.db.Match(t.search, t.showHidden)
 		posDiff[0] += t.getLenSearchBox() - oldSearchLen
 
-		// N available item slots
-		nItemSlots := t.h - reservedTopLines
-
-		// Before doing anything with vertical positioning, we need to automatically reduce available
-		// offset if there are unused visible lines
-		linesToClear := nItemSlots - len(matches) + t.vertOffset
-		if linesToClear > 0 {
-			t.vertOffset = max(0, t.vertOffset-linesToClear)
-		}
-
-		// Change vertical cursor position based on a number of constraints.
-		// This needs to happen after matches have been refreshed, but before setting a new curItem
-		newYIdx := t.curY + posDiff[1] // Apply diff from ops
-
-		// If there are hidden items above the top displayed item, shift all down 1
-		if newYIdx < reservedTopLines-1 {
-			if t.vertOffset > 0 {
-				t.vertOffset--
-			}
-		}
-
-		// Prevent index < 0
-		newYIdx = max(newYIdx, reservedTopLines-1)
-
-		// Cater for hidden items below
-		if newYIdx > t.h-1 {
-			// N items still available below the top offset (aka any hidden at the top of the list)
-			nItemsBelowOffset := len(matches) - t.vertOffset
-
-			// N items remaining BELOW the item slots (aka visible portion of the list)
-			nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
-
-			if nItemsBelowInvisible > 0 {
-				t.vertOffset++
-			}
-		}
-		// Prevent going out of range of screen
-		newYIdx = min(newYIdx, t.h-1)
-
-		// Prevent going out of range of returned matches
-		// This needs to knowledge of the vertOffset as we will never show empty lines at the bottom of the screen if there is an
-		// offset available at the top
-		t.curY = min(newYIdx, reservedTopLines+len(matches)-1)
-
-		isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
-
-		// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
-		// If on search line, just set to nil
-		if isSearchLine {
-			t.curItem = nil
-		} else {
-			t.curItem = &matches[t.curY-reservedTopLines+t.vertOffset]
-		}
-
-		// Then refresh the X position based on vertical position and curItem
-
-		// If we've moved up for down, clear the horizontal offset
-		if posDiff[1] > 0 || posDiff[1] < 0 {
-			t.horizOffset = 0
-		}
-
-		// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
-		// Therefore ensure we do not go < 0
-		t.horizOffset = max(0, t.horizOffset)
-
-		newXIdx := t.curX + posDiff[0]
-		if isSearchLine {
-			newXIdx = max(0, newXIdx) // Prevent index < 0
-			t.curX = min(newXIdx, t.getLenSearchBox())
-		} else {
-			// Deal with horizontal offset if applicable
-			if newXIdx < 0 {
-				if t.horizOffset > 0 {
-					t.horizOffset--
-				}
-				t.curX = 0 // Prevent index < 0
-			} else {
-				if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
-					t.horizOffset++
-				}
-				// len([]rune) rather than len(string) as some string chars are >1 bytes
-				newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
-				t.curX = min(newXIdx, t.w-1)                                                           // Prevent going out of range of the page
+		// Queue cursor movements
+		if posDiff[0] != 0 || posDiff[1] != 0 {
+			cursorEvents <- &offsetKey{
+				T:       time.Now(),
+				X:       posDiff[0],
+				Y:       posDiff[1],
+				matches: matches,
 			}
 		}
 
