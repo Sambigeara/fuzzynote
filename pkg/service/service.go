@@ -59,6 +59,7 @@ func NewWal(rootDir string) *Wal {
 		walPathPattern:    path.Join(rootDir, walFilePattern),
 		latestWalSchemaID: latestWalSchemaID,
 		log:               &[]eventLog{},
+		fullLog:           &[]eventLog{},
 		listItemTracker:   make(map[string]*ListItem),
 		syncFilePath:      path.Join(rootDir, syncFile),
 		syncMutex:         &sync.Mutex{},

@@ -213,20 +213,21 @@ func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, 
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
 	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
 	// events
-	if len(*w.log) == 0 {
+	if len(append(*w.fullLog, *w.log...)) == 0 {
 		var err error
-		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
+		w.fullLog, err = buildWalFromPrimary(w.uuid, primaryRoot)
 		if err != nil {
 			return root, nextID, err
 		}
 	}
 
+	fullLog := append(*w.fullLog, *w.log...)
 	// If still no events, return nil
-	if len(*w.log) == 0 {
+	if len(fullLog) == 0 {
 		return root, nextID, nil
 	}
 
-	for _, e := range *w.log {
+	for _, e := range fullLog {
 		var item *ListItem
 		root, item, _ = w.callFunctionForEventLog(root, e)
 
@@ -355,7 +356,7 @@ func flush(f *os.File, walLog *[]eventLog) error {
 	return nil
 }
 
-func (w *Wal) buildFromFile(f *os.File) (*[]eventLog, error) {
+func (w *Wal) buildFromFile(f *os.File) ([]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
@@ -366,11 +367,11 @@ func (w *Wal) buildFromFile(f *os.File) (*[]eventLog, error) {
 		if err != nil {
 			switch err {
 			case io.EOF:
-				return &el, nil
+				return el, nil
 			case io.ErrUnexpectedEOF:
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return &el, err
+				return el, err
 			}
 		}
 		el = append(el, *e)
@@ -397,7 +398,7 @@ func checkEquality(event1 eventLog, event2 eventLog) int {
 	return eventsEqual
 }
 
-func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
+func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) []eventLog {
 	//if len(*wal1) == 0 {
 	//    return wal2
 	//} else if len(*wal2) == 0 {
@@ -447,15 +448,18 @@ func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 			}
 		}
 	}
-	return &mergedEl
+	return mergedEl
 }
 
-func (w *Wal) sync(fullSync bool) error {
+// TODO decouple this from the Wal as it should almost be a pure function
+func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
+	// This mutex completely goes against having the refresh function in a standalone thread with a
+	// "process then update" methodology
 	w.syncMutex.Lock()
 	defer w.syncMutex.Unlock()
 
@@ -469,45 +473,55 @@ func (w *Wal) sync(fullSync bool) error {
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
-	wals := []*[]eventLog{}
-
 	var localWalFile *os.File
+
+	// Avoid mutating underyling logs before the process is complete.
+	// Therefore, dereference into copies, who's pointers will be reassigned to w later on
 	localWal := *w.log
+	fullLog := *w.fullLog
 
 	//runtime.Breakpoint()
 	if fullSync {
 		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		defer localWalFile.Close()
 
-		w.fullLog, err = w.buildFromFile(localWalFile)
-		if err != nil {
-			return err
+		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
+		// The read will only be required on Load, not on Save (when we close the app)
+		// TODO decouple `sync` into `Load` and `Finish` functions
+		if len(fullLog) == 0 {
+			fullLog, err = w.buildFromFile(localWalFile)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
-		localWal = *(w.merge(w.fullLog, &localWal))
+		localWal = w.merge(&fullLog, &localWal)
 	}
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+
+	mergedWal := []eventLog{}
 
 	// Load all WAL files into arrays
 	for _, fileName := range fileNames {
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
 			wal, err := w.buildFromFile(f)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
-			wals = append(wals, wal)
+			// Merge all WALs
+			mergedWal = w.merge(&mergedWal, &wal)
 			f.Close()
 			if fullSync {
 				os.Remove(fileName)
@@ -515,23 +529,18 @@ func (w *Wal) sync(fullSync bool) error {
 		}
 	}
 
-	mergedWal := []eventLog{}
-	// Merge all WALs
-	for i := 0; i < len(wals); i++ {
-		mergedWal = *(w.merge(&mergedWal, wals[i]))
-	}
-
+	flushPartial := true
 	if !fullSync {
 		// Before we merge in the localWal, we should check to see if the merged logs are
 		// the same length the as recent local logs. If so, there's no point flushing any
 		// new random files as they'll add additional files to merge with no difference to
 		// the outcome
 		if len(localWal) == len(mergedWal) {
-			return nil
+			flushPartial = false
 		}
 	}
 
-	mergedWal = *(w.merge(&mergedWal, &localWal))
+	mergedWal = w.merge(&mergedWal, &localWal)
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
@@ -543,18 +552,26 @@ func (w *Wal) sync(fullSync bool) error {
 		localWalFile.Truncate(0)
 		localWalFile.Seek(0, io.SeekStart)
 		err = flush(localWalFile, &mergedWal)
+		if err != nil {
+			return nil, nil, err
+		}
+		// We also want to append the recent w.log to w.fullLog, and refresh (empty) the log
+		return &[]eventLog{}, &mergedWal, nil
 	} else {
 		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
 		// to disk
-		randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
-		partialWalFile, err := os.Create(randomWal)
-		if err != nil {
-			return err
+		//go func() {
+		if flushPartial {
+			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
+			partialWalFile, err := os.Create(randomWal)
+			if err != nil {
+				return nil, nil, err
+			}
+			defer partialWalFile.Close()
+			// Flush the log rather than merged events to avoid duplication between partial WALs
+			err = flush(partialWalFile, w.log)
 		}
-		defer partialWalFile.Close()
-		err = flush(partialWalFile, w.log)
+		return &mergedWal, &fullLog, nil
+		//}()
 	}
-	w.log = &mergedWal
-
-	return err
 }
