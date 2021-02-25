@@ -7,11 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexflint/go-filemutex"
 	"github.com/gdamore/tcell"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
 )
+
+const refreshFile = "_refresh_lock.db"
 
 func main() {
 	var rootDir string
@@ -36,23 +39,47 @@ func main() {
 		os.Exit(0)
 	}
 
-	// https://golang.org/pkg/time/#NewTicker
-	ticker := time.NewTicker(time.Second)
+	partialRefreshTicker := time.NewTicker(time.Second)
+	sync := make(chan bool)
 	refresh := make(chan bool)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
 	// (and thus refresh the UI)
 	termCycle := make(chan tcell.Event)
 
+	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
+	go func() {
+		refreshFileName := path.Join(rootDir, refreshFile)
+		mut, err := filemutex.New(refreshFileName)
+		if err != nil {
+			log.Fatalf("Error creating wal refresh lock: %s\n", err)
+		}
+		mut.Lock()
+		defer mut.Unlock()
+		fullRefreshTicker := time.NewTicker(time.Minute)
+		go func() {
+			for {
+				select {
+				case <-fullRefreshTicker.C:
+					var listItem *service.ListItem
+					listRepo.Refresh(listItem, nil, true)
+					termCycle <- &client.RefreshKey{T: time.Now()}
+				case <-refresh:
+					partialRefreshTicker.Stop()
+				}
+			}
+		}()
+	}()
+
 	go func() {
 		for {
 			select {
-			case <-ticker.C:
+			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
 				listRepo.Refresh(listItem, nil, false)
 				termCycle <- &client.RefreshKey{T: time.Now()}
-			case <-refresh:
-				ticker.Stop()
+			case <-sync:
+				partialRefreshTicker.Stop()
 			}
 		}
 	}()
@@ -73,6 +100,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		sync <- true
 		refresh <- true
 		os.Exit(0)
 	}
