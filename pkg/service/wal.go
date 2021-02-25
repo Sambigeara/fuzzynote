@@ -11,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/alexflint/go-filemutex"
+	"github.com/rogpeppe/go-internal/lockedfile"
 	//"errors"
 	//"runtime"
 )
@@ -463,13 +463,11 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	w.syncMutex.Lock()
 	defer w.syncMutex.Unlock()
 
-	mut, err := filemutex.New(w.syncFilePath)
+	mutFile, err := lockedfile.Create(w.syncFilePath)
 	if err != nil {
 		log.Fatalf("Error creating wal sync lock: %s\n", err)
 	}
-
-	mut.Lock()
-	defer mut.Unlock()
+	defer mutFile.Close()
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 

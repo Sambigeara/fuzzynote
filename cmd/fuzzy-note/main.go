@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexflint/go-filemutex"
 	"github.com/gdamore/tcell"
+	"github.com/rogpeppe/go-internal/lockedfile"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
@@ -39,7 +39,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Second)
+	partialRefreshTicker := time.NewTicker(time.Millisecond)
 	sync := make(chan bool)
 	refresh := make(chan bool)
 
@@ -50,12 +50,11 @@ func main() {
 	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
 	go func() {
 		refreshFileName := path.Join(rootDir, refreshFile)
-		mut, err := filemutex.New(refreshFileName)
+		mutFile, err := lockedfile.Create(refreshFileName)
 		if err != nil {
 			log.Fatalf("Error creating wal refresh lock: %s\n", err)
 		}
-		mut.Lock()
-		defer mut.Unlock()
+		defer mutFile.Close()
 		fullRefreshTicker := time.NewTicker(time.Minute)
 		go func() {
 			for {
