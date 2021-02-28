@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"time"
 	"unsafe"
-	//"github.com/rogpeppe/go-internal/lockedfile"
 	//"errors"
 	//"runtime"
+
+	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
 func init() {
@@ -489,16 +490,11 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	// LOAD AND MERGE ALL WALs
 	//
 
-	// This mutex completely goes against having the refresh function in a standalone thread with a
-	// "process then update" methodology
-	//w.syncMutex.Lock()
-	//defer w.syncMutex.Unlock()
-
-	//mutFile, err := lockedfile.Create(w.syncFilePath)
-	//if err != nil {
-	//    log.Fatalf("Error creating wal sync lock: %s\n", err)
-	//}
-	//defer mutFile.Close()
+	mutFile, err := lockedfile.Create(w.syncFilePath)
+	if err != nil {
+		log.Fatalf("Error creating wal sync lock: %s\n", err)
+	}
+	defer mutFile.Close()
 	//mutFile := lockedfile.MutexAt(w.syncFilePath)
 	//unlockFunc, err := mutFile.Lock()
 	//defer unlockFunc()
@@ -516,7 +512,6 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	fullLog := *w.fullLog
 
 	//runtime.Breakpoint()
-	var err error
 	if fullSync {
 		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)

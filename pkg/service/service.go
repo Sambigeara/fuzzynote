@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"path"
-	"sync"
 	"time"
 )
 
@@ -48,7 +47,6 @@ type Wal struct {
 	walPathPattern    string
 	latestWalSchemaID uint16
 	syncFilePath      string
-	syncMutex         *sync.Mutex
 }
 
 func generateUUID() uuid {
@@ -64,7 +62,6 @@ func NewWal(rootDir string) *Wal {
 		fullLog:           &[]eventLog{},
 		listItemTracker:   make(map[string]*ListItem),
 		syncFilePath:      path.Join(rootDir, syncFile),
-		syncMutex:         &sync.Mutex{},
 	}
 }
 
@@ -140,21 +137,6 @@ func (r *DBListRepo) AddLog(el eventLog) {
 	// Append to log
 	*r.wal.log = append(*r.wal.log, el)
 }
-
-//func (r *DBListRepo) ProcessEvents() {
-//    go func() {
-//        for {
-//            el := <-r.EventQueue
-//            //r.wal.syncMutex.Lock()
-//            var err error
-//            r.Root, _, err = r.CallFunctionForEventLog(r.Root, *el)
-//            if err != nil {
-//                return
-//            }
-//            //r.wal.syncMutex.Unlock()
-//        }
-//    }()
-//}
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 func (r *DBListRepo) Add(line string, note *[]byte, idx int, callback func()) error {
