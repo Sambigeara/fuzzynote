@@ -136,9 +136,9 @@ func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine str
 	}
 }
 
-func (w *Wal) addLog(el eventLog) {
+func (r *DBListRepo) AddLog(el eventLog) {
 	// Append to log
-	*w.log = append(*w.log, el)
+	*r.wal.log = append(*r.wal.log, el)
 }
 
 //func (r *DBListRepo) ProcessEvents() {

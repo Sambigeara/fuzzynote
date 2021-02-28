@@ -30,9 +30,9 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
+	//runtime.Breakpoint()
 	listRepo := service.NewDBListRepo(rootDir)
 
-	//runtime.Breakpoint()
 	// List instantiation
 	err := listRepo.Load()
 	if err != nil {
@@ -40,7 +40,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Second)
+	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
@@ -77,6 +77,7 @@ func main() {
 			select {
 			case el := <-listRepo.EventQueue:
 				var err error
+				listRepo.AddLog(*el)
 				listRepo.Root, _, err = listRepo.CallFunctionForEventLog(listRepo.Root, *el)
 				if err != nil {
 					return
@@ -114,9 +115,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	//err = listRepo.Save()
-	//if err != nil {
-	//    log.Fatal(err)
-	//}
+	//listRepo.Save()
+	//listRepo.Load()
+	//listRepo.Save()
 	//os.Exit(0)
 }

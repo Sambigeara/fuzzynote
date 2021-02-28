@@ -58,11 +58,6 @@ type eventLog struct {
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
-	// TODO is this check needed
-	if e.eventType != cursorMoveEvent {
-		r.wal.addLog(e)
-	}
-
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
 	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
 
