@@ -183,7 +183,6 @@ func TestServiceAdd(t *testing.T) {
 	defer clearUp(repo)
 
 	t.Run("Add item at head of list", func(t *testing.T) {
-		//runtime.Breakpoint()
 		newLine := "Now I'm first"
 		err := repo.Add(newLine, nil, 0, func() {})
 		if err != nil {
@@ -579,6 +578,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
+		//runtime.Breakpoint()
 		repo := NewMockDBListRepo(rootDir)
 		repo.Add("Third", nil, 0, func() {})
 		repo.Add("Second", nil, 0, func() {})

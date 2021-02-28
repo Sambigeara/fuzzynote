@@ -68,7 +68,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 	// we should just skip the event and return
 	// However, skip this check for cursorMoveEvent, as they are a special case
 	if e.eventType != cursorMoveEvent && item == nil && e.eventType != addEvent && e.eventType != updateEvent {
-		return nil, nil, nil
+		return root, nil, nil
 	}
 
 	var err error
@@ -117,7 +117,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 	case moveUpEvent:
 		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
-			return nil, nil, nil
+			return root, nil, nil
 		}
 		newChild := targetItem.child
 		newParent := targetItem
@@ -125,7 +125,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		r.addUndoLog(moveUpEvent, item, "", nil)
 	case moveDownEvent:
 		if targetItem == nil {
-			return nil, nil, nil
+			return root, nil, nil
 		}
 		newChild := targetItem
 		newParent := targetItem.parent
