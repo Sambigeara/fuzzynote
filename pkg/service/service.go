@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"path"
 	"sync"
@@ -23,16 +24,17 @@ const (
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Add(line string, note *[]byte, idx int) error
-	Update(line string, note *[]byte, idx int) (string, error)
-	Delete(idx int) error
-	MoveUp(idx int) (bool, error)
-	MoveDown(idx int) (bool, error)
-	ToggleVisibility(idx int) error
-	Undo() error
-	Redo() error
+	Add(line string, note *[]byte, idx int, callback func()) error
+	Update(line string, note *[]byte, idx int, callback func()) error
+	Delete(idx int, callback func()) error
+	MoveUp(idx int, callback func()) error
+	MoveDown(idx int, callback func()) error
+	ToggleVisibility(idx int, callback func()) error
+	Undo(callback func()) error
+	Redo(callback func()) error
 	Match(keys [][]rune, showHidden bool) ([]MatchItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
+	ScheduleCursorMove(callback func()) error
 }
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
@@ -79,6 +81,7 @@ type DBListRepo struct {
 	wal                *Wal
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
+	EventQueue         chan *eventLog
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -115,11 +118,12 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 		wal:                NewWal(rootDir),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
+		EventQueue:         make(chan *eventLog),
 	}
 }
 
-func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid) (eventLog, error) {
-	el := eventLog{
+func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid, callback func()) eventLog {
+	return eventLog{
 		uuid:             originUUID,
 		unixNanoTime:     time.Now().UnixNano(),
 		eventType:        e,
@@ -127,25 +131,36 @@ func (w *Wal) addLog(e eventType, id uint64, targetID uint64, newLine string, ne
 		targetListItemID: targetID,
 		line:             newLine,
 		note:             newNote,
+		callback:         callback,
+		//curRoot:          r.Root,
 	}
-
-	// This mutex (which also wraps the WAL sync) is a bit of an ugly hack to prevent us losing events
-	// that are added to the WAL log during the WAL sync process
-	// TODO queue events in a channel and only consume from them when a intra-process sync is not in progress
-	w.syncMutex.Lock()
-	defer w.syncMutex.Unlock()
-
-	// Append to log
-	*w.log = append(*w.log, el)
-
-	return el, nil
 }
 
+func (w *Wal) addLog(el eventLog) {
+	// Append to log
+	*w.log = append(*w.log, el)
+}
+
+//func (r *DBListRepo) ProcessEvents() {
+//    go func() {
+//        for {
+//            el := <-r.EventQueue
+//            //r.wal.syncMutex.Lock()
+//            var err error
+//            r.Root, _, err = r.CallFunctionForEventLog(r.Root, *el)
+//            if err != nil {
+//                return
+//            }
+//            //r.wal.syncMutex.Unlock()
+//        }
+//    }()
+//}
+
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Add(line string, note *[]byte, idx int, callback func()) error {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
 
 	var childID uint64
@@ -153,58 +168,56 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
 	// This is (conveniently) in line with intended behaviour for now. If we merge a remote, it makes sense
 	// to attribute new items to that WAL when adding below focused items.
+	// TODO actually, this should RESOLVE with the original UUID, but set with the local!!!
 	newUUID := r.wal.uuid
 	if idx > 0 {
 		childItem := r.matchListItems[idx-1]
 		childID = childItem.id
 		newUUID = childItem.originUUID
 	}
-	el, err := r.wal.addLog(addEvent, r.NextID, childID, line, note, newUUID)
-	if err != nil {
-		return err
-	}
-	r.NextID++
-	var listItem *ListItem
-	r.Root, listItem, _ = r.wal.callFunctionForEventLog(r.Root, el)
-	return r.addUndoLog(addEvent, listItem, line, note)
+	el := r.getLog(addEvent, r.NextID, childID, line, note, newUUID, callback)
+	r.EventQueue <- &el
+	return nil
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, idx int) (string, error) {
+func (r *DBListRepo) Update(line string, note *[]byte, idx int, callback func()) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return "", errors.New("ListItem idx out of bounds")
+		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
 
 	listItem := r.matchListItems[idx]
 
-	// Need to add to Undo/Redo log before mutating, because the addLog
+	// Need to add to Undo/Redo log before mutating, because the getLog
 	// function requires previous state
+	// TODO unbreak this
 	r.addUndoLog(updateEvent, listItem, line, note)
 
-	el, err := r.wal.addLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID)
-	_, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
-	return listItem.Line, err
+	el := r.getLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID, callback)
+	var err error
+	r.EventQueue <- &el
+	return err
 }
 
 // Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(idx int) error {
+func (r *DBListRepo) Delete(idx int, callback func()) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
 		return errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
 
-	el, err := r.wal.addLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID)
-	r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
-	r.addUndoLog(deleteEvent, listItem, "", nil)
+	el := r.getLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID, callback)
+	var err error
+	r.EventQueue <- &el
 	return err
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveUp(idx int) (bool, error) {
+func (r *DBListRepo) MoveUp(idx int, callback func()) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return false, errors.New("ListItem idx out of bounds")
+		return errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -221,20 +234,16 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	}
 
 	// There's no point in moving if there's nothing to move to
-	if targetItemID != 0 {
-		el, err := r.wal.addLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
-		r.Root, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
-		r.addUndoLog(moveUpEvent, listItem, "", nil)
-		return true, err
-	}
-	return false, nil
+	el := r.getLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
+	r.EventQueue <- &el
+	return nil
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveDown(idx int) (bool, error) {
+func (r *DBListRepo) MoveDown(idx int, callback func()) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return false, errors.New("ListItem idx out of bounds")
+		return errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -246,17 +255,13 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 		targetItemID = listItem.parent.id
 	}
 
-	if targetItemID != 0 {
-		el, err := r.wal.addLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID)
-		r.Root, listItem, err = r.wal.callFunctionForEventLog(r.Root, el)
-		r.addUndoLog(moveDownEvent, listItem, "", nil)
-		return true, err
-	}
-	return false, nil
+	el := r.getLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
+	r.EventQueue <- &el
+	return nil
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
-func (r *DBListRepo) ToggleVisibility(idx int) error {
+func (r *DBListRepo) ToggleVisibility(idx int, callback func()) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
 		return errors.New("ListItem idx out of bounds")
 	}
@@ -269,13 +274,12 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 	} else {
 		evType = hideEvent
 	}
-	r.addUndoLog(evType, listItem, "", nil)
-	el, err := r.wal.addLog(evType, listItem.id, 0, "", nil, listItem.originUUID)
-	r.wal.callFunctionForEventLog(r.Root, el)
-	return err
+	el := r.getLog(evType, listItem.id, 0, "", nil, listItem.originUUID, callback)
+	r.EventQueue <- &el
+	return nil
 }
 
-func (r *DBListRepo) Undo() error {
+func (r *DBListRepo) Undo(callback func()) error {
 	if r.eventLogger.curIdx > 0 {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
@@ -285,15 +289,16 @@ func (r *DBListRepo) Undo() error {
 			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid)
-		r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
+		el := r.getLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, callback)
+		var err error
+		r.EventQueue <- &el
 		r.eventLogger.curIdx--
 		return err
 	}
 	return nil
 }
 
-func (r *DBListRepo) Redo() error {
+func (r *DBListRepo) Redo(callback func()) error {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
@@ -303,8 +308,9 @@ func (r *DBListRepo) Redo() error {
 			targetListItemID = uel.ptr.child.id
 		}
 
-		el, err := r.wal.addLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid)
-		r.Root, _, err = r.wal.callFunctionForEventLog(r.Root, el)
+		el := r.getLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, callback)
+		var err error
+		r.EventQueue <- &el
 		r.eventLogger.curIdx++
 		return err
 	}
@@ -386,4 +392,13 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 
 		cur = cur.parent
 	}
+}
+
+func (r *DBListRepo) ScheduleCursorMove(callback func()) error {
+	el := eventLog{
+		eventType: cursorMoveEvent,
+		callback:  callback,
+	}
+	r.EventQueue <- &el
+	return nil
 }

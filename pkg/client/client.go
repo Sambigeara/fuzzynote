@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	//"sync"
 	"time"
 
 	"fuzzy-note/pkg/service"
@@ -31,10 +32,8 @@ type Terminal struct {
 	curItem               *service.MatchItem // The currently selected item
 	s                     tcell.Screen
 	style                 tcell.Style
-	w                     int
-	h                     int
-	curX                  int // Cur "screen" index, not related to matched item lists
-	curY                  int // Cur "screen" index, not related to matched item lists
+	w, h                  int
+	curX, curY            int // Cur "screen" index, not related to matched item lists
 	vertOffset            int // The index of the first displayed item in the match set
 	horizOffset           int // The index of the first displayed char in the curItem
 	showHidden            bool
@@ -42,6 +41,7 @@ type Terminal struct {
 	copiedItem            *service.MatchItem
 	hiddenMatchPrefix     string // The common string that we want to truncate from each line
 	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
+	pendingX, pendingY    int    // Aggregated async cursor movements to apply
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -165,7 +165,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	_, err = t.db.Update(t.curItem.Line, &newDat, t.curY-1)
+	err = t.db.Update(t.curItem.Line, &newDat, t.curY-1, func() {})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -366,103 +366,13 @@ func (ev *RefreshKey) When() time.Time {
 	return ev.T
 }
 
-type offsetKey struct {
-	T       time.Time
-	X       int // X offset to move cursor
-	Y       int // Y offset to move cursor
-	matches []service.MatchItem
-}
-
-func (t *Terminal) handleCursorMovement(x int, y int, matches []service.MatchItem) {
-	// N available item slots
-	nItemSlots := t.h - reservedTopLines
-
-	// Before doing anything with vertical positioning, we need to automatically reduce available
-	// offset if there are unused visible lines
-	linesToClear := nItemSlots - len(matches) + t.vertOffset
-	if linesToClear > 0 {
-		t.vertOffset = max(0, t.vertOffset-linesToClear)
-	}
-
-	// Change vertical cursor position based on a number of constraints.
-	// This needs to happen after matches have been refreshed, but before setting a new curItem
-	newYIdx := t.curY + y // Apply diff from ops
-
-	// If there are hidden items above the top displayed item, shift all down 1
-	if newYIdx < reservedTopLines-1 {
-		if t.vertOffset > 0 {
-			t.vertOffset--
-		}
-	}
-
-	// Prevent index < 0
-	newYIdx = max(newYIdx, reservedTopLines-1)
-
-	// Cater for hidden items below
-	if newYIdx > t.h-1 {
-		// N items still available below the top offset (aka any hidden at the top of the list)
-		nItemsBelowOffset := len(matches) - t.vertOffset
-
-		// N items remaining BELOW the item slots (aka visible portion of the list)
-		nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
-
-		if nItemsBelowInvisible > 0 {
-			t.vertOffset++
-		}
-	}
-	// Prevent going out of range of screen
-	newYIdx = min(newYIdx, t.h-1)
-
-	// Prevent going out of range of returned matches
-	// This needs to knowledge of the vertOffset as we will never show empty lines at the bottom of the screen if there is an
-	// offset available at the top
-	t.curY = min(newYIdx, reservedTopLines+len(matches)-1)
-
-	isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
-
-	// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
-	// If on search line, just set to nil
-	if isSearchLine {
-		t.curItem = nil
-	} else {
-		t.curItem = &matches[t.curY-reservedTopLines+t.vertOffset]
-	}
-
-	// Then refresh the X position based on vertical position and curItem
-
-	// If we've moved up for down, clear the horizontal offset
-	if y > 0 || y < 0 {
-		t.horizOffset = 0
-	}
-
-	// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
-	// Therefore ensure we do not go < 0
-	t.horizOffset = max(0, t.horizOffset)
-
-	newXIdx := t.curX + x
-	if isSearchLine {
-		newXIdx = max(0, newXIdx) // Prevent index < 0
-		t.curX = min(newXIdx, t.getLenSearchBox())
-	} else {
-		// Deal with horizontal offset if applicable
-		if newXIdx < 0 {
-			if t.horizOffset > 0 {
-				t.horizOffset--
-			}
-			t.curX = 0 // Prevent index < 0
-		} else {
-			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
-				t.horizOffset++
-			}
-			// len([]rune) rather than len(string) as some string chars are >1 bytes
-			newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-len([]byte(t.hiddenMatchPrefix))) // Prevent going out of range of the line
-			t.curX = min(newXIdx, t.w-1)                                                                       // Prevent going out of range of the page
-		}
-	}
+type OffsetKey struct {
+	X int // X offset to move cursor
+	Y int // Y offset to move cursor
 }
 
 // RunClient reads key presses on a loop
-func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
+func (t *Terminal) RunClient(cursorEvents chan *OffsetKey) error {
 
 	matches, err := t.db.Match([][]rune{}, t.showHidden)
 	if err != nil {
@@ -475,20 +385,135 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 	t.paint(matches, false)
 
 	// Handle cursor movement events
-	cursorEvents := make(chan *offsetKey)
+	//cursorEvents := make(chan *offsetKey)
+
+	applyCursorOffset := func(x int, y int) func() {
+		return func() {
+			cursorEvents <- &OffsetKey{
+				X: x,
+				Y: y,
+			}
+		}
+	}
+
 	go func() {
 		for {
 			ev := <-cursorEvents
-			t.handleCursorMovement(ev.X, ev.Y, ev.matches)
+			// TODO bundle events, perhaps iterate over backlog and aggregate offsets
+			// TODO does this need a lock?
+			offsetX := ev.X
+			offsetY := ev.Y
+
+			t.s.Clear()
+
+			t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
+
+			// Handle any offsets that need to be accounted for due to unexpected search line mutations
+			// behind the scenes
+			oldSearchLen := t.getLenSearchBox()
+			matches, err = t.db.Match(t.search, t.showHidden)
+			offsetX += t.getLenSearchBox() - oldSearchLen
+
+			// N available item slots
+			nItemSlots := t.h - reservedTopLines
+
+			// Before doing anything with vertical positioning, we need to automatically reduce available
+			// offset if there are unused visible lines
+			linesToClear := nItemSlots - len(matches) + t.vertOffset
+			if linesToClear > 0 {
+				t.vertOffset = max(0, t.vertOffset-linesToClear)
+			}
+
+			// Change vertical cursor position based on a number of constraints.
+			// This needs to happen after matches have been refreshed, but before setting a new curItem
+			newYIdx := t.curY + offsetY // Apply diff from ops
+
+			// If there are hidden items above the top displayed item, shift all down 1
+			if newYIdx < reservedTopLines-1 {
+				if t.vertOffset > 0 {
+					t.vertOffset--
+				}
+			}
+
+			// Prevent index < 0
+			newYIdx = max(newYIdx, reservedTopLines-1)
+
+			// Cater for hidden items below
+			if newYIdx > t.h-1 {
+				// N items still available below the top offset (aka any hidden at the top of the list)
+				nItemsBelowOffset := len(matches) - t.vertOffset
+
+				// N items remaining BELOW the item slots (aka visible portion of the list)
+				nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
+
+				if nItemsBelowInvisible > 0 {
+					t.vertOffset++
+				}
+			}
+			// Prevent going out of range of screen
+			newYIdx = min(newYIdx, t.h-1)
+
+			// Prevent going out of range of returned matches
+			// This needs to knowledge of the vertOffset as we will never show empty lines at the bottom of the screen if there is an
+			// offset available at the top
+			t.curY = min(newYIdx, reservedTopLines+len(matches)-1)
+
+			isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
+
+			// Set curItem before establishing max X position based on the len of the curItem line (to avoid nonexistent array indexes)
+			// If on search line, just set to nil
+			if isSearchLine {
+				t.curItem = nil
+			} else {
+				t.curItem = &matches[t.curY-reservedTopLines+t.vertOffset]
+			}
+
+			// Then refresh the X position based on vertical position and curItem
+
+			// If we've moved up for down, clear the horizontal offset
+			if offsetY > 0 || offsetY < 0 {
+				t.horizOffset = 0
+			}
+
+			// Some logic above does forceful operations to ensure that the cursor is moved to MINIMUM beginning of line
+			// Therefore ensure we do not go < 0
+			t.horizOffset = max(0, t.horizOffset)
+
+			newXIdx := t.curX + offsetX
+			if isSearchLine {
+				newXIdx = max(0, newXIdx) // Prevent index < 0
+				t.curX = min(newXIdx, t.getLenSearchBox())
+			} else {
+				// Deal with horizontal offset if applicable
+				if newXIdx < 0 {
+					if t.horizOffset > 0 {
+						t.horizOffset--
+					}
+					t.curX = 0 // Prevent index < 0
+				} else {
+					if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
+						t.horizOffset++
+					}
+					// len([]rune) rather than len(string) as some string chars are >1 bytes
+					newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-len([]byte(t.hiddenMatchPrefix))) // Prevent going out of range of the line
+					t.curX = min(newXIdx, t.w-1)                                                                       // Prevent going out of range of the page
+				}
+			}
+
+			t.resizeScreen()
+			t.paint(matches, false)
+			t.s.Show()
 		}
 	}()
 
 	for {
-		posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
+		asyncCursOffsets := []int{0, 0} // x and y mutations to apply after db data mutations
+		xDiff := 0
 		t.s.Show()
 
-		go func() { termCycle <- t.s.PollEvent() }()
-		ev := <-termCycle
+		//go func() { termCycle <- t.s.PollEvent() }()
+		//ev := <-termCycle
+		ev := t.s.PollEvent()
 
 		// offsetX represents the position in the underying curItem.Line
 		// Only apply the prefix offset if the line starts with the prefix, other lines will
@@ -500,6 +525,8 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 		}
 
 		switch ev := ev.(type) {
+		//case *RefreshKey:
+		//    continue
 		case *tcell.EventKey:
 			switch ev.Key() {
 			case tcell.KeyCtrlUnderscore:
@@ -526,19 +553,20 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 
 					var err error
 					if t.curY == reservedTopLines-1 {
-						posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
+						//asyncCursOffsets[0] -= len([]byte(t.hiddenFullMatchPrefix))
+						xDiff = max(-len([]byte(t.hiddenFullMatchPrefix)), 0)
 					}
-					err = t.db.Add(newString, nil, t.curY)
+					err = t.db.Add(newString, nil, t.curY, applyCursorOffset(xDiff, 1))
 					if err != nil {
 						log.Fatal(err)
 					}
-					posDiff[1]++
+					//asyncCursOffsets[1]++
 				}
 			case tcell.KeyCtrlD:
 				if t.curY == reservedTopLines-1 {
 					t.search = [][]rune{}
 				} else {
-					err := t.db.Delete(t.curY - 1)
+					err := t.db.Delete(t.curY-1, applyCursorOffset(0, 0))
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -571,18 +599,18 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 				if t.curY == reservedTopLines-1 {
 					t.showHidden = !t.showHidden
 				} else {
-					err = t.db.ToggleVisibility(t.curY - 1)
+					err = t.db.ToggleVisibility(t.curY-1, applyCursorOffset(0, 0))
 					if err != nil {
 						log.Fatal(err)
 					}
 				}
 			case tcell.KeyCtrlU:
-				err := t.db.Undo()
+				err := t.db.Undo(applyCursorOffset(0, 0))
 				if err != nil {
 					log.Fatal(err)
 				}
 			case tcell.KeyCtrlR:
-				err := t.db.Redo()
+				err := t.db.Redo(applyCursorOffset(0, 0))
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -594,11 +622,11 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 			case tcell.KeyCtrlP:
 				// Paste functionality
 				if t.copiedItem != nil {
-					err := t.db.Add(t.copiedItem.Line, nil, t.curY)
+					err := t.db.Add(t.copiedItem.Line, nil, t.curY, applyCursorOffset(0, 1))
 					if err != nil {
 						log.Fatal(err)
 					}
-					posDiff[1]++
+					//asyncCursOffsets[1]++
 				}
 			case tcell.KeyCtrlS:
 				if t.curY != reservedTopLines-1 {
@@ -633,7 +661,7 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 						t.search[grpIdx] = newLeft
 						t.search[grpIdx+1] = newRight
 					}
-					posDiff[0]++
+					asyncCursOffsets[0]++
 				}
 			case tcell.KeyBackspace:
 			case tcell.KeyBackspace2:
@@ -655,7 +683,7 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 							newGroup = append(newGroup[:charOffset-1], newGroup[charOffset:]...)
 							t.search[grpIdx] = newGroup
 						}
-						posDiff[0]--
+						asyncCursOffsets[0]--
 					}
 				} else {
 					// If cursor in 0 position and current line is empty, delete current line and go
@@ -663,24 +691,26 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 					newLine := []rune(t.curItem.Line)
 					if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 						newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-						t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+						err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1, applyCursorOffset(-1, 0))
 						if err != nil {
 							log.Fatal(err)
 						}
-						posDiff[0]--
+						//asyncCursOffsets[0]--
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curY - 1)
-						if err != nil {
-							log.Fatal(err)
-						}
-						// Move up a cursor position
-						posDiff[1]--
 						if t.curY > reservedTopLines {
 							// TODO setting to the max width isn't completely robust as other
 							// decrements will affect, but it's good enough for now as the cursor
 							// repositioning logic will take care of over-increments
-							posDiff[0] += t.w
+							//applyCursorOffset(t.w, 0)
+							//asyncCursOffsets[0] += t.w
+							xDiff = t.w
 						}
+						err := t.db.Delete(t.curY-1, applyCursorOffset(xDiff, -1))
+						if err != nil {
+							log.Fatal(err)
+						}
+						// Move up a cursor position
+						//asyncCursOffsets[1]--
 					}
 				}
 			case tcell.KeyDelete:
@@ -708,55 +738,59 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 					newLine := []rune(t.curItem.Line)
 					if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 						newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-						t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+						err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1, applyCursorOffset(0, 0))
 						if err != nil {
 							log.Fatal(err)
 						}
 					} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-						err := t.db.Delete(t.curY - 1)
-						if err != nil {
-							log.Fatal(err)
-						}
-						// Move up a cursor position
-						posDiff[1]--
 						if t.curY > reservedTopLines {
 							// TODO setting to the max width isn't completely robust as other
 							// decrements will affect, but it's good enough for now as the cursor
 							// repositioning logic will take care of over-increments
-							posDiff[0] += t.w
+							//applyCursorOffset(t.w, 0)
+							//asyncCursOffsets[0] += t.w
+							xDiff = t.w
 						}
+						err := t.db.Delete(t.curY-1, applyCursorOffset(xDiff, -1))
+						if err != nil {
+							log.Fatal(err)
+						}
+						// Move up a cursor position
+						//asyncCursOffsets[1]--
 					}
 				}
 			case tcell.KeyPgUp:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item up and follow with cursor
-					moved, err := t.db.MoveUp(t.curY - 1)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if moved {
-						posDiff[1]--
-					}
+					t.db.MoveUp(t.curY-1, applyCursorOffset(0, -1))
+					//if err != nil {
+					//    log.Fatal(err)
+					//}
+					//if moved {
+					//    //asyncCursOffsets[1]--
+					//    applyCursorOffset(0, -1)
+					//}
 				}
 			case tcell.KeyPgDn:
 				if t.curY > reservedTopLines-1 {
 					// Move the current item down and follow with cursor
-					moved, err := t.db.MoveDown(t.curY - 1)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if moved {
-						posDiff[1]++
-					}
+					t.db.MoveDown(t.curY-1, applyCursorOffset(0, 1))
+					//if err != nil {
+					//    log.Fatal(err)
+					//}
+					//if moved {
+					//    //asyncCursOffsets[1]++
+					//    applyCursorOffset(0, 1)
+					//}
 				}
 			case tcell.KeyDown:
-				posDiff[1]++
+				asyncCursOffsets[1]++
 			case tcell.KeyUp:
-				posDiff[1]--
+				asyncCursOffsets[1]--
 			case tcell.KeyRight:
-				posDiff[0]++
+				asyncCursOffsets[0]++
 			case tcell.KeyLeft:
-				posDiff[0]--
+				asyncCursOffsets[0]--
 			default:
 				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
@@ -772,7 +806,7 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 						newTerm = append(newTerm, ev.Rune())
 						t.search = append(t.search, newTerm)
 					}
-					posDiff[0]++
+					asyncCursOffsets[0]++
 				} else {
 					newLine := []rune(t.curItem.Line)
 					// Insert characters at position
@@ -781,37 +815,17 @@ func (t *Terminal) RunClient(termCycle chan (tcell.Event)) error {
 					} else {
 						newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 					}
-					oldLen := len(t.curItem.Line)
-					t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+					//oldLen := len(t.curItem.Line)
+					//err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1, applyCursorOffset(len(t.curItem.Line)-oldLen, 0))
+					err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1, applyCursorOffset(1, 0))
 					if err != nil {
 						log.Fatal(err)
 						return nil
 					}
-					posDiff[0] += len(t.curItem.Line) - oldLen
+					//asyncCursOffsets[0] += len(t.curItem.Line) - oldLen
 				}
 			}
 		}
-		t.s.Clear()
-
-		t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
-
-		// Handle any offsets that need to be accounted for due to unexpected search line mutations
-		// behind the scenes
-		oldSearchLen := t.getLenSearchBox()
-		matches, err = t.db.Match(t.search, t.showHidden)
-		posDiff[0] += t.getLenSearchBox() - oldSearchLen
-
-		// Queue cursor movements
-		if posDiff[0] != 0 || posDiff[1] != 0 {
-			cursorEvents <- &offsetKey{
-				T:       time.Now(),
-				X:       posDiff[0],
-				Y:       posDiff[1],
-				matches: matches,
-			}
-		}
-
-		t.resizeScreen()
-		t.paint(matches, false)
+		t.db.ScheduleCursorMove(applyCursorOffset(asyncCursOffsets[0], asyncCursOffsets[1]))
 	}
 }

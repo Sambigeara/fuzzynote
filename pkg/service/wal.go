@@ -10,8 +10,7 @@ import (
 	"path/filepath"
 	"time"
 	"unsafe"
-
-	"github.com/rogpeppe/go-internal/lockedfile"
+	//"github.com/rogpeppe/go-internal/lockedfile"
 	//"errors"
 	//"runtime"
 )
@@ -43,6 +42,7 @@ const (
 	showEvent
 	hideEvent
 	deleteEvent
+	cursorMoveEvent
 )
 
 type eventLog struct {
@@ -53,29 +53,43 @@ type eventLog struct {
 	eventType        eventType
 	line             string
 	note             *[]byte
+	//curRoot          *ListItem
+	callback func()
 }
 
-func (w *Wal) callFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
-	item := w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	targetItem := w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
+func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
+	// TODO is this check needed
+	if e.eventType != cursorMoveEvent {
+		r.wal.addLog(e)
+	}
+
+	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
+	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
-	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
+	// However, skip this check for cursorMoveEvent, as they are a special case
+	if e.eventType != cursorMoveEvent && item == nil && e.eventType != addEvent && e.eventType != updateEvent {
 		return nil, nil, nil
 	}
 
 	var err error
 	switch e.eventType {
 	case addEvent:
-		root, item, err = w.add(root, e.line, e.note, targetItem, e.uuid)
+		root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
 		item.id = e.listItemID
-		w.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+		//r.NextID++
+		if item.id >= r.NextID {
+			r.NextID = item.id + 1
+		}
+		r.addUndoLog(addEvent, item, e.line, e.note)
 	case deleteEvent:
-		root, err = w.del(root, item)
-		delete(w.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
+		root, err = r.wal.del(root, item)
+		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
+		r.addUndoLog(deleteEvent, item, "", nil)
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -88,31 +102,49 @@ func (w *Wal) callFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *L
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = w.update(e.line, e.note, item)
+			item, err = r.wal.update(e.line, e.note, item)
 		} else {
-			addEl := e
-			addEl.eventType = addEvent
-			root, item, err = w.callFunctionForEventLog(root, addEl)
+			//addEl := e
+			//addEl.eventType = addEvent
+			//root, item, err = r.CallFunctionForEventLog(root, e)
+
+			// TODO refactor - this is currently copied from above to avoid the extra eventLog creation
+			root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
+			item.id = e.listItemID
+			r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
+			//r.NextID++
+			if item.id >= r.NextID {
+				r.NextID = item.id + 1
+			}
+			r.addUndoLog(addEvent, item, e.line, e.note)
 		}
 	case moveUpEvent:
+		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
 			return nil, nil, nil
 		}
 		newChild := targetItem.child
 		newParent := targetItem
-		root, err = w.moveItem(root, item, newChild, newParent)
+		root, err = r.wal.moveItem(root, item, newChild, newParent)
+		r.addUndoLog(moveUpEvent, item, "", nil)
 	case moveDownEvent:
 		if targetItem == nil {
 			return nil, nil, nil
 		}
 		newChild := targetItem
 		newParent := targetItem.parent
-		root, err = w.moveItem(root, item, newChild, newParent)
+		root, err = r.wal.moveItem(root, item, newChild, newParent)
+		r.addUndoLog(moveDownEvent, item, "", nil)
 	case showEvent:
-		err = w.setVisibility(item, true)
+		err = r.wal.setVisibility(item, true)
+		r.addUndoLog(showEvent, item, "", nil)
 	case hideEvent:
-		err = w.setVisibility(item, false)
+		err = r.wal.setVisibility(item, false)
+		r.addUndoLog(hideEvent, item, "", nil)
 	}
+	// TODO make this better
+	// Callback adds to the cursor movement channel to be actioned by the client
+	e.callback()
 	return root, item, err
 }
 
@@ -204,24 +236,25 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, error) {
+func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, error) {
 	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
 	// and then set the global NextID afterwards, to avoid wastage.
+	// TODO look at this??
 	nextID := uint64(1)
 
 	// TODO remove this temp measure
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
 	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
 	// events
-	if len(w.merge(w.fullLog, w.log)) == 0 {
+	if len(r.wal.merge(r.wal.fullLog, r.wal.log)) == 0 {
 		var err error
-		w.fullLog, err = buildWalFromPrimary(w.uuid, primaryRoot)
+		r.wal.fullLog, err = buildWalFromPrimary(r.wal.uuid, primaryRoot)
 		if err != nil {
 			return root, nextID, err
 		}
 	}
 
-	fullLog := w.merge(w.fullLog, w.log)
+	fullLog := r.wal.merge(r.wal.fullLog, r.wal.log)
 	// If still no events, return nil
 	if len(fullLog) == 0 {
 		return root, nextID, nil
@@ -229,7 +262,10 @@ func (w *Wal) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, 
 
 	for _, e := range fullLog {
 		var item *ListItem
-		root, item, _ = w.callFunctionForEventLog(root, e)
+		// Stub out the cursor callback
+		// TODO move to deserialisation?
+		e.callback = func() {}
+		root, item, _ = r.CallFunctionForEventLog(root, e)
 
 		// Item can be nil in the distributed merge orphaned item cases
 		if item != nil {
@@ -460,14 +496,14 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 
 	// This mutex completely goes against having the refresh function in a standalone thread with a
 	// "process then update" methodology
-	w.syncMutex.Lock()
-	defer w.syncMutex.Unlock()
+	//w.syncMutex.Lock()
+	//defer w.syncMutex.Unlock()
 
-	mutFile, err := lockedfile.Create(w.syncFilePath)
-	if err != nil {
-		log.Fatalf("Error creating wal sync lock: %s\n", err)
-	}
-	defer mutFile.Close()
+	//mutFile, err := lockedfile.Create(w.syncFilePath)
+	//if err != nil {
+	//    log.Fatalf("Error creating wal sync lock: %s\n", err)
+	//}
+	//defer mutFile.Close()
 	//mutFile := lockedfile.MutexAt(w.syncFilePath)
 	//unlockFunc, err := mutFile.Lock()
 	//defer unlockFunc()
@@ -485,6 +521,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	fullLog := *w.fullLog
 
 	//runtime.Breakpoint()
+	var err error
 	if fullSync {
 		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
