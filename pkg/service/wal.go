@@ -97,7 +97,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
-			root, item, err = r.CallFunctionForEventLog(root, e)
+			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
 	case deleteEvent:
 		root, err = r.wal.del(root, item)
