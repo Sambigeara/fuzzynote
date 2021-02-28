@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gdamore/tcell"
-	"github.com/rogpeppe/go-internal/lockedfile"
+	//"github.com/rogpeppe/go-internal/lockedfile"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
+	//"runtime"
 )
 
 const refreshFile = "_refresh_lock.db"
@@ -30,6 +30,7 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
+	//runtime.Breakpoint()
 	listRepo := service.NewDBListRepo(rootDir)
 
 	// List instantiation
@@ -39,40 +40,56 @@ func main() {
 		os.Exit(0)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Millisecond)
-	fullRefreshTicker := time.NewTicker(time.Second * 10)
+	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
+	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
 	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
 	// (and thus refresh the UI)
-	termCycle := make(chan tcell.Event)
+	//termCycle := make(chan tcell.Event)
+	//cursorEvents := make(chan *client.OffsetKey)
 
 	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
-	go func() {
-		refreshFileName := path.Join(rootDir, refreshFile)
-		mutFile, err := lockedfile.Create(refreshFileName)
-		if err != nil {
-			log.Fatalf("Error creating wal refresh lock: %s\n", err)
-		}
-		defer mutFile.Close()
-		go func() {
-			for {
-				select {
-				case <-fullRefreshTicker.C:
-					var listItem *service.ListItem
-					listRepo.Refresh(listItem, nil, true)
-					termCycle <- &client.RefreshKey{T: time.Now()}
-				}
-			}
-		}()
-	}()
+	//go func() {
+	//    refreshFileName := path.Join(rootDir, refreshFile)
+	//    mutFile, err := lockedfile.Create(refreshFileName)
+	//    if err != nil {
+	//        log.Fatalf("Error creating wal refresh lock: %s\n", err)
+	//    }
+	//    defer mutFile.Close()
+	//    go func() {
+	//        for {
+	//            select {
+	//            case <-fullRefreshTicker.C:
+	//                var listItem *service.ListItem
+	//                listRepo.Refresh(listItem, nil, true)
+	//                cursorEvents <- &client.OffsetKey{}
+	//            }
+	//        }
+	//    }()
+	//}()
+
+	//listRepo.ProcessEvents()
+
+	cursorEvents := make(chan *client.OffsetKey)
 
 	go func() {
 		for {
 			select {
+			case el := <-listRepo.EventQueue:
+				var err error
+				listRepo.AddLog(*el)
+				listRepo.Root, _, err = listRepo.CallFunctionForEventLog(listRepo.Root, *el)
+				if err != nil {
+					return
+				}
 			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
 				listRepo.Refresh(listItem, nil, false)
-				termCycle <- &client.RefreshKey{T: time.Now()}
+				cursorEvents <- &client.OffsetKey{}
+			case <-fullRefreshTicker.C:
+				var listItem *service.ListItem
+				listRepo.Refresh(listItem, nil, true)
+				cursorEvents <- &client.OffsetKey{}
 			}
 		}
 	}()
@@ -85,7 +102,7 @@ func main() {
 
 	term := client.NewTerm(listRepo, fznColour)
 
-	err = term.RunClient(termCycle)
+	err = term.RunClient(cursorEvents)
 	if err != nil {
 		log.Fatal(err)
 	} else {
@@ -97,4 +114,9 @@ func main() {
 		fullRefreshTicker.Stop()
 		os.Exit(0)
 	}
+
+	//listRepo.Save()
+	//listRepo.Load()
+	//listRepo.Save()
+	//os.Exit(0)
 }
