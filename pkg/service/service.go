@@ -164,8 +164,10 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int, callback func()) er
 		childID = childItem.id
 		newUUID = childItem.originUUID
 	}
-	el := r.getLog(addEvent, r.NextID, childID, line, note, newUUID, callback)
+	newID := r.NextID
+	el := r.getLog(addEvent, newID, childID, line, note, newUUID, callback)
 	r.eventProcessor(&el)
+	r.addUndoLog(addEvent, newID, childID, line, note, line, note)
 	return nil
 }
 
@@ -177,15 +179,11 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int, callback func())
 
 	listItem := r.matchListItems[idx]
 
-	// Need to add to Undo/Redo log before mutating, because the getLog
-	// function requires previous state
-	// TODO unbreak this
-	r.addUndoLog(updateEvent, listItem, line, note)
-
+	// Add the UndoLog here to allow us to access existing Line/Note state
+	r.addUndoLog(updateEvent, listItem.id, 0, listItem.Line, listItem.Note, line, note)
 	el := r.getLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID, callback)
-	var err error
 	r.eventProcessor(&el)
-	return err
+	return nil
 }
 
 // Delete will remove an existing ListItem
@@ -196,10 +194,14 @@ func (r *DBListRepo) Delete(idx int, callback func()) error {
 
 	listItem := r.matchListItems[idx]
 
+	var targetListItemID uint64
+	if listItem.child != nil {
+		targetListItemID = listItem.child.id
+	}
 	el := r.getLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID, callback)
-	var err error
 	r.eventProcessor(&el)
-	return err
+	r.addUndoLog(deleteEvent, listItem.id, targetListItemID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
+	return nil
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -222,9 +224,12 @@ func (r *DBListRepo) MoveUp(idx int, callback func()) error {
 		targetItemID = listItem.child.id
 	}
 
-	// There's no point in moving if there's nothing to move to
 	el := r.getLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
 	r.eventProcessor(&el)
+	// There's no point in moving if there's nothing to move to
+	if targetItemID != 0 {
+		r.addUndoLog(moveUpEvent, listItem.id, targetItemID, "", nil, "", nil)
+	}
 	return nil
 }
 
@@ -246,6 +251,10 @@ func (r *DBListRepo) MoveDown(idx int, callback func()) error {
 
 	el := r.getLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
 	r.eventProcessor(&el)
+	// There's no point in moving if there's nothing to move to
+	if targetItemID != 0 {
+		r.addUndoLog(moveDownEvent, listItem.id, targetItemID, "", nil, "", nil)
+	}
 	return nil
 }
 
@@ -260,8 +269,10 @@ func (r *DBListRepo) ToggleVisibility(idx int, callback func()) error {
 	var evType eventType
 	if listItem.IsHidden {
 		evType = showEvent
+		r.addUndoLog(showEvent, listItem.id, 0, "", nil, "", nil)
 	} else {
 		evType = hideEvent
+		r.addUndoLog(hideEvent, listItem.id, 0, "", nil, "", nil)
 	}
 	el := r.getLog(evType, listItem.id, 0, "", nil, listItem.originUUID, callback)
 	r.eventProcessor(&el)
@@ -273,12 +284,7 @@ func (r *DBListRepo) Undo(callback func()) error {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
 
-		targetListItemID := uint64(0)
-		if uel.ptr.child != nil {
-			targetListItemID = uel.ptr.child.id
-		}
-
-		el := r.getLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, callback)
+		el := r.getLog(oppositeEvent[uel.eventType], uel.listItemID, uel.targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, callback)
 		var err error
 		r.eventProcessor(&el)
 		r.eventLogger.curIdx--
@@ -292,12 +298,7 @@ func (r *DBListRepo) Redo(callback func()) error {
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
 
-		targetListItemID := uint64(0)
-		if uel.ptr.child != nil {
-			targetListItemID = uel.ptr.child.id
-		}
-
-		el := r.getLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, callback)
+		el := r.getLog(uel.eventType, uel.listItemID, uel.targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, callback)
 		var err error
 		r.eventProcessor(&el)
 		r.eventLogger.curIdx++

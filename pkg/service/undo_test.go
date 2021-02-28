@@ -1,8 +1,8 @@
 package service
 
 import (
-	//"runtime"
 	"os"
+	//"runtime"
 	"testing"
 )
 
@@ -47,7 +47,7 @@ func TestTransactionUndo(t *testing.T) {
 		if logItem.eventType != addEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
-		if logItem.ptr.id != matches[0].id {
+		if logItem.listItemID != matches[0].id {
 			t.Errorf("Event log list item should have the same id")
 		}
 		if (repo.eventLogger.curIdx) != 1 {
@@ -183,7 +183,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 		listItem := matches[0]
-		if logItem.ptr != listItem {
+		if logItem.listItemID != listItem.id {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -213,7 +213,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the new line")
 		}
 
-		if logItem2.ptr != listItem2 {
+		if logItem2.listItemID != listItem2.id {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -234,7 +234,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		if logItem3.ptr != listItem2 {
+		if logItem3.listItemID != listItem2.id {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -257,7 +257,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		if logItem4.ptr != listItem {
+		if logItem4.listItemID != listItem.id {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -282,7 +282,6 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		//runtime.Breakpoint()
 		err = repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
@@ -300,6 +299,7 @@ func TestTransactionUndo(t *testing.T) {
 		if len(matches) != 2 {
 			t.Errorf("Undo should have added the second original item back in")
 		}
+		//runtime.Breakpoint()
 		if matches[1].Line != line2 {
 			t.Errorf("List item should now have the original line")
 		}

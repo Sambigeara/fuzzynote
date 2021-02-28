@@ -81,11 +81,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		if item.id >= r.NextID {
 			r.NextID = item.id + 1
 		}
-		r.addUndoLog(addEvent, item, e.line, e.note)
-	case deleteEvent:
-		root, err = r.wal.del(root, item)
-		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
-		r.addUndoLog(deleteEvent, item, "", nil)
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -100,20 +95,13 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		if item != nil {
 			item, err = r.wal.update(e.line, e.note, item)
 		} else {
-			//addEl := e
-			//addEl.eventType = addEvent
-			//root, item, err = r.CallFunctionForEventLog(root, e)
-
-			// TODO refactor - this is currently copied from above to avoid the extra eventLog creation
-			root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
-			item.id = e.listItemID
-			r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
-			//r.NextID++
-			if item.id >= r.NextID {
-				r.NextID = item.id + 1
-			}
-			r.addUndoLog(addEvent, item, e.line, e.note)
+			addEl := e
+			addEl.eventType = addEvent
+			root, item, err = r.CallFunctionForEventLog(root, e)
 		}
+	case deleteEvent:
+		root, err = r.wal.del(root, item)
+		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
 	case moveUpEvent:
 		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
@@ -122,7 +110,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		newChild := targetItem.child
 		newParent := targetItem
 		root, err = r.wal.moveItem(root, item, newChild, newParent)
-		r.addUndoLog(moveUpEvent, item, "", nil)
 	case moveDownEvent:
 		if targetItem == nil {
 			return root, nil, nil
@@ -130,13 +117,10 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		newChild := targetItem
 		newParent := targetItem.parent
 		root, err = r.wal.moveItem(root, item, newChild, newParent)
-		r.addUndoLog(moveDownEvent, item, "", nil)
 	case showEvent:
 		err = r.wal.setVisibility(item, true)
-		r.addUndoLog(showEvent, item, "", nil)
 	case hideEvent:
 		err = r.wal.setVisibility(item, false)
-		r.addUndoLog(hideEvent, item, "", nil)
 	}
 	// TODO make this better
 	// Callback adds to the cursor movement channel to be actioned by the client
