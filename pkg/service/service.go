@@ -79,6 +79,7 @@ type DBListRepo struct {
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
 	EventQueue         chan *eventLog
+	eventProcessor     func(*eventLog)
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -109,7 +110,7 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootDir string) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
-	return &DBListRepo{
+	r := DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
 		wal:                NewWal(rootDir),
@@ -117,6 +118,10 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 		latestFileSchemaID: fileSchemaID(3),
 		EventQueue:         make(chan *eventLog),
 	}
+	r.eventProcessor = func(e *eventLog) {
+		r.EventQueue <- e
+	}
+	return &r
 }
 
 func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid, callback func()) eventLog {
@@ -133,9 +138,11 @@ func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine str
 	}
 }
 
-func (r *DBListRepo) AddLog(el eventLog) {
-	// Append to log
-	*r.wal.log = append(*r.wal.log, el)
+func (r *DBListRepo) ProcessEventLog(e *eventLog) error {
+	*r.wal.log = append(*r.wal.log, *e)
+	var err error
+	r.Root, _, err = r.CallFunctionForEventLog(r.Root, *e)
+	return err
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
@@ -158,7 +165,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int, callback func()) er
 		newUUID = childItem.originUUID
 	}
 	el := r.getLog(addEvent, r.NextID, childID, line, note, newUUID, callback)
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return nil
 }
 
@@ -177,7 +184,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int, callback func())
 
 	el := r.getLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID, callback)
 	var err error
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return err
 }
 
@@ -191,7 +198,7 @@ func (r *DBListRepo) Delete(idx int, callback func()) error {
 
 	el := r.getLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID, callback)
 	var err error
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return err
 }
 
@@ -217,7 +224,7 @@ func (r *DBListRepo) MoveUp(idx int, callback func()) error {
 
 	// There's no point in moving if there's nothing to move to
 	el := r.getLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return nil
 }
 
@@ -238,7 +245,7 @@ func (r *DBListRepo) MoveDown(idx int, callback func()) error {
 	}
 
 	el := r.getLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return nil
 }
 
@@ -257,7 +264,7 @@ func (r *DBListRepo) ToggleVisibility(idx int, callback func()) error {
 		evType = hideEvent
 	}
 	el := r.getLog(evType, listItem.id, 0, "", nil, listItem.originUUID, callback)
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return nil
 }
 
@@ -273,7 +280,7 @@ func (r *DBListRepo) Undo(callback func()) error {
 
 		el := r.getLog(oppositeEvent[uel.eventType], uel.ptr.id, targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, callback)
 		var err error
-		r.EventQueue <- &el
+		r.eventProcessor(&el)
 		r.eventLogger.curIdx--
 		return err
 	}
@@ -292,7 +299,7 @@ func (r *DBListRepo) Redo(callback func()) error {
 
 		el := r.getLog(uel.eventType, uel.ptr.id, targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, callback)
 		var err error
-		r.EventQueue <- &el
+		r.eventProcessor(&el)
 		r.eventLogger.curIdx++
 		return err
 	}
@@ -381,6 +388,6 @@ func (r *DBListRepo) ScheduleCursorMove(callback func()) error {
 		eventType: cursorMoveEvent,
 		callback:  callback,
 	}
-	r.EventQueue <- &el
+	r.eventProcessor(&el)
 	return nil
 }

@@ -8,11 +8,11 @@ import (
 
 func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo on empty db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -29,12 +29,12 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, 0, func() {})
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
@@ -54,7 +54,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The event logger index should increment to 1")
 		}
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,17 +77,17 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, 0, func() {})
 
 		updatedLine := "Updated item"
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
-		repo.Update(updatedLine, &[]byte{}, 0)
+		repo.Update(updatedLine, &[]byte{}, 0, func() {})
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -115,7 +115,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should have the updated line")
 		}
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +136,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		err = repo.Undo()
+		err = repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,12 +158,12 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, 0, func() {})
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
@@ -188,7 +188,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		line2 := "Another item"
-		repo.Add(line2, nil, 1)
+		repo.Add(line2, nil, 1, func() {})
 		repo.Match([][]rune{}, true)
 		matches = repo.matchListItems
 		idx := 1
@@ -217,7 +217,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		repo.Delete(idx)
+		repo.Delete(idx, func() {})
 
 		if len(repo.eventLogger.log) != 4 {
 			t.Errorf("Event log should have one null and three real events in it")
@@ -238,7 +238,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		repo.Delete(0)
+		repo.Delete(0, func() {})
 		repo.Match([][]rune{}, true)
 		matches = repo.matchListItems
 
@@ -261,7 +261,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,7 +283,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		//runtime.Breakpoint()
-		err = repo.Undo()
+		err = repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +304,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		err = repo.Redo()
+		err = repo.Redo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -326,11 +326,11 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Add("", nil, 0)
+		repo.Add("", nil, 0, func() {})
 
 		logItem := repo.eventLogger.log[1]
 		if logItem.eventType != addEvent {
@@ -341,7 +341,7 @@ func TestTransactionUndo(t *testing.T) {
 		matches := repo.matchListItems
 
 		newLine := "a"
-		repo.Update(newLine, &[]byte{}, 0)
+		repo.Update(newLine, &[]byte{}, 0, func() {})
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -360,7 +360,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the new line")
 		}
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,7 +379,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 		//fmt.Println(repo.eventLogger.curIdx)
 
-		err = repo.Redo()
+		err = repo.Redo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -400,12 +400,12 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add line, Delete line, Undo, delete character, Undo", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
 		originalLine := "Original line"
-		repo.Add(originalLine, nil, 0)
+		repo.Add(originalLine, nil, 0, func() {})
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have a nullEvent and addEvent in it")
@@ -416,7 +416,7 @@ func TestTransactionUndo(t *testing.T) {
 
 		repo.Match([][]rune{}, true)
 
-		repo.Delete(0)
+		repo.Delete(0, func() {})
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -431,7 +431,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to one")
 		}
 
-		err := repo.Undo()
+		err := repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,7 +450,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		newLine := "Updated line"
-		repo.Update(newLine, &[]byte{}, 0)
+		repo.Update(newLine, &[]byte{}, 0, func() {})
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have the nullEvent, addEvent and overriding updateEvent")
@@ -462,7 +462,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to 2")
 		}
 
-		err = repo.Undo()
+		err = repo.Undo(func() {})
 		if err != nil {
 			t.Fatal(err)
 		}

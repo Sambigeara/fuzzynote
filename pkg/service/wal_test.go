@@ -50,7 +50,7 @@ func TestEventEquality(t *testing.T) {
 
 func TestWalMerge(t *testing.T) {
 	t.Run("Start empty db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		f, _ := os.Create(rootPath)
 		defer f.Close()
@@ -67,7 +67,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Load from primary.db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		f, _ := os.Create(rootPath)
 		defer f.Close()
@@ -130,7 +130,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Load from primary.db with hidden", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		f, _ := os.Create(rootPath)
 		defer f.Close()
@@ -199,7 +199,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Single local WAL merge", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
@@ -275,7 +275,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Two WAL file merge", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
@@ -433,7 +433,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
@@ -523,7 +523,7 @@ func TestWalMerge(t *testing.T) {
 
 		// Save and reload to ensure consistency in event log after write and read to/from disk
 		repo.Save()
-		repo = NewDBListRepo(rootDir)
+		repo = NewMockDBListRepo(rootDir)
 		//runtime.Breakpoint()
 		repo.Load()
 
@@ -555,7 +555,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatal("Root shoud equal Root.parent.child")
 		}
 
-		repo.Delete(1)
+		repo.Delete(1, func() {})
 
 		preSaveLog = *repo.wal.log
 
@@ -598,7 +598,7 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Two WAL file duplicate merge, Delete item in one, Update same in other", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewMockDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)

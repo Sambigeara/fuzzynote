@@ -76,9 +76,7 @@ func main() {
 		for {
 			select {
 			case el := <-listRepo.EventQueue:
-				var err error
-				listRepo.AddLog(*el)
-				listRepo.Root, _, err = listRepo.CallFunctionForEventLog(listRepo.Root, *el)
+				err := listRepo.ProcessEventLog(el)
 				if err != nil {
 					return
 				}
