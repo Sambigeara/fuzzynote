@@ -78,15 +78,24 @@ func main() {
 			case el := <-listRepo.EventQueue:
 				err := listRepo.ProcessEventLog(el)
 				if err != nil {
+					log.Fatalf("Failed to process event log: %v", err)
 					return
 				}
 			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
-				listRepo.Refresh(listItem, nil, false)
+				err := listRepo.Refresh(listItem, nil, false)
+				if err != nil {
+					log.Fatalf("Failed on partial sync: %v", err)
+					return
+				}
 				cursorEvents <- &client.OffsetKey{}
 			case <-fullRefreshTicker.C:
 				var listItem *service.ListItem
-				listRepo.Refresh(listItem, nil, true)
+				err := listRepo.Refresh(listItem, nil, true)
+				if err != nil {
+					log.Fatalf("Failed on full sync: %v", err)
+					return
+				}
 				cursorEvents <- &client.OffsetKey{}
 			}
 		}
