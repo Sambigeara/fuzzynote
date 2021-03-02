@@ -21,6 +21,7 @@ var oppositeEvent = map[eventType]eventType{
 
 type undoEventLog struct {
 	uuid             uuid
+	targetUUID       uuid
 	eventType        eventType
 	listItemID       uint64
 	targetListItemID uint64
@@ -48,9 +49,10 @@ func NewDbEventLogger() *DbEventLogger {
 	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e eventType, listItemID uint64, targetListItemID uint64, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
+func (r *DBListRepo) addUndoLog(e eventType, listItemID uint64, targetListItemID uint64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
 	ev := undoEventLog{
-		uuid:             r.wal.uuid,
+		uuid:             originUUID,
+		targetUUID:       targetUUID,
 		eventType:        e,
 		listItemID:       listItemID,
 		targetListItemID: targetListItemID,

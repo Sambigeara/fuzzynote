@@ -42,11 +42,12 @@ type Wal struct {
 	// log represents a fresh set of events (unique from the historical log below)
 	log *[]eventLog
 	// fullLog is a historical log of events
-	fullLog           *[]eventLog
-	listItemTracker   map[string]*ListItem
-	walPathPattern    string
-	latestWalSchemaID uint16
-	syncFilePath      string
+	fullLog              *[]eventLog
+	listItemTracker      map[string]*ListItem
+	processedPartialWals map[string]struct{}
+	walPathPattern       string
+	latestWalSchemaID    uint16
+	syncFilePath         string
 }
 
 func generateUUID() uuid {
@@ -55,13 +56,14 @@ func generateUUID() uuid {
 
 func NewWal(rootDir string) *Wal {
 	return &Wal{
-		uuid:              generateUUID(),
-		walPathPattern:    path.Join(rootDir, walFilePattern),
-		latestWalSchemaID: latestWalSchemaID,
-		log:               &[]eventLog{},
-		fullLog:           &[]eventLog{},
-		listItemTracker:   make(map[string]*ListItem),
-		syncFilePath:      path.Join(rootDir, syncFile),
+		uuid:                 generateUUID(),
+		walPathPattern:       path.Join(rootDir, walFilePattern),
+		latestWalSchemaID:    latestWalSchemaID,
+		log:                  &[]eventLog{},
+		fullLog:              &[]eventLog{},
+		listItemTracker:      make(map[string]*ListItem),
+		processedPartialWals: make(map[string]struct{}),
+		syncFilePath:         path.Join(rootDir, syncFile),
 	}
 }
 
@@ -124,9 +126,10 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 	return &r
 }
 
-func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid, callback func()) eventLog {
+func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid, callback func()) eventLog {
 	return eventLog{
 		uuid:             originUUID,
+		targetUUID:       targetUUID,
 		unixNanoTime:     time.Now().UnixNano(),
 		eventType:        e,
 		listItemID:       id,
@@ -134,12 +137,13 @@ func (r *DBListRepo) getLog(e eventType, id uint64, targetID uint64, newLine str
 		line:             newLine,
 		note:             newNote,
 		callback:         callback,
-		//curRoot:          r.Root,
 	}
 }
 
 func (r *DBListRepo) ProcessEventLog(e *eventLog) error {
-	*r.wal.log = append(*r.wal.log, *e)
+	if e.eventType != cursorMoveEvent {
+		*r.wal.log = append(*r.wal.log, *e)
+	}
 	var err error
 	r.Root, _, err = r.CallFunctionForEventLog(r.Root, *e)
 	return err
@@ -165,9 +169,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int, callback func()) er
 		newUUID = childItem.originUUID
 	}
 	newID := r.NextID
-	el := r.getLog(addEvent, newID, childID, line, note, newUUID, callback)
+	el := r.getLog(addEvent, newID, childID, line, note, newUUID, newUUID, callback)
 	r.eventProcessor(&el)
-	r.addUndoLog(addEvent, newID, childID, line, note, line, note)
+	r.addUndoLog(addEvent, newID, childID, newUUID, newUUID, line, note, line, note)
 	return nil
 }
 
@@ -180,8 +184,8 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int, callback func())
 	listItem := r.matchListItems[idx]
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
-	r.addUndoLog(updateEvent, listItem.id, 0, listItem.Line, listItem.Note, line, note)
-	el := r.getLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID, callback)
+	r.addUndoLog(updateEvent, listItem.id, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
+	el := r.getLog(updateEvent, listItem.id, 0, line, note, listItem.originUUID, uuid(0), callback)
 	r.eventProcessor(&el)
 	return nil
 }
@@ -195,12 +199,14 @@ func (r *DBListRepo) Delete(idx int, callback func()) error {
 	listItem := r.matchListItems[idx]
 
 	var targetListItemID uint64
+	var targetUUID uuid
 	if listItem.child != nil {
 		targetListItemID = listItem.child.id
+		targetUUID = listItem.child.originUUID
 	}
-	el := r.getLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID, callback)
+	el := r.getLog(deleteEvent, listItem.id, 0, "", nil, listItem.originUUID, uuid(0), callback)
 	r.eventProcessor(&el)
-	r.addUndoLog(deleteEvent, listItem.id, targetListItemID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
+	r.addUndoLog(deleteEvent, listItem.id, targetListItemID, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
 	return nil
 }
 
@@ -214,21 +220,24 @@ func (r *DBListRepo) MoveUp(idx int, callback func()) error {
 	listItem := r.matchListItems[idx]
 
 	var targetItemID uint64
+	var targetUUID uuid
 	if listItem.matchChild != nil {
 		targetItemID = listItem.matchChild.id
+		targetUUID = listItem.matchChild.originUUID
 	} else if listItem.child != nil {
 		// Cover nil child case (e.g. attempting to move top of list up)
 
 		// matchChild will only be null in this context on initial startup with loading
 		// from the WAL
 		targetItemID = listItem.child.id
+		targetUUID = listItem.child.originUUID
 	}
 
-	el := r.getLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
+	el := r.getLog(moveUpEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, targetUUID, callback)
 	r.eventProcessor(&el)
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
-		r.addUndoLog(moveUpEvent, listItem.id, targetItemID, "", nil, "", nil)
+		r.addUndoLog(moveUpEvent, listItem.id, targetItemID, listItem.originUUID, targetUUID, "", nil, "", nil)
 	}
 	return nil
 }
@@ -243,17 +252,20 @@ func (r *DBListRepo) MoveDown(idx int, callback func()) error {
 	listItem := r.matchListItems[idx]
 
 	var targetItemID uint64
+	var targetUUID uuid
 	if listItem.matchParent != nil {
 		targetItemID = listItem.matchParent.id
+		targetUUID = listItem.matchParent.originUUID
 	} else if listItem.parent != nil {
 		targetItemID = listItem.parent.id
+		targetUUID = listItem.parent.originUUID
 	}
 
-	el := r.getLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, callback)
+	el := r.getLog(moveDownEvent, listItem.id, targetItemID, "", nil, listItem.originUUID, targetUUID, callback)
 	r.eventProcessor(&el)
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
-		r.addUndoLog(moveDownEvent, listItem.id, targetItemID, "", nil, "", nil)
+		r.addUndoLog(moveDownEvent, listItem.id, targetItemID, listItem.originUUID, targetUUID, "", nil, "", nil)
 	}
 	return nil
 }
@@ -269,12 +281,12 @@ func (r *DBListRepo) ToggleVisibility(idx int, callback func()) error {
 	var evType eventType
 	if listItem.IsHidden {
 		evType = showEvent
-		r.addUndoLog(showEvent, listItem.id, 0, "", nil, "", nil)
+		r.addUndoLog(showEvent, listItem.id, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
 	} else {
 		evType = hideEvent
-		r.addUndoLog(hideEvent, listItem.id, 0, "", nil, "", nil)
+		r.addUndoLog(hideEvent, listItem.id, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
 	}
-	el := r.getLog(evType, listItem.id, 0, "", nil, listItem.originUUID, callback)
+	el := r.getLog(evType, listItem.id, 0, "", nil, listItem.originUUID, uuid(0), callback)
 	r.eventProcessor(&el)
 	return nil
 }
@@ -284,7 +296,7 @@ func (r *DBListRepo) Undo(callback func()) error {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
 
-		el := r.getLog(oppositeEvent[uel.eventType], uel.listItemID, uel.targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, callback)
+		el := r.getLog(oppositeEvent[uel.eventType], uel.listItemID, uel.targetListItemID, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID, callback)
 		var err error
 		r.eventProcessor(&el)
 		r.eventLogger.curIdx--
@@ -298,7 +310,7 @@ func (r *DBListRepo) Redo(callback func()) error {
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
 
-		el := r.getLog(uel.eventType, uel.listItemID, uel.targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, callback)
+		el := r.getLog(uel.eventType, uel.listItemID, uel.targetListItemID, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID, callback)
 		var err error
 		r.eventProcessor(&el)
 		r.eventLogger.curIdx++

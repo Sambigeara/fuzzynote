@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	"unsafe"
+	//"unsafe"
 	//"errors"
 	//"runtime"
 
@@ -20,10 +20,22 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 1
+const latestWalSchemaID uint16 = 2
 
+// TODO these don't need to be public attributes
 type walItemSchema1 struct {
 	UUID             uuid
+	ListItemID       uint64
+	TargetListItemID uint64
+	UnixTime         int64
+	EventType        eventType
+	LineLength       uint64
+	NoteLength       uint64
+}
+
+type walItemSchema2 struct {
+	UUID             uuid
+	TargetUUID       uuid
 	ListItemID       uint64
 	TargetListItemID uint64
 	UnixTime         int64
@@ -49,6 +61,7 @@ const (
 type eventLog struct {
 	uuid             uuid
 	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
+	targetUUID       uuid
 	targetListItemID uint64
 	unixNanoTime     int64
 	eventType        eventType
@@ -60,7 +73,7 @@ type eventLog struct {
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
+	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemID)]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
@@ -240,6 +253,7 @@ func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, u
 		return root, nextID, nil
 	}
 
+	//runtime.Breakpoint()
 	for _, e := range fullLog {
 		var item *ListItem
 		// Stub out the cursor callback
@@ -296,38 +310,70 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 	return &primaryLogs, nil
 }
 
-func getNextEventLogFromWalFile(f *os.File) (*eventLog, error) {
-	item := walItemSchema1{}
+func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
 	el := eventLog{}
-
-	err := binary.Read(f, binary.LittleEndian, &item)
-	if err != nil {
-		return nil, err
-	}
-
-	// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
-	el.listItemID = item.ListItemID
-	el.targetListItemID = item.TargetListItemID
-	el.unixNanoTime = item.UnixTime
-	el.uuid = item.UUID
-	el.eventType = item.EventType
-
-	line := make([]byte, item.LineLength)
-	err = binary.Read(f, binary.LittleEndian, &line)
-	if err != nil {
-		return nil, err
-	}
-	el.line = string(line)
-
-	if item.NoteLength > 0 {
-		note := make([]byte, item.NoteLength)
-		err = binary.Read(f, binary.LittleEndian, &note)
+	if schemaVersionID == uint16(1) {
+		item := walItemSchema1{}
+		err := binary.Read(f, binary.LittleEndian, &item)
 		if err != nil {
 			return nil, err
 		}
-		el.note = &note
-	}
+		// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
+		el.listItemID = item.ListItemID
+		el.targetListItemID = item.TargetListItemID
+		el.unixNanoTime = item.UnixTime
+		el.uuid = item.UUID
+		el.eventType = item.EventType
 
+		line := make([]byte, item.LineLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(f, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
+	} else if schemaVersionID == uint16(2) {
+		item := walItemSchema2{}
+		err := binary.Read(f, binary.LittleEndian, &item)
+		if err != nil {
+			return nil, err
+		}
+		el.listItemID = item.ListItemID
+		el.targetListItemID = item.TargetListItemID
+		el.unixNanoTime = item.UnixTime
+		el.uuid = item.UUID
+		el.targetUUID = item.TargetUUID
+		el.eventType = item.EventType
+
+		// TODO remove, this is roughly covering a broken previous build
+		if el.targetUUID == uuid(0) {
+			el.targetUUID = item.UUID
+		}
+
+		line := make([]byte, item.LineLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(f, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
+	}
 	return &el, nil
 }
 
@@ -344,8 +390,9 @@ func flush(f *os.File, walLog *[]eventLog) error {
 		if item.note != nil {
 			lenNote = uint64(len(*(item.note)))
 		}
-		i := walItemSchema1{
+		i := walItemSchema2{
 			UUID:             item.uuid,
+			TargetUUID:       item.targetUUID,
 			ListItemID:       item.listItemID,
 			TargetListItemID: item.targetListItemID,
 			UnixTime:         item.unixNanoTime,
@@ -375,11 +422,22 @@ func flush(f *os.File, walLog *[]eventLog) error {
 func (w *Wal) buildFromFile(f *os.File) ([]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
-	f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
+	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
 	el := []eventLog{}
+	var walSchemaVersionID uint16
+	err := binary.Read(f, binary.LittleEndian, &walSchemaVersionID)
+	if err != nil {
+		if err == io.EOF {
+			return el, nil
+		} else {
+			log.Fatal(err)
+			return el, err
+		}
+	}
+
 	for {
-		e, err := getNextEventLogFromWalFile(f)
+		e, err := getNextEventLogFromWalFile(f, walSchemaVersionID)
 		if err != nil {
 			switch err {
 			case io.EOF:
@@ -495,7 +553,6 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	localWal := *w.log
 	fullLog := *w.fullLog
 
-	//runtime.Breakpoint()
 	if fullSync {
 		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
 		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
@@ -522,6 +579,24 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		return nil, nil, err
 	}
 
+	// TODO refactor
+	// On partial syncs, to avoid file reads completely, iterate over the names, and if
+	// they're all already processed, return
+	if !fullSync && len(fileNames) > 1 && len(localWal) == 0 {
+		returnEarly := true
+		i := 0
+		for i < len(fileNames) && returnEarly {
+			fileName := fileNames[i]
+			if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
+				returnEarly = false
+			}
+			i++
+		}
+		if returnEarly {
+			return w.log, w.fullLog, nil
+		}
+	}
+
 	mergedWal := []eventLog{}
 
 	// Load all WAL files into arrays
@@ -535,6 +610,8 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 			if err != nil {
 				return nil, nil, err
 			}
+			// Add to the processed cache
+			w.processedPartialWals[fileName] = struct{}{}
 			// Merge all WALs
 			mergedWal = w.merge(&mergedWal, &wal)
 			f.Close()
