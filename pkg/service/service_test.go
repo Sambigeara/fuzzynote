@@ -87,6 +87,7 @@ func TestServiceStoreLoad(t *testing.T) {
 			}
 		}
 
+		//runtime.Breakpoint()
 		err := repo.Load()
 		if err != nil {
 			t.Fatalf("Load failed when loading to file schema %d: %s", repo.latestFileSchemaID, err)
@@ -578,7 +579,6 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
-		//runtime.Breakpoint()
 		repo := NewMockDBListRepo(rootDir)
 		repo.Add("Third", nil, 0, func() {})
 		repo.Add("Second", nil, 0, func() {})

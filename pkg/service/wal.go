@@ -288,6 +288,7 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 		}
 		el := eventLog{
 			uuid:             uuid,
+			targetUUID:       uuid,
 			listItemID:       item.id,
 			targetListItemID: targetListItemID,
 			unixNanoTime:     now,
