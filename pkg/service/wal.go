@@ -442,7 +442,7 @@ func (w *Wal) buildFromFile(f *os.File) ([]eventLog, error) {
 			switch err {
 			case io.EOF:
 				return el, nil
-			case io.ErrUnexpectedEOF:
+			//case io.ErrUnexpectedEOF:
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return el, err
