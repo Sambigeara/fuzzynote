@@ -312,6 +312,8 @@ func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
 
 func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
 	el := eventLog{}
+	// TODO this is a hacky fix. Instantiate the note just in case
+	el.note = &[]byte{}
 	if schemaVersionID == uint16(1) {
 		item := walItemSchema1{}
 		err := binary.Read(f, binary.LittleEndian, &item)
