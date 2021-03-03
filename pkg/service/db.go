@@ -31,10 +31,11 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 
 func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem, fullSync bool) error {
 	var err error
-	if r.wal.log, r.wal.fullLog, err = r.wal.sync(fullSync); err != nil {
+	var log, fullLog *[]eventLog
+	if log, fullLog, err = r.wal.sync(fullSync); err != nil {
 		return err
 	}
-	if r.Root, r.NextID, err = r.replay(root, primaryRoot); err != nil {
+	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, primaryRoot, log, fullLog); err != nil {
 		return err
 	}
 	return nil

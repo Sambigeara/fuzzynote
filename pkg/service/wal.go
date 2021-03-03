@@ -229,7 +229,7 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, uint64, error) {
+func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
 	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
 	// and then set the global NextID afterwards, to avoid wastage.
 	// TODO look at this??
@@ -239,22 +239,22 @@ func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, u
 	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
 	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
 	// events
-	if len(r.wal.merge(r.wal.fullLog, r.wal.log)) == 0 {
+	if len(*(merge(fullLog, log))) == 0 {
 		var err error
-		r.wal.fullLog, err = buildWalFromPrimary(r.wal.uuid, primaryRoot)
+		fullLog, err = buildWalFromPrimary(r.wal.uuid, primaryRoot)
 		if err != nil {
-			return root, nextID, err
+			return root, nextID, log, fullLog, err
 		}
 	}
 
-	fullLog := r.wal.merge(r.wal.fullLog, r.wal.log)
+	fullLog = merge(fullLog, log)
 	// If still no events, return nil
-	if len(fullLog) == 0 {
-		return root, nextID, nil
+	if len(*fullLog) == 0 {
+		return root, nextID, log, fullLog, nil
 	}
 
 	//runtime.Breakpoint()
-	for _, e := range fullLog {
+	for _, e := range *fullLog {
 		var item *ListItem
 		// Stub out the cursor callback
 		// TODO move to deserialisation?
@@ -269,7 +269,7 @@ func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem) (*ListItem, u
 		}
 	}
 
-	return root, nextID, nil
+	return root, nextID, log, fullLog, nil
 }
 
 func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
@@ -475,7 +475,7 @@ func checkEquality(event1 eventLog, event2 eventLog) int {
 	return eventsEqual
 }
 
-func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) []eventLog {
+func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	//if len(*wal1) == 0 {
 	//    return wal2
 	//} else if len(*wal2) == 0 {
@@ -525,7 +525,7 @@ func (w *Wal) merge(wal1 *[]eventLog, wal2 *[]eventLog) []eventLog {
 			}
 		}
 	}
-	return mergedEl
+	return &mergedEl
 }
 
 // TODO decouple this from the Wal as it should almost be a pure function
@@ -574,7 +574,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 			}
 		}
 
-		localWal = w.merge(&fullLog, &localWal)
+		localWal = *(merge(&fullLog, &localWal))
 	}
 
 	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
@@ -616,7 +616,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 			// Add to the processed cache
 			w.processedPartialWals[fileName] = struct{}{}
 			// Merge all WALs
-			mergedWal = w.merge(&mergedWal, &wal)
+			mergedWal = *(merge(&mergedWal, &wal))
 			f.Close()
 			if fullSync {
 				os.Remove(fileName)
@@ -635,7 +635,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		}
 	}
 
-	mergedWal = w.merge(&mergedWal, &localWal)
+	mergedWal = *(merge(&mergedWal, &localWal))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
