@@ -26,8 +26,8 @@ type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
 	Update(line string, note *[]byte, idx int) error
 	Delete(idx int) error
-	MoveUp(idx int) error
-	MoveDown(idx int) error
+	MoveUp(idx int) (bool, error)
+	MoveDown(idx int) (bool, error)
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
@@ -193,9 +193,9 @@ func (r *DBListRepo) Delete(idx int) error {
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveUp(idx int) error {
+func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return false, errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -218,15 +218,16 @@ func (r *DBListRepo) MoveUp(idx int) error {
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
 		r.addUndoLog(moveUpEvent, listItem.id, targetItemID, listItem.originUUID, targetUUID, "", nil, "", nil)
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveDown(idx int) error {
+func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return false, errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -245,8 +246,9 @@ func (r *DBListRepo) MoveDown(idx int) error {
 	// There's no point in moving if there's nothing to move to
 	if targetItemID != 0 {
 		r.addUndoLog(moveDownEvent, listItem.id, targetItemID, listItem.originUUID, targetUUID, "", nil, "", nil)
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
