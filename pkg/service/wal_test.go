@@ -445,8 +445,6 @@ func TestWalMerge(t *testing.T) {
 			oldLogItem := preSaveLog[i]
 			newLogItem := (*repo.wal.fullLog)[i]
 			// `cmp.Equal` doesn't like function comparisons but they're not relevant for this test, so nullify
-			oldLogItem.callback = nil
-			newLogItem.callback = nil
 			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
 				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
 			}

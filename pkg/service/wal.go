@@ -67,7 +67,6 @@ type eventLog struct {
 	line             string
 	note             *[]byte
 	//curRoot          *ListItem
-	callback func()
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
@@ -224,34 +223,18 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 }
 
 func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
-	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
-	// and then set the global NextID afterwards, to avoid wastage.
-	// TODO look at this??
-	nextID := uint64(1)
-
 	fullLog = merge(fullLog, log)
 	// If still no events, return nil
 	if len(*fullLog) == 0 {
-		return root, nextID, log, fullLog, nil
+		return root, uint64(1), log, fullLog, nil
 	}
 
 	//runtime.Breakpoint()
 	for _, e := range *fullLog {
-		var item *ListItem
-		// Stub out the cursor callback
-		// TODO move to deserialisation?
-		e.callback = func() {}
-		root, item, _ = r.CallFunctionForEventLog(root, e)
-
-		// Item can be nil in the distributed merge orphaned item cases
-		if item != nil {
-			if nextID <= item.id {
-				nextID = item.id + 1
-			}
-		}
+		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
-	return root, nextID, log, fullLog, nil
+	return root, r.NextID, log, fullLog, nil
 }
 
 func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
