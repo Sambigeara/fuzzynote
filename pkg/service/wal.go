@@ -417,7 +417,7 @@ func flush(f *os.File, walLog *[]eventLog) error {
 	return nil
 }
 
-func (w *Wal) buildFromFile(f *os.File) ([]eventLog, error) {
+func buildFromFile(f *os.File) ([]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
@@ -535,12 +535,6 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		log.Fatalf("Error creating wal sync lock: %s\n", err)
 	}
 	defer mutFile.Close()
-	//mutFile := lockedfile.MutexAt(w.syncFilePath)
-	//unlockFunc, err := mutFile.Lock()
-	//defer unlockFunc()
-	//if err != nil {
-	//    log.Fatalf("Error creating wal sync lock: %s\n", err)
-	//}
 
 	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
 
@@ -561,9 +555,8 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 
 		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
 		// The read will only be required on Load, not on Save (when we close the app)
-		// TODO decouple `sync` into `Load` and `Finish` functions
 		if len(fullLog) == 0 {
-			fullLog, err = w.buildFromFile(localWalFile)
+			fullLog, err = buildFromFile(localWalFile)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -599,12 +592,13 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 
 	// Load all WAL files into arrays
 	for _, fileName := range fileNames {
+		// Avoid localWal
 		if fileName != localWalFilePath {
 			f, err := os.Open(fileName)
 			if err != nil {
 				return nil, nil, err
 			}
-			wal, err := w.buildFromFile(f)
+			wal, err := buildFromFile(f)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -650,7 +644,6 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	} else {
 		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
 		// to disk
-		//go func() {
 		if flushPartial {
 			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
 			partialWalFile, err := os.Create(randomWal)
@@ -662,6 +655,5 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 			err = flush(partialWalFile, w.log)
 		}
 		return &mergedWal, &fullLog, nil
-		//}()
 	}
 }
