@@ -27,21 +27,20 @@ const (
 )
 
 type Terminal struct {
-	db                    service.ListRepo
-	search                [][]rune
-	matches               []service.MatchItem
-	curItem               *service.MatchItem // The currently selected item
-	S                     tcell.Screen
-	style                 tcell.Style
-	w, h                  int
-	curX, curY            int // Cur "screen" index, not related to matched item lists
-	vertOffset            int // The index of the first displayed item in the match set
-	horizOffset           int // The index of the first displayed char in the curItem
-	showHidden            bool
-	selectedItems         map[int]string // struct{} is more space efficient than bool
-	copiedItem            *service.MatchItem
-	hiddenMatchPrefix     string // The common string that we want to truncate from each line
-	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
+	db                service.ListRepo
+	search            [][]rune
+	matches           []service.MatchItem
+	curItem           *service.MatchItem // The currently selected item
+	S                 tcell.Screen
+	style             tcell.Style
+	w, h              int
+	curX, curY        int // Cur "screen" index, not related to matched item lists
+	vertOffset        int // The index of the first displayed item in the match set
+	horizOffset       int // The index of the first displayed char in the curItem
+	showHidden        bool
+	selectedItems     map[int]string // struct{} is more space efficient than bool
+	copiedItem        *service.MatchItem
+	hiddenMatchPrefix string // The common string that we want to truncate from each line
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -258,9 +257,8 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 		// ignoring search operators
 		// Op needs to be case-insensitive, but must not mutate underlying line
 		if strings.HasPrefix(strings.ToLower(line), t.hiddenMatchPrefix) {
-			line = string([]rune(line)[len(t.hiddenMatchPrefix):])
+			line = string([]rune(line)[len([]byte(t.hiddenMatchPrefix)):])
 		}
-		//line = strings.TrimPrefix(line, t.hiddenMatchPrefix)
 		// If we strip the match prefix, and there is a space remaining, trim that too
 		line = strings.TrimPrefix(line, " ")
 
@@ -289,42 +287,22 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 	return nil
 }
 
-func (t *Terminal) getHiddenLinePrefix(keys [][]rune) (string, string) {
+func (t *Terminal) getHiddenLinePrefix(keys [][]rune) string {
 	// Only apply the trunaction on "closed" search groups (e.g. when the user has tabbed to
 	// the next one).
 
 	if len(keys) == 0 || (len(keys) == 1 && len(keys[0]) == 0) {
-		return "", ""
+		return ""
 	}
 
-	//keyArray := []string{}
-	//// We keep an array with the modifiers as well to allow us to return true lengths
-	//fullKeyArray := []string{}
-	//for _, key := range keys {
-	//    // Strip all trailing and leading spaces
-	//    // Ignore empty keys
-	//    key = []rune(strings.TrimSpace(string(key)))
-	//    if len(key) > 0 {
-	//        _, nChars := t.db.GetMatchPattern(key)
-	//        keyArray = append(keyArray, string(key[nChars:]))
-	//        fullKeyArray = append(fullKeyArray, string(key))
-	//    }
-	//}
-
-	//shortenedPrefix := fmt.Sprintf("%s ", strings.Join(keyArray, " "))
-	//fullPrefix := fmt.Sprintf("%s ", strings.Join(fullKeyArray, " "))
-
-	// The above joins all keys in the search group, but this causes numerous strange behaviours.
-	// For now, only operate on the first key.
+	// Only operate on the first key
 	key := keys[0]
 	_, nChars := t.db.GetMatchPattern(key)
 	trimmedKey := string(key[nChars:])
-	fullKey := string(key)
 
 	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
-	fullPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(fullKey)))
 
-	return shortenedPrefix, fullPrefix
+	return shortenedPrefix
 }
 
 func (t *Terminal) getSearchGroupIdxAndOffset() (int, int) {
@@ -386,13 +364,13 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// Only apply the prefix offset if the line starts with the prefix, other lines will
 	// match but not have the prefix truncated
 	offsetX := t.horizOffset + t.curX
-	lenHiddenMatchPrefix := len([]byte(t.hiddenMatchPrefix))
-	if t.curItem != nil && strings.HasPrefix(strings.ToLower(t.curItem.Line), strings.ToLower(t.hiddenMatchPrefix)) {
-		offsetX += lenHiddenMatchPrefix
+	lenHiddenMatchPrefix := 0
+	if t.curItem != nil &&
+		strings.HasPrefix(strings.ToLower(t.curItem.Line), t.hiddenMatchPrefix) {
+		lenHiddenMatchPrefix = len([]byte(t.hiddenMatchPrefix))
 	}
-
+	offsetX += lenHiddenMatchPrefix
 	var err error
-
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
 		switch ev.Key() {
@@ -416,11 +394,16 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 						searchStrings = append(searchStrings, string(group[nChars:]))
 					}
 				}
-				newString := fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+				newString := ""
+				if len(searchStrings) > 0 {
+					newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+				}
 
 				var err error
 				if t.curY == reservedTopLines-1 {
-					posDiff[0] -= len([]byte(t.hiddenFullMatchPrefix))
+					if len(t.search) > 0 {
+						posDiff[0] -= len([]byte(strings.TrimSpace(string(t.search[0])))) + 1
+					}
 				}
 				err = t.db.Add(newString, nil, t.curY)
 				if err != nil {
@@ -692,7 +675,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	}
 	t.S.Clear()
 
-	t.hiddenMatchPrefix, t.hiddenFullMatchPrefix = t.getHiddenLinePrefix(t.search)
+	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
 	// Handle any offsets that need to be accounted for due to unexpected search line mutations
 	// behind the scenes
@@ -780,7 +763,6 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 				t.horizOffset++
 			}
-			// len([]rune) rather than len(string) as some string chars are >1 bytes
 			newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
 			t.curX = min(newXIdx, t.w-1)                                                           // Prevent going out of range of the page
 		}
