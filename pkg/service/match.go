@@ -71,7 +71,7 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	return pattern, nChars
 }
 
-func (r *DBListRepo) parseOperatorGroups(sub string) string {
+func parseOperatorGroups(sub string) string {
 	// Match the op against any known operator (e.g. date) and parse if applicable.
 	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
 	now := time.Now()

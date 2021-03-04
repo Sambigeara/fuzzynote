@@ -20,13 +20,15 @@ var oppositeEvent = map[eventType]eventType{
 }
 
 type undoEventLog struct {
-	uuid      uuid
-	eventType eventType
-	ptr       *ListItem
-	undoLine  string
-	undoNote  *[]byte
-	redoLine  string
-	redoNote  *[]byte
+	uuid             uuid
+	targetUUID       uuid
+	eventType        eventType
+	listItemID       uint64
+	targetListItemID uint64
+	undoLine         string
+	undoNote         *[]byte
+	redoLine         string
+	redoNote         *[]byte
 }
 
 // DbEventLogger is used for in-mem undo/redo mechanism
@@ -39,7 +41,6 @@ type DbEventLogger struct {
 func NewDbEventLogger() *DbEventLogger {
 	el := undoEventLog{
 		eventType: nullEvent,
-		ptr:       nil,
 		undoLine:  "",
 		undoNote:  nil,
 		redoLine:  "",
@@ -48,15 +49,17 @@ func NewDbEventLogger() *DbEventLogger {
 	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e eventType, item *ListItem, newLine string, newNote *[]byte) error {
+func (r *DBListRepo) addUndoLog(e eventType, listItemID uint64, targetListItemID uint64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
 	ev := undoEventLog{
-		uuid:      r.wal.uuid,
-		eventType: e,
-		ptr:       item,
-		undoLine:  item.Line,
-		undoNote:  item.Note,
-		redoLine:  newLine,
-		redoNote:  newNote,
+		uuid:             originUUID,
+		targetUUID:       targetUUID,
+		eventType:        e,
+		listItemID:       listItemID,
+		targetListItemID: targetListItemID,
+		undoLine:         oldLine,
+		undoNote:         oldNote,
+		redoLine:         newLine,
+		redoNote:         newNote,
 	}
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten
