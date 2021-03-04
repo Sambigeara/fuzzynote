@@ -42,7 +42,6 @@ type Terminal struct {
 	copiedItem            *service.MatchItem
 	hiddenMatchPrefix     string // The common string that we want to truncate from each line
 	hiddenFullMatchPrefix string // The common string that we want to truncate from each line
-	pendingX, pendingY    int    // Aggregated async cursor movements to apply
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
