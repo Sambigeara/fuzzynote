@@ -55,7 +55,6 @@ const (
 	showEvent
 	hideEvent
 	deleteEvent
-	cursorMoveEvent
 )
 
 type eventLog struct {
@@ -79,8 +78,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
-	// However, skip this check for cursorMoveEvent, as they are a special case
-	if e.eventType != cursorMoveEvent && item == nil && e.eventType != addEvent && e.eventType != updateEvent {
+	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
 		return root, nil, nil
 	}
 
@@ -135,9 +133,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 	case hideEvent:
 		err = r.wal.setVisibility(item, false)
 	}
-	// TODO make this better
-	// Callback adds to the cursor movement channel to be actioned by the client
-	e.callback()
 	return root, item, err
 }
 

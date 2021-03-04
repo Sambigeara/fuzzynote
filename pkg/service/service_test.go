@@ -14,22 +14,6 @@ const rootDir string = "folder_to_delete"
 
 var rootPath = path.Join(rootDir, rootFileName)
 
-func NewMockDBListRepo(rootDir string) *DBListRepo {
-	rootPath := path.Join(rootDir, rootFileName)
-	r := DBListRepo{
-		rootPath:           rootPath,
-		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(rootDir),
-		NextID:             1,
-		latestFileSchemaID: fileSchemaID(3),
-		EventQueue:         make(chan *eventLog),
-	}
-	r.eventProcessor = func(e *eventLog) {
-		r.ProcessEventLog(e)
-	}
-	return &r
-}
-
 func clearUp(r *DBListRepo) {
 	os.Remove(rootPath)
 	os.Remove(fmt.Sprintf(r.wal.walPathPattern, r.wal.uuid))
@@ -50,7 +34,7 @@ func clearUp(r *DBListRepo) {
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Loads from file schema 1", func(t *testing.T) {
 		// Run for both schema type
-		repo := NewMockDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir)
 
 		os.Mkdir(rootDir, os.ModePerm)
 
@@ -112,7 +96,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 	})
 	t.Run("Stores to file and loads back", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir)
 
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
@@ -173,9 +157,9 @@ func TestServiceStoreLoad(t *testing.T) {
 }
 
 func TestServiceAdd(t *testing.T) {
-	repo := NewMockDBListRepo(rootDir)
-	repo.Add("Old existing created line", nil, 0, func() {})
-	repo.Add("New existing created line", nil, 0, func() {})
+	repo := NewDBListRepo(rootDir)
+	repo.Add("Old existing created line", nil, 0)
+	repo.Add("New existing created line", nil, 0)
 
 	item1 := repo.Root
 	item2 := repo.Root.parent
@@ -185,7 +169,7 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		err := repo.Add(newLine, nil, 0, func() {})
+		err := repo.Add(newLine, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,7 +221,7 @@ func TestServiceAdd(t *testing.T) {
 		oldLen := len(matches)
 		oldParent := matches[len(matches)-1]
 
-		err := repo.Add(newLine, nil, oldLen, func() {})
+		err := repo.Add(newLine, nil, oldLen)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +263,7 @@ func TestServiceAdd(t *testing.T) {
 		oldParent := item1.parent
 
 		newIdx := 2
-		err := repo.Add(newLine, nil, newIdx, func() {})
+		err := repo.Add(newLine, nil, newIdx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -306,10 +290,10 @@ func TestServiceAdd(t *testing.T) {
 	})
 
 	t.Run("Add new item to empty list", func(t *testing.T) {
-		repo := NewMockDBListRepo("test")
+		repo := NewDBListRepo("test")
 
 		newLine := "First item in list"
-		repo.Add(newLine, nil, 0, func() {})
+		repo.Add(newLine, nil, 0)
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -340,10 +324,10 @@ func TestServiceAdd(t *testing.T) {
 
 func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from head of list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
 
@@ -352,7 +336,7 @@ func TestServiceDelete(t *testing.T) {
 
 		repo.Match([][]rune{}, true)
 
-		err := repo.Delete(0, func() {})
+		err := repo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -383,10 +367,10 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
 
@@ -395,7 +379,7 @@ func TestServiceDelete(t *testing.T) {
 
 		repo.Match([][]rune{}, true)
 
-		err := repo.Delete(2, func() {})
+		err := repo.Delete(2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -422,10 +406,10 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
@@ -435,7 +419,7 @@ func TestServiceDelete(t *testing.T) {
 
 		repo.Match([][]rune{}, true)
 
-		err := repo.Delete(1, func() {})
+		err := repo.Delete(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -468,10 +452,10 @@ func TestServiceDelete(t *testing.T) {
 
 func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from bottom", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -484,7 +468,7 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches)-1, func() {})
+		err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -524,10 +508,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from middle", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -539,7 +523,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveUp(1, func() {})
+		err := repo.MoveUp(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -579,10 +563,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -594,7 +578,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveUp(0, func() {})
+		err := repo.MoveUp(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -617,10 +601,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from top", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -632,7 +616,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(0, func() {})
+		err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -672,10 +656,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from middle", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -687,7 +671,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(1, func() {})
+		err := repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -727,10 +711,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from bottom", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -743,7 +727,7 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		err := repo.MoveDown(len(matches)-1, func() {})
+		err := repo.MoveDown(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -766,10 +750,10 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -781,14 +765,14 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(0, func() {})
+		err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
 		repo.Match([][]rune{}, true)
-		err = repo.MoveDown(1, func() {})
+		err = repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -832,10 +816,10 @@ func TestServiceMove(t *testing.T) {
 }
 
 func TestServiceUpdate(t *testing.T) {
-	repo := NewMockDBListRepo(rootDir)
-	repo.Add("Third", nil, 0, func() {})
-	repo.Add("Second", nil, 0, func() {})
-	repo.Add("First", nil, 0, func() {})
+	repo := NewDBListRepo(rootDir)
+	repo.Add("Third", nil, 0)
+	repo.Add("Second", nil, 0)
+	repo.Add("First", nil, 0)
 
 	item2 := repo.Root.parent
 
@@ -846,7 +830,7 @@ func TestServiceUpdate(t *testing.T) {
 	repo.Match([][]rune{}, true)
 
 	expectedLine := "Oooo I'm new"
-	err := repo.Update(expectedLine, &[]byte{}, 1, func() {})
+	err := repo.Update(expectedLine, &[]byte{}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -866,12 +850,12 @@ func TestServiceUpdate(t *testing.T) {
 
 func TestServiceMatch(t *testing.T) {
 	t.Run("Full match items in list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Also not second", nil, 0, func() {})
-		repo.Add("Not second", nil, 0, func() {})
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Also not second", nil, 0)
+		repo.Add("Not second", nil, 0)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
@@ -942,12 +926,12 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Also not second", nil, 0, func() {})
-		repo.Add("Not second", nil, 0, func() {})
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Also not second", nil, 0)
+		repo.Add("Not second", nil, 0)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
@@ -1018,12 +1002,12 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Also not second", nil, 0, func() {})
-		repo.Add("Not second", nil, 0, func() {})
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Also not second", nil, 0)
+		repo.Add("Not second", nil, 0)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
@@ -1055,10 +1039,10 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -1070,13 +1054,13 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 
 		// Hide middle item
-		repo.ToggleVisibility(1, func() {})
+		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches)-1, func() {})
+		err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1135,10 +1119,10 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -1150,19 +1134,19 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 
 		// Hide middle item
-		repo.ToggleVisibility(1, func() {})
+		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches)-1, func() {})
+		err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		repo.Save()
-		repo = NewMockDBListRepo(rootDir)
+		repo = NewDBListRepo(rootDir)
 		repo.Load()
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
@@ -1218,10 +1202,10 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
-		repo := NewMockDBListRepo(rootDir)
-		repo.Add("Third", nil, 0, func() {})
-		repo.Add("Second", nil, 0, func() {})
-		repo.Add("First", nil, 0, func() {})
+		repo := NewDBListRepo(rootDir)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -1233,19 +1217,19 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 
 		// Hide middle item
-		repo.ToggleVisibility(1, func() {})
+		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveDown(0, func() {})
+		err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		repo.Save()
-		repo = NewMockDBListRepo(rootDir)
+		repo = NewDBListRepo(rootDir)
 		repo.Load()
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems

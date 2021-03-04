@@ -6,12 +6,13 @@ import (
 	"path"
 	"strings"
 	"time"
+	//"runtime"
 
+	"github.com/gdamore/tcell"
 	//"github.com/rogpeppe/go-internal/lockedfile"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
-	//"runtime"
 )
 
 const refreshFile = "_refresh_lock.db"
@@ -43,11 +44,6 @@ func main() {
 	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
-	// termCycle will receive tcell pollEvents and ticker refreshes to trigger a cycle of the main event loop
-	// (and thus refresh the UI)
-	//termCycle := make(chan tcell.Event)
-	//cursorEvents := make(chan *client.OffsetKey)
-
 	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
 	//go func() {
 	//    refreshFileName := path.Join(rootDir, refreshFile)
@@ -68,39 +64,6 @@ func main() {
 	//    }()
 	//}()
 
-	//listRepo.ProcessEvents()
-
-	cursorEvents := make(chan *client.OffsetKey)
-
-	go func() {
-		for {
-			select {
-			case el := <-listRepo.EventQueue:
-				err := listRepo.ProcessEventLog(el)
-				if err != nil {
-					log.Fatalf("Failed to process event log: %v", err)
-					return
-				}
-			case <-partialRefreshTicker.C:
-				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, nil, false)
-				if err != nil {
-					log.Fatalf("Failed on partial sync: %v", err)
-					return
-				}
-				cursorEvents <- &client.OffsetKey{}
-			case <-fullRefreshTicker.C:
-				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, nil, true)
-				if err != nil {
-					log.Fatalf("Failed on full sync: %v", err)
-					return
-				}
-				cursorEvents <- &client.OffsetKey{}
-			}
-		}
-	}()
-
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
 	if fznColour == "" || (fznColour != "light" && fznColour != "dark") {
@@ -109,17 +72,48 @@ func main() {
 
 	term := client.NewTerm(listRepo, fznColour)
 
-	err = term.RunClient(cursorEvents)
-	if err != nil {
-		log.Fatal(err)
-	} else {
-		err := listRepo.Save()
-		if err != nil {
-			log.Fatal(err)
+	// We retrieve keypresses from tcell through a blocking function call which can't be used
+	// in the main select below
+
+	keyPressEvts := make(chan tcell.Event)
+	go func() {
+		for {
+			select {
+			case <-partialRefreshTicker.C:
+				var listItem *service.ListItem
+				err := listRepo.Refresh(listItem, nil, false)
+				if err != nil {
+					log.Fatalf("Failed on partial sync: %v", err)
+					return
+				}
+				term.S.PostEvent(&client.RefreshKey{})
+			case <-fullRefreshTicker.C:
+				var listItem *service.ListItem
+				err := listRepo.Refresh(listItem, nil, true)
+				if err != nil {
+					log.Fatalf("Failed on full sync: %v", err)
+					return
+				}
+				term.S.PostEvent(&client.RefreshKey{})
+			case ev := <-keyPressEvts:
+				cont, err := term.HandleKeyEvent(ev)
+				if err != nil {
+					log.Fatal(err)
+				} else if !cont {
+					err := listRepo.Save()
+					if err != nil {
+						log.Fatal(err)
+					}
+					partialRefreshTicker.Stop()
+					fullRefreshTicker.Stop()
+					os.Exit(0)
+				}
+			}
 		}
-		partialRefreshTicker.Stop()
-		fullRefreshTicker.Stop()
-		os.Exit(0)
+	}()
+
+	for {
+		keyPressEvts <- term.S.PollEvent()
 	}
 
 	//listRepo.Save()
