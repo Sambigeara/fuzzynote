@@ -609,26 +609,24 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 		case tcell.KeyPgUp:
 			if t.curY > reservedTopLines-1 {
 				// Move the current item up and follow with cursor
-				//moved, err := t.db.MoveUp(t.curY - 1)
-				err := t.db.MoveUp(t.curY - 1)
+				moved, err := t.db.MoveUp(t.curY - 1)
 				if err != nil {
 					log.Fatal(err)
 				}
-				//if moved {
-				//    posDiff[1]--
-				//}
+				if moved {
+					posDiff[1]--
+				}
 			}
 		case tcell.KeyPgDn:
 			if t.curY > reservedTopLines-1 {
 				// Move the current item down and follow with cursor
-				//moved, err := t.db.MoveDown(t.curY - 1)
-				err := t.db.MoveDown(t.curY - 1)
+				moved, err := t.db.MoveDown(t.curY - 1)
 				if err != nil {
 					log.Fatal(err)
 				}
-				//if moved {
-				//    posDiff[1]++
-				//}
+				if moved {
+					posDiff[1]++
+				}
 			}
 		case tcell.KeyDown:
 			posDiff[1]++

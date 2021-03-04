@@ -405,7 +405,7 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
+		_, err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -460,7 +460,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveUp(1)
+		_, err := repo.MoveUp(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,7 +515,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveUp(0)
+		_, err := repo.MoveUp(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -553,7 +553,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(0)
+		_, err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -608,7 +608,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(1)
+		_, err := repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -664,7 +664,7 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		err := repo.MoveDown(len(matches) - 1)
+		_, err := repo.MoveDown(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -702,14 +702,14 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true)
 
-		err := repo.MoveDown(0)
+		_, err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
 		repo.Match([][]rune{}, true)
-		err = repo.MoveDown(1)
+		_, err = repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -997,7 +997,7 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
+		_, err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1077,7 +1077,7 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
+		_, err := repo.MoveUp(len(matches) - 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1160,7 +1160,7 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 		matches := repo.matchListItems
 
-		err := repo.MoveDown(0)
+		_, err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
