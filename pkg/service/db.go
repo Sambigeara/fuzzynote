@@ -32,8 +32,15 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem, fullSync bool) error {
 	var err error
 	var log, fullLog *[]eventLog
+	lenLog := len(*r.wal.log)
+	lenFullLog := len(*r.wal.fullLog)
 	if log, fullLog, err = r.wal.sync(fullSync); err != nil {
 		return err
+	}
+	// Take initial lengths of logs. If these are unchanged after sync, no changes have occurred so
+	// don't both rebuilding the list in `replay`
+	if lenLog == len(*log) && lenFullLog == len(*fullLog) {
+		return nil
 	}
 	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, primaryRoot, log, fullLog); err != nil {
 		return err
