@@ -4,12 +4,18 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
 	"strings"
+	"time"
+	//"runtime"
+
+	"github.com/gdamore/tcell"
+	//"github.com/rogpeppe/go-internal/lockedfile"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
 )
+
+const refreshFile = "_refresh_lock.db"
 
 func main() {
 	var rootDir string
@@ -25,6 +31,7 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
+	//runtime.Breakpoint()
 	listRepo := service.NewDBListRepo(rootDir)
 
 	// List instantiation
@@ -34,6 +41,29 @@ func main() {
 		os.Exit(0)
 	}
 
+	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
+	fullRefreshTicker := time.NewTicker(time.Second * 60)
+
+	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
+	//go func() {
+	//    refreshFileName := path.Join(rootDir, refreshFile)
+	//    mutFile, err := lockedfile.Create(refreshFileName)
+	//    if err != nil {
+	//        log.Fatalf("Error creating wal refresh lock: %s\n", err)
+	//    }
+	//    defer mutFile.Close()
+	//    go func() {
+	//        for {
+	//            select {
+	//            case <-fullRefreshTicker.C:
+	//                var listItem *service.ListItem
+	//                listRepo.Refresh(listItem, nil, true)
+	//                cursorEvents <- &client.OffsetKey{}
+	//            }
+	//        }
+	//    }()
+	//}()
+
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
 	if fznColour == "" || (fznColour != "light" && fznColour != "dark") {
@@ -42,14 +72,52 @@ func main() {
 
 	term := client.NewTerm(listRepo, fznColour)
 
-	err = term.RunClient()
-	if err != nil {
-		log.Fatal(err)
-	} else {
-		err := listRepo.Save()
-		if err != nil {
-			log.Fatal(err)
+	// We retrieve keypresses from tcell through a blocking function call which can't be used
+	// in the main select below
+
+	keyPressEvts := make(chan tcell.Event)
+	go func() {
+		for {
+			select {
+			case <-partialRefreshTicker.C:
+				var listItem *service.ListItem
+				err := listRepo.Refresh(listItem, false)
+				if err != nil {
+					log.Fatalf("Failed on partial sync: %v", err)
+					return
+				}
+				term.S.PostEvent(&client.RefreshKey{})
+			case <-fullRefreshTicker.C:
+				var listItem *service.ListItem
+				err := listRepo.Refresh(listItem, true)
+				if err != nil {
+					log.Fatalf("Failed on full sync: %v", err)
+					return
+				}
+				term.S.PostEvent(&client.RefreshKey{})
+			case ev := <-keyPressEvts:
+				cont, err := term.HandleKeyEvent(ev)
+				if err != nil {
+					log.Fatal(err)
+				} else if !cont {
+					err := listRepo.Save()
+					if err != nil {
+						log.Fatal(err)
+					}
+					partialRefreshTicker.Stop()
+					fullRefreshTicker.Stop()
+					os.Exit(0)
+				}
+			}
 		}
-		os.Exit(0)
+	}()
+
+	for {
+		keyPressEvts <- term.S.PollEvent()
 	}
+
+	//listRepo.Save()
+	//listRepo.Load()
+	//listRepo.Save()
+	//os.Exit(0)
 }
