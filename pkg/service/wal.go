@@ -9,21 +9,33 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	"unsafe"
-
-	"github.com/alexflint/go-filemutex"
+	//"unsafe"
 	//"errors"
 	//"runtime"
+
+	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 1
+const latestWalSchemaID uint16 = 2
 
+// TODO these don't need to be public attributes
 type walItemSchema1 struct {
 	UUID             uuid
+	ListItemID       uint64
+	TargetListItemID uint64
+	UnixTime         int64
+	EventType        eventType
+	LineLength       uint64
+	NoteLength       uint64
+}
+
+type walItemSchema2 struct {
+	UUID             uuid
+	TargetUUID       uuid
 	ListItemID       uint64
 	TargetListItemID uint64
 	UnixTime         int64
@@ -48,34 +60,36 @@ const (
 type eventLog struct {
 	uuid             uuid
 	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
+	targetUUID       uuid
 	targetListItemID uint64
 	unixNanoTime     int64
 	eventType        eventType
 	line             string
 	note             *[]byte
+	//curRoot          *ListItem
 }
 
-func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
+func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.targetListItemID)]
+	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemID)]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
 	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
-		return nil, nil
+		return root, nil, nil
 	}
 
 	var err error
 	switch e.eventType {
 	case addEvent:
-		item, err = r.add(e.line, e.note, targetItem, e.uuid)
+		root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
 		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
-	case deleteEvent:
-		err = r.del(item)
-		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
+		if item.id >= r.NextID {
+			r.NextID = item.id + 1
+		}
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -88,56 +102,58 @@ func (r *DBListRepo) callFunctionForEventLog(e eventLog) (*ListItem, error) {
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.line, e.note, item)
+			item, err = r.wal.update(e.line, e.note, item)
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
-			item, err = r.callFunctionForEventLog(addEl)
+			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
+	case deleteEvent:
+		root, err = r.wal.del(root, item)
+		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
 	case moveUpEvent:
+		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
-			return nil, nil
+			return root, nil, nil
 		}
 		newChild := targetItem.child
 		newParent := targetItem
-		err = r.moveItem(item, newChild, newParent)
+		root, err = r.wal.moveItem(root, item, newChild, newParent)
 	case moveDownEvent:
 		if targetItem == nil {
-			return nil, nil
+			return root, nil, nil
 		}
 		newChild := targetItem
 		newParent := targetItem.parent
-		err = r.moveItem(item, newChild, newParent)
+		root, err = r.wal.moveItem(root, item, newChild, newParent)
 	case showEvent:
-		err = r.setVisibility(item, true)
+		err = r.wal.setVisibility(item, true)
 	case hideEvent:
-		err = r.setVisibility(item, false)
+		err = r.wal.setVisibility(item, false)
 	}
-	return item, err
+	return root, item, err
 }
 
-func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, error) {
+func (w *Wal) add(root *ListItem, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
 	newItem := &ListItem{
 		Line:       line,
-		id:         r.NextID,
 		child:      childItem,
 		Note:       note,
 		originUUID: uuid,
 	}
-	r.NextID++
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {
-		oldRoot := r.Root
-		r.Root = newItem
+		oldRoot := root
+		root = newItem
 		if oldRoot != nil {
 			newItem.parent = oldRoot
 			oldRoot.child = newItem
 		}
-		return newItem, nil
+		return root, newItem, nil
 	}
 
 	if childItem.parent != nil {
@@ -146,33 +162,33 @@ func (r *DBListRepo) add(line string, note *[]byte, childItem *ListItem, uuid uu
 	}
 	childItem.parent = newItem
 
-	return newItem, nil
+	return root, newItem, nil
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	line = r.parseOperatorGroups(line)
+func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
+	line = parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
 	return listItem, nil
 }
 
-func (r *DBListRepo) del(item *ListItem) error {
+func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	if item.child != nil {
 		item.child.parent = item.parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.parent
+		root = item.parent
 	}
 
 	if item.parent != nil {
 		item.parent.child = item.child
 	}
 
-	return nil
+	return root, nil
 }
 
-func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *ListItem) error {
+func (w *Wal) moveItem(root *ListItem, item *ListItem, newChild *ListItem, newParent *ListItem) (*ListItem, error) {
 	// Close off gap from source location (for whole dataset)
 	if item.child != nil {
 		item.child.parent = item.parent
@@ -195,143 +211,117 @@ func (r *DBListRepo) moveItem(item *ListItem, newChild *ListItem, newParent *Lis
 
 	// Update root if required
 	// for loop because it might have to traverse multiple times
-	for r.Root.child != nil {
-		r.Root = r.Root.child
+	for root.child != nil {
+		root = root.child
 	}
-	return nil
+	return root, nil
 }
 
-func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
+func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	item.IsHidden = !isVisible
 	return nil
 }
 
-func (w *Wal) replay(r *DBListRepo, primaryRoot *ListItem) error {
-	// TODO remove this temp measure
-	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
-	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
-	// events
-	if len(*w.log) == 0 {
-		var err error
-		w.log, err = buildWalFromPrimary(w.uuid, primaryRoot)
-		if err != nil {
-			return err
-		}
-	}
-
+func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+	fullLog = merge(fullLog, log)
 	// If still no events, return nil
-	if len(*w.log) == 0 {
-		return nil
+	if len(*fullLog) == 0 {
+		return root, uint64(1), log, fullLog, nil
 	}
 
-	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
-	// and then set the global NextID afterwards, to avoid wastage.
-	nextID := uint64(1)
-
-	for _, e := range *w.log {
-		item, _ := r.callFunctionForEventLog(e)
-
-		// Item can be nil in the distributed merge orphaned item cases
-		if item != nil {
-			if nextID <= item.id {
-				nextID = item.id + 1
-			}
-		}
+	//runtime.Breakpoint()
+	for _, e := range *fullLog {
+		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
-	r.NextID = nextID
-
-	return nil
+	return root, r.NextID, log, fullLog, nil
 }
 
-func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
-	primaryLogs := []eventLog{}
-	// We need to implement a nasty and non-guaranteed hack here, but it's only super
-	// temporary. In order to ensure uniqueness, each record needs to have it's own UUID.
-	// We don't know how many records there will be without traversing, and because I'm
-	// lazy, it's easier just to preset `now` to 1 year ago and increment a nanosecond
-	// at a time
-	now := time.Now().AddDate(-1, 0, 0).UnixNano()
-
-	for item != nil {
-		var targetListItemID uint64
-		if item.child != nil {
-			targetListItemID = item.child.id
-		}
-		el := eventLog{
-			uuid:             uuid,
-			listItemID:       item.id,
-			targetListItemID: targetListItemID,
-			unixNanoTime:     now,
-			eventType:        addEvent,
-			line:             item.Line,
-			note:             item.Note,
-		}
-		primaryLogs = append(primaryLogs, el)
-
-		if item.IsHidden {
-			now++
-			el.eventType = hideEvent
-			el.unixNanoTime = now
-			primaryLogs = append(primaryLogs, el)
-		}
-		now++
-		item = item.parent
-	}
-
-	return &primaryLogs, nil
-}
-
-func getNextEventLogFromWalFile(f *os.File) (eventLog, error) {
-	item := walItemSchema1{}
+func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
 	el := eventLog{}
-
-	err := binary.Read(f, binary.LittleEndian, &item)
-	if err != nil {
-		return el, err
-	}
-
-	// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
-	el.listItemID = item.ListItemID
-	el.targetListItemID = item.TargetListItemID
-	el.unixNanoTime = item.UnixTime
-	el.uuid = item.UUID
-	el.eventType = item.EventType
-
-	line := make([]byte, item.LineLength)
-	err = binary.Read(f, binary.LittleEndian, &line)
-	if err != nil {
-		return el, err
-	}
-	el.line = string(line)
-
-	if item.NoteLength > 0 {
-		note := make([]byte, item.NoteLength)
-		err = binary.Read(f, binary.LittleEndian, &note)
+	// TODO this is a hacky fix. Instantiate the note just in case
+	el.note = &[]byte{}
+	if schemaVersionID == uint16(1) {
+		item := walItemSchema1{}
+		err := binary.Read(f, binary.LittleEndian, &item)
 		if err != nil {
-			return el, err
+			return nil, err
 		}
-		el.note = &note
-	}
+		// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
+		el.listItemID = item.ListItemID
+		el.targetListItemID = item.TargetListItemID
+		el.unixNanoTime = item.UnixTime
+		el.uuid = item.UUID
+		el.eventType = item.EventType
 
-	return el, nil
+		line := make([]byte, item.LineLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(f, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
+	} else if schemaVersionID == uint16(2) {
+		item := walItemSchema2{}
+		err := binary.Read(f, binary.LittleEndian, &item)
+		if err != nil {
+			return nil, err
+		}
+		el.listItemID = item.ListItemID
+		el.targetListItemID = item.TargetListItemID
+		el.unixNanoTime = item.UnixTime
+		el.uuid = item.UUID
+		el.targetUUID = item.TargetUUID
+		el.eventType = item.EventType
+
+		// TODO remove, this is roughly covering a broken previous build
+		if el.targetUUID == uuid(0) {
+			el.targetUUID = item.UUID
+		}
+
+		line := make([]byte, item.LineLength)
+		err = binary.Read(f, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(f, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
+	}
+	return &el, nil
 }
 
-func (w *Wal) flush(f *os.File) error {
+func flush(f *os.File, walLog *[]eventLog) error {
 	// Write the schema ID
 	err := binary.Write(f, binary.LittleEndian, latestWalSchemaID)
 	if err != nil {
 		return err
 	}
 
-	for _, item := range *w.log {
+	for _, item := range *walLog {
 		lenLine := uint64(len([]byte(item.line)))
 		var lenNote uint64
 		if item.note != nil {
 			lenNote = uint64(len(*(item.note)))
 		}
-		i := walItemSchema1{
+		i := walItemSchema2{
 			UUID:             item.uuid,
+			TargetUUID:       item.targetUUID,
 			ListItemID:       item.listItemID,
 			TargetListItemID: item.targetListItemID,
 			UnixTime:         item.unixNanoTime,
@@ -358,165 +348,243 @@ func (w *Wal) flush(f *os.File) error {
 	return nil
 }
 
-func (w *Wal) sync() error {
-	//
-	// LOAD AND MERGE ALL WALs
-	//
-	//runtime.Breakpoint()
+func buildFromFile(f *os.File) ([]eventLog, error) {
+	// The first two bytes of each file represents the file schema ID. For now this means nothing
+	// so we can seek forwards 2 bytes
+	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
-	mut, err := filemutex.New(w.syncFilePath)
+	el := []eventLog{}
+	var walSchemaVersionID uint16
+	err := binary.Read(f, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
-		log.Fatalln("Error creating wal sync lock")
-	}
-
-	mut.Lock()
-	defer mut.Unlock()
-
-	// We need to pre flush any events held in memory to a randomly generated WAL, prior to full sync
-	// (this will be empty on initial load, but full on close)
-	randomWalFile, err := os.Create(fmt.Sprintf(w.walPathPattern, generateUUID()))
-	if err != nil {
-		return err
-	}
-	err = w.flush(randomWalFile)
-	if err != nil {
-		return err
-	}
-
-	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
-	// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
-	localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer localWalFile.Close()
-
-	// Initially, we want to create a single merged eventLog for all non-local WAL files
-	// To do this, we find and open each file, and traverse through each simultaneously with an N-pointer approach
-	//remoteFiles := make(map[*os.File]struct{}) // Effectively a set implementation (struct{} cheaper than bool}
-	remoteFiles := map[*os.File]struct{}{
-		localWalFile: struct{}{},
-	} // Effectively a set implementation (struct{} cheaper than bool}
-
-	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
-	if err != nil {
-		return err
-	}
-	for _, fileName := range fileNames {
-		if fileName != localWalFilePath {
-			f, err := os.Open(fileName)
-			if err != nil {
-				return err
-			}
-
-			remoteFiles[f] = struct{}{}
-			defer f.Close()
-			defer os.Remove(fileName)
+		if err == io.EOF {
+			return el, nil
+		} else {
+			log.Fatal(err)
+			return el, err
 		}
 	}
 
-	// This maps the open remote WAL file to the current head of that file, useful when comparing each head to
-	// determine order of single output
-	curEventLogs := make(map[*os.File]eventLog)
-	mergedRemoteLogs := []eventLog{}
-
-	// We keep track of open files to determine how many current eventLogs to store in the map
-	// Initially, we grab the first item from each open file to populate curEventLogs
-	// We then pop the oldest item and append it to the merged logs, and replace with another item from that file.
-	// We repeat this until end of file.
-	// When we close a file, we reduce remoteFiles so we know to compare on fewer items.
-	for f := range remoteFiles {
-		// The first two bytes of each file represents the file schema ID. For now this means nothing
-		// so we can seek forwards 2 bytes
-		f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
-
-		e, err := getNextEventLogFromWalFile(f)
+	for {
+		e, err := getNextEventLogFromWalFile(f, walSchemaVersionID)
 		if err != nil {
 			switch err {
 			case io.EOF:
-				// We need to remove from remoteFiles here to prevent them being iterated
-				// over in the loop below (when pulling events from the file)
-				delete(remoteFiles, f)
-				continue
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return err
+				return el, nil
+			//case io.ErrUnexpectedEOF:
 			default:
-				return err
-			}
-		}
-		curEventLogs[f] = e
-	}
-
-	for len(curEventLogs) > 0 {
-		// Get the current oldest item, and the file that it resides in
-		var curFile *os.File = nil
-		oldest := eventLog{}
-
-		for f := range remoteFiles {
-			if oldest.eventType == nullEvent {
-				// Deal with initial iteration
-				oldest = curEventLogs[f]
-				curFile = f
-			} else {
-				e := curEventLogs[f]
-				if e.unixNanoTime < oldest.unixNanoTime {
-					oldest = e
-					curFile = f
-				} else if e.unixNanoTime == oldest.unixNanoTime {
-					// If unixNanoTime's are the same, order by uuid and then eventType to ensure consistent ordering
-					if e.uuid < oldest.uuid {
-						oldest = e
-						curFile = f
-					} else if e.uuid == oldest.uuid {
-						if e.eventType < oldest.eventType {
-							oldest = e
-							curFile = f
-						}
-					}
-				}
-			}
-		}
-
-		// Because we have guaranteed ordering by unixNanoTime -> uuid -> eventType, we can compare the current "oldest"
-		// against the head of the mergedRemoteLogs - if they share the three attributes above (strictly only uuid
-		// and rowID) we can ignore. Otherwise, we append to the logs
-		if oldest.eventType != nullEvent {
-			if len(mergedRemoteLogs) > 0 {
-				head := mergedRemoteLogs[len(mergedRemoteLogs)-1]
-				// This is an inverse (De Morgan's Law) of: IGNORE if UUIDs and unixNanoTime's are the same
-				if head.uuid != oldest.uuid || head.unixNanoTime != oldest.unixNanoTime {
-					mergedRemoteLogs = append(mergedRemoteLogs, oldest)
-				}
-			} else {
-				mergedRemoteLogs = append(mergedRemoteLogs, oldest)
-			}
-		}
-
-		// Retrieve the next log from that file. If EOF, remove it from the list of remoteFiles
-		nextEvent, err := getNextEventLogFromWalFile(curFile)
-		if err != nil {
-			if err == io.EOF {
-				delete(curEventLogs, curFile)
-			} else {
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
-				return err
+				return el, err
 			}
+		}
+		el = append(el, *e)
+	}
+}
+
+const (
+	eventsEqual int = iota
+	leftEventOlder
+	rightEventOlder
+)
+
+func checkEquality(event1 eventLog, event2 eventLog) int {
+	// TODO I think BODMAS covers us here so remove the parantheses (check first)
+	if event1.unixNanoTime < event2.unixNanoTime ||
+		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
+		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
+		return leftEventOlder
+	} else if event2.unixNanoTime < event1.unixNanoTime ||
+		event2.unixNanoTime == event1.unixNanoTime && event2.uuid < event1.uuid ||
+		event2.unixNanoTime == event1.unixNanoTime && event2.uuid == event1.uuid && event2.eventType < event1.eventType {
+		return rightEventOlder
+	}
+	return eventsEqual
+}
+
+func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
+	//if len(*wal1) == 0 {
+	//    return wal2
+	//} else if len(*wal2) == 0 {
+	//    return wal1
+	//}
+
+	// Adopt a two pointer approach
+	i, j := 0, 0
+	mergedEl := []eventLog{}
+	// We can use an empty log here because it will never be equal to in the checkEquality calls below
+	lastEvent := eventLog{}
+	for i < len(*wal1) || j < len(*wal2) {
+		if len(mergedEl) > 0 {
+			lastEvent = mergedEl[len(mergedEl)-1]
+		}
+		if i == len(*wal1) {
+			// Ignore duplicates (compare with current head of the array
+			if len(mergedEl) == 0 || checkEquality((*wal2)[j], lastEvent) != eventsEqual {
+				mergedEl = append(mergedEl, (*wal2)[j])
+			}
+			j++
+		} else if j == len(*wal2) {
+			// Ignore duplicates (compare with current head of the array
+			if len(mergedEl) == 0 || checkEquality((*wal1)[i], lastEvent) != eventsEqual {
+				mergedEl = append(mergedEl, (*wal1)[i])
+			}
+			i++
 		} else {
-			if nextEvent.eventType != nullEvent {
-				curEventLogs[curFile] = nextEvent
+			switch checkEquality((*wal1)[i], (*wal2)[j]) {
+			case leftEventOlder:
+				if len(mergedEl) == 0 || checkEquality((*wal1)[i], lastEvent) != eventsEqual {
+					mergedEl = append(mergedEl, (*wal1)[i])
+				}
+				i++
+			case rightEventOlder:
+				if len(mergedEl) == 0 || checkEquality((*wal2)[j], lastEvent) != eventsEqual {
+					mergedEl = append(mergedEl, (*wal2)[j])
+				}
+				j++
+			case eventsEqual:
+				// At this point, we only want to guarantee an increment on ONE of the two pointers
+				if i < len(*wal1) {
+					i++
+				} else {
+					j++
+				}
+			}
+		}
+	}
+	return &mergedEl
+}
+
+// TODO decouple this from the Wal as it should almost be a pure function
+func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
+
+	//
+	// LOAD AND MERGE ALL WALs
+	//
+
+	mutFile, err := lockedfile.Create(w.syncFilePath)
+	if err != nil {
+		log.Fatalf("Error creating wal sync lock: %s\n", err)
+	}
+	defer mutFile.Close()
+
+	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
+
+	var localWalFile *os.File
+
+	// Avoid mutating underyling logs before the process is complete.
+	// Therefore, dereference into copies, who's pointers will be reassigned to w later on
+	localWal := *w.log
+	fullLog := *w.fullLog
+
+	if fullSync {
+		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
+		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer localWalFile.Close()
+
+		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
+		// The read will only be required on Load, not on Save (when we close the app)
+		if len(fullLog) == 0 {
+			fullLog, err = buildFromFile(localWalFile)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		localWal = *(merge(&fullLog, &localWal))
+	}
+
+	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// TODO refactor
+	// On partial syncs, to avoid file reads completely, iterate over the names, and if
+	// they're all already processed, return
+	if !fullSync && len(fileNames) > 1 && len(localWal) == 0 {
+		returnEarly := true
+		i := 0
+		for i < len(fileNames) && returnEarly {
+			fileName := fileNames[i]
+			if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
+				returnEarly = false
+			}
+			i++
+		}
+		if returnEarly {
+			return w.log, w.fullLog, nil
+		}
+	}
+
+	mergedWal := []eventLog{}
+
+	// Load all WAL files into arrays
+	for _, fileName := range fileNames {
+		// Avoid localWal
+		if fileName != localWalFilePath {
+			f, err := os.Open(fileName)
+			if err != nil {
+				return nil, nil, err
+			}
+			wal, err := buildFromFile(f)
+			if err != nil {
+				return nil, nil, err
+			}
+			// Add to the processed cache
+			w.processedPartialWals[fileName] = struct{}{}
+			// Merge all WALs
+			mergedWal = *(merge(&mergedWal, &wal))
+			f.Close()
+			if fullSync {
+				os.Remove(fileName)
 			}
 		}
 	}
 
-	w.log = &mergedRemoteLogs
+	flushPartial := true
+	if !fullSync {
+		// Before we merge in the localWal, we should check to see if the merged logs are
+		// the same length the as recent local logs. If so, there's no point flushing any
+		// new random files as they'll add additional files to merge with no difference to
+		// the outcome
+		if len(localWal) == len(mergedWal) {
+			flushPartial = false
+		}
+	}
+
+	mergedWal = *(merge(&mergedWal, &localWal))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
-	localWalFile.Truncate(io.SeekStart)
-	localWalFile.Seek(0, io.SeekStart)
-
-	return w.flush(localWalFile)
+	if fullSync {
+		// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
+		// full log of events, and named after the static UUID for the app/db
+		localWalFile.Truncate(0)
+		localWalFile.Seek(0, io.SeekStart)
+		err = flush(localWalFile, &mergedWal)
+		if err != nil {
+			return nil, nil, err
+		}
+		// We also want to append the recent w.log to w.fullLog, and refresh (empty) the log
+		return &[]eventLog{}, &mergedWal, nil
+	} else {
+		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
+		// to disk
+		if flushPartial {
+			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
+			partialWalFile, err := os.Create(randomWal)
+			if err != nil {
+				return nil, nil, err
+			}
+			defer partialWalFile.Close()
+			// Flush the log rather than merged events to avoid duplication between partial WALs
+			err = flush(partialWalFile, w.log)
+		}
+		return &mergedWal, &fullLog, nil
+	}
 }

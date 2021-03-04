@@ -29,10 +29,29 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
+func (r *DBListRepo) Refresh(root *ListItem, fullSync bool) error {
+	var err error
+	var log, fullLog *[]eventLog
+	lenLog := len(*r.wal.log)
+	lenFullLog := len(*r.wal.fullLog)
+	if log, fullLog, err = r.wal.sync(fullSync); err != nil {
+		return err
+	}
+	// Take initial lengths of logs. If these are unchanged after sync, no changes have occurred so
+	// don't both rebuilding the list in `replay`
+	if lenLog == len(*log) && lenFullLog == len(*fullLog) {
+		return nil
+	}
+	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, log, fullLog); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
 func (r *DBListRepo) Load() error {
-	f, err := os.OpenFile(r.rootPath, os.O_CREATE, 0644)
+	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -41,11 +60,17 @@ func (r *DBListRepo) Load() error {
 
 	fileHeader := fileHeader{}
 	err = binary.Read(f, binary.LittleEndian, &fileHeader.schemaID)
-	// Don't return if the primary.db is empty - we need to pass through to the WAL creation
-	// stage to cover fresh app instantiation
-	if err != nil && err != io.EOF {
-		log.Fatal(err)
-		return err
+	if err != nil {
+		// For initial load cases (first time an app is run) to beat an edge case race condition
+		// (loading two apps in a fresh root without saves) we need to flush state to the primary.db
+		// file. This prevents initial apps getting confused and generating different WAL UUIDs (thus
+		// ultimately leading to data loss)
+		if err == io.EOF {
+			r.flushPrimary(f)
+		} else {
+			log.Fatal(err)
+			return err
+		}
 	}
 
 	// NOTE Special case handling for introduction of UUID in fileSchema 2
@@ -78,8 +103,6 @@ func (r *DBListRepo) Load() error {
 	}
 
 	var cur *ListItem
-	// primaryRoot is the root built from primary.db rather than from the WAL
-	var primaryRoot *ListItem
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	for {
@@ -92,18 +115,14 @@ func (r *DBListRepo) Load() error {
 
 		nextItem.child = cur
 		if !cont {
+			//runtime.Breakpoint()
 			// Load the WAL into memory
-			if err := r.wal.sync(); err != nil {
+			if err := r.Refresh(r.Root, true); err != nil {
 				return err
 			}
-			//runtime.Breakpoint()
-			r.wal.replay(r, primaryRoot)
 			return nil
 		}
-		if cur == nil {
-			// TODO
-			primaryRoot = &nextItem
-		} else {
+		if cur != nil {
 			cur.parent = &nextItem
 		}
 		cur = &nextItem
@@ -117,6 +136,26 @@ func (r *DBListRepo) Load() error {
 	}
 }
 
+func (r *DBListRepo) flushPrimary(f *os.File) error {
+	// Truncate and move to start of file just in case
+	f.Truncate(0)
+	f.Seek(0, io.SeekStart)
+
+	// Write the file header to the start of the file
+	fileHeader := fileHeader{
+		schemaID:       r.latestFileSchemaID,
+		uuid:           r.wal.uuid,
+		nextListItemID: r.NextID,
+	}
+	err := binary.Write(f, binary.LittleEndian, &fileHeader)
+	if err != nil {
+		fmt.Println("binary.Write failed when writing fileHeader:", err)
+		log.Fatal(err)
+		return err
+	}
+	return nil
+}
+
 // Save is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Save() error {
 	f, err := os.Create(r.rootPath)
@@ -126,20 +165,12 @@ func (r *DBListRepo) Save() error {
 	}
 	defer f.Close()
 
-	// Write the file header to the start of the file
-	fileHeader := fileHeader{
-		schemaID:       r.latestFileSchemaID,
-		uuid:           r.wal.uuid,
-		nextListItemID: r.NextID,
-	}
-	err = binary.Write(f, binary.LittleEndian, &fileHeader)
+	err = r.flushPrimary(f)
 	if err != nil {
-		fmt.Println("binary.Write failed when writing fileHeader:", err)
-		log.Fatal(err)
 		return err
 	}
 
-	r.wal.sync()
+	r.wal.sync(true)
 
 	// We don't care about the primary.db for now, so return nil here
 	return nil
