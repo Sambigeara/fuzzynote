@@ -29,7 +29,7 @@ var listItemSchemaMap = map[fileSchemaID]interface{}{
 	3: listItemSchema1{},
 }
 
-func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem, fullSync bool) error {
+func (r *DBListRepo) Refresh(root *ListItem, fullSync bool) error {
 	var err error
 	var log, fullLog *[]eventLog
 	lenLog := len(*r.wal.log)
@@ -42,7 +42,7 @@ func (r *DBListRepo) Refresh(root *ListItem, primaryRoot *ListItem, fullSync boo
 	if lenLog == len(*log) && lenFullLog == len(*fullLog) {
 		return nil
 	}
-	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, primaryRoot, log, fullLog); err != nil {
+	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, log, fullLog); err != nil {
 		return err
 	}
 	return nil
@@ -103,8 +103,6 @@ func (r *DBListRepo) Load() error {
 	}
 
 	var cur *ListItem
-	// primaryRoot is the root built from primary.db rather than from the WAL
-	var primaryRoot *ListItem
 
 	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
 	for {
@@ -119,15 +117,12 @@ func (r *DBListRepo) Load() error {
 		if !cont {
 			//runtime.Breakpoint()
 			// Load the WAL into memory
-			if err := r.Refresh(r.Root, primaryRoot, true); err != nil {
+			if err := r.Refresh(r.Root, true); err != nil {
 				return err
 			}
 			return nil
 		}
-		if cur == nil {
-			// TODO
-			primaryRoot = &nextItem
-		} else {
+		if cur != nil {
 			cur.parent = &nextItem
 		}
 		cur = &nextItem

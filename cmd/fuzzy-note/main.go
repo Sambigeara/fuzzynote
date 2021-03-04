@@ -81,7 +81,7 @@ func main() {
 			select {
 			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, nil, false)
+				err := listRepo.Refresh(listItem, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 					return
@@ -89,7 +89,7 @@ func main() {
 				term.S.PostEvent(&client.RefreshKey{})
 			case <-fullRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, nil, true)
+				err := listRepo.Refresh(listItem, true)
 				if err != nil {
 					log.Fatalf("Failed on full sync: %v", err)
 					return

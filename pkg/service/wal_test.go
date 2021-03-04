@@ -65,138 +65,6 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("repo.Root should not exist")
 		}
 	})
-	t.Run("Load from primary.db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
-		f, _ := os.Create(rootPath)
-		defer f.Close()
-		defer clearUp(repo)
-
-		line0 := []byte("First item")
-		line1 := []byte("Second item")
-		data := []interface{}{
-			uint16(3), // Schema type
-			generateUUID(),
-			uint64(3), // nextListItemID
-			listItemSchema1{
-				1,
-				0,
-				uint64(len(line0)),
-				0,
-			},
-			line0,
-			listItemSchema1{
-				2,
-				0,
-				uint64(len(line1)),
-				0,
-			},
-			line1,
-		}
-
-		for _, v := range data {
-			err := binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		f.Close()
-
-		repo.Load()
-
-		if len(*repo.wal.fullLog) != 2 {
-			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
-		}
-
-		repo.Match([][]rune{}, true)
-		matches := repo.matchListItems
-		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.fullLog))
-		}
-
-		if (*repo.wal.fullLog)[0].listItemID != matches[0].id {
-			t.Fatal("First match listItemID should match first eventLog")
-		}
-		if (*repo.wal.fullLog)[1].listItemID != matches[1].id {
-			t.Fatal("Second match listItemID should match second eventLog")
-		}
-
-		if (*repo.wal.fullLog)[0].eventType != addEvent {
-			t.Fatal("First match item should be of type addEvent")
-		}
-		if (*repo.wal.fullLog)[1].eventType != addEvent {
-			t.Fatal("Second match item should be of type addEvent")
-		}
-	})
-	t.Run("Load from primary.db with hidden", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
-		f, _ := os.Create(rootPath)
-		defer f.Close()
-		defer clearUp(repo)
-
-		line0 := []byte("First item")
-		line1 := []byte("Second item")
-		data := []interface{}{
-			uint16(3), // Schema type
-			generateUUID(),
-			uint64(3), // nextListItemID
-			listItemSchema1{
-				1,
-				0,
-				uint64(len(line0)),
-				0,
-			},
-			line0,
-			listItemSchema1{
-				2,
-				hidden, // Set hidden bit in metadata
-				uint64(len(line1)),
-				0,
-			},
-			line1,
-		}
-
-		for _, v := range data {
-			err := binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		f.Close()
-
-		repo.Load()
-
-		if len(*repo.wal.fullLog) != 3 {
-			t.Fatalf("Expected 3 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
-		}
-
-		repo.Match([][]rune{}, true)
-		matches := repo.matchListItems
-		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.fullLog))
-		}
-
-		if (*repo.wal.fullLog)[0].listItemID != matches[0].id {
-			t.Fatal("First match listItemID should match first eventLog")
-		}
-		if (*repo.wal.fullLog)[1].listItemID != matches[1].id {
-			t.Fatal("Second match listItemID should match first eventLog")
-		}
-		if (*repo.wal.fullLog)[2].listItemID != matches[1].id {
-			t.Fatal("Second match listItemID should match first eventLog")
-		}
-
-		if (*repo.wal.fullLog)[0].eventType != addEvent {
-			t.Fatal("First match item should be of type addEvent")
-		}
-		if (*repo.wal.fullLog)[1].eventType != addEvent {
-			t.Fatal("Second match item should be of type addEvent")
-		}
-		if (*repo.wal.fullLog)[2].eventType != hideEvent {
-			t.Fatal("Third match item should be of type hideEvent")
-		}
-	})
 	t.Run("Single local WAL merge", func(t *testing.T) {
 		repo := NewDBListRepo(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
@@ -248,7 +116,7 @@ func TestWalMerge(t *testing.T) {
 		f.Close()
 
 		//runtime.Breakpoint()
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 
 		if len(*repo.wal.fullLog) != 2 {
 			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -413,7 +281,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 
 		if len(*repo.wal.fullLog) != 8 {
 			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -507,7 +375,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -558,7 +426,7 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		repo.Delete(1)
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 		preSaveLog = *repo.wal.fullLog
 
 		// Re-write the same remote WAL
@@ -571,7 +439,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
@@ -710,7 +578,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, nil, true)
+		repo.Refresh(nil, true)
 
 		if len(*repo.wal.fullLog) != 4 {
 			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*repo.wal.fullLog))

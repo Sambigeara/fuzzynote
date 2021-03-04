@@ -32,69 +32,6 @@ func clearUp(r *DBListRepo) {
 }
 
 func TestServiceStoreLoad(t *testing.T) {
-	t.Run("Loads from file schema 1", func(t *testing.T) {
-		// Run for both schema type
-		repo := NewDBListRepo(rootDir)
-
-		os.Mkdir(rootDir, os.ModePerm)
-
-		f, _ := os.Create(rootPath)
-		defer f.Close()
-		defer clearUp(repo)
-
-		expectedLines := make([]string, 2)
-		expectedLines[0] = "Test ListItem"
-		expectedLines[1] = "Another test ListItem"
-
-		data := []interface{}{
-			uint16(1), // Schema type 1
-			listItemSchema1{
-				1,
-				0,
-				uint64(len([]byte(expectedLines[0]))),
-				0,
-			},
-			[]byte(expectedLines[0]),
-			listItemSchema1{
-				2,
-				0,
-				uint64(len([]byte(expectedLines[1]))),
-				0,
-			},
-			[]byte(expectedLines[1]),
-		}
-
-		for _, v := range data {
-			err := binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		//runtime.Breakpoint()
-		err := repo.Load()
-		if err != nil {
-			t.Fatalf("Load failed when loading to file schema %d: %s", repo.latestFileSchemaID, err)
-		}
-
-		if repo.Root.Line != expectedLines[0] {
-			t.Errorf("Repo file schema %d: Expected %s but got %s", repo.latestFileSchemaID, expectedLines[0], repo.Root.Line)
-		}
-
-		expectedID := uint64(1)
-		if repo.Root.id != expectedID {
-			t.Errorf("Repo file schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, repo.Root.id)
-		}
-
-		if repo.Root.parent.Line != expectedLines[1] {
-			t.Errorf("Repo file schema %d: Expected %s but got %s", repo.latestFileSchemaID, expectedLines[1], repo.Root.Line)
-		}
-
-		expectedID = 2
-		if repo.Root.parent.id != expectedID {
-			t.Errorf("Repo file schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, repo.Root.parent.id)
-		}
-	})
 	t.Run("Stores to file and loads back", func(t *testing.T) {
 		repo := NewDBListRepo(rootDir)
 

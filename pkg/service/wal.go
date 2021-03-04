@@ -88,7 +88,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListI
 		root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
 		item.id = e.listItemID
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
-		//r.NextID++
 		if item.id >= r.NextID {
 			r.NextID = item.id + 1
 		}
@@ -224,23 +223,11 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
 	// At the moment, we're bypassing the primary.db entirely, so we track the maxID from the WAL
 	// and then set the global NextID afterwards, to avoid wastage.
 	// TODO look at this??
 	nextID := uint64(1)
-
-	// TODO remove this temp measure
-	// To deal with legacy pre-WAL versions, if there are WAL files present, build an initial one based
-	// on the state of the `primary.db` and return that. It will involve a number of Add and setVisibility
-	// events
-	if len(*(merge(fullLog, log))) == 0 {
-		var err error
-		fullLog, err = buildWalFromPrimary(r.wal.uuid, primaryRoot)
-		if err != nil {
-			return root, nextID, log, fullLog, err
-		}
-	}
 
 	fullLog = merge(fullLog, log)
 	// If still no events, return nil
@@ -265,45 +252,6 @@ func (r *DBListRepo) replay(root *ListItem, primaryRoot *ListItem, log *[]eventL
 	}
 
 	return root, nextID, log, fullLog, nil
-}
-
-func buildWalFromPrimary(uuid uuid, item *ListItem) (*[]eventLog, error) {
-	primaryLogs := []eventLog{}
-	// We need to implement a nasty and non-guaranteed hack here, but it's only super
-	// temporary. In order to ensure uniqueness, each record needs to have it's own UUID.
-	// We don't know how many records there will be without traversing, and because I'm
-	// lazy, it's easier just to preset `now` to 1 year ago and increment a nanosecond
-	// at a time
-	now := time.Now().AddDate(-1, 0, 0).UnixNano()
-
-	for item != nil {
-		var targetListItemID uint64
-		if item.child != nil {
-			targetListItemID = item.child.id
-		}
-		el := eventLog{
-			uuid:             uuid,
-			targetUUID:       uuid,
-			listItemID:       item.id,
-			targetListItemID: targetListItemID,
-			unixNanoTime:     now,
-			eventType:        addEvent,
-			line:             item.Line,
-			note:             item.Note,
-		}
-		primaryLogs = append(primaryLogs, el)
-
-		if item.IsHidden {
-			now++
-			el.eventType = hideEvent
-			el.unixNanoTime = now
-			primaryLogs = append(primaryLogs, el)
-		}
-		now++
-		item = item.parent
-	}
-
-	return &primaryLogs, nil
 }
 
 func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
