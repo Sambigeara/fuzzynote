@@ -175,7 +175,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update(t.curItem.Line, &newDat, t.curY-1)
+	err = t.db.Update(t.curItem.Line, &newDat, t.curY-reservedTopLines)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 		line = strings.TrimPrefix(line, " ")
 
 		// Account for horizontal offset if on curItem
-		if i == t.curY {
+		if i == t.curY-reservedTopLines {
 			line = line[t.horizOffset:]
 		}
 
@@ -480,12 +480,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 		case tcell.KeyCtrlS:
 			if t.curY != reservedTopLines-1 {
 				// If exists, clear, otherwise set
-				if _, ok := t.selectedItems[t.curY-1]; ok {
-					delete(t.selectedItems, t.curY-1)
+				if _, ok := t.selectedItems[t.curY-reservedTopLines]; ok {
+					delete(t.selectedItems, t.curY-reservedTopLines)
 				} else {
-					//fmt.Printf("BOOM %v\n", matches[t.curY-1].Line)
-					//os.Exit(1)
-					t.selectedItems[t.curY-1] = t.matches[t.curY-1].Line
+					t.selectedItems[t.curY-reservedTopLines] = t.matches[t.curY-reservedTopLines].Line
 				}
 			}
 		case tcell.KeyEscape:
@@ -540,8 +538,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				newLine := []rune(t.curItem.Line)
 				if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 					newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-					//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
-					err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+					err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -586,8 +583,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				newLine := []rune(t.curItem.Line)
 				if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 					newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-					//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
-					err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+					//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
+					err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -661,8 +658,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 					newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 				}
 				//oldLen := len(t.curItem.Line)
-				//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
-				err = t.db.Update(string(newLine), t.curItem.Note, t.curY-1)
+				//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
+				err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
