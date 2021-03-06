@@ -2,7 +2,6 @@ package service
 
 import (
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -69,15 +68,6 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	}
 	nChars, _ := matchChars[pattern]
 	return pattern, nChars
-}
-
-func parseOperatorGroups(sub string) string {
-	// Match the op against any known operator (e.g. date) and parse if applicable.
-	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
-	now := time.Now()
-	dateString := now.Format(dateFormat)
-	sub = strings.ReplaceAll(sub, "{d}", dateString)
-	return sub
 }
 
 // If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
