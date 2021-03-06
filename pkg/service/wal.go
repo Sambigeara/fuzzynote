@@ -569,7 +569,8 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		// We also want to append the recent w.log to w.fullLog, and refresh (empty) the log
+		// Clear the processedPartialWals cache as processed files may have changed on full syncs
+		w.processedPartialWals = make(map[string]struct{})
 		return &[]eventLog{}, &mergedWal, nil
 	} else {
 		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
