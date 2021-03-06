@@ -21,6 +21,7 @@ import (
 )
 
 const (
+	dateFormat              = "Mon, Jan 02, 2006"
 	reservedTopLines int    = 1
 	reservedEndChars int    = 1
 	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
@@ -93,6 +94,15 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func parseOperatorGroups(sub string) string {
+	// Match the op against any known operator (e.g. date) and parse if applicable.
+	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
+	now := time.Now()
+	dateString := now.Format(dateFormat)
+	sub = strings.ReplaceAll(sub, "{d}", dateString)
+	return sub
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -642,7 +652,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 					// We want to insert a char into the current search group then update in place
 					newGroup = t.insertCharInPlace(newGroup, charOffset, ev.Rune())
-					t.search[grpIdx] = newGroup
+					oldLen := len(string(newGroup))
+					parsedGroup := parseOperatorGroups(string(newGroup))
+					t.search[grpIdx] = []rune(parsedGroup)
+					posDiff[0] += len(parsedGroup) - oldLen
 				} else {
 					var newTerm []rune
 					newTerm = append(newTerm, ev.Rune())
@@ -657,14 +670,13 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				} else {
 					newLine = t.insertCharInPlace(newLine, offsetX, ev.Rune())
 				}
-				//oldLen := len(t.curItem.Line)
-				//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
-				err = t.db.Update(string(newLine), t.curItem.Note, t.curY-reservedTopLines)
+				oldLen := len(newLine)
+				parsedNewLine := parseOperatorGroups(string(newLine))
+				err = t.db.Update(parsedNewLine, t.curItem.Note, t.curY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
-				//posDiff[0] += len(t.curItem.Line) - oldLen
-				posDiff[0]++
+				posDiff[0] += len(parsedNewLine) - oldLen + 1
 			}
 		}
 	}
