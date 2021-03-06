@@ -10,9 +10,9 @@ import (
 )
 
 type fileHeader struct {
-	schemaID       fileSchemaID
-	uuid           uuid
-	nextListItemID uint64
+	SchemaID       fileSchemaID
+	UUID           uuid
+	NextListItemID uint64
 }
 
 type listItemSchema1 struct {
@@ -20,13 +20,6 @@ type listItemSchema1 struct {
 	Metadata   bits
 	LineLength uint64
 	NoteLength uint64
-}
-
-var listItemSchemaMap = map[fileSchemaID]interface{}{
-	1: listItemSchema1{},
-	// 2 maps to 1 to allow for addition of UUID to file header, which is handled as a special case
-	2: listItemSchema1{},
-	3: listItemSchema1{},
 }
 
 func (r *DBListRepo) Refresh(root *ListItem, fullSync bool) error {
@@ -59,7 +52,7 @@ func (r *DBListRepo) Load() error {
 	defer f.Close()
 
 	fileHeader := fileHeader{}
-	err = binary.Read(f, binary.LittleEndian, &fileHeader.schemaID)
+	err = binary.Read(f, binary.LittleEndian, &fileHeader)
 	if err != nil {
 		// For initial load cases (first time an app is run) to beat an edge case race condition
 		// (loading two apps in a fresh root without saves) we need to flush state to the primary.db
@@ -73,67 +66,18 @@ func (r *DBListRepo) Load() error {
 		}
 	}
 
-	// NOTE Special case handling for introduction of UUID in fileSchema 2
-	if fileHeader.schemaID >= 2 {
-		err = binary.Read(f, binary.LittleEndian, &fileHeader.uuid)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			log.Fatal(err)
-			return err
-		}
-		// TODO get rid of this
-		// We can now override uuid as it's been read from the file
-		if fileHeader.uuid != 0 {
-			r.wal.uuid = fileHeader.uuid
-		}
-
-		// NOTE special case handling for introduction of persisted nextId in file
-		if fileHeader.schemaID >= 3 {
-			err = binary.Read(f, binary.LittleEndian, &r.NextID)
-			if err != nil {
-				if err == io.EOF {
-					return nil
-				}
-				log.Fatal(err)
-				return err
-			}
-		}
+	// We can now override uuid as it's been read from the file
+	// TODO UUID should always be set now, so this `if UUID != 0` check can go, but currently breaks
+	// tests if I do remove.
+	if fileHeader.UUID != 0 {
+		r.wal.uuid = fileHeader.UUID
 	}
 
-	var cur *ListItem
-
-	// Retrieve first line from the file, which will be the youngest (and therefore top) entry
-	for {
-		nextItem := ListItem{}
-		cont, err := r.readListItemFromFile(f, fileHeader.schemaID, &nextItem)
-		if err != nil {
-			//log.Fatal(err)
-			return err
-		}
-
-		nextItem.child = cur
-		if !cont {
-			//runtime.Breakpoint()
-			// Load the WAL into memory
-			if err := r.Refresh(r.Root, true); err != nil {
-				return err
-			}
-			return nil
-		}
-		if cur != nil {
-			cur.parent = &nextItem
-		}
-		cur = &nextItem
-
-		// TODO REMOVE THIS ONCE ALL REMOTES ARE USING v3 or higher
-		// This is only relevant on the first instance of moving from v < 3 to v >= 3
-		// We need to find the next available index for the entire dataset
-		if nextItem.id >= r.NextID {
-			r.NextID = nextItem.id + 1
-		}
+	// Load the WAL into memory
+	if err := r.Refresh(r.Root, true); err != nil {
+		return err
 	}
+	return nil
 }
 
 func (r *DBListRepo) flushPrimary(f *os.File) error {
@@ -143,9 +87,9 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 
 	// Write the file header to the start of the file
 	fileHeader := fileHeader{
-		schemaID:       r.latestFileSchemaID,
-		uuid:           r.wal.uuid,
-		nextListItemID: r.NextID,
+		SchemaID:       r.latestFileSchemaID,
+		UUID:           r.wal.uuid,
+		NextListItemID: r.NextID,
 	}
 	err := binary.Write(f, binary.LittleEndian, &fileHeader)
 	if err != nil {
@@ -172,111 +116,5 @@ func (r *DBListRepo) Save() error {
 
 	r.wal.sync(true)
 
-	// We don't care about the primary.db for now, so return nil here
 	return nil
-
-	//// Return if no files to write. os.Create truncates by default so the file will
-	//// be empty, with just the file header (including verion id and UUID)
-	//if r.Root == nil {
-	//	return nil
-	//}
-
-	//cur := r.Root
-
-	//for {
-	//	err := r.writeFileFromListItem(f, cur)
-	//	if err != nil {
-	//		//log.Fatal(err)
-	//		return err
-	//	}
-
-	//	if cur.parent == nil {
-	//		break
-	//	}
-	//	cur = cur.parent
-	//}
-	//return nil
-}
-
-func (r *DBListRepo) readListItemFromFile(f io.Reader, schemaID fileSchemaID, newItem *ListItem) (bool, error) {
-	i, ok := listItemSchemaMap[schemaID]
-	if !ok {
-		i, _ = listItemSchemaMap[0]
-	}
-
-	var err error
-	switch s := i.(type) {
-	case listItemSchema1:
-		err = binary.Read(f, binary.LittleEndian, &s)
-		if err != nil {
-			switch err {
-			case io.EOF:
-				return false, nil
-			case io.ErrUnexpectedEOF:
-				fmt.Println("binary.Read failed on listItem header:", err)
-				return false, err
-			}
-		}
-
-		line := make([]byte, s.LineLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			fmt.Println("binary.Read failed on listItem line:", err)
-			return false, err
-		}
-
-		note := make([]byte, s.NoteLength)
-		err = binary.Read(f, binary.LittleEndian, &note)
-		if err != nil {
-			fmt.Println("binary.Read failed on listItem note:", err)
-			return false, err
-		}
-
-		newItem.Line = string(line)
-		newItem.id = uint64(s.PageID)
-		newItem.Note = &note
-		newItem.IsHidden = has(s.Metadata, hidden)
-		return true, nil
-	}
-	return false, err
-}
-
-func (r *DBListRepo) writeFileFromListItem(f io.Writer, listItem *ListItem) error {
-	// TODO this doesn't need to be a map now
-	i, ok := listItemSchemaMap[r.latestFileSchemaID]
-	if !ok {
-		i, _ = listItemSchemaMap[0]
-	}
-
-	var err error
-	switch s := i.(type) {
-	case listItemSchema1:
-		var metadata bits = 0
-		if listItem.IsHidden {
-			metadata = set(metadata, hidden)
-		}
-		byteLine := []byte(listItem.Line)
-
-		s.PageID = uint32(listItem.id)
-		s.Metadata = metadata
-		s.LineLength = uint64(len([]byte(listItem.Line)))
-		s.NoteLength = 0
-
-		data := []interface{}{&s, &byteLine}
-		if listItem.Note != nil {
-			s.NoteLength = uint64(len(*listItem.Note))
-			data = append(data, listItem.Note)
-		}
-
-		// TODO the below writes need to be atomic
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing %v: %s\n", v, err)
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
-	return err
 }
