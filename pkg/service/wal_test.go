@@ -79,7 +79,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Second item")
 		data := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -90,7 +90,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:       0,
 			},
 			line0,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       2,
@@ -163,7 +163,7 @@ func TestWalMerge(t *testing.T) {
 		line2 := []byte("Third item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -173,7 +173,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -184,7 +184,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:       0,
 			},
 			line0,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       2,
@@ -194,7 +194,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       2,
@@ -225,7 +225,7 @@ func TestWalMerge(t *testing.T) {
 		line3 := []byte("Fourth item")
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             remoteUUID,
 				TargetUUID:       remoteUUID,
 				ListItemID:       1,
@@ -235,7 +235,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             remoteUUID,
 				TargetUUID:       remoteUUID,
 				ListItemID:       1,
@@ -246,7 +246,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:       0,
 			},
 			line1,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             remoteUUID,
 				TargetUUID:       remoteUUID,
 				ListItemID:       2,
@@ -256,7 +256,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             remoteUUID,
 				TargetUUID:       remoteUUID,
 				ListItemID:       2,
@@ -320,7 +320,7 @@ func TestWalMerge(t *testing.T) {
 		line0 := []byte("First item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -350,7 +350,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Second item")
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             remoteUUID,
 				TargetUUID:       remoteUUID,
 				ListItemID:       1,
@@ -479,7 +479,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Updated item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -489,7 +489,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -501,7 +501,7 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			// Deviates here
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -527,7 +527,7 @@ func TestWalMerge(t *testing.T) {
 
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -537,7 +537,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:       0,
 				NoteLength:       0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,
 				ListItemID:       1,
@@ -549,7 +549,7 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			// Deviates here
-			walItemSchema2{
+			walItemSchema1{
 				// UUID will be same as item.originUUID
 				UUID:             repo.wal.uuid,
 				TargetUUID:       repo.wal.uuid,

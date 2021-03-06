@@ -53,16 +53,6 @@ func NewWal(rootDir string) *Wal {
 // TODO these don't need to be public attributes
 type walItemSchema1 struct {
 	UUID             uuid
-	ListItemID       uint64
-	TargetListItemID uint64
-	UnixTime         int64
-	EventType        eventType
-	LineLength       uint64
-	NoteLength       uint64
-}
-
-type walItemSchema2 struct {
-	UUID             uuid
 	TargetUUID       uuid
 	ListItemID       uint64
 	TargetListItemID uint64
@@ -268,67 +258,33 @@ func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, 
 	el := eventLog{}
 	// TODO this is a hacky fix. Instantiate the note just in case
 	el.note = &[]byte{}
-	if schemaVersionID == uint16(1) {
-		item := walItemSchema1{}
-		err := binary.Read(f, binary.LittleEndian, &item)
+
+	item := walItemSchema1{}
+	err := binary.Read(f, binary.LittleEndian, &item)
+	if err != nil {
+		return nil, err
+	}
+	el.listItemID = item.ListItemID
+	el.targetListItemID = item.TargetListItemID
+	el.unixNanoTime = item.UnixTime
+	el.uuid = item.UUID
+	el.targetUUID = item.TargetUUID
+	el.eventType = item.EventType
+
+	line := make([]byte, item.LineLength)
+	err = binary.Read(f, binary.LittleEndian, &line)
+	if err != nil {
+		return nil, err
+	}
+	el.line = string(line)
+
+	if item.NoteLength > 0 {
+		note := make([]byte, item.NoteLength)
+		err = binary.Read(f, binary.LittleEndian, &note)
 		if err != nil {
 			return nil, err
 		}
-		// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
-		el.listItemID = item.ListItemID
-		el.targetListItemID = item.TargetListItemID
-		el.unixNanoTime = item.UnixTime
-		el.uuid = item.UUID
-		el.eventType = item.EventType
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(f, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
-	} else if schemaVersionID == uint16(2) {
-		item := walItemSchema2{}
-		err := binary.Read(f, binary.LittleEndian, &item)
-		if err != nil {
-			return nil, err
-		}
-		el.listItemID = item.ListItemID
-		el.targetListItemID = item.TargetListItemID
-		el.unixNanoTime = item.UnixTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
-
-		// TODO remove, this is roughly covering a broken previous build
-		if el.targetUUID == uuid(0) {
-			el.targetUUID = item.UUID
-		}
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(f, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
+		el.note = &note
 	}
 	return &el, nil
 }
@@ -346,7 +302,7 @@ func flush(f *os.File, walLog *[]eventLog) error {
 		if item.note != nil {
 			lenNote = uint64(len(*(item.note)))
 		}
-		i := walItemSchema2{
+		i := walItemSchema1{
 			UUID:             item.uuid,
 			TargetUUID:       item.targetUUID,
 			ListItemID:       item.listItemID,
