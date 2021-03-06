@@ -393,6 +393,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				t.search = getCommonSearchPrefix(t.selectedItems)
 				t.selectedItems = make(map[int]string)
 				t.curY = 0
+				posDiff[0] += len(t.search[0])
 			} else {
 				// Add a new item below current cursor position
 				// This will insert the contents of the current search string (omitting search args like `#`)
