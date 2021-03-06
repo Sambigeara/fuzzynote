@@ -15,7 +15,6 @@ type (
 
 const (
 	// This is THE date that Golang needs to determine custom formatting
-	dateFormat     = "Mon, Jan 2, 2006"
 	rootFileName   = "primary.db"
 	walFilePattern = "wal_%v.db"
 	syncFile       = "_sync_lock.db"
@@ -308,15 +307,6 @@ type MatchItem struct {
 // fulfil all rules.
 func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
-
-	// We need to pre-process the keys to parse any operators. We can't do this in the same loop as when
-	// we have no matching lines, the parsing logic will not be reached, and things get messy
-	for i, group := range keys {
-		group = []rune(parseOperatorGroups(string(group)))
-		// TODO Confirm: The slices within the slice appear to be the same mem locations as those
-		// passed in so they mutate as needed
-		keys[i] = group
-	}
 
 	cur := r.Root
 	var lastCur *ListItem

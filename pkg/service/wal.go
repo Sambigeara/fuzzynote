@@ -167,7 +167,6 @@ func (w *Wal) add(root *ListItem, line string, note *[]byte, childItem *ListItem
 
 // Update will update the line or note of an existing ListItem
 func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	line = parseOperatorGroups(line)
 	listItem.Line = line
 	listItem.Note = note
 	return listItem, nil
