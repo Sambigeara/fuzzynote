@@ -584,6 +584,8 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 			defer partialWalFile.Close()
 			// Flush the log rather than merged events to avoid duplication between partial WALs
 			err = flush(partialWalFile, w.log)
+			// Add it straight to the cache to avoid processing it in the future
+			w.processedPartialWals[randomWal] = struct{}{}
 		}
 		return &mergedWal, &fullLog, nil
 	}
