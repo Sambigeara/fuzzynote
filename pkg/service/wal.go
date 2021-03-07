@@ -9,8 +9,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	//"regexp"
 	"time"
+	//"regexp"
 	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
@@ -49,7 +49,7 @@ func NewWal(rootDir string) *Wal {
 		listItemTracker:      make(map[string]*ListItem),
 		processedPartialWals: make(map[string]struct{}),
 		localWalFile:         newLocalWalFile(rootDir),
-		remoteWalFiles:       []walFile{},
+		remoteWalFiles:       []walFile{newS3FileWal()},
 	}
 }
 
@@ -91,8 +91,8 @@ type eventLog struct {
 
 // WalFile offers a generic interface into local or remote filesystems
 type walFile interface {
-	lock() error
-	unlock() error
+	//lock() error
+	//unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error

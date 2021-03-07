@@ -42,6 +42,7 @@ func main() {
 	}
 
 	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
+	remoteRefreshTicker := time.NewTicker(time.Second * 5)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
 	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
@@ -81,7 +82,15 @@ func main() {
 			select {
 			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, false)
+				err := listRepo.Refresh(listItem, false, false)
+				if err != nil {
+					log.Fatalf("Failed on partial sync: %v", err)
+					return
+				}
+				term.S.PostEvent(&client.RefreshKey{})
+			case <-remoteRefreshTicker.C:
+				var listItem *service.ListItem
+				err := listRepo.Refresh(listItem, false, true)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 					return
@@ -89,7 +98,7 @@ func main() {
 				term.S.PostEvent(&client.RefreshKey{})
 			case <-fullRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, true)
+				err := listRepo.Refresh(listItem, true, true)
 				if err != nil {
 					log.Fatalf("Failed on full sync: %v", err)
 					return
@@ -120,4 +129,14 @@ func main() {
 	//listRepo.Load()
 	//listRepo.Save()
 	//os.Exit(0)
+
+	//runtime.Breakpoint()
+	//s3WalFile := service.NewS3FileWal()
+	//fileNames, _ := s3WalFile.GetFileNamesMatchingPattern("foo")
+	//for _, fileName := range fileNames {
+	//    wal, _ := s3WalFile.GenerateLogFromFile(fileName)
+	//    fmt.Println(wal)
+	//    s3WalFile.RemoveFile(fileName)
+	//    s3WalFile.Flush(fileName, &wal)
+	//}
 }

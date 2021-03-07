@@ -3,6 +3,7 @@ module fuzzy-note
 go 1.14
 
 require (
+	github.com/aws/aws-sdk-go v1.37.25
 	github.com/gdamore/tcell v1.4.0
 	github.com/google/go-cmp v0.5.4
 	github.com/jpillora/longestcommon v0.0.0-20161227235612-adb9d91ee629

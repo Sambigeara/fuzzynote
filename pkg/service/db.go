@@ -113,7 +113,7 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	r.wal.sync(true, false)
+	r.wal.sync(true, true)
 
 	return nil
 }
