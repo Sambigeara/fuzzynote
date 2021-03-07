@@ -22,20 +22,19 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(root *ListItem, fullSync bool) error {
+func (r *DBListRepo) Refresh(root *ListItem, fullSync bool, remoteSync bool) error {
 	var err error
-	var log, fullLog *[]eventLog
-	lenLog := len(*r.wal.log)
+	var fullLog *[]eventLog
 	lenFullLog := len(*r.wal.fullLog)
-	if log, fullLog, err = r.wal.sync(fullSync); err != nil {
+	if fullLog, err = r.wal.sync(fullSync, remoteSync); err != nil {
 		return err
 	}
 	// Take initial lengths of logs. If these are unchanged after sync, no changes have occurred so
 	// don't both rebuilding the list in `replay`
-	if lenLog == len(*log) && lenFullLog == len(*fullLog) {
+	if lenFullLog == len(*fullLog) {
 		return nil
 	}
-	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, log, fullLog); err != nil {
+	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, &[]eventLog{}, fullLog); err != nil {
 		return err
 	}
 	return nil
@@ -74,7 +73,7 @@ func (r *DBListRepo) Load() error {
 	}
 
 	// Load the WAL into memory
-	if err := r.Refresh(r.Root, true); err != nil {
+	if err := r.Refresh(r.Root, true, false); err != nil {
 		return err
 	}
 	return nil
@@ -114,7 +113,7 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	r.wal.sync(true)
+	r.wal.sync(true, false)
 
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	//"regexp"
 	"time"
 	//"runtime"
 
@@ -92,7 +93,7 @@ type eventLog struct {
 type walFile interface {
 	lock() error
 	unlock() error
-	getFileNames(string) ([]string, error)
+	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error
 	flush(string, *[]eventLog) error
@@ -123,8 +124,8 @@ func (wf *localWalFile) unlock() error {
 	return nil
 }
 
-func (wf *localWalFile) getFileNames(walPathPattern string) ([]string, error) {
-	fileNames, err := filepath.Glob(fmt.Sprintf(walPathPattern, "*"))
+func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
 	}
@@ -361,7 +362,6 @@ func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog
 		return root, uint64(1), log, fullLog, nil
 	}
 
-	//runtime.Breakpoint()
 	for _, e := range *fullLog {
 		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
@@ -503,140 +503,144 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
+func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
-	walFiles := append(w.remoteWalFiles, w.localWalFile)
-
-	for _, wf := range walFiles {
-		err := wf.lock()
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer wf.unlock()
+	walFiles := []walFile{w.localWalFile}
+	if remoteSync {
+		walFiles = append(walFiles, w.remoteWalFiles...)
 	}
 
-	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
+	//for _, wf := range walFiles {
+	//    err := wf.lock()
+	//    if err != nil {
+	//        log.Fatal(err)
+	//    }
+	//    defer wf.unlock()
+	//}
 
 	// Avoid mutating underyling logs before the process is complete.
 	// Therefore, dereference into copies, who's pointers will be reassigned to w later on
-	localWal := *w.log
+	homeWal := *w.log
 	fullLog := *w.fullLog
 
 	if fullSync {
-		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
-		localWalFile, err := os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer localWalFile.Close()
-
-		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
-		// The read will only be required on Load, not on Save (when we close the app)
-		if len(fullLog) == 0 {
-			fullLog, err = buildFromFile(localWalFile)
+		for _, wf := range walFiles {
+			homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v*", w.uuid)))
 			if err != nil {
-				return nil, nil, err
+				log.Fatal(err)
 			}
+			// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
+			// The read will only be required on Load, not on Save (when we close the app)
+			if len(fullLog) == 0 {
+				for _, fileName := range homeFileNames {
+					l, err := wf.generateLogFromFile(fileName)
+					if err != nil {
+						log.Fatal(err)
+					}
+					fullLog = *(merge(&fullLog, &l))
+					w.processedPartialWals[fileName] = struct{}{}
+				}
+			}
+			homeWal = *(merge(&fullLog, &homeWal))
 		}
-
-		localWal = *(merge(&fullLog, &localWal))
 	}
 
-	fileNameMap := make(map[walFile][]string)
-	//fileNames := []string{}
+	allFileNamesMap := make(map[walFile][]string)
 	nFileNames := 0
 	for _, wf := range walFiles {
-		fileNames, err := wf.getFileNames(w.walPathPattern)
+		fileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
 		if err != nil {
 			log.Fatal(err)
 		}
 		nFileNames += len(fileNames)
-		fileNameMap[wf] = append(fileNameMap[wf], fileNames...)
+		allFileNamesMap[wf] = fileNames
 	}
+
+	//runtime.Breakpoint()
+	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
 
 	// On partial syncs, to avoid file reads completely, iterate over the names, and if
 	// they're all already processed, return
-	if !fullSync && nFileNames > 1 && len(localWal) == 0 {
+	if !fullSync && nFileNames > 1 && len(*w.log) == 0 {
 		returnEarly := true
-		for _, fileNames := range fileNameMap {
+		for _, fileNames := range allFileNamesMap {
 			i := 0
 			for i < len(fileNames) && returnEarly {
 				fileName := fileNames[i]
-				if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
+				if _, exists := w.processedPartialWals[fileName]; !exists {
 					returnEarly = false
 				}
 				i++
 			}
-			if returnEarly {
-				return w.log, w.fullLog, nil
-			}
+		}
+		if returnEarly {
+			return w.fullLog, nil
 		}
 	}
 
 	mergedWal := []eventLog{}
 
 	// Load all WAL files into arrays
-	for wf, fileNames := range fileNameMap {
+	for wf, fileNames := range allFileNamesMap {
 		for _, fileName := range fileNames {
-			// Avoid localWal
-			if fileName != localWalFilePath {
-				// Don't bother merging processed files
-				if _, exists := w.processedPartialWals[fileName]; !exists {
-					wal, err := wf.generateLogFromFile(fileName)
-					if err != nil {
-						log.Fatal(err)
-					}
-					// Add to the processed cache
-					w.processedPartialWals[fileName] = struct{}{}
-					// Merge all WALs
-					mergedWal = *(merge(&mergedWal, &wal))
+			// Avoid homeWal
+			//if !localReg.MatchString(fileName) {
+			// Don't bother merging processed files
+			if _, exists := w.processedPartialWals[fileName]; !exists {
+				wal, err := wf.generateLogFromFile(fileName)
+				if err != nil {
+					log.Fatal(err)
 				}
-				if fullSync {
-					err := wf.removeFile(fileName)
-					if err != nil {
-						return nil, nil, err
-					}
-				}
+				// Merge all WALs
+				mergedWal = *(merge(&mergedWal, &wal))
+				// Add to the processed cache
+				w.processedPartialWals[fileName] = struct{}{}
 			}
+			if fullSync {
+				defer wf.removeFile(fileName)
+			}
+			//}
 		}
 	}
 
 	flushPartial := true
 	if !fullSync {
-		// Before we merge in the localWal, we should check to see if the merged logs are
+		// Before we merge in the homeWal, we should check to see if the merged logs are
 		// the same length the as recent local logs. If so, there's no point flushing any
 		// new random files as they'll add additional files to merge with no difference to
 		// the outcome
-		if len(localWal) == len(mergedWal) {
+		if len(homeWal) == len(mergedWal) {
 			flushPartial = false
 		}
 	}
 
-	mergedWal = *(merge(&mergedWal, &localWal))
+	mergedWal = *(merge(&mergedWal, &homeWal))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
 	if fullSync {
+		// Clear the processedPartialWals cache as processed files may have changed on full syncs
+		w.processedPartialWals = make(map[string]struct{})
+		randomHomeWal := fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v%v", w.uuid, generateUUID()))
 		for _, wf := range walFiles {
 			// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
 			// full log of events, and named after the static UUID for the app/db
-			err := wf.flush(localWalFilePath, &mergedWal)
+			err := wf.flush(randomHomeWal, &mergedWal)
 			if err != nil {
-				return nil, nil, err
+				log.Fatal(err)
 			}
-			// Clear the processedPartialWals cache as processed files may have changed on full syncs
-			w.processedPartialWals = make(map[string]struct{})
 		}
-		return &[]eventLog{}, &mergedWal, nil
+		w.processedPartialWals[randomHomeWal] = struct{}{}
+		return &mergedWal, nil
 	} else {
 		for _, wf := range walFiles {
-			// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
+			// Otherwise, we leave the home WALs untouched, generate a temp UUID and flush the partial WAL
 			// to disk
 			if flushPartial {
 				randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
@@ -649,6 +653,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 				w.processedPartialWals[randomWal] = struct{}{}
 			}
 		}
-		return &mergedWal, &fullLog, nil
+		fullLog = *(merge(&mergedWal, &fullLog))
+		return &fullLog, nil
 	}
 }

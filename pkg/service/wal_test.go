@@ -116,7 +116,7 @@ func TestWalMerge(t *testing.T) {
 		f.Close()
 
 		//runtime.Breakpoint()
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 
 		if len(*repo.wal.fullLog) != 2 {
 			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -281,7 +281,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 
 		if len(*repo.wal.fullLog) != 8 {
 			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -375,7 +375,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -426,7 +426,7 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		repo.Delete(1)
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 		preSaveLog = *repo.wal.fullLog
 
 		// Re-write the same remote WAL
@@ -439,7 +439,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
@@ -576,7 +576,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true)
+		repo.Refresh(nil, true, false)
 
 		if len(*repo.wal.fullLog) != 4 {
 			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*repo.wal.fullLog))

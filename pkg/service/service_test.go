@@ -16,7 +16,10 @@ var rootPath = path.Join(rootDir, rootFileName)
 
 func clearUp(r *DBListRepo) {
 	os.Remove(rootPath)
-	os.Remove(fmt.Sprintf(r.wal.walPathPattern, r.wal.uuid))
+	wals, _ := filepath.Glob(fmt.Sprintf(r.wal.walPathPattern, "*"))
+	for _, wal := range wals {
+		os.Remove(wal)
+	}
 	os.Remove(r.wal.localWalFile.syncFilePath)
 	os.Remove(rootDir)
 
