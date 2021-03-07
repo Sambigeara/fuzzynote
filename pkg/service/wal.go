@@ -523,20 +523,24 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	// Load all WAL files into arrays
 	for _, fileName := range fileNames {
 		// Avoid localWal
+		//if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
 		if fileName != localWalFilePath {
-			f, err := os.Open(fileName)
-			if err != nil {
-				return nil, nil, err
+			// Don't bother merging processing files
+			if _, exists := w.processedPartialWals[fileName]; !exists {
+				f, err := os.Open(fileName)
+				if err != nil {
+					return nil, nil, err
+				}
+				wal, err := buildFromFile(f)
+				if err != nil {
+					return nil, nil, err
+				}
+				// Add to the processed cache
+				w.processedPartialWals[fileName] = struct{}{}
+				// Merge all WALs
+				mergedWal = *(merge(&mergedWal, &wal))
+				f.Close()
 			}
-			wal, err := buildFromFile(f)
-			if err != nil {
-				return nil, nil, err
-			}
-			// Add to the processed cache
-			w.processedPartialWals[fileName] = struct{}{}
-			// Merge all WALs
-			mergedWal = *(merge(&mergedWal, &wal))
-			f.Close()
 			if fullSync {
 				os.Remove(fileName)
 			}
