@@ -30,8 +30,8 @@ type Wal struct {
 	processedPartialWals map[string]struct{}
 	walPathPattern       string
 	latestWalSchemaID    uint16
-	syncFilePath         string
-	walFiles             []walFile
+	localWalFile         *localWalFile
+	remoteWalFiles       []walFile
 }
 
 func generateUUID() uuid {
@@ -39,18 +39,16 @@ func generateUUID() uuid {
 }
 
 func NewWal(rootDir string) *Wal {
-	walPathPattern := path.Join(rootDir, walFilePattern)
-	syncFilePath := path.Join(rootDir, syncFile)
 	return &Wal{
 		uuid:                 generateUUID(),
-		walPathPattern:       walPathPattern,
+		walPathPattern:       path.Join(rootDir, walFilePattern),
 		latestWalSchemaID:    latestWalSchemaID,
 		log:                  &[]eventLog{},
 		fullLog:              &[]eventLog{},
 		listItemTracker:      make(map[string]*ListItem),
 		processedPartialWals: make(map[string]struct{}),
-		syncFilePath:         syncFilePath,
-		walFiles:             []walFile{newLocalWalFile(syncFilePath, walPathPattern)},
+		localWalFile:         newLocalWalFile(rootDir),
+		remoteWalFiles:       []walFile{},
 	}
 }
 
@@ -88,29 +86,26 @@ type eventLog struct {
 	eventType        eventType
 	line             string
 	note             *[]byte
-	//curRoot          *ListItem
 }
 
 // WalFile offers a generic interface into local or remote filesystems
 type walFile interface {
 	lock() error
 	unlock() error
-	getFileNames() ([]string, error)
+	getFileNames(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error
 	flush(string, *[]eventLog) error
 }
 
 type localWalFile struct {
-	syncFilePath   string
-	walPathPattern string
-	fileMutex      *lockedfile.File
+	syncFilePath string
+	fileMutex    *lockedfile.File
 }
 
-func newLocalWalFile(syncFilePath string, walPathPattern string) *localWalFile {
+func newLocalWalFile(rootDir string) *localWalFile {
 	return &localWalFile{
-		syncFilePath:   syncFilePath,
-		walPathPattern: walPathPattern,
+		syncFilePath: path.Join(rootDir, syncFile),
 	}
 }
 
@@ -128,8 +123,8 @@ func (wf *localWalFile) unlock() error {
 	return nil
 }
 
-func (wf *localWalFile) getFileNames() ([]string, error) {
-	fileNames, err := filepath.Glob(fmt.Sprintf(wf.walPathPattern, "*"))
+func (wf *localWalFile) getFileNames(walPathPattern string) ([]string, error) {
+	fileNames, err := filepath.Glob(fmt.Sprintf(walPathPattern, "*"))
 	if err != nil {
 		return []string{}, err
 	}
@@ -508,14 +503,15 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-// TODO decouple this from the Wal as it should almost be a pure function
 func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
-	for _, wf := range w.walFiles {
+	walFiles := append(w.remoteWalFiles, w.localWalFile)
+
+	for _, wf := range walFiles {
 		err := wf.lock()
 		if err != nil {
 			log.Fatal(err)
@@ -553,8 +549,8 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	fileNameMap := make(map[walFile][]string)
 	//fileNames := []string{}
 	nFileNames := 0
-	for _, wf := range w.walFiles {
-		fileNames, err := wf.getFileNames()
+	for _, wf := range walFiles {
+		fileNames, err := wf.getFileNames(w.walPathPattern)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -627,10 +623,9 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 	//
 
 	if fullSync {
-		for _, wf := range w.walFiles {
+		for _, wf := range walFiles {
 			// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
 			// full log of events, and named after the static UUID for the app/db
-			// TODO Do I need to close the file before letting `flush` deal with it?
 			err := wf.flush(localWalFilePath, &mergedWal)
 			if err != nil {
 				return nil, nil, err
@@ -640,7 +635,7 @@ func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
 		}
 		return &[]eventLog{}, &mergedWal, nil
 	} else {
-		for _, wf := range w.walFiles {
+		for _, wf := range walFiles {
 			// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
 			// to disk
 			if flushPartial {
