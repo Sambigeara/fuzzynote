@@ -8,19 +8,21 @@ import (
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 type s3FileWal struct {
-	svc        *s3.S3
-	downloader *s3manager.Downloader
-	uploader   *s3manager.Uploader
-	bucket     string
+	svc                  *s3.S3
+	downloader           *s3manager.Downloader
+	uploader             *s3manager.Uploader
+	bucket               string
+	processedPartialWals map[string]struct{}
 }
 
-func newS3FileWal() *s3FileWal {
+func NewS3FileWal() *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String("eu-west-1"),
 	})
@@ -29,10 +31,11 @@ func newS3FileWal() *s3FileWal {
 	}
 
 	return &s3FileWal{
-		svc:        s3.New(sess),
-		downloader: s3manager.NewDownloader(sess),
-		uploader:   s3manager.NewUploader(sess),
-		bucket:     "fuzzynote-pub",
+		svc:                  s3.New(sess),
+		downloader:           s3manager.NewDownloader(sess),
+		uploader:             s3manager.NewUploader(sess),
+		bucket:               "fuzzynote-pub",
+		processedPartialWals: make(map[string]struct{}),
 	}
 }
 
@@ -70,7 +73,12 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]eventLog, error) {
 			Key:    aws.String(fileName),
 		})
 	if err != nil {
-		exitErrorf("Unable to download item %q, %v", fileName, err)
+		// If the file has been removed, skip, as it means another process has already merged
+		// and deleted this one
+		if _, ok := err.(awserr.Error); !ok {
+			// process SDK error
+			exitErrorf("Unable to download item %q, %v", fileName, err)
+		}
 	}
 
 	//fmt.Println("Downloaded", f.Name(), numBytes, "bytes")

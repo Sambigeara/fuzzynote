@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 	"path"
+	//"runtime"
 	"strings"
 	"time"
-	//"runtime"
 
 	"github.com/gdamore/tcell"
 	//"github.com/rogpeppe/go-internal/lockedfile"
@@ -32,38 +32,24 @@ func main() {
 	os.Mkdir(rootDir, os.ModePerm)
 
 	//runtime.Breakpoint()
-	listRepo := service.NewDBListRepo(rootDir)
+	localWalFile := service.NewLocalWalFile(rootDir)
+	s3WalFile := service.NewS3FileWal()
+	walFiles := []service.WalFile{localWalFile, s3WalFile}
+
+	listRepo := service.NewDBListRepo(rootDir, walFiles)
 
 	// List instantiation
-	err := listRepo.Load()
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(0)
+	for _, wf := range walFiles {
+		err := listRepo.Load(wf)
+		if err != nil {
+			log.Fatal(err)
+			os.Exit(0)
+		}
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Millisecond * 500)
-	remoteRefreshTicker := time.NewTicker(time.Second * 5)
+	partialRefreshTicker := time.NewTicker(time.Millisecond * 250)
+	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
-
-	// We only need one fullRefreshTicker running between processes (if we have multiple locals running).
-	//go func() {
-	//    refreshFileName := path.Join(rootDir, refreshFile)
-	//    mutFile, err := lockedfile.Create(refreshFileName)
-	//    if err != nil {
-	//        log.Fatalf("Error creating wal refresh lock: %s\n", err)
-	//    }
-	//    defer mutFile.Close()
-	//    go func() {
-	//        for {
-	//            select {
-	//            case <-fullRefreshTicker.C:
-	//                var listItem *service.ListItem
-	//                listRepo.Refresh(listItem, nil, true)
-	//                cursorEvents <- &client.OffsetKey{}
-	//            }
-	//        }
-	//    }()
-	//}()
 
 	// Set colourscheme
 	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
@@ -82,26 +68,28 @@ func main() {
 			select {
 			case <-partialRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, false, false)
+				err := listRepo.Refresh(localWalFile, listItem, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 					return
 				}
 				term.S.PostEvent(&client.RefreshKey{})
 			case <-remoteRefreshTicker.C:
+				// TODO can remote refresh run in an entirely independent loop?
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, false, true)
+				err := listRepo.Refresh(s3WalFile, listItem, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 					return
 				}
-				term.S.PostEvent(&client.RefreshKey{})
 			case <-fullRefreshTicker.C:
 				var listItem *service.ListItem
-				err := listRepo.Refresh(listItem, true, true)
-				if err != nil {
-					log.Fatalf("Failed on full sync: %v", err)
-					return
+				for _, wf := range walFiles {
+					err := listRepo.Refresh(wf, listItem, true)
+					if err != nil {
+						log.Fatalf("Failed on full sync: %v", err)
+						return
+					}
 				}
 				term.S.PostEvent(&client.RefreshKey{})
 			case ev := <-keyPressEvts:
@@ -109,9 +97,11 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
-					err := listRepo.Save()
-					if err != nil {
-						log.Fatal(err)
+					for _, wf := range walFiles {
+						err := listRepo.Save(wf)
+						if err != nil {
+							log.Fatal(err)
+						}
 					}
 					partialRefreshTicker.Stop()
 					fullRefreshTicker.Stop()

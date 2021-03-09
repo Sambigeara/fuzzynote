@@ -28,18 +28,23 @@ type Wal struct {
 	log                  *[]eventLog // log represents a fresh set of events (unique from the historical log below)
 	fullLog              *[]eventLog // fullLog is a historical log of events
 	listItemTracker      map[string]*ListItem
-	processedPartialWals map[string]struct{}
+	processedPartialWals map[WalFile]map[string]struct{}
 	walPathPattern       string
 	latestWalSchemaID    uint16
-	localWalFile         *localWalFile
-	remoteWalFiles       []walFile
+	//localWalFile         *localWalFile
+	//remoteWalFiles       []WalFile
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(rootDir string) *Wal {
+func NewWal(rootDir string, walFiles []WalFile) *Wal {
+	// Instantiate map for each walFile
+	processedPartialWals := make(map[WalFile]map[string]struct{})
+	for _, wf := range walFiles {
+		processedPartialWals[wf] = make(map[string]struct{})
+	}
 	return &Wal{
 		uuid:                 generateUUID(),
 		walPathPattern:       path.Join(rootDir, walFilePattern),
@@ -47,13 +52,12 @@ func NewWal(rootDir string) *Wal {
 		log:                  &[]eventLog{},
 		fullLog:              &[]eventLog{},
 		listItemTracker:      make(map[string]*ListItem),
-		processedPartialWals: make(map[string]struct{}),
-		localWalFile:         newLocalWalFile(rootDir),
-		remoteWalFiles:       []walFile{newS3FileWal()},
+		processedPartialWals: processedPartialWals,
+		//localWalFile:         NewLocalWalFile(rootDir),
+		//remoteWalFiles:       []WalFile{NewS3FileWal()},
 	}
 }
 
-// TODO these don't need to be public attributes
 type walItemSchema1 struct {
 	UUID             uuid
 	TargetUUID       uuid
@@ -90,7 +94,7 @@ type eventLog struct {
 }
 
 // WalFile offers a generic interface into local or remote filesystems
-type walFile interface {
+type WalFile interface {
 	//lock() error
 	//unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
@@ -102,11 +106,13 @@ type walFile interface {
 type localWalFile struct {
 	syncFilePath string
 	fileMutex    *lockedfile.File
+	//processedPartialWals map[string]struct{}
 }
 
-func newLocalWalFile(rootDir string) *localWalFile {
+func NewLocalWalFile(rootDir string) *localWalFile {
 	return &localWalFile{
 		syncFilePath: path.Join(rootDir, syncFile),
+		//processedPartialWals: make(map[string]struct{}),
 	}
 }
 
@@ -151,7 +157,7 @@ func (wf *localWalFile) removeFile(fileName string) error {
 }
 
 func (wf *localWalFile) flush(fileName string, walLog *[]eventLog) error {
-	// TODO make generic function with walFile specific functions retrieving specific io.Writer
+	// TODO make generic function with WalFile specific functions retrieving specific io.Writer
 	f, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -427,7 +433,12 @@ func buildFromFile(f *os.File) ([]eventLog, error) {
 			switch err {
 			case io.EOF:
 				return el, nil
-			//case io.ErrUnexpectedEOF:
+			case io.ErrUnexpectedEOF:
+				// Given the distributed concurrent nature of this app, we sometimes pick up partially
+				// uploaded files which will fail, but may well be complete later on, therefore just
+				// return for now and attempt again later
+				// TODO implement a decent retry mech here
+				return []eventLog{}, nil
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return el, err
@@ -503,16 +514,16 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
+func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
-	walFiles := []walFile{w.localWalFile}
-	if remoteSync {
-		walFiles = append(walFiles, w.remoteWalFiles...)
-	}
+	//walFiles := []WalFile{w.localWalFile}
+	//if remoteSync {
+	//    walFiles = append(walFiles, w.remoteWalFiles...)
+	//}
 
 	//for _, wf := range walFiles {
 	//    err := wf.lock()
@@ -528,37 +539,33 @@ func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 	fullLog := *w.fullLog
 
 	if fullSync {
-		for _, wf := range walFiles {
-			homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v*", w.uuid)))
-			if err != nil {
-				log.Fatal(err)
-			}
-			// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
-			// The read will only be required on Load, not on Save (when we close the app)
-			if len(fullLog) == 0 {
-				for _, fileName := range homeFileNames {
-					l, err := wf.generateLogFromFile(fileName)
-					if err != nil {
-						log.Fatal(err)
-					}
-					fullLog = *(merge(&fullLog, &l))
-					w.processedPartialWals[fileName] = struct{}{}
-				}
-			}
-			homeWal = *(merge(&fullLog, &homeWal))
-		}
-	}
-
-	allFileNamesMap := make(map[walFile][]string)
-	nFileNames := 0
-	for _, wf := range walFiles {
-		fileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
+		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v*", w.uuid)))
 		if err != nil {
 			log.Fatal(err)
 		}
-		nFileNames += len(fileNames)
-		allFileNamesMap[wf] = fileNames
+		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
+		// The read will only be required on Load, not on Save (when we close the app)
+		if len(fullLog) == 0 {
+			for _, fileName := range homeFileNames {
+				l, err := wf.generateLogFromFile(fileName)
+				if err != nil {
+					log.Fatal(err)
+				}
+				fullLog = *(merge(&fullLog, &l))
+				w.processedPartialWals[wf][fileName] = struct{}{}
+			}
+		}
+		homeWal = *(merge(&fullLog, &homeWal))
 	}
+
+	allFileNamesMap := make(map[WalFile][]string)
+	nFileNames := 0
+	fileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	nFileNames += len(fileNames)
+	allFileNamesMap[wf] = fileNames
 
 	//runtime.Breakpoint()
 	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
@@ -571,7 +578,7 @@ func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 			i := 0
 			for i < len(fileNames) && returnEarly {
 				fileName := fileNames[i]
-				if _, exists := w.processedPartialWals[fileName]; !exists {
+				if _, exists := w.processedPartialWals[wf][fileName]; !exists {
 					returnEarly = false
 				}
 				i++
@@ -590,7 +597,7 @@ func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 			// Avoid homeWal
 			//if !localReg.MatchString(fileName) {
 			// Don't bother merging processed files
-			if _, exists := w.processedPartialWals[fileName]; !exists {
+			if _, exists := w.processedPartialWals[wf][fileName]; !exists {
 				wal, err := wf.generateLogFromFile(fileName)
 				if err != nil {
 					log.Fatal(err)
@@ -598,7 +605,7 @@ func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 				// Merge all WALs
 				mergedWal = *(merge(&mergedWal, &wal))
 				// Add to the processed cache
-				w.processedPartialWals[fileName] = struct{}{}
+				w.processedPartialWals[wf][fileName] = struct{}{}
 			}
 			if fullSync {
 				defer wf.removeFile(fileName)
@@ -626,32 +633,28 @@ func (w *Wal) sync(fullSync bool, remoteSync bool) (*[]eventLog, error) {
 
 	if fullSync {
 		// Clear the processedPartialWals cache as processed files may have changed on full syncs
-		w.processedPartialWals = make(map[string]struct{})
+		w.processedPartialWals[wf] = make(map[string]struct{})
 		randomHomeWal := fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v%v", w.uuid, generateUUID()))
-		for _, wf := range walFiles {
-			// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
-			// full log of events, and named after the static UUID for the app/db
-			err := wf.flush(randomHomeWal, &mergedWal)
+		// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
+		// full log of events, and named after the static UUID for the app/db
+		err := wf.flush(randomHomeWal, &mergedWal)
+		if err != nil {
+			log.Fatal(err)
+		}
+		w.processedPartialWals[wf][randomHomeWal] = struct{}{}
+		return &mergedWal, nil
+	} else {
+		// Otherwise, we leave the home WALs untouched, generate a temp UUID and flush the partial WAL
+		// to disk
+		if flushPartial {
+			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
+			// Flush the log rather than merged events to avoid duplication between partial WALs
+			err := wf.flush(randomWal, w.log)
 			if err != nil {
 				log.Fatal(err)
 			}
-		}
-		w.processedPartialWals[randomHomeWal] = struct{}{}
-		return &mergedWal, nil
-	} else {
-		for _, wf := range walFiles {
-			// Otherwise, we leave the home WALs untouched, generate a temp UUID and flush the partial WAL
-			// to disk
-			if flushPartial {
-				randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
-				// Flush the log rather than merged events to avoid duplication between partial WALs
-				err := wf.flush(randomWal, w.log)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// Add it straight to the cache to avoid processing it in the future
-				w.processedPartialWals[randomWal] = struct{}{}
-			}
+			// Add it straight to the cache to avoid processing it in the future
+			w.processedPartialWals[wf][randomWal] = struct{}{}
 		}
 		fullLog = *(merge(&mergedWal, &fullLog))
 		return &fullLog, nil

@@ -74,12 +74,12 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string) *DBListRepo {
+func NewDBListRepo(rootDir string, walFiles []WalFile) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(rootDir),
+		wal:                NewWal(rootDir, walFiles),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 	}

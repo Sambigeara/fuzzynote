@@ -22,15 +22,15 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(root *ListItem, fullSync bool, remoteSync bool) error {
+func (r *DBListRepo) Refresh(wf WalFile, root *ListItem, fullSync bool) error {
 	var err error
 	var fullLog *[]eventLog
 	lenFullLog := len(*r.wal.fullLog)
-	if fullLog, err = r.wal.sync(fullSync, remoteSync); err != nil {
+	if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
 		return err
 	}
-	// Take initial lengths of logs. If these are unchanged after sync, no changes have occurred so
-	// don't both rebuilding the list in `replay`
+	// Take initial lengths of fullLog. If this is unchanged after sync, no changes have occurred so
+	// don't bother rebuilding the list in `replay`
 	if lenFullLog == len(*fullLog) {
 		return nil
 	}
@@ -42,7 +42,7 @@ func (r *DBListRepo) Refresh(root *ListItem, fullSync bool, remoteSync bool) err
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (r *DBListRepo) Load() error {
+func (r *DBListRepo) Load(wf WalFile) error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -73,7 +73,7 @@ func (r *DBListRepo) Load() error {
 	}
 
 	// Load the WAL into memory
-	if err := r.Refresh(r.Root, true, false); err != nil {
+	if err := r.Refresh(wf, r.Root, true); err != nil {
 		return err
 	}
 	return nil
@@ -100,7 +100,7 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save() error {
+func (r *DBListRepo) Save(wf WalFile) error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -113,7 +113,7 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	r.wal.sync(true, true)
+	r.wal.sync(wf, true)
 
 	return nil
 }
