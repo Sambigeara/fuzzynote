@@ -558,31 +558,25 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 		homeWal = *(merge(&fullLog, &homeWal))
 	}
 
-	allFileNamesMap := make(map[WalFile][]string)
-	nFileNames := 0
 	fileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	nFileNames += len(fileNames)
-	allFileNamesMap[wf] = fileNames
 
 	//runtime.Breakpoint()
 	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
 
 	// On partial syncs, to avoid file reads completely, iterate over the names, and if
 	// they're all already processed, return
-	if !fullSync && nFileNames > 1 && len(*w.log) == 0 {
+	if !fullSync && len(fileNames) > 1 && len(*w.log) == 0 {
 		returnEarly := true
-		for _, fileNames := range allFileNamesMap {
-			i := 0
-			for i < len(fileNames) && returnEarly {
-				fileName := fileNames[i]
-				if _, exists := w.processedPartialWals[wf][fileName]; !exists {
-					returnEarly = false
-				}
-				i++
+		i := 0
+		for i < len(fileNames) && returnEarly {
+			fileName := fileNames[i]
+			if _, exists := w.processedPartialWals[wf][fileName]; !exists {
+				returnEarly = false
 			}
+			i++
 		}
 		if returnEarly {
 			return w.fullLog, nil
@@ -592,26 +586,24 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 	mergedWal := []eventLog{}
 
 	// Load all WAL files into arrays
-	for wf, fileNames := range allFileNamesMap {
-		for _, fileName := range fileNames {
-			// Avoid homeWal
-			//if !localReg.MatchString(fileName) {
-			// Don't bother merging processed files
-			if _, exists := w.processedPartialWals[wf][fileName]; !exists {
-				wal, err := wf.generateLogFromFile(fileName)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// Merge all WALs
-				mergedWal = *(merge(&mergedWal, &wal))
-				// Add to the processed cache
-				w.processedPartialWals[wf][fileName] = struct{}{}
+	for _, fileName := range fileNames {
+		// Avoid homeWal
+		//if !localReg.MatchString(fileName) {
+		// Don't bother merging processed files
+		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
+			wal, err := wf.generateLogFromFile(fileName)
+			if err != nil {
+				log.Fatal(err)
 			}
-			if fullSync {
-				defer wf.removeFile(fileName)
-			}
-			//}
+			// Merge all WALs
+			mergedWal = *(merge(&mergedWal, &wal))
+			// Add to the processed cache
+			w.processedPartialWals[wf][fileName] = struct{}{}
 		}
+		if fullSync {
+			defer wf.removeFile(fileName)
+		}
+		//}
 	}
 
 	flushPartial := true
