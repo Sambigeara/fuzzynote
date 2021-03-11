@@ -158,7 +158,6 @@ func (t *Terminal) openEditorSession() error {
 	tmpfile, err := ioutil.TempFile("", "fzn_buffer")
 	if err != nil {
 		log.Fatal(err)
-		return err
 	}
 
 	defer os.Remove(tmpfile.Name())

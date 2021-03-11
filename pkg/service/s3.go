@@ -1,12 +1,11 @@
 package service
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
-	"path"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -21,10 +20,11 @@ type s3FileWal struct {
 	uploader             *s3manager.Uploader
 	bucket               string
 	processedPartialWals map[string]struct{}
-	syncFilePath         string
+	rootDir              string
+	localRootDir         string
 }
 
-func NewS3FileWal(rootDir string) *s3FileWal {
+func NewS3FileWal(rootDir string, localRootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String("eu-west-1"),
 	})
@@ -38,8 +38,17 @@ func NewS3FileWal(rootDir string) *s3FileWal {
 		uploader:             s3manager.NewUploader(sess),
 		bucket:               "fuzzynote-pub",
 		processedPartialWals: make(map[string]struct{}),
-		syncFilePath:         path.Join(rootDir, syncFile),
+		rootDir:              rootDir,
+		localRootDir:         localRootDir,
 	}
+}
+
+func (wf *s3FileWal) getRootDir() string {
+	return wf.rootDir
+}
+
+func (wf *s3FileWal) getLocalRootDir() string {
+	return wf.localRootDir
 }
 
 // TODO get rid of these
@@ -52,8 +61,10 @@ func (wf *s3FileWal) unlock() error {
 }
 
 func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(wf.bucket),
+		Prefix: aws.String(wf.getRootDir()),
 	})
 	if err != nil {
 		exitErrorf("Unable to list items in bucket %q, %v", wf.bucket, err)
@@ -72,11 +83,12 @@ func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string,
 }
 
 func (wf *s3FileWal) generateLogFromFile(fileName string) ([]eventLog, error) {
-	f, err := os.Create(fileName)
+	// Read into bytes rather than file
+	f, err := ioutil.TempFile("", "fzn_buffer")
 	if err != nil {
-		exitErrorf("Unable to open file %q, %v", fileName, err)
+		log.Fatal(err)
 	}
-	defer f.Close()
+	defer os.Remove(f.Name())
 
 	//numBytes, err := wf.downloader.Download(f,
 	_, err = wf.downloader.Download(f,
@@ -120,60 +132,10 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *s3FileWal) flush(fileName string, walLog *[]eventLog) error {
-	// TODO make generic function with walFile specific functions retrieving specific io.Writer
-	f, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// TODO this might not be needed anymore now we use fresh files each time
-	// Seek to beginning of file just in case
-	f.Truncate(0)
+func (wf *s3FileWal) flush(f *os.File, fileName string) error {
+	defer os.Remove(f.Name())
 	f.Seek(0, io.SeekStart)
-
-	// Write the schema ID
-	err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range *walLog {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema1{
-			UUID:             item.uuid,
-			TargetUUID:       item.targetUUID,
-			ListItemID:       item.listItemID,
-			TargetListItemID: item.targetListItemID,
-			UnixTime:         item.unixNanoTime,
-			EventType:        item.eventType,
-			LineLength:       lenLine,
-			NoteLength:       lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
-
-	f.Seek(0, io.SeekStart)
-	_, err = wf.uploader.Upload(&s3manager.UploadInput{
+	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
 		Body:   f,

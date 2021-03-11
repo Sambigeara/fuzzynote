@@ -22,27 +22,35 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(wf WalFile, root *ListItem, fullSync bool) error {
+func (r *DBListRepo) Refresh(wfs []WalFile, root *ListItem, fullSync bool) error {
 	var err error
 	var fullLog *[]eventLog
-	lenFullLog := len(*r.wal.fullLog)
-	if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
-		return err
-	}
-	// Take initial lengths of fullLog. If this is unchanged after sync, no changes have occurred so
-	// don't bother rebuilding the list in `replay`
-	if lenFullLog == len(*fullLog) {
-		return nil
-	}
-	if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, &[]eventLog{}, fullLog); err != nil {
-		return err
+	for _, wf := range wfs {
+		lenFullLog := len(*r.wal.fullLog)
+		if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
+			return err
+		}
+		// Take initial lengths of fullLog. If this is unchanged after sync, no changes have occurred so
+		// don't bother rebuilding the list in `replay`
+		if lenFullLog == len(*fullLog) {
+			continue
+		}
+		if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, &[]eventLog{}, fullLog); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (r *DBListRepo) Load(wf WalFile) error {
+func (r *DBListRepo) Load(wfs []WalFile) error {
+	// Instantiate processedPartialWals and pendingRemoteLogs caches
+	for _, wf := range wfs {
+		r.wal.processedPartialWals[wf] = make(map[string]struct{})
+		r.wal.pendingRemoteLogs[wf] = &[]eventLog{}
+	}
+
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -72,14 +80,11 @@ func (r *DBListRepo) Load(wf WalFile) error {
 		r.wal.uuid = fileHeader.UUID
 	}
 
-	// TODO PUT THIS SOMEWHERE PROPER
-	// instantiate pendingRemoteLogs for given WalFile
-	r.wal.pendingRemoteLogs[wf] = &[]eventLog{}
-
 	// Load the WAL into memory
-	if err := r.Refresh(wf, r.Root, true); err != nil {
+	if err := r.Refresh(wfs, r.Root, true); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -104,7 +109,7 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save(wf WalFile) error {
+func (r *DBListRepo) Save(wfs []WalFile) error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -117,7 +122,9 @@ func (r *DBListRepo) Save(wf WalFile) error {
 		return err
 	}
 
-	r.wal.sync(wf, true)
+	for _, wf := range wfs {
+		r.wal.sync(wf, true)
+	}
 
 	return nil
 }

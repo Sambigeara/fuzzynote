@@ -18,39 +18,37 @@ import (
 const refreshFile = "_refresh_lock.db"
 
 func main() {
+	// Specify root directory for local instance
 	var rootDir string
-	if rootDir = os.Getenv("FZN_ROOT_DIR"); rootDir == "" {
+	var ok bool
+	if rootDir, ok = os.LookupEnv("FZN_ROOT_DIR"); !ok {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			log.Fatal(err)
-			os.Exit(1)
 		}
 		rootDir = path.Join(home, ".fzn/")
 	}
-
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
-	localWalFile := service.NewLocalWalFile(rootDir)
-	s3WalFile := service.NewS3FileWal(rootDir)
-	walFiles := []service.WalFile{localWalFile, s3WalFile}
-	//walFiles := []service.WalFile{localWalFile}
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(rootDir)
 
-	listRepo := service.NewDBListRepo(rootDir, walFiles)
+	localWalFiles := []service.WalFile{service.NewLocalWalFile(rootDir)}
+	remoteWalFiles := []service.WalFile{}
+
+	if s3Prefix := os.Getenv("FZN_REMOTE_PREFIX"); s3Prefix != "" {
+		remoteWalFiles = append(remoteWalFiles, service.NewS3FileWal(s3Prefix, rootDir))
+	}
+	allWalFiles := append(localWalFiles, remoteWalFiles...)
 
 	// List instantiation
-	for _, wf := range walFiles {
-		err := listRepo.Load(wf)
-		if err != nil {
-			log.Fatal(err)
-			os.Exit(0)
-		}
-	}
-
 	//runtime.Breakpoint()
-	//listRepo.Add("Hello", nil, 0)
-	//listRepo.Refresh(localWalFile, nil, false)
-	//listRepo.Refresh(s3WalFile, nil, false)
+	err := listRepo.Load(allWalFiles)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(0)
+	}
 
 	partialRefreshTicker := time.NewTicker(time.Millisecond * 250)
 	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
@@ -66,32 +64,25 @@ func main() {
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
-
 	keyPressEvts := make(chan tcell.Event)
 	go func() {
 		for {
 			select {
 			case <-partialRefreshTicker.C:
-				err := listRepo.Refresh(localWalFile, nil, false)
+				err := listRepo.Refresh(localWalFiles, nil, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
-					return
 				}
 				term.S.PostEvent(&client.RefreshKey{})
 			case <-remoteRefreshTicker.C:
-				// TODO can remote refresh run in an entirely independent loop?
-				err := listRepo.Refresh(s3WalFile, nil, false)
+				err := listRepo.Refresh(remoteWalFiles, nil, false)
 				if err != nil {
 					log.Fatalf("Failed on remote sync: %v", err)
-					return
 				}
 			case <-fullRefreshTicker.C:
-				for _, wf := range walFiles {
-					err := listRepo.Refresh(wf, nil, true)
-					if err != nil {
-						log.Fatalf("Failed on full sync: %v", err)
-						return
-					}
+				err := listRepo.Refresh(allWalFiles, nil, true)
+				if err != nil {
+					log.Fatalf("Failed on full sync: %v", err)
 				}
 				term.S.PostEvent(&client.RefreshKey{})
 			case ev := <-keyPressEvts:
@@ -99,11 +90,9 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
-					for _, wf := range walFiles {
-						err := listRepo.Save(wf)
-						if err != nil {
-							log.Fatal(err)
-						}
+					err := listRepo.Save(allWalFiles)
+					if err != nil {
+						log.Fatal(err)
 					}
 					partialRefreshTicker.Stop()
 					fullRefreshTicker.Stop()
@@ -116,19 +105,4 @@ func main() {
 	for {
 		keyPressEvts <- term.S.PollEvent()
 	}
-
-	//listRepo.Save()
-	//listRepo.Load()
-	//listRepo.Save()
-	//os.Exit(0)
-
-	//runtime.Breakpoint()
-	//s3WalFile := service.NewS3FileWal()
-	//fileNames, _ := s3WalFile.GetFileNamesMatchingPattern("foo")
-	//for _, fileName := range fileNames {
-	//    wal, _ := s3WalFile.GenerateLogFromFile(fileName)
-	//    fmt.Println(wal)
-	//    s3WalFile.RemoveFile(fileName)
-	//    s3WalFile.Flush(fileName, &wal)
-	//}
 }

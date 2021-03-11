@@ -29,34 +29,23 @@ type Wal struct {
 	fullLog              *[]eventLog // fullLog is a historical log of events
 	listItemTracker      map[string]*ListItem
 	processedPartialWals map[WalFile]map[string]struct{}
-	walPathPattern       string
 	latestWalSchemaID    uint16
 	pendingRemoteLogs    map[WalFile]*[]eventLog
-	//localWalFile         *localWalFile
-	//remoteWalFiles       []WalFile
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(rootDir string, walFiles []WalFile) *Wal {
-	// Instantiate map for each walFile
-	processedPartialWals := make(map[WalFile]map[string]struct{})
-	for _, wf := range walFiles {
-		processedPartialWals[wf] = make(map[string]struct{})
-	}
+func NewWal() *Wal {
 	return &Wal{
 		uuid:                 generateUUID(),
-		walPathPattern:       path.Join(rootDir, walFilePattern),
 		latestWalSchemaID:    latestWalSchemaID,
 		log:                  &[]eventLog{},
 		fullLog:              &[]eventLog{},
 		listItemTracker:      make(map[string]*ListItem),
-		processedPartialWals: processedPartialWals,
+		processedPartialWals: make(map[WalFile]map[string]struct{}),
 		pendingRemoteLogs:    make(map[WalFile]*[]eventLog),
-		//localWalFile:         NewLocalWalFile(rootDir),
-		//remoteWalFiles:       []WalFile{NewS3FileWal()},
 	}
 }
 
@@ -97,30 +86,42 @@ type eventLog struct {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
+	getRootDir() string
+	getLocalRootDir() string
 	lock() error
 	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error
-	flush(string, *[]eventLog) error
+	flush(*os.File, string) error
 }
 
 type localWalFile struct {
-	syncFilePath string
-	fileMutex    *lockedfile.File
+	//syncFilePath string
+	fileMutex *lockedfile.File
+	rootDir   string
 	//processedPartialWals map[string]struct{}
 }
 
 func NewLocalWalFile(rootDir string) *localWalFile {
 	return &localWalFile{
-		syncFilePath: path.Join(rootDir, syncFile),
+		//syncFilePath: path.Join(rootDir, syncFile),
+		rootDir: rootDir,
 		//processedPartialWals: make(map[string]struct{}),
 	}
 }
 
+func (wf *localWalFile) getRootDir() string {
+	return wf.rootDir
+}
+
+func (wf *localWalFile) getLocalRootDir() string {
+	return wf.rootDir
+}
+
 func (wf *localWalFile) lock() error {
 	var err error
-	wf.fileMutex, err = lockedfile.Create(wf.syncFilePath)
+	wf.fileMutex, err = lockedfile.Create(path.Join(wf.rootDir, syncFile))
 	if err != nil {
 		return fmt.Errorf("error creating wal sync lock: %s", err)
 	}
@@ -158,56 +159,7 @@ func (wf *localWalFile) removeFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *localWalFile) flush(fileName string, walLog *[]eventLog) error {
-	// TODO make generic function with WalFile specific functions retrieving specific io.Writer
-	f, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Seek to beginning of file just in case
-	f.Truncate(0)
-	f.Seek(0, io.SeekStart)
-
-	// Write the schema ID
-	err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range *walLog {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema1{
-			UUID:             item.uuid,
-			TargetUUID:       item.targetUUID,
-			ListItemID:       item.listItemID,
-			TargetListItemID: item.targetListItemID,
-			UnixTime:         item.unixNanoTime,
-			EventType:        item.eventType,
-			LineLength:       lenLine,
-			NoteLength:       lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
+func (wf *localWalFile) flush(f *os.File, fileName string) error {
 	return nil
 }
 
@@ -542,7 +494,9 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 		}
 	}
 
-	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
+	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
+
+	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -557,7 +511,8 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 	// ONLY remove files prefixed with the local UUID. This is import when handling remote WalFile locations and
 	// enables us to handle distributed merge without any distrbuted file mutex mechanisms (etc).
 	if fullSync {
-		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v*", w.uuid)))
+		// TODO this does not need to be another call to S3 seeing as we retrieve fileNames above!!
+		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, fmt.Sprintf("%v*", w.uuid)))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -608,8 +563,60 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 
 	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
 	if fullSync || len(eventsToFlush) > 0 {
-		randomWal := fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v%v", w.uuid, generateUUID()))
-		err = wf.flush(randomWal, &eventsToFlush)
+		// We need to use the local WalFile rootDir here
+		randomUUID := generateUUID()
+		// We need to generate the file within the local root (which is guaranteed to exist) but then flush
+		// to the correct remote prefix
+		randomLocalWal := fmt.Sprintf(path.Join(wf.getLocalRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, randomUUID))
+		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, randomUUID))
+		f, err := os.OpenFile(randomLocalWal, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+
+		// Seek to beginning of file just in case
+		f.Truncate(0)
+		f.Seek(0, io.SeekStart)
+
+		// Write the schema ID
+		err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, item := range eventsToFlush {
+			lenLine := uint64(len([]byte(item.line)))
+			var lenNote uint64
+			if item.note != nil {
+				lenNote = uint64(len(*(item.note)))
+			}
+			i := walItemSchema1{
+				UUID:             item.uuid,
+				TargetUUID:       item.targetUUID,
+				ListItemID:       item.listItemID,
+				TargetListItemID: item.targetListItemID,
+				UnixTime:         item.unixNanoTime,
+				EventType:        item.eventType,
+				LineLength:       lenLine,
+				NoteLength:       lenNote,
+			}
+			data := []interface{}{
+				i,
+				[]byte(item.line),
+			}
+			if item.note != nil {
+				data = append(data, item.note)
+			}
+			for _, v := range data {
+				err = binary.Write(f, binary.LittleEndian, v)
+				if err != nil {
+					fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+					log.Fatal(err)
+				}
+			}
+		}
+		err = wf.flush(f, randomWal)
 		if err != nil {
 			log.Fatal(err)
 		}
