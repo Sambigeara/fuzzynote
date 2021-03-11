@@ -95,8 +95,8 @@ type eventLog struct {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	//lock() error
-	//unlock() error
+	lock() error
+	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error
@@ -515,140 +515,88 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 }
 
 func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
+	//runtime.Breakpoint()
+	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
-	//walFiles := []WalFile{w.localWalFile}
-	//if remoteSync {
-	//    walFiles = append(walFiles, w.remoteWalFiles...)
-	//}
+	// TODO only local wal needs a lock so remove interface functions and implement here
+	err := wf.lock()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer wf.unlock()
 
-	//for _, wf := range walFiles {
-	//    err := wf.lock()
-	//    if err != nil {
-	//        log.Fatal(err)
-	//    }
-	//    defer wf.unlock()
-	//}
+	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	newFileNames := []string{}
+	// TODO put the processedPartialWals map on the WalFile and check this within getFileNamesMatchingPattern
+	for _, fileName := range allFileNames {
+		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
+			newFileNames = append(newFileNames, fileName)
+		}
+	}
 
-	// Avoid mutating underyling logs before the process is complete.
-	// Therefore, dereference into copies, who's pointers will be reassigned to w later on
-	homeWal := *w.log
-	fullLog := *w.fullLog
-
+	// ONLY remove files prefixed with the local UUID. This is import when handling remote WalFile locations and
+	// enables us to handle distributed merge without any distrbuted file mutex mechanisms (etc).
 	if fullSync {
 		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v*", w.uuid)))
 		if err != nil {
 			log.Fatal(err)
 		}
-		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
-		// The read will only be required on Load, not on Save (when we close the app)
-		if len(fullLog) == 0 {
-			for _, fileName := range homeFileNames {
-				l, err := wf.generateLogFromFile(fileName)
-				if err != nil {
-					log.Fatal(err)
-				}
-				fullLog = *(merge(&fullLog, &l))
-				w.processedPartialWals[wf][fileName] = struct{}{}
-			}
-		}
-		homeWal = *(merge(&fullLog, &homeWal))
-	}
-
-	fileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	//runtime.Breakpoint()
-	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
-
-	// On partial syncs, to avoid file reads completely, iterate over the names, and if
-	// they're all already processed, return
-	if !fullSync && len(fileNames) > 1 && len(*w.log) == 0 {
-		returnEarly := true
-		i := 0
-		for i < len(fileNames) && returnEarly {
-			fileName := fileNames[i]
-			if _, exists := w.processedPartialWals[wf][fileName]; !exists {
-				returnEarly = false
-			}
-			i++
-		}
-		if returnEarly {
-			return w.fullLog, nil
-		}
-	}
-
-	mergedWal := []eventLog{}
-
-	// Load all WAL files into arrays
-	for _, fileName := range fileNames {
-		// Avoid homeWal
-		//if !localReg.MatchString(fileName) {
-		// Don't bother merging processed files
-		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
-			wal, err := wf.generateLogFromFile(fileName)
-			if err != nil {
-				log.Fatal(err)
-			}
-			// Merge all WALs
-			mergedWal = *(merge(&mergedWal, &wal))
-			// Add to the processed cache
-			w.processedPartialWals[wf][fileName] = struct{}{}
-		}
-		if fullSync {
+		for _, fileName := range homeFileNames {
 			defer wf.removeFile(fileName)
 		}
-		//}
 	}
 
-	flushPartial := true
-	if !fullSync {
-		// Before we merge in the homeWal, we should check to see if the merged logs are
-		// the same length the as recent local logs. If so, there's no point flushing any
-		// new random files as they'll add additional files to merge with no difference to
-		// the outcome
-		if len(homeWal) == len(mergedWal) {
-			flushPartial = false
+	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
+	// w.log) we've already processed all of them, so return early
+	if !fullSync && len(*w.log) == 0 && len(newFileNames) == 0 {
+		return w.fullLog, nil
+	}
+
+	newMergedWal := []eventLog{}
+	// Iterate over the new files and generate a new log of events
+	for _, fileName := range newFileNames {
+		newWal, err := wf.generateLogFromFile(fileName)
+		if err != nil {
+			log.Fatal(err)
 		}
+		newMergedWal = *(merge(&newMergedWal, &newWal))
+		// Add to the processed cache
+		w.processedPartialWals[wf][fileName] = struct{}{}
 	}
-
-	mergedWal = *(merge(&mergedWal, &homeWal))
+	processedWithNewEvents := *(merge(w.log, merge(w.fullLog, &newMergedWal)))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
+	// On full sync, we want to flush the product of all merged logs to a new file as we're effectively
+	// aggregating all. We then remove all other files
+	var eventsToFlush []eventLog
 	if fullSync {
-		// Clear the processedPartialWals cache as processed files may have changed on full syncs
-		w.processedPartialWals[wf] = make(map[string]struct{})
-		randomHomeWal := fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v%v", w.uuid, generateUUID()))
-		// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
-		// full log of events, and named after the static UUID for the app/db
-		err := wf.flush(randomHomeWal, &mergedWal)
+		eventsToFlush = processedWithNewEvents
+	} else {
+		eventsToFlush = *w.log
+	}
+	// TODO move this to an explicit location outside of the function
+	w.log = &[]eventLog{}
+
+	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
+	if fullSync || len(eventsToFlush) > 0 {
+		randomWal := fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v%v", w.uuid, generateUUID()))
+		err = wf.flush(randomWal, &eventsToFlush)
 		if err != nil {
 			log.Fatal(err)
 		}
-		w.processedPartialWals[wf][randomHomeWal] = struct{}{}
-		return &mergedWal, nil
-	} else {
-		// Otherwise, we leave the home WALs untouched, generate a temp UUID and flush the partial WAL
-		// to disk
-		if flushPartial {
-			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
-			// Flush the log rather than merged events to avoid duplication between partial WALs
-			err := wf.flush(randomWal, w.log)
-			if err != nil {
-				log.Fatal(err)
-			}
-			// Add it straight to the cache to avoid processing it in the future
-			w.processedPartialWals[wf][randomWal] = struct{}{}
-		}
-		fullLog = *(merge(&mergedWal, &fullLog))
-		return &fullLog, nil
+		// Add it straight to the cache to avoid processing it in the future
+		w.processedPartialWals[wf][randomWal] = struct{}{}
 	}
+
+	return &processedWithNewEvents, nil
 }

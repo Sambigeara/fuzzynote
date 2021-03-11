@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -20,9 +21,10 @@ type s3FileWal struct {
 	uploader             *s3manager.Uploader
 	bucket               string
 	processedPartialWals map[string]struct{}
+	syncFilePath         string
 }
 
-func NewS3FileWal() *s3FileWal {
+func NewS3FileWal(rootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String("eu-west-1"),
 	})
@@ -36,7 +38,17 @@ func NewS3FileWal() *s3FileWal {
 		uploader:             s3manager.NewUploader(sess),
 		bucket:               "fuzzynote-pub",
 		processedPartialWals: make(map[string]struct{}),
+		syncFilePath:         path.Join(rootDir, syncFile),
 	}
+}
+
+// TODO get rid of these
+func (wf *s3FileWal) lock() error {
+	return nil
+}
+
+func (wf *s3FileWal) unlock() error {
+	return nil
 }
 
 func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {

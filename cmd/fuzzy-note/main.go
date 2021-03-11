@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
 	"strings"
 	"time"
+	//"runtime"
 
 	"github.com/gdamore/tcell"
 	//"github.com/rogpeppe/go-internal/lockedfile"
@@ -31,10 +31,10 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
-	//runtime.Breakpoint()
 	localWalFile := service.NewLocalWalFile(rootDir)
-	s3WalFile := service.NewS3FileWal()
-	walFiles := []service.WalFile{localWalFile, s3WalFile}
+	//s3WalFile := service.NewS3FileWal(rootDir)
+	//walFiles := []service.WalFile{localWalFile, s3WalFile}
+	walFiles := []service.WalFile{localWalFile}
 
 	listRepo := service.NewDBListRepo(rootDir, walFiles)
 
@@ -47,8 +47,15 @@ func main() {
 		}
 	}
 
+	//runtime.Breakpoint()
+	//listRepo.Add("Hello", nil, 0)
+	//listRepo.Refresh(localWalFile, nil, false)
+	//listRepo.Match([][]rune{}, true)
+	//listRepo.Delete(0)
+	//listRepo.Refresh(localWalFile, nil, false)
+
 	partialRefreshTicker := time.NewTicker(time.Millisecond * 250)
-	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
+	//remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
 	// Set colourscheme
@@ -67,25 +74,22 @@ func main() {
 		for {
 			select {
 			case <-partialRefreshTicker.C:
-				var listItem *service.ListItem
-				err := listRepo.Refresh(localWalFile, listItem, false)
+				err := listRepo.Refresh(localWalFile, nil, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 					return
 				}
 				term.S.PostEvent(&client.RefreshKey{})
-			case <-remoteRefreshTicker.C:
-				// TODO can remote refresh run in an entirely independent loop?
-				var listItem *service.ListItem
-				err := listRepo.Refresh(s3WalFile, listItem, false)
-				if err != nil {
-					log.Fatalf("Failed on partial sync: %v", err)
-					return
-				}
+			//case <-remoteRefreshTicker.C:
+			//    // TODO can remote refresh run in an entirely independent loop?
+			//    err := listRepo.Refresh(s3WalFile, nil, false)
+			//    if err != nil {
+			//        log.Fatalf("Failed on partial sync: %v", err)
+			//        return
+			//    }
 			case <-fullRefreshTicker.C:
-				var listItem *service.ListItem
 				for _, wf := range walFiles {
-					err := listRepo.Refresh(wf, listItem, true)
+					err := listRepo.Refresh(wf, nil, true)
 					if err != nil {
 						log.Fatalf("Failed on full sync: %v", err)
 						return
