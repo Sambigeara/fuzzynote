@@ -72,6 +72,10 @@ func (r *DBListRepo) Load(wf WalFile) error {
 		r.wal.uuid = fileHeader.UUID
 	}
 
+	// TODO PUT THIS SOMEWHERE PROPER
+	// instantiate pendingRemoteLogs for given WalFile
+	r.wal.pendingRemoteLogs[wf] = &[]eventLog{}
+
 	// Load the WAL into memory
 	if err := r.Refresh(wf, r.Root, true); err != nil {
 		return err

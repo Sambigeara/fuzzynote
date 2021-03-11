@@ -31,6 +31,7 @@ type Wal struct {
 	processedPartialWals map[WalFile]map[string]struct{}
 	walPathPattern       string
 	latestWalSchemaID    uint16
+	pendingRemoteLogs    map[WalFile]*[]eventLog
 	//localWalFile         *localWalFile
 	//remoteWalFiles       []WalFile
 }
@@ -53,6 +54,7 @@ func NewWal(rootDir string, walFiles []WalFile) *Wal {
 		fullLog:              &[]eventLog{},
 		listItemTracker:      make(map[string]*ListItem),
 		processedPartialWals: processedPartialWals,
+		pendingRemoteLogs:    make(map[WalFile]*[]eventLog),
 		//localWalFile:         NewLocalWalFile(rootDir),
 		//remoteWalFiles:       []WalFile{NewS3FileWal()},
 	}
@@ -529,6 +531,17 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 	}
 	defer wf.unlock()
 
+	// We need any recent local changes to be flushed to all WalFiles, but we only process one at a time.
+	// Therefore, propagate any recent local changes to all other WalFiles
+	if !fullSync && len(*w.log) > 0 {
+		// It will always exist (due to pre-instantiation) but might be empty
+		for otherWalFile, otherLog := range w.pendingRemoteLogs {
+			if otherWalFile != wf {
+				w.pendingRemoteLogs[otherWalFile] = merge(otherLog, w.log)
+			}
+		}
+	}
+
 	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(w.walPathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
@@ -553,9 +566,12 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 		}
 	}
 
+	// Grab any pending logs early for the comparison below
+	pendingLogs, _ := w.pendingRemoteLogs[wf]
+
 	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
 	// w.log) we've already processed all of them, so return early
-	if !fullSync && len(*w.log) == 0 && len(newFileNames) == 0 {
+	if !fullSync && len(*w.log) == 0 && len(newFileNames) == 0 && len(*pendingLogs) == 0 {
 		return w.fullLog, nil
 	}
 
@@ -583,6 +599,9 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 		eventsToFlush = processedWithNewEvents
 	} else {
 		eventsToFlush = *w.log
+		// Grab any aggregated pending local changes
+		eventsToFlush = *(merge(&eventsToFlush, pendingLogs))
+		w.pendingRemoteLogs[wf] = &[]eventLog{}
 	}
 	// TODO move this to an explicit location outside of the function
 	w.log = &[]eventLog{}

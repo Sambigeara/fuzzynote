@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 	"path"
+	//"runtime"
 	"strings"
 	"time"
-	//"runtime"
 
 	"github.com/gdamore/tcell"
 	//"github.com/rogpeppe/go-internal/lockedfile"
@@ -32,9 +32,9 @@ func main() {
 	os.Mkdir(rootDir, os.ModePerm)
 
 	localWalFile := service.NewLocalWalFile(rootDir)
-	//s3WalFile := service.NewS3FileWal(rootDir)
-	//walFiles := []service.WalFile{localWalFile, s3WalFile}
-	walFiles := []service.WalFile{localWalFile}
+	s3WalFile := service.NewS3FileWal(rootDir)
+	walFiles := []service.WalFile{localWalFile, s3WalFile}
+	//walFiles := []service.WalFile{localWalFile}
 
 	listRepo := service.NewDBListRepo(rootDir, walFiles)
 
@@ -50,12 +50,10 @@ func main() {
 	//runtime.Breakpoint()
 	//listRepo.Add("Hello", nil, 0)
 	//listRepo.Refresh(localWalFile, nil, false)
-	//listRepo.Match([][]rune{}, true)
-	//listRepo.Delete(0)
-	//listRepo.Refresh(localWalFile, nil, false)
+	//listRepo.Refresh(s3WalFile, nil, false)
 
 	partialRefreshTicker := time.NewTicker(time.Millisecond * 250)
-	//remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
+	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
 	// Set colourscheme
@@ -80,13 +78,13 @@ func main() {
 					return
 				}
 				term.S.PostEvent(&client.RefreshKey{})
-			//case <-remoteRefreshTicker.C:
-			//    // TODO can remote refresh run in an entirely independent loop?
-			//    err := listRepo.Refresh(s3WalFile, nil, false)
-			//    if err != nil {
-			//        log.Fatalf("Failed on partial sync: %v", err)
-			//        return
-			//    }
+			case <-remoteRefreshTicker.C:
+				// TODO can remote refresh run in an entirely independent loop?
+				err := listRepo.Refresh(s3WalFile, nil, false)
+				if err != nil {
+					log.Fatalf("Failed on remote sync: %v", err)
+					return
+				}
 			case <-fullRefreshTicker.C:
 				for _, wf := range walFiles {
 					err := listRepo.Refresh(wf, nil, true)
