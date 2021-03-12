@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -93,7 +95,7 @@ type WalFile interface {
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]eventLog, error)
 	removeFile(string) error
-	flush(*os.File, string) error
+	flush(*bytes.Buffer, string) error
 }
 
 type localWalFile struct {
@@ -148,7 +150,11 @@ func (wf *localWalFile) generateLogFromFile(fileName string) ([]eventLog, error)
 	if err != nil {
 		return wal, err
 	}
-	wal, err = buildFromFile(f)
+
+	var b []byte
+	b, err = ioutil.ReadFile(fileName)
+	buf := bytes.NewBuffer(b)
+	wal, err = buildFromFile(buf)
 	if err != nil {
 		return wal, err
 	}
@@ -159,7 +165,13 @@ func (wf *localWalFile) removeFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *localWalFile) flush(f *os.File, fileName string) error {
+func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
+	f, err := os.Create(fileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	f.Write(b.Bytes())
 	return nil
 }
 
@@ -329,13 +341,13 @@ func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog
 	return root, r.NextID, log, fullLog, nil
 }
 
-func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
+func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*eventLog, error) {
 	el := eventLog{}
 	// TODO this is a hacky fix. Instantiate the note just in case
 	el.note = &[]byte{}
 
 	item := walItemSchema1{}
-	err := binary.Read(f, binary.LittleEndian, &item)
+	err := binary.Read(b, binary.LittleEndian, &item)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +359,7 @@ func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, 
 	el.eventType = item.EventType
 
 	line := make([]byte, item.LineLength)
-	err = binary.Read(f, binary.LittleEndian, &line)
+	err = binary.Read(b, binary.LittleEndian, &line)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +367,7 @@ func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, 
 
 	if item.NoteLength > 0 {
 		note := make([]byte, item.NoteLength)
-		err = binary.Read(f, binary.LittleEndian, &note)
+		err = binary.Read(b, binary.LittleEndian, &note)
 		if err != nil {
 			return nil, err
 		}
@@ -364,14 +376,14 @@ func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, 
 	return &el, nil
 }
 
-func buildFromFile(f *os.File) ([]eventLog, error) {
+func buildFromFile(b *bytes.Buffer) ([]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
 	el := []eventLog{}
 	var walSchemaVersionID uint16
-	err := binary.Read(f, binary.LittleEndian, &walSchemaVersionID)
+	err := binary.Read(b, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
 		if err == io.EOF {
 			return el, nil
@@ -382,7 +394,7 @@ func buildFromFile(f *os.File) ([]eventLog, error) {
 	}
 
 	for {
-		e, err := getNextEventLogFromWalFile(f, walSchemaVersionID)
+		e, err := getNextEventLogFromWalFile(b, walSchemaVersionID)
 		if err != nil {
 			switch err {
 			case io.EOF:
@@ -563,24 +575,9 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 
 	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
 	if fullSync || len(eventsToFlush) > 0 {
-		// We need to use the local WalFile rootDir here
-		randomUUID := generateUUID()
-		// We need to generate the file within the local root (which is guaranteed to exist) but then flush
-		// to the correct remote prefix
-		randomLocalWal := fmt.Sprintf(path.Join(wf.getLocalRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, randomUUID))
-		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, randomUUID))
-		f, err := os.OpenFile(randomLocalWal, os.O_RDWR|os.O_CREATE, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer f.Close()
-
-		// Seek to beginning of file just in case
-		f.Truncate(0)
-		f.Seek(0, io.SeekStart)
-
+		var b bytes.Buffer
 		// Write the schema ID
-		err = binary.Write(f, binary.LittleEndian, latestWalSchemaID)
+		err = binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -609,14 +606,15 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 				data = append(data, item.note)
 			}
 			for _, v := range data {
-				err = binary.Write(f, binary.LittleEndian, v)
+				err = binary.Write(&b, binary.LittleEndian, v)
 				if err != nil {
 					fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
 					log.Fatal(err)
 				}
 			}
 		}
-		err = wf.flush(f, randomWal)
+		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, generateUUID()))
+		err = wf.flush(&b, randomWal)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -1,9 +1,8 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -72,11 +71,6 @@ func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string,
 
 	fileNames := []string{}
 	for _, item := range resp.Contents {
-		//fmt.Println("Name:         ", *item.Key)
-		//fmt.Println("Last modified:", *item.LastModified)
-		//fmt.Println("Size:         ", *item.Size)
-		//fmt.Println("Storage class:", *item.StorageClass)
-		//fmt.Println("")
 		fileNames = append(fileNames, *item.Key)
 	}
 	return fileNames, nil
@@ -84,14 +78,10 @@ func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string,
 
 func (wf *s3FileWal) generateLogFromFile(fileName string) ([]eventLog, error) {
 	// Read into bytes rather than file
-	f, err := ioutil.TempFile("", "fzn_buffer")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.Remove(f.Name())
+	b := aws.NewWriteAtBuffer([]byte{})
 
-	//numBytes, err := wf.downloader.Download(f,
-	_, err = wf.downloader.Download(f,
+	// Default concurrency = 5
+	_, err := wf.downloader.Download(b,
 		&s3.GetObjectInput{
 			Bucket: aws.String(wf.bucket),
 			Key:    aws.String(fileName),
@@ -105,9 +95,9 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]eventLog, error) {
 		}
 	}
 
-	//fmt.Println("Downloaded", f.Name(), numBytes, "bytes")
+	buf := bytes.NewBuffer(b.Bytes())
 
-	wal, err := buildFromFile(f)
+	wal, err := buildFromFile(buf)
 	if err != nil {
 		return wal, err
 	}
@@ -132,13 +122,11 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *s3FileWal) flush(f *os.File, fileName string) error {
-	defer os.Remove(f.Name())
-	f.Seek(0, io.SeekStart)
+func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
-		Body:   f,
+		Body:   b,
 	})
 	if err != nil {
 		exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
