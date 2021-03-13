@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	//"sync"
 	"time"
+	//"sync"
 
 	"fuzzy-note/pkg/service"
 	//"github.com/Sambigeara/fuzzy-note/pkg/service"
@@ -17,7 +17,6 @@ import (
 	"github.com/gdamore/tcell/encoding"
 	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
-	"github.com/micmonay/keybd_event"
 )
 
 const (
@@ -135,25 +134,7 @@ func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 	return s
 }
 
-// This method is a horrible workaround for this bug: https://github.com/gdamore/tcell/issues/194
-// When closing a screen session (to give full control to the external program, e.g. vim), a subsequent keypress is dropped.
-// This aditional EOL event is sent to ensure consequent events are correctly handled
-func sendExtraEventFix() {
-	kb, err := keybd_event.NewKeyBonding()
-	if err != nil {
-		panic(err)
-	}
-	kb.SetKeys(keybd_event.VK_ENTER)
-	err = kb.Launching()
-	if err != nil {
-		panic(err)
-	}
-}
-
 func (t *Terminal) openEditorSession() error {
-	// TODO https://github.com/gdamore/tcell/issues/194
-	sendExtraEventFix()
-
 	// Write text to temp file
 	tmpfile, err := ioutil.TempFile("", "fzn_buffer")
 	if err != nil {
