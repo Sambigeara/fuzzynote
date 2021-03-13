@@ -32,9 +32,12 @@ func main() {
 		Prefix string `conf:"env:S3_PREFIX,flag:s3-prefix"`
 	}
 	var cfg struct {
-		Root   string
-		Colour string
-		S3     s3
+		Root                string
+		Colour              string
+		S3                  s3
+		LocalRefreshFreqMs  uint16 `conf:"default:250"`
+		RemoteRefreshFreqMs uint16 `conf:"default:500"`
+		FullRefreshFreqMs   uint16 `conf:"default:60000"`
 	}
 
 	// Instantiate default root direct in case it's not set
@@ -111,9 +114,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Millisecond * 250)
-	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
-	fullRefreshTicker := time.NewTicker(time.Second * 60)
+	partialRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.LocalRefreshFreqMs))
+	remoteRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.RemoteRefreshFreqMs))
+	fullRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.FullRefreshFreqMs))
 
 	term := client.NewTerm(listRepo, cfg.Colour)
 
