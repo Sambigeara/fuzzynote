@@ -90,9 +90,6 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(cfg.Root, os.ModePerm)
 
-	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root)
-
 	localWalFiles := []service.WalFile{service.NewLocalWalFile(cfg.Root)}
 	remoteWalFiles := []service.WalFile{}
 
@@ -108,8 +105,11 @@ func main() {
 	}
 	allWalFiles := append(localWalFiles, remoteWalFiles...)
 
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(cfg.Root, allWalFiles)
+
 	// List instantiation
-	err = listRepo.Load(allWalFiles)
+	err = listRepo.Load(localWalFiles)
 	if err != nil {
 		log.Fatal(err)
 	}

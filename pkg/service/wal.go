@@ -39,8 +39,8 @@ func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal() *Wal {
-	return &Wal{
+func NewWal(walFiles []WalFile) *Wal {
+	wal := Wal{
 		uuid:                 generateUUID(),
 		latestWalSchemaID:    latestWalSchemaID,
 		log:                  &[]eventLog{},
@@ -49,6 +49,12 @@ func NewWal() *Wal {
 		processedPartialWals: make(map[WalFile]map[string]struct{}),
 		pendingRemoteLogs:    make(map[WalFile]*[]eventLog),
 	}
+	// Instantiate processedPartialWals and pendingRemoteLogs caches
+	for _, wf := range walFiles {
+		wal.processedPartialWals[wf] = make(map[string]struct{})
+		wal.pendingRemoteLogs[wf] = &[]eventLog{}
+	}
+	return &wal
 }
 
 type walItemSchema1 struct {

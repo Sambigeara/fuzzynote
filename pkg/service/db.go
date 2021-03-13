@@ -45,12 +45,6 @@ func (r *DBListRepo) Refresh(wfs []WalFile, root *ListItem, fullSync bool) error
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
 func (r *DBListRepo) Load(wfs []WalFile) error {
-	// Instantiate processedPartialWals and pendingRemoteLogs caches
-	for _, wf := range wfs {
-		r.wal.processedPartialWals[wf] = make(map[string]struct{})
-		r.wal.pendingRemoteLogs[wf] = &[]eventLog{}
-	}
-
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
