@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
@@ -17,15 +18,18 @@ type s3FileWal struct {
 	svc                  *s3.S3
 	downloader           *s3manager.Downloader
 	uploader             *s3manager.Uploader
-	bucket               string
 	processedPartialWals map[string]struct{}
-	rootDir              string
 	localRootDir         string
+	key                  string
+	secret               string
+	bucket               string
+	prefix               string
 }
 
-func NewS3FileWal(rootDir string, localRootDir string) *s3FileWal {
+func NewS3FileWal(key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("eu-west-1"),
+		Region:      aws.String("eu-west-1"),
+		Credentials: credentials.NewStaticCredentials(key, secret, ""),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -35,15 +39,17 @@ func NewS3FileWal(rootDir string, localRootDir string) *s3FileWal {
 		svc:                  s3.New(sess),
 		downloader:           s3manager.NewDownloader(sess),
 		uploader:             s3manager.NewUploader(sess),
-		bucket:               "fuzzynote-pub",
 		processedPartialWals: make(map[string]struct{}),
-		rootDir:              rootDir,
 		localRootDir:         localRootDir,
+		key:                  key,
+		secret:               secret,
+		bucket:               bucket,
+		prefix:               prefix,
 	}
 }
 
 func (wf *s3FileWal) getRootDir() string {
-	return wf.rootDir
+	return wf.prefix
 }
 
 func (wf *s3FileWal) getLocalRootDir() string {

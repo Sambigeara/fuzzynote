@@ -5,9 +5,8 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
-	"strings"
 	"time"
+	//"runtime"
 
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell"
@@ -94,8 +93,15 @@ func main() {
 	localWalFiles := []service.WalFile{service.NewLocalWalFile(cfg.Root)}
 	remoteWalFiles := []service.WalFile{}
 
-	if s3Prefix := os.Getenv("FZN_REMOTE_PREFIX"); s3Prefix != "" {
-		remoteWalFiles = append(remoteWalFiles, service.NewS3FileWal(s3Prefix, cfg.Root))
+	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
+		s3FileWal := service.NewS3FileWal(
+			cfg.S3.Key,
+			cfg.S3.Secret,
+			cfg.S3.Bucket,
+			cfg.S3.Prefix,
+			cfg.Root,
+		)
+		remoteWalFiles = append(remoteWalFiles, s3FileWal)
 	}
 	allWalFiles := append(localWalFiles, remoteWalFiles...)
 
@@ -109,13 +115,7 @@ func main() {
 	remoteRefreshTicker := time.NewTicker(time.Millisecond * 500)
 	fullRefreshTicker := time.NewTicker(time.Second * 60)
 
-	// Set colourscheme
-	fznColour := strings.ToLower(os.Getenv("FZN_COLOUR"))
-	if fznColour == "" || (fznColour != "light" && fznColour != "dark") {
-		fznColour = "light"
-	}
-
-	term := client.NewTerm(listRepo, fznColour)
+	term := client.NewTerm(listRepo, cfg.Colour)
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
