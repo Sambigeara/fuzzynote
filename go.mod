@@ -3,6 +3,7 @@ module fuzzy-note
 go 1.14
 
 require (
+	github.com/ardanlabs/conf v1.3.4
 	github.com/aws/aws-sdk-go v1.37.25
 	github.com/gdamore/tcell v1.4.0
 	github.com/google/go-cmp v0.5.4
@@ -15,4 +16,5 @@ require (
 	golang.org/x/sys v0.0.0-20210225091947-4ada9433c6ea // indirect
 	golang.org/x/text v0.3.5 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
+	gopkg.in/yaml.v2 v2.4.0
 )
