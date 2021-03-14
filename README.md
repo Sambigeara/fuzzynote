@@ -28,6 +28,7 @@ Examples:
 - `Ctrl-a` (not search line): Go to start of item
 - `Ctrl-e` (not search line): Go to end of item
 - `ESCAPE` (not top line): Go to search line
+- `Double ESCAPE`: Exit
 
 ### Search
 
@@ -40,7 +41,6 @@ Examples:
 ### State
 
 - `Ctrl-u/Ctrl-r`: Undo/Redo
-- `Ctrl-_`: Exit
 
 ### Items
 

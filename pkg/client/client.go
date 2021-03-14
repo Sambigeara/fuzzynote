@@ -38,7 +38,8 @@ type Terminal struct {
 	showHidden        bool
 	selectedItems     map[int]string // struct{} is more space efficient than bool
 	copiedItem        *service.MatchItem
-	hiddenMatchPrefix string // The common string that we want to truncate from each line
+	hiddenMatchPrefix string    // The common string that we want to truncate from each line
+	previousKey       tcell.Key // Keep track of the previous keypress
 }
 
 func NewTerm(db service.ListRepo, colour string) *Terminal {
@@ -362,9 +363,16 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
 		switch ev.Key() {
-		case tcell.KeyCtrlUnderscore:
-			t.S.Fini()
-			return false, nil
+		case tcell.KeyEscape:
+			if t.previousKey == tcell.KeyEscape {
+				t.S.Fini()
+				return false, nil
+			}
+			if len(t.selectedItems) > 0 {
+				t.selectedItems = make(map[int]string)
+			} else {
+				t.curY = 0 // TODO
+			}
 		case tcell.KeyEnter:
 			if len(t.selectedItems) > 0 {
 				// Add common search prefix to search groups
@@ -477,12 +485,6 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				} else {
 					t.selectedItems[t.curY-reservedTopLines] = t.matches[t.curY-reservedTopLines].Line
 				}
-			}
-		case tcell.KeyEscape:
-			if len(t.selectedItems) > 0 {
-				t.selectedItems = make(map[int]string)
-			} else {
-				t.curY = 0 // TODO
 			}
 		case tcell.KeyTab:
 			if t.curY == reservedTopLines-1 {
@@ -661,6 +663,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				posDiff[0] += len(parsedNewLine) - oldLen + 1
 			}
 		}
+		t.previousKey = ev.Key()
 	}
 	t.S.Clear()
 
