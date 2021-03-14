@@ -75,7 +75,7 @@ func (r *DBListRepo) Load(wfs []WalFile) error {
 	}
 
 	// Load the WAL into memory
-	if err := r.Refresh(wfs, true); err != nil {
+	if err := r.Refresh(wfs, false); err != nil {
 		return err
 	}
 
