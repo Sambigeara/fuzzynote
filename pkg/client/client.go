@@ -21,6 +21,9 @@ const (
 	dateFormat                            = "Mon, Jan 02, 2006"
 	reservedTopLines, reservedBottomLines = 1, 1
 	reservedEndChars                      = 1
+	emptySearchLinePrompt                 = "Search here..."
+	searchGroupPrompt                     = "TAB: Create new search group"
+	newLinePrompt                         = "Enter: Create new line"
 )
 
 type Terminal struct {
@@ -30,6 +33,7 @@ type Terminal struct {
 	curItem           *service.MatchItem // The currently selected item
 	S                 tcell.Screen
 	style             tcell.Style
+	promptStyle       tcell.Style
 	Editor            string
 	w, h              int
 	curX, curY        int // Cur "screen" index, not related to matched item lists
@@ -46,15 +50,21 @@ type Terminal struct {
 func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 	encoding.Register()
 
-	var defStyle tcell.Style
+	var defStyle, promptStyle tcell.Style
 	if colour == "light" {
 		defStyle = tcell.StyleDefault.
 			Background(tcell.ColorWhite).
 			Foreground(tcell.ColorBlack)
+		promptStyle = tcell.StyleDefault.
+			Background(tcell.ColorWhite).
+			Foreground(tcell.ColorGray)
 	} else {
 		defStyle = tcell.StyleDefault.
 			Background(tcell.ColorBlack).
 			Foreground(tcell.ColorWhite)
+		promptStyle = tcell.StyleDefault.
+			Background(tcell.ColorBlack).
+			Foreground(tcell.ColorGray)
 	}
 
 	s := newInstantiatedScreen(defStyle)
@@ -71,6 +81,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 		db:            db,
 		S:             s,
 		style:         defStyle,
+		promptStyle:   promptStyle,
 		Editor:        editor,
 		w:             w,
 		h:             h,
@@ -180,6 +191,12 @@ func (t *Terminal) openEditorSession() error {
 }
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
+	// If no search items at all, display emptySearchLinePrompt and return
+	if len(t.search) == 0 {
+		emitStr(s, 0, 0, t.promptStyle, emptySearchLinePrompt)
+		return
+	}
+
 	searchStyle := tcell.StyleDefault.
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
@@ -188,6 +205,12 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 		emitStr(s, pos, 0, searchStyle, string(key))
 		l = len(key)
 		pos = pos + l + 1 // Add a separator between groups with `+ 1`
+	}
+
+	// Display `TAB` prompt after final search group if only one search group
+	// +1 just to give some breathing room
+	if len(t.search) == 1 && t.curY == 0 {
+		emitStr(s, pos+1, 0, t.promptStyle, searchGroupPrompt)
 	}
 
 	// Display whether all items or just non-hidden items are currently displayed
@@ -274,6 +297,17 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 		}
 	}
 
+	// If no matches, display help prompt on first line
+	// TODO ordering
+	if len(matches) == 0 {
+		if len(t.search) > 0 && len(t.search[0]) > 0 {
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new with search prefix: \"%s\"", t.getNewLinePrefix())
+			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
+		} else {
+			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
+		}
+	}
+
 	if t.footerMessage != "" {
 		t.buildFooter(t.S, t.footerMessage)
 	}
@@ -355,6 +389,21 @@ func (ev *RefreshKey) When() time.Time {
 	return ev.T
 }
 
+func (t *Terminal) getNewLinePrefix() string {
+	var searchStrings []string
+	for _, group := range t.search {
+		pattern, nChars := t.db.GetMatchPattern(group)
+		if pattern != service.InverseMatchPattern && len(group) > 0 {
+			searchStrings = append(searchStrings, string(group[nChars:]))
+		}
+	}
+	newString := ""
+	if len(searchStrings) > 0 {
+		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+	}
+	return newString
+}
+
 func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 	//t.S.Show()
@@ -394,25 +443,13 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			} else {
 				// Add a new item below current cursor position
 				// This will insert the contents of the current search string (omitting search args like `#`)
-				var searchStrings []string
-				// We can't use t.hiddenMatchPrefix as it only includes the first group at present
-				for _, group := range t.search {
-					pattern, nChars := t.db.GetMatchPattern(group)
-					if pattern != service.InverseMatchPattern && len(group) > 0 {
-						searchStrings = append(searchStrings, string(group[nChars:]))
-					}
-				}
-				newString := ""
-				if len(searchStrings) > 0 {
-					newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
-				}
-
 				var err error
 				if t.curY == reservedTopLines-1 {
 					if len(t.search) > 0 {
 						posDiff[0] -= len([]byte(strings.TrimSpace(string(t.search[0])))) + 1
 					}
 				}
+				newString := t.getNewLinePrefix()
 				err = t.db.Add(newString, nil, t.curY)
 				if err != nil {
 					log.Fatal(err)
