@@ -192,7 +192,7 @@ func (t *Terminal) openEditorSession() error {
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	// If no search items at all, display emptySearchLinePrompt and return
-	if len(t.search) == 0 {
+	if len(t.search) == 0 || len(t.search) == 1 && len(t.search[0]) == 0 {
 		emitStr(s, 0, 0, t.promptStyle, emptySearchLinePrompt)
 		return
 	}
@@ -209,7 +209,7 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 
 	// Display `TAB` prompt after final search group if only one search group
 	// +1 just to give some breathing room
-	if len(t.search) == 1 && t.curY == 0 {
+	if len(t.search) == 1 && len(t.search[0]) > 0 && t.curY == 0 {
 		emitStr(s, pos+1, 0, t.promptStyle, searchGroupPrompt)
 	}
 
@@ -225,7 +225,7 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 
 func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	footer := tcell.StyleDefault.
-		Foreground(tcell.ColorRed).Background(tcell.ColorYellow)
+		Foreground(tcell.ColorBlack).Background(tcell.ColorYellow)
 
 	// Pad out remaining line with spaces to ensure whole bar is filled
 	lenStr := len([]rune(text))
