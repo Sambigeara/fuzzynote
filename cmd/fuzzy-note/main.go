@@ -36,7 +36,7 @@ func main() {
 		Colour              string
 		S3                  s3
 		LocalRefreshFreqMs  uint16 `conf:"default:250"`
-		RemoteRefreshFreqMs uint16 `conf:"default:500"`
+		RemoteRefreshFreqMs uint16 `conf:"default:5000"`
 		FullRefreshFreqMs   uint16 `conf:"default:60000"`
 	}
 
