@@ -1,16 +1,18 @@
 package service
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
-	//"unsafe"
-	//"errors"
+	//"regexp"
 	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
@@ -22,18 +24,40 @@ func init() {
 
 const latestWalSchemaID uint16 = 2
 
-// TODO these don't need to be public attributes
-type walItemSchema1 struct {
-	UUID             uuid
-	ListItemID       uint64
-	TargetListItemID uint64
-	UnixTime         int64
-	EventType        eventType
-	LineLength       uint64
-	NoteLength       uint64
+// Wal manages the state of the WAL, via all update functions and replay functionality
+type Wal struct {
+	uuid                 uuid
+	log                  *[]eventLog // log represents a fresh set of events (unique from the historical log below)
+	fullLog              *[]eventLog // fullLog is a historical log of events
+	listItemTracker      map[string]*ListItem
+	processedPartialWals map[WalFile]map[string]struct{}
+	latestWalSchemaID    uint16
+	pendingRemoteLogs    map[WalFile]*[]eventLog
 }
 
-type walItemSchema2 struct {
+func generateUUID() uuid {
+	return uuid(rand.Uint32())
+}
+
+func NewWal(walFiles []WalFile) *Wal {
+	wal := Wal{
+		uuid:                 generateUUID(),
+		latestWalSchemaID:    latestWalSchemaID,
+		log:                  &[]eventLog{},
+		fullLog:              &[]eventLog{},
+		listItemTracker:      make(map[string]*ListItem),
+		processedPartialWals: make(map[WalFile]map[string]struct{}),
+		pendingRemoteLogs:    make(map[WalFile]*[]eventLog),
+	}
+	// Instantiate processedPartialWals and pendingRemoteLogs caches
+	for _, wf := range walFiles {
+		wal.processedPartialWals[wf] = make(map[string]struct{})
+		wal.pendingRemoteLogs[wf] = &[]eventLog{}
+	}
+	return &wal
+}
+
+type walItemSchema1 struct {
 	UUID             uuid
 	TargetUUID       uuid
 	ListItemID       uint64
@@ -66,7 +90,95 @@ type eventLog struct {
 	eventType        eventType
 	line             string
 	note             *[]byte
-	//curRoot          *ListItem
+}
+
+// WalFile offers a generic interface into local or remote filesystems
+type WalFile interface {
+	getRootDir() string
+	getLocalRootDir() string
+	lock() error
+	unlock() error
+	getFileNamesMatchingPattern(string) ([]string, error)
+	generateLogFromFile(string) ([]eventLog, error)
+	removeFile(string) error
+	flush(*bytes.Buffer, string) error
+}
+
+type localWalFile struct {
+	//syncFilePath string
+	fileMutex *lockedfile.File
+	rootDir   string
+	//processedPartialWals map[string]struct{}
+}
+
+func NewLocalWalFile(rootDir string) *localWalFile {
+	return &localWalFile{
+		//syncFilePath: path.Join(rootDir, syncFile),
+		rootDir: rootDir,
+		//processedPartialWals: make(map[string]struct{}),
+	}
+}
+
+func (wf *localWalFile) getRootDir() string {
+	return wf.rootDir
+}
+
+func (wf *localWalFile) getLocalRootDir() string {
+	return wf.rootDir
+}
+
+func (wf *localWalFile) lock() error {
+	var err error
+	wf.fileMutex, err = lockedfile.Create(path.Join(wf.rootDir, syncFile))
+	if err != nil {
+		return fmt.Errorf("error creating wal sync lock: %s", err)
+	}
+	return nil
+}
+
+func (wf *localWalFile) unlock() error {
+	wf.fileMutex.Close()
+	return nil
+}
+
+func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+	fileNames, err := filepath.Glob(matchPattern)
+	if err != nil {
+		return []string{}, err
+	}
+	return fileNames, nil
+}
+
+func (wf *localWalFile) generateLogFromFile(fileName string) ([]eventLog, error) {
+	wal := []eventLog{}
+	f, err := os.Open(fileName)
+	defer f.Close()
+	if err != nil {
+		return wal, err
+	}
+
+	var b []byte
+	b, err = ioutil.ReadFile(fileName)
+	buf := bytes.NewBuffer(b)
+	wal, err = buildFromFile(buf)
+	if err != nil {
+		return wal, err
+	}
+	return wal, nil
+}
+
+func (wf *localWalFile) removeFile(fileName string) error {
+	return os.Remove(fileName)
+}
+
+func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
+	f, err := os.Create(fileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	f.Write(b.Bytes())
+	return nil
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
@@ -221,14 +333,14 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+func (r *DBListRepo) replay(log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+	var root *ListItem
 	fullLog = merge(fullLog, log)
 	// If still no events, return nil
 	if len(*fullLog) == 0 {
 		return root, uint64(1), log, fullLog, nil
 	}
 
-	//runtime.Breakpoint()
 	for _, e := range *fullLog {
 		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
@@ -236,125 +348,49 @@ func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog
 	return root, r.NextID, log, fullLog, nil
 }
 
-func getNextEventLogFromWalFile(f *os.File, schemaVersionID uint16) (*eventLog, error) {
+func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*eventLog, error) {
 	el := eventLog{}
 	// TODO this is a hacky fix. Instantiate the note just in case
 	el.note = &[]byte{}
-	if schemaVersionID == uint16(1) {
-		item := walItemSchema1{}
-		err := binary.Read(f, binary.LittleEndian, &item)
+
+	item := walItemSchema1{}
+	err := binary.Read(b, binary.LittleEndian, &item)
+	if err != nil {
+		return nil, err
+	}
+	el.listItemID = item.ListItemID
+	el.targetListItemID = item.TargetListItemID
+	el.unixNanoTime = item.UnixTime
+	el.uuid = item.UUID
+	el.targetUUID = item.TargetUUID
+	el.eventType = item.EventType
+
+	line := make([]byte, item.LineLength)
+	err = binary.Read(b, binary.LittleEndian, &line)
+	if err != nil {
+		return nil, err
+	}
+	el.line = string(line)
+
+	if item.NoteLength > 0 {
+		note := make([]byte, item.NoteLength)
+		err = binary.Read(b, binary.LittleEndian, &note)
 		if err != nil {
 			return nil, err
 		}
-		// ptr is initially set to nil as any "add" events wont have corresponding ptrs, so we deal with this post-merge
-		el.listItemID = item.ListItemID
-		el.targetListItemID = item.TargetListItemID
-		el.unixNanoTime = item.UnixTime
-		el.uuid = item.UUID
-		el.eventType = item.EventType
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(f, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
-	} else if schemaVersionID == uint16(2) {
-		item := walItemSchema2{}
-		err := binary.Read(f, binary.LittleEndian, &item)
-		if err != nil {
-			return nil, err
-		}
-		el.listItemID = item.ListItemID
-		el.targetListItemID = item.TargetListItemID
-		el.unixNanoTime = item.UnixTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
-
-		// TODO remove, this is roughly covering a broken previous build
-		if el.targetUUID == uuid(0) {
-			el.targetUUID = item.UUID
-		}
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(f, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(f, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
+		el.note = &note
 	}
 	return &el, nil
 }
 
-func flush(f *os.File, walLog *[]eventLog) error {
-	// Write the schema ID
-	err := binary.Write(f, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range *walLog {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema2{
-			UUID:             item.uuid,
-			TargetUUID:       item.targetUUID,
-			ListItemID:       item.listItemID,
-			TargetListItemID: item.targetListItemID,
-			UnixTime:         item.unixNanoTime,
-			EventType:        item.eventType,
-			LineLength:       lenLine,
-			NoteLength:       lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(f, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func buildFromFile(f *os.File) ([]eventLog, error) {
+func buildFromFile(b *bytes.Buffer) ([]eventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
 	el := []eventLog{}
 	var walSchemaVersionID uint16
-	err := binary.Read(f, binary.LittleEndian, &walSchemaVersionID)
+	err := binary.Read(b, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
 		if err == io.EOF {
 			return el, nil
@@ -365,12 +401,17 @@ func buildFromFile(f *os.File) ([]eventLog, error) {
 	}
 
 	for {
-		e, err := getNextEventLogFromWalFile(f, walSchemaVersionID)
+		e, err := getNextEventLogFromWalFile(b, walSchemaVersionID)
 		if err != nil {
 			switch err {
 			case io.EOF:
 				return el, nil
-			//case io.ErrUnexpectedEOF:
+			case io.ErrUnexpectedEOF:
+				// Given the distributed concurrent nature of this app, we sometimes pick up partially
+				// uploaded files which will fail, but may well be complete later on, therefore just
+				// return for now and attempt again later
+				// TODO implement a decent retry mech here
+				return []eventLog{}, nil
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return el, err
@@ -387,7 +428,6 @@ const (
 )
 
 func checkEquality(event1 eventLog, event2 eventLog) int {
-	// TODO I think BODMAS covers us here so remove the parantheses (check first)
 	if event1.unixNanoTime < event2.unixNanoTime ||
 		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
 		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
@@ -401,12 +441,6 @@ func checkEquality(event1 eventLog, event2 eventLog) int {
 }
 
 func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
-	//if len(*wal1) == 0 {
-	//    return wal2
-	//} else if len(*wal2) == 0 {
-	//    return wal1
-	//}
-
 	// Adopt a two pointer approach
 	i, j := 0, 0
 	mergedEl := []eventLog{}
@@ -453,144 +487,147 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-// TODO decouple this from the Wal as it should almost be a pure function
-func (w *Wal) sync(fullSync bool) (*[]eventLog, *[]eventLog, error) {
+func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
+	//runtime.Breakpoint()
+	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
 
 	//
 	// LOAD AND MERGE ALL WALs
 	//
 
-	mutFile, err := lockedfile.Create(w.syncFilePath)
+	// TODO only local wal needs a lock so remove interface functions and implement here
+	err := wf.lock()
 	if err != nil {
-		log.Fatalf("Error creating wal sync lock: %s\n", err)
+		log.Fatal(err)
 	}
-	defer mutFile.Close()
+	defer wf.unlock()
 
-	localWalFilePath := fmt.Sprintf(w.walPathPattern, w.uuid)
+	// We need any recent local changes to be flushed to all WalFiles, but we only process one at a time.
+	// Therefore, propagate any recent local changes to all other WalFiles
+	if !fullSync && len(*w.log) > 0 {
+		// It will always exist (due to pre-instantiation) but might be empty
+		for otherWalFile, otherLog := range w.pendingRemoteLogs {
+			if otherWalFile != wf {
+				w.pendingRemoteLogs[otherWalFile] = merge(otherLog, w.log)
+			}
+		}
+	}
 
-	var localWalFile *os.File
+	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
 
-	// Avoid mutating underyling logs before the process is complete.
-	// Therefore, dereference into copies, who's pointers will be reassigned to w later on
-	localWal := *w.log
-	fullLog := *w.fullLog
+	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	newFileNames := []string{}
+	// TODO put the processedPartialWals map on the WalFile and check this within getFileNamesMatchingPattern
+	for _, fileName := range allFileNames {
+		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
+			newFileNames = append(newFileNames, fileName)
+		}
+	}
 
+	// ONLY remove files prefixed with the local UUID. This is import when handling remote WalFile locations and
+	// enables us to handle distributed merge without any distrbuted file mutex mechanisms (etc).
 	if fullSync {
-		// On initial load, sync will be called on no WAL files, we we need to create here with the O_CREATE flag
-		localWalFile, err = os.OpenFile(localWalFilePath, os.O_RDWR|os.O_CREATE, 0644)
+		// TODO this does not need to be another call to S3 seeing as we retrieve fileNames above!!
+		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, fmt.Sprintf("%v*", w.uuid)))
 		if err != nil {
-			return nil, nil, err
+			log.Fatal(err)
 		}
-		defer localWalFile.Close()
-
-		// If w.fullLog is not empty, then it'll be consistent with the state of the file, so skip this read.
-		// The read will only be required on Load, not on Save (when we close the app)
-		if len(fullLog) == 0 {
-			fullLog, err = buildFromFile(localWalFile)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-
-		localWal = *(merge(&fullLog, &localWal))
-	}
-
-	fileNames, err := filepath.Glob(fmt.Sprintf(w.walPathPattern, "*"))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// TODO refactor
-	// On partial syncs, to avoid file reads completely, iterate over the names, and if
-	// they're all already processed, return
-	if !fullSync && len(fileNames) > 1 && len(localWal) == 0 {
-		returnEarly := true
-		i := 0
-		for i < len(fileNames) && returnEarly {
-			fileName := fileNames[i]
-			if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
-				returnEarly = false
-			}
-			i++
-		}
-		if returnEarly {
-			return w.log, w.fullLog, nil
+		for _, fileName := range homeFileNames {
+			defer wf.removeFile(fileName)
 		}
 	}
 
-	mergedWal := []eventLog{}
+	// Grab any pending logs early for the comparison below
+	pendingLogs, _ := w.pendingRemoteLogs[wf]
 
-	// Load all WAL files into arrays
-	for _, fileName := range fileNames {
-		// Avoid localWal
-		//if _, exists := w.processedPartialWals[fileName]; !exists && fileName != localWalFilePath {
-		if fileName != localWalFilePath {
-			// Don't bother merging processing files
-			if _, exists := w.processedPartialWals[fileName]; !exists {
-				f, err := os.Open(fileName)
-				if err != nil {
-					return nil, nil, err
-				}
-				wal, err := buildFromFile(f)
-				if err != nil {
-					return nil, nil, err
-				}
-				// Add to the processed cache
-				w.processedPartialWals[fileName] = struct{}{}
-				// Merge all WALs
-				mergedWal = *(merge(&mergedWal, &wal))
-				f.Close()
-			}
-			if fullSync {
-				os.Remove(fileName)
-			}
-		}
+	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
+	// w.log) we've already processed all of them, so return early
+	if !fullSync && len(*w.log) == 0 && len(newFileNames) == 0 && len(*pendingLogs) == 0 {
+		return w.fullLog, nil
 	}
 
-	flushPartial := true
-	if !fullSync {
-		// Before we merge in the localWal, we should check to see if the merged logs are
-		// the same length the as recent local logs. If so, there's no point flushing any
-		// new random files as they'll add additional files to merge with no difference to
-		// the outcome
-		if len(localWal) == len(mergedWal) {
-			flushPartial = false
+	newMergedWal := []eventLog{}
+	// Iterate over the new files and generate a new log of events
+	for _, fileName := range newFileNames {
+		newWal, err := wf.generateLogFromFile(fileName)
+		if err != nil {
+			log.Fatal(err)
 		}
+		newMergedWal = *(merge(&newMergedWal, &newWal))
+		// Add to the processed cache
+		w.processedPartialWals[wf][fileName] = struct{}{}
 	}
-
-	mergedWal = *(merge(&mergedWal, &localWal))
+	processedWithNewEvents := *(merge(w.log, merge(w.fullLog, &newMergedWal)))
 
 	//
 	// SAVE AND FLUSH TO A SINGLE WAL
 	//
 
+	// On full sync, we want to flush the product of all merged logs to a new file as we're effectively
+	// aggregating all. We then remove all other files
+	var eventsToFlush []eventLog
 	if fullSync {
-		// In the case of full syncs, we want to override the "base" WAL (aka the one representing the
-		// full log of events, and named after the static UUID for the app/db
-		localWalFile.Truncate(0)
-		localWalFile.Seek(0, io.SeekStart)
-		err = flush(localWalFile, &mergedWal)
-		if err != nil {
-			return nil, nil, err
-		}
-		// Clear the processedPartialWals cache as processed files may have changed on full syncs
-		w.processedPartialWals = make(map[string]struct{})
-		return &[]eventLog{}, &mergedWal, nil
+		eventsToFlush = processedWithNewEvents
 	} else {
-		// Otherwise, we leave the base WAL untouched, generate a temp UUID and flush the partial WAL
-		// to disk
-		if flushPartial {
-			randomWal := fmt.Sprintf(w.walPathPattern, generateUUID())
-			partialWalFile, err := os.Create(randomWal)
-			if err != nil {
-				return nil, nil, err
-			}
-			defer partialWalFile.Close()
-			// Flush the log rather than merged events to avoid duplication between partial WALs
-			err = flush(partialWalFile, w.log)
-			// Add it straight to the cache to avoid processing it in the future
-			w.processedPartialWals[randomWal] = struct{}{}
-		}
-		return &mergedWal, &fullLog, nil
+		eventsToFlush = *w.log
+		// Grab any aggregated pending local changes
+		eventsToFlush = *(merge(&eventsToFlush, pendingLogs))
+		w.pendingRemoteLogs[wf] = &[]eventLog{}
 	}
+	// TODO move this to an explicit location outside of the function
+	w.log = &[]eventLog{}
+
+	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
+	if fullSync || len(eventsToFlush) > 0 {
+		var b bytes.Buffer
+		// Write the schema ID
+		err = binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, item := range eventsToFlush {
+			lenLine := uint64(len([]byte(item.line)))
+			var lenNote uint64
+			if item.note != nil {
+				lenNote = uint64(len(*(item.note)))
+			}
+			i := walItemSchema1{
+				UUID:             item.uuid,
+				TargetUUID:       item.targetUUID,
+				ListItemID:       item.listItemID,
+				TargetListItemID: item.targetListItemID,
+				UnixTime:         item.unixNanoTime,
+				EventType:        item.eventType,
+				LineLength:       lenLine,
+				NoteLength:       lenNote,
+			}
+			data := []interface{}{
+				i,
+				[]byte(item.line),
+			}
+			if item.note != nil {
+				data = append(data, item.note)
+			}
+			for _, v := range data {
+				err = binary.Write(&b, binary.LittleEndian, v)
+				if err != nil {
+					fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+					log.Fatal(err)
+				}
+			}
+		}
+		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, generateUUID()))
+		err = wf.flush(&b, randomWal)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Add it straight to the cache to avoid processing it in the future
+		w.processedPartialWals[wf][randomWal] = struct{}{}
+	}
+
+	return &processedWithNewEvents, nil
 }
