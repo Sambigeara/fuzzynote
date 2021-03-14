@@ -8,7 +8,7 @@ import (
 
 func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo on empty db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
@@ -29,7 +29,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
@@ -77,7 +77,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
@@ -158,7 +158,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
@@ -326,7 +326,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
@@ -400,7 +400,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add line, Delete line, Undo, delete character, Undo", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 

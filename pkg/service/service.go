@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"path"
 	"time"
 )
@@ -32,35 +31,6 @@ type ListRepo interface {
 	Redo() error
 	Match(keys [][]rune, showHidden bool) ([]MatchItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
-}
-
-// Wal manages the state of the WAL, via all update functions and replay functionality
-type Wal struct {
-	uuid                 uuid
-	log                  *[]eventLog // log represents a fresh set of events (unique from the historical log below)
-	fullLog              *[]eventLog // fullLog is a historical log of events
-	listItemTracker      map[string]*ListItem
-	processedPartialWals map[string]struct{}
-	walPathPattern       string
-	latestWalSchemaID    uint16
-	syncFilePath         string
-}
-
-func generateUUID() uuid {
-	return uuid(rand.Uint32())
-}
-
-func NewWal(rootDir string) *Wal {
-	return &Wal{
-		uuid:                 generateUUID(),
-		walPathPattern:       path.Join(rootDir, walFilePattern),
-		latestWalSchemaID:    latestWalSchemaID,
-		log:                  &[]eventLog{},
-		fullLog:              &[]eventLog{},
-		listItemTracker:      make(map[string]*ListItem),
-		processedPartialWals: make(map[string]struct{}),
-		syncFilePath:         path.Join(rootDir, syncFile),
-	}
 }
 
 type listItemKey string
@@ -104,12 +74,12 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string) *DBListRepo {
+func NewDBListRepo(rootDir string, walFiles []WalFile) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(rootDir),
+		wal:                NewWal(walFiles),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 	}
