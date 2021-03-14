@@ -50,13 +50,14 @@ func TestEventEquality(t *testing.T) {
 
 func TestWalMerge(t *testing.T) {
 	t.Run("Start empty db", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
 		f, _ := os.Create(rootPath)
 		defer f.Close()
 		defer clearUp(repo)
 
-		repo.Load()
+		repo.Load(walFiles)
 
 		if len(*repo.wal.fullLog) != 0 {
 			t.Fatalf("Expected no events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -66,12 +67,13 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Single local WAL merge", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
 
-		repo.Load()
+		repo.Load(walFiles)
 
 		now := time.Now().UnixNano()
 
@@ -116,7 +118,7 @@ func TestWalMerge(t *testing.T) {
 		f.Close()
 
 		//runtime.Breakpoint()
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 
 		if len(*repo.wal.fullLog) != 2 {
 			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -143,12 +145,13 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Two WAL file merge", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
 
-		repo.Load()
+		repo.Load(walFiles)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -281,7 +284,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 
 		if len(*repo.wal.fullLog) != 8 {
 			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
@@ -307,12 +310,13 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
 
-		repo.Load()
+		repo.Load(walFiles)
 
 		now0 := time.Now().UnixNano() - 10 // `-10` Otherwise delete "happens" before these times
 		now1 := now0 + 1
@@ -375,7 +379,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -394,8 +398,8 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		preSaveLog := *repo.wal.fullLog
-		repo = NewDBListRepo(rootDir)
-		repo.Load()
+		repo = NewDBListRepo(rootDir, walFiles)
+		repo.Load(walFiles)
 
 		repo.Match([][]rune{}, true)
 		matches = repo.matchListItems
@@ -426,7 +430,7 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		repo.Delete(1)
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 		preSaveLog = *repo.wal.fullLog
 
 		// Re-write the same remote WAL
@@ -439,7 +443,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
@@ -463,12 +467,13 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Two WAL file duplicate merge, Delete item in one, Update same in other", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
 		defer clearUp(repo)
 
-		repo.Load()
+		repo.Load(walFiles)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -576,7 +581,7 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(nil, true, false)
+		repo.Refresh(walFiles, true)
 
 		if len(*repo.wal.fullLog) != 4 {
 			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*repo.wal.fullLog))

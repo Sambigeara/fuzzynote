@@ -16,11 +16,13 @@ var rootPath = path.Join(rootDir, rootFileName)
 
 func clearUp(r *DBListRepo) {
 	os.Remove(rootPath)
-	wals, _ := filepath.Glob(fmt.Sprintf(r.wal.walPathPattern, "*"))
+
+	walPathPattern := fmt.Sprintf(path.Join(rootDir, walFilePattern), "*")
+	wals, _ := filepath.Glob(walPathPattern)
 	for _, wal := range wals {
 		os.Remove(wal)
 	}
-	os.Remove(r.wal.localWalFile.syncFilePath)
+	os.Remove(path.Join(rootDir, syncFile))
 	os.Remove(rootDir)
 
 	files, err := filepath.Glob("wal_*.db")
@@ -36,7 +38,7 @@ func clearUp(r *DBListRepo) {
 
 func TestServiceStoreLoad(t *testing.T) {
 	t.Run("Stores to file and loads back", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
@@ -54,7 +56,7 @@ func TestServiceStoreLoad(t *testing.T) {
 
 		repo.Root = &newItem
 		repo.NextID = 3
-		err := repo.Save()
+		err := repo.Save([]WalFile{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +71,7 @@ func TestServiceStoreLoad(t *testing.T) {
 		}
 		f.Close()
 
-		err = repo.Load()
+		err = repo.Load([]WalFile{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +99,7 @@ func TestServiceStoreLoad(t *testing.T) {
 }
 
 func TestServiceAdd(t *testing.T) {
-	repo := NewDBListRepo(rootDir)
+	repo := NewDBListRepo(rootDir, []WalFile{})
 	repo.Add("Old existing created line", nil, 0)
 	repo.Add("New existing created line", nil, 0)
 
@@ -230,7 +232,7 @@ func TestServiceAdd(t *testing.T) {
 	})
 
 	t.Run("Add new item to empty list", func(t *testing.T) {
-		repo := NewDBListRepo("test")
+		repo := NewDBListRepo("test", []WalFile{})
 
 		newLine := "First item in list"
 		repo.Add(newLine, nil, 0)
@@ -264,7 +266,7 @@ func TestServiceAdd(t *testing.T) {
 
 func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from head of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -307,7 +309,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -346,7 +348,7 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -392,7 +394,7 @@ func TestServiceDelete(t *testing.T) {
 
 func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -448,7 +450,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -503,7 +505,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -541,7 +543,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from top", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -596,7 +598,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -651,7 +653,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -690,7 +692,7 @@ func TestServiceMove(t *testing.T) {
 	})
 
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -756,7 +758,7 @@ func TestServiceMove(t *testing.T) {
 }
 
 func TestServiceUpdate(t *testing.T) {
-	repo := NewDBListRepo(rootDir)
+	repo := NewDBListRepo(rootDir, []WalFile{})
 	repo.Add("Third", nil, 0)
 	repo.Add("Second", nil, 0)
 	repo.Add("First", nil, 0)
@@ -790,7 +792,7 @@ func TestServiceUpdate(t *testing.T) {
 
 func TestServiceMatch(t *testing.T) {
 	t.Run("Full match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -866,7 +868,7 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -942,7 +944,7 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -979,7 +981,7 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		repo := NewDBListRepo(rootDir, []WalFile{})
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1059,7 +1061,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1085,9 +1088,10 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Save()
-		repo = NewDBListRepo(rootDir)
-		repo.Load()
+		//runtime.Breakpoint()
+		repo.Save(walFiles)
+		repo = NewDBListRepo(rootDir, walFiles)
+		repo.Load(walFiles)
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
 
@@ -1142,7 +1146,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir)
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1168,9 +1173,9 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Save()
-		repo = NewDBListRepo(rootDir)
-		repo.Load()
+		repo.Save(walFiles)
+		repo = NewDBListRepo(rootDir, walFiles)
+		repo.Load(walFiles)
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
 
