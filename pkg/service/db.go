@@ -117,7 +117,7 @@ func (r *DBListRepo) Save(wfs []WalFile) error {
 	}
 
 	for _, wf := range wfs {
-		r.wal.sync(wf, true)
+		r.wal.sync(wf, false)
 	}
 
 	return nil
