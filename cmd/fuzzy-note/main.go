@@ -35,6 +35,7 @@ func main() {
 		Root                string
 		Colour              string
 		S3                  s3
+		Editor              string `conf:"default:vim"`
 		LocalRefreshFreqMs  uint16 `conf:"default:250"`
 		RemoteRefreshFreqMs uint16 `conf:"default:5000"`
 		FullRefreshFreqMs   uint16 `conf:"default:60000"`
@@ -118,7 +119,7 @@ func main() {
 	remoteRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.RemoteRefreshFreqMs))
 	fullRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.FullRefreshFreqMs))
 
-	term := client.NewTerm(listRepo, cfg.Colour)
+	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
