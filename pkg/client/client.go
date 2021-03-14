@@ -8,15 +8,13 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-	//"sync"
 
-	"fuzzy-note/pkg/service"
-	//"github.com/Sambigeara/fuzzy-note/pkg/service"
-
-	"github.com/gdamore/tcell"
-	"github.com/gdamore/tcell/encoding"
+	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
+
+	"fuzzy-note/pkg/service"
 )
 
 const (
@@ -413,12 +411,15 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			}
 		case tcell.KeyCtrlO:
 			if t.curY != 0 {
-				t.S.Fini()
-				err = t.openEditorSession()
-				if err != nil {
-					log.Fatal(err)
+				if err := t.S.Suspend(); err == nil {
+					err = t.openEditorSession()
+					if err != nil {
+						log.Fatal(err)
+					}
+					if err := t.S.Resume(); err != nil {
+						panic("failed to resume: " + err.Error())
+					}
 				}
-				t.S = newInstantiatedScreen(t.style)
 			}
 		case tcell.KeyCtrlA:
 			// Go to beginning of line

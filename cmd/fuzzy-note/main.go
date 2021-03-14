@@ -9,7 +9,7 @@ import (
 	//"runtime"
 
 	"github.com/ardanlabs/conf"
-	"github.com/gdamore/tcell"
+	"github.com/gdamore/tcell/v2"
 	"gopkg.in/yaml.v2"
 	//"github.com/rogpeppe/go-internal/lockedfile"
 
