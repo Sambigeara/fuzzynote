@@ -333,7 +333,8 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) replay(root *ListItem, log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+func (r *DBListRepo) replay(log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
+	var root *ListItem
 	fullLog = merge(fullLog, log)
 	// If still no events, return nil
 	if len(*fullLog) == 0 {

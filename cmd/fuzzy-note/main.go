@@ -127,18 +127,18 @@ func main() {
 		for {
 			select {
 			case <-partialRefreshTicker.C:
-				err := listRepo.Refresh(localWalFiles, nil, false)
+				err := listRepo.Refresh(localWalFiles, false)
 				if err != nil {
 					log.Fatalf("Failed on partial sync: %v", err)
 				}
 				term.S.PostEvent(&client.RefreshKey{})
 			case <-remoteRefreshTicker.C:
-				err := listRepo.Refresh(remoteWalFiles, nil, false)
+				err := listRepo.Refresh(remoteWalFiles, false)
 				if err != nil {
 					log.Fatalf("Failed on remote sync: %v", err)
 				}
 			case <-fullRefreshTicker.C:
-				err := listRepo.Refresh(allWalFiles, nil, true)
+				err := listRepo.Refresh(allWalFiles, true)
 				if err != nil {
 					log.Fatalf("Failed on full sync: %v", err)
 				}

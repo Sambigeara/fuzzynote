@@ -22,7 +22,7 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(wfs []WalFile, root *ListItem, fullSync bool) error {
+func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) error {
 	var err error
 	var fullLog *[]eventLog
 	for _, wf := range wfs {
@@ -35,7 +35,7 @@ func (r *DBListRepo) Refresh(wfs []WalFile, root *ListItem, fullSync bool) error
 		if lenFullLog == len(*fullLog) {
 			continue
 		}
-		if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(root, &[]eventLog{}, fullLog); err != nil {
+		if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(&[]eventLog{}, fullLog); err != nil {
 			return err
 		}
 	}
@@ -75,7 +75,7 @@ func (r *DBListRepo) Load(wfs []WalFile) error {
 	}
 
 	// Load the WAL into memory
-	if err := r.Refresh(wfs, r.Root, true); err != nil {
+	if err := r.Refresh(wfs, true); err != nil {
 		return err
 	}
 
