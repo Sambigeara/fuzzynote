@@ -7,17 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	//"sync"
 	"time"
 
-	"fuzzy-note/pkg/service"
-	//"github.com/Sambigeara/fuzzy-note/pkg/service"
-
-	"github.com/gdamore/tcell"
-	"github.com/gdamore/tcell/encoding"
+	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
-	"github.com/micmonay/keybd_event"
+
+	"fuzzy-note/pkg/service"
 )
 
 const (
@@ -135,30 +132,11 @@ func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 	return s
 }
 
-// This method is a horrible workaround for this bug: https://github.com/gdamore/tcell/issues/194
-// When closing a screen session (to give full control to the external program, e.g. vim), a subsequent keypress is dropped.
-// This aditional EOL event is sent to ensure consequent events are correctly handled
-func sendExtraEventFix() {
-	kb, err := keybd_event.NewKeyBonding()
-	if err != nil {
-		panic(err)
-	}
-	kb.SetKeys(keybd_event.VK_ENTER)
-	err = kb.Launching()
-	if err != nil {
-		panic(err)
-	}
-}
-
 func (t *Terminal) openEditorSession() error {
-	// TODO https://github.com/gdamore/tcell/issues/194
-	sendExtraEventFix()
-
 	// Write text to temp file
 	tmpfile, err := ioutil.TempFile("", "fzn_buffer")
 	if err != nil {
 		log.Fatal(err)
-		return err
 	}
 
 	defer os.Remove(tmpfile.Name())
@@ -433,12 +411,15 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			}
 		case tcell.KeyCtrlO:
 			if t.curY != 0 {
-				t.S.Fini()
-				err = t.openEditorSession()
-				if err != nil {
-					log.Fatal(err)
+				if err := t.S.Suspend(); err == nil {
+					err = t.openEditorSession()
+					if err != nil {
+						log.Fatal(err)
+					}
+					if err := t.S.Resume(); err != nil {
+						panic("failed to resume: " + err.Error())
+					}
 				}
-				t.S = newInstantiatedScreen(t.style)
 			}
 		case tcell.KeyCtrlA:
 			// Go to beginning of line
