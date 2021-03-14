@@ -18,10 +18,9 @@ import (
 )
 
 const (
-	dateFormat              = "Mon, Jan 02, 2006"
-	reservedTopLines int    = 1
-	reservedEndChars int    = 1
-	saveWarningMsg   string = "UNSAVED CHANGES: save with `Ctrl-s`, or ignore changes and exit with `Ctrl-_`"
+	dateFormat                            = "Mon, Jan 02, 2006"
+	reservedTopLines, reservedBottomLines = 1, 1
+	reservedEndChars                      = 1
 )
 
 type Terminal struct {
@@ -31,6 +30,7 @@ type Terminal struct {
 	curItem           *service.MatchItem // The currently selected item
 	S                 tcell.Screen
 	style             tcell.Style
+	Editor            string
 	w, h              int
 	curX, curY        int // Cur "screen" index, not related to matched item lists
 	vertOffset        int // The index of the first displayed item in the match set
@@ -40,9 +40,10 @@ type Terminal struct {
 	copiedItem        *service.MatchItem
 	hiddenMatchPrefix string    // The common string that we want to truncate from each line
 	previousKey       tcell.Key // Keep track of the previous keypress
+	footerMessage     string    // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
 }
 
-func NewTerm(db service.ListRepo, colour string) *Terminal {
+func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 	encoding.Register()
 
 	var defStyle tcell.Style
@@ -70,6 +71,7 @@ func NewTerm(db service.ListRepo, colour string) *Terminal {
 		db:            db,
 		S:             s,
 		style:         defStyle,
+		Editor:        editor,
 		w:             w,
 		h:             h,
 		showHidden:    showHidden,
@@ -148,13 +150,14 @@ func (t *Terminal) openEditorSession() error {
 	}
 
 	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
-	cmd := exec.Command("vim", tmpfile.Name())
+	cmd := exec.Command(t.Editor, tmpfile.Name())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	err = cmd.Run()
 	if err != nil {
-		log.Printf("Command finished with error: %v", err)
-		return err
+		// For now, show a warning and return
+		// TODO make more robust
+		t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
 	}
 
 	// Read back from the temp file, and return to the write function
@@ -189,26 +192,30 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 
 	// Display whether all items or just non-hidden items are currently displayed
 	if t.showHidden {
-		emitStr(s, t.w-3+reservedEndChars, 0, searchStyle, "VIS")
+		indicator := "VIS"
+		emitStr(s, t.w-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
 	} else {
-		emitStr(s, t.w-3+reservedEndChars, 0, searchStyle, "HID")
+		indicator := "HID"
+		emitStr(s, t.w-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
 	}
 }
 
 func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	footer := tcell.StyleDefault.
-		Foreground(tcell.ColorBlue).Background(tcell.ColorYellow)
+		Foreground(tcell.ColorRed).Background(tcell.ColorYellow)
 
 	// Pad out remaining line with spaces to ensure whole bar is filled
 	lenStr := len([]rune(text))
 	text += string(make([]rune, t.w-lenStr))
-	emitStr(s, 0, t.h-1, footer, text)
+	// reservedBottomLines is subtracted from t.h globally, and we want to print on the bottom line
+	// so add it back in here
+	emitStr(s, 0, t.h-1+reservedBottomLines, footer, text)
 }
 
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
 	t.w = w - reservedEndChars
-	t.h = h
+	t.h = h - reservedBottomLines
 }
 
 func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
@@ -228,7 +235,7 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 	// Fill lineItems
 	var offset int
 	var style tcell.Style
-	for i, r := range matches[t.vertOffset:] {
+	for i, r := range matches[t.vertOffset:min(len(matches), t.vertOffset+t.h-reservedTopLines)] {
 		offset = i + reservedTopLines
 		// If item is highlighted, indicate accordingly
 		if _, ok := t.selectedItems[i]; ok {
@@ -265,6 +272,10 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 		if offset == t.h {
 			break
 		}
+	}
+
+	if t.footerMessage != "" {
+		t.buildFooter(t.S, t.footerMessage)
 	}
 
 	//if saveWarning {
@@ -664,6 +675,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				}
 				posDiff[0] += len([]rune(parsedNewLine)) - oldLen + 1
 			}
+			t.footerMessage = ""
 		}
 		t.previousKey = ev.Key()
 	}
