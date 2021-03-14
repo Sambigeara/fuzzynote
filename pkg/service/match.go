@@ -34,35 +34,35 @@ const (
 type matchPattern int
 
 const (
-	fullMatchPattern matchPattern = iota
-	inverseMatchPattern
-	fuzzyMatchPattern
-	noMatchPattern
+	FullMatchPattern matchPattern = iota
+	InverseMatchPattern
+	FuzzyMatchPattern
+	NoMatchPattern
 )
 
 // matchChars represents the number of characters at the start of the string
 // which are attributed to the match pattern.
 // This is used elsewhere to strip the characters where appropriate
 var matchChars = map[matchPattern]int{
-	fullMatchPattern:    1,
-	inverseMatchPattern: 2,
-	fuzzyMatchPattern:   0,
-	noMatchPattern:      0,
+	FullMatchPattern:    1,
+	InverseMatchPattern: 2,
+	FuzzyMatchPattern:   0,
+	NoMatchPattern:      0,
 }
 
 // GetMatchPattern will return the matchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
 func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	if len(sub) == 0 {
-		return noMatchPattern, 0
+		return NoMatchPattern, 0
 	}
-	pattern := fuzzyMatchPattern
+	pattern := FuzzyMatchPattern
 	if sub[0] == '#' {
-		pattern = fullMatchPattern
+		pattern = FullMatchPattern
 		if len(sub) > 1 {
 			// Inverse string match if a search group begins with `#!`
 			if sub[1] == '!' {
-				pattern = inverseMatchPattern
+				pattern = InverseMatchPattern
 			}
 		}
 	}
@@ -76,11 +76,11 @@ func isMatch(sub []rune, full string, pattern matchPattern) bool {
 		return true
 	}
 	switch pattern {
-	case fullMatchPattern:
+	case FullMatchPattern:
 		return isSubString(string(sub), full)
-	case inverseMatchPattern:
+	case InverseMatchPattern:
 		return !isSubString(string(sub), full)
-	case fuzzyMatchPattern:
+	case FuzzyMatchPattern:
 		return isFuzzyMatch(sub, full)
 	default:
 		// Shouldn't reach here
