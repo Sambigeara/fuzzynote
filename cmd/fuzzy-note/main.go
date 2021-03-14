@@ -67,7 +67,7 @@ func main() {
 	// Because we're using the same cfg to parse file and cli/envvar, we can't rely on the supported `default`
 	// tags, so pre-set any defaults prior to parsing
 	cfg.Colour = "light"
-	cfg.S3.Prefix = "home"
+	cfg.S3.Prefix = "main"
 
 	// Initially retrieve config from the config file, if available
 	cfgFile := path.Join(cfg.Root, ".config.yml")

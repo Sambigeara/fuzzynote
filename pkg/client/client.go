@@ -412,6 +412,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if t.curY == reservedTopLines-1 {
 				t.search = [][]rune{}
 			} else {
+				// Copy into buffer in case we're moving it elsewhere
+				t.copiedItem = t.curItem
 				err := t.db.Delete(t.curY - 1)
 				if err != nil {
 					log.Fatal(err)

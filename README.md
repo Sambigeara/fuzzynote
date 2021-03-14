@@ -34,7 +34,7 @@ Examples:
 
 - `TAB (top line)`: Add new search group
 - `Enter`: Add new line below (prepends search line to new line)
-- `Ctrl-d`: Delete line or clear search groups
+- `Ctrl-d`: Copies line into buffer and deletes it, or clear search groups
 - `Alt-]/Alt-[`: Moves the current item up or down in the list
 - `Ctrl-s`: Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items.
 
@@ -47,7 +47,8 @@ Examples:
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim
-- `Ctrl-c/p`: Copy current item/paste current item below current position
+- `Ctrl-c`: Copy current item into buffer
+- `Ctrl-p`: Paste current item from buffer below current position
 
 ## Token operators
 
