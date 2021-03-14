@@ -662,7 +662,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				if err != nil {
 					log.Fatal(err)
 				}
-				posDiff[0] += len(parsedNewLine) - oldLen + 1
+				posDiff[0] += len([]rune(parsedNewLine)) - oldLen + 1
 			}
 		}
 		t.previousKey = ev.Key()
