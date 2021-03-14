@@ -386,8 +386,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				var searchStrings []string
 				// We can't use t.hiddenMatchPrefix as it only includes the first group at present
 				for _, group := range t.search {
-					_, nChars := t.db.GetMatchPattern(group)
-					if len(group) > 0 {
+					pattern, nChars := t.db.GetMatchPattern(group)
+					if pattern != service.InverseMatchPattern && len(group) > 0 {
 						searchStrings = append(searchStrings, string(group[nChars:]))
 					}
 				}
