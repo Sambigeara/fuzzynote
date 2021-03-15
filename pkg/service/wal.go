@@ -11,8 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"time"
-	//"regexp"
 	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
@@ -489,7 +489,6 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 
 func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 	//runtime.Breakpoint()
-	//localReg, _ := regexp.Compile(fmt.Sprintf(w.walPathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
 
 	//
 	// LOAD AND MERGE ALL WALs
@@ -530,13 +529,11 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 	// ONLY remove files prefixed with the local UUID. This is import when handling remote WalFile locations and
 	// enables us to handle distributed merge without any distrbuted file mutex mechanisms (etc).
 	if fullSync {
-		// TODO this does not need to be another call to S3 seeing as we retrieve fileNames above!!
-		homeFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, fmt.Sprintf("%v*", w.uuid)))
-		if err != nil {
-			log.Fatal(err)
-		}
-		for _, fileName := range homeFileNames {
-			defer wf.removeFile(fileName)
+		localReg, _ := regexp.Compile(fmt.Sprintf(filePathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
+		for _, fileName := range allFileNames {
+			if localReg.MatchString(fileName) {
+				defer wf.removeFile(fileName)
+			}
 		}
 	}
 
