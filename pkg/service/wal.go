@@ -337,6 +337,8 @@ func (r *DBListRepo) Replay(fullLog *[]EventLog) error {
 	// Merge with any new local events which may have occurred during sync
 	// TODO refactor
 	r.wal.fullLog = merge(fullLog, r.wal.log)
+	// Reset r.wal.log
+	r.wal.log = &[]EventLog{}
 	// If no events, do nothing and return nil
 	if len(*r.wal.fullLog) == 0 {
 		return nil
