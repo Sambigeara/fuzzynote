@@ -170,6 +170,7 @@ func main() {
 						log.Fatal(err)
 					}
 					partialRefreshTicker.Stop()
+					remoteRefreshTicker.Stop()
 					fullRefreshTicker.Stop()
 					os.Exit(0)
 				}
