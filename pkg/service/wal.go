@@ -27,12 +27,12 @@ const latestWalSchemaID uint16 = 2
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
 	uuid                 uuid
-	log                  *[]eventLog // log represents a fresh set of events (unique from the historical log below)
-	fullLog              *[]eventLog // fullLog is a historical log of events
+	log                  *[]EventLog // log represents a fresh set of events (unique from the historical log below)
+	fullLog              *[]EventLog // fullLog is a historical log of events
 	listItemTracker      map[string]*ListItem
 	processedPartialWals map[WalFile]map[string]struct{}
 	latestWalSchemaID    uint16
-	pendingRemoteLogs    map[WalFile]*[]eventLog
+	pendingRemoteLogs    map[WalFile]*[]EventLog
 }
 
 func generateUUID() uuid {
@@ -43,16 +43,16 @@ func NewWal(walFiles []WalFile) *Wal {
 	wal := Wal{
 		uuid:                 generateUUID(),
 		latestWalSchemaID:    latestWalSchemaID,
-		log:                  &[]eventLog{},
-		fullLog:              &[]eventLog{},
+		log:                  &[]EventLog{},
+		fullLog:              &[]EventLog{},
 		listItemTracker:      make(map[string]*ListItem),
 		processedPartialWals: make(map[WalFile]map[string]struct{}),
-		pendingRemoteLogs:    make(map[WalFile]*[]eventLog),
+		pendingRemoteLogs:    make(map[WalFile]*[]EventLog),
 	}
 	// Instantiate processedPartialWals and pendingRemoteLogs caches
 	for _, wf := range walFiles {
 		wal.processedPartialWals[wf] = make(map[string]struct{})
-		wal.pendingRemoteLogs[wf] = &[]eventLog{}
+		wal.pendingRemoteLogs[wf] = &[]EventLog{}
 	}
 	return &wal
 }
@@ -81,7 +81,7 @@ const (
 	deleteEvent
 )
 
-type eventLog struct {
+type EventLog struct {
 	uuid             uuid
 	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
 	targetUUID       uuid
@@ -99,7 +99,7 @@ type WalFile interface {
 	lock() error
 	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
-	generateLogFromFile(string) ([]eventLog, error)
+	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
 	flush(*bytes.Buffer, string) error
 }
@@ -149,8 +149,8 @@ func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]stri
 	return fileNames, nil
 }
 
-func (wf *localWalFile) generateLogFromFile(fileName string) ([]eventLog, error) {
-	wal := []eventLog{}
+func (wf *localWalFile) generateLogFromFile(fileName string) ([]EventLog, error) {
+	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
 	if err != nil {
@@ -181,7 +181,7 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e eventLog) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
 	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemID)]
 
@@ -333,23 +333,30 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) replay(log *[]eventLog, fullLog *[]eventLog) (*ListItem, uint64, *[]eventLog, *[]eventLog, error) {
-	var root *ListItem
-	fullLog = merge(fullLog, log)
-	// If still no events, return nil
-	if len(*fullLog) == 0 {
-		return root, uint64(1), log, fullLog, nil
+func (r *DBListRepo) Replay(fullLog *[]EventLog) error {
+	// Merge with any new local events which may have occurred during sync
+	// TODO refactor
+	r.wal.fullLog = merge(fullLog, r.wal.log)
+	// Reset r.wal.log
+	r.wal.log = &[]EventLog{}
+	// If no events, do nothing and return nil
+	if len(*r.wal.fullLog) == 0 {
+		return nil
 	}
 
-	for _, e := range *fullLog {
+	var root *ListItem
+	for _, e := range *r.wal.fullLog {
+		// We need to pass a fresh null root and leave the old r.Root intact for the function
+		// caller logic, because dragons lie within
 		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
-	return root, r.NextID, log, fullLog, nil
+	r.Root = root
+	return nil
 }
 
-func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*eventLog, error) {
-	el := eventLog{}
+func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
+	el := EventLog{}
 	// TODO this is a hacky fix. Instantiate the note just in case
 	el.note = &[]byte{}
 
@@ -383,12 +390,12 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*event
 	return &el, nil
 }
 
-func buildFromFile(b *bytes.Buffer) ([]eventLog, error) {
+func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
 
-	el := []eventLog{}
+	el := []EventLog{}
 	var walSchemaVersionID uint16
 	err := binary.Read(b, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
@@ -411,7 +418,7 @@ func buildFromFile(b *bytes.Buffer) ([]eventLog, error) {
 				// uploaded files which will fail, but may well be complete later on, therefore just
 				// return for now and attempt again later
 				// TODO implement a decent retry mech here
-				return []eventLog{}, nil
+				return []EventLog{}, nil
 			default:
 				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return el, err
@@ -427,7 +434,7 @@ const (
 	rightEventOlder
 )
 
-func checkEquality(event1 eventLog, event2 eventLog) int {
+func checkEquality(event1 EventLog, event2 EventLog) int {
 	if event1.unixNanoTime < event2.unixNanoTime ||
 		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
 		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
@@ -440,12 +447,12 @@ func checkEquality(event1 eventLog, event2 eventLog) int {
 	return eventsEqual
 }
 
-func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
+func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	// Adopt a two pointer approach
 	i, j := 0, 0
-	mergedEl := []eventLog{}
+	mergedEl := []EventLog{}
 	// We can use an empty log here because it will never be equal to in the checkEquality calls below
-	lastEvent := eventLog{}
+	lastEvent := EventLog{}
 	for i < len(*wal1) || j < len(*wal2) {
 		if len(mergedEl) > 0 {
 			lastEvent = mergedEl[len(mergedEl)-1]
@@ -487,7 +494,7 @@ func merge(wal1 *[]eventLog, wal2 *[]eventLog) *[]eventLog {
 	return &mergedEl
 }
 
-func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
+func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	//runtime.Breakpoint()
 
 	//
@@ -537,16 +544,16 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 		}
 	}
 
-	// Grab any pending logs early for the comparison below
-	pendingLogs, _ := w.pendingRemoteLogs[wf]
+	// Grab any pending logs and join with new local events early for the comparison below
+	pendingLogs := merge(w.pendingRemoteLogs[wf], w.log)
 
 	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
 	// w.log) we've already processed all of them, so return early
-	if !fullSync && len(*w.log) == 0 && len(newFileNames) == 0 && len(*pendingLogs) == 0 {
+	if !fullSync && len(*pendingLogs) == 0 && len(newFileNames) == 0 {
 		return w.fullLog, nil
 	}
 
-	newMergedWal := []eventLog{}
+	newMergedWal := []EventLog{}
 	// Iterate over the new files and generate a new log of events
 	for _, fileName := range newFileNames {
 		newWal, err := wf.generateLogFromFile(fileName)
@@ -565,17 +572,14 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]eventLog, error) {
 
 	// On full sync, we want to flush the product of all merged logs to a new file as we're effectively
 	// aggregating all. We then remove all other files
-	var eventsToFlush []eventLog
+	var eventsToFlush []EventLog
 	if fullSync {
 		eventsToFlush = processedWithNewEvents
 	} else {
-		eventsToFlush = *w.log
 		// Grab any aggregated pending local changes
-		eventsToFlush = *(merge(&eventsToFlush, pendingLogs))
-		w.pendingRemoteLogs[wf] = &[]eventLog{}
+		eventsToFlush = *pendingLogs
+		w.pendingRemoteLogs[wf] = &[]EventLog{}
 	}
-	// TODO move this to an explicit location outside of the function
-	w.log = &[]eventLog{}
 
 	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
 	if fullSync || len(eventsToFlush) > 0 {
