@@ -36,8 +36,8 @@ func main() {
 		Colour              string
 		S3                  s3
 		Editor              string `conf:"default:vim"`
-		LocalRefreshFreqMs  uint16 `conf:"default:250"`
-		RemoteRefreshFreqMs uint16 `conf:"default:5000"`
+		LocalRefreshFreqMs  uint16 `conf:"default:1000"`
+		RemoteRefreshFreqMs uint16 `conf:"default:2000"`
 		FullRefreshFreqMs   uint16 `conf:"default:60000"`
 	}
 
