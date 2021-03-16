@@ -156,20 +156,6 @@ func main() {
 	go func() {
 		for {
 			select {
-			//case <-partialRefreshTicker.C:
-			//    //err := listRepo.Refresh(localWalFiles, false)
-			//    //if err != nil {
-			//    //    log.Fatalf("Failed on partial sync: %v", err)
-			//    //}
-
-			//    if fullLog, err := listRepo.Refresh(localWalFiles, false); err == nil {
-			//        if len(*fullLog) > 0 {
-			//            if err = listRepo.Replay(fullLog); err != nil {
-			//                log.Fatalf("Failed on partial sync: %v", err)
-			//            }
-			//        }
-			//    }
-			//    term.S.PostEvent(&client.RefreshKey{})
 			case fullLog := <-replayEvts:
 				if err := listRepo.Replay(fullLog); err != nil {
 					log.Fatal(err)
