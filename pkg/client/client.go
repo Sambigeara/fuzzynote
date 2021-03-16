@@ -194,7 +194,6 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	// If no search items at all, display emptySearchLinePrompt and return
 	if len(t.search) == 0 || len(t.search) == 1 && len(t.search[0]) == 0 {
 		emitStr(s, 0, 0, t.promptStyle, emptySearchLinePrompt)
-		return
 	}
 
 	searchStyle := tcell.StyleDefault.
@@ -301,7 +300,7 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.search) > 0 && len(t.search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new with search prefix: \"%s\"", t.getNewLinePrefix())
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", t.getNewLinePrefix())
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
