@@ -82,7 +82,7 @@ func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string,
 	return fileNames, nil
 }
 
-func (wf *s3FileWal) generateLogFromFile(fileName string) ([]eventLog, error) {
+func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 

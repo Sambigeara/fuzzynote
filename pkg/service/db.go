@@ -22,24 +22,21 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) error {
+func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) (*[]EventLog, error) {
 	var err error
-	var fullLog *[]eventLog
+	fullLog := &[]EventLog{}
 	for _, wf := range wfs {
 		lenFullLog := len(*r.wal.fullLog)
 		if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
-			return err
+			return fullLog, err
 		}
 		// Take initial lengths of fullLog. If this is unchanged after sync, no changes have occurred so
-		// don't bother rebuilding the list in `replay`
+		// don't bother rebuilding the list in `Replay`
 		if lenFullLog == len(*fullLog) {
 			continue
 		}
-		if r.Root, r.NextID, r.wal.log, r.wal.fullLog, err = r.replay(&[]eventLog{}, fullLog); err != nil {
-			return err
-		}
 	}
-	return nil
+	return fullLog, nil
 }
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
@@ -75,8 +72,14 @@ func (r *DBListRepo) Load(wfs []WalFile) error {
 	}
 
 	// Load the WAL into memory
-	if err := r.Refresh(wfs, false); err != nil {
+	fullLog, err := r.Refresh(wfs, false)
+	if err != nil {
 		return err
+	}
+	if len(*fullLog) > 0 {
+		if err = r.Replay(fullLog); err != nil {
+			return err
+		}
 	}
 
 	return nil

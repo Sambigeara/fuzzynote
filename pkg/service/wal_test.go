@@ -18,14 +18,14 @@ func TestEventEquality(t *testing.T) {
 	t.Run("Check event comparisons", func(t *testing.T) {
 		time1 := time.Now().UnixNano()
 		uuid := uuid(1)
-		event1 := eventLog{
+		event1 := EventLog{
 			unixNanoTime: time1,
 			uuid:         uuid,
 			eventType:    addEvent,
 		}
 
 		time2 := time1 + 1
-		event2 := eventLog{
+		event2 := EventLog{
 			unixNanoTime: time2,
 			uuid:         uuid,
 			eventType:    addEvent,
@@ -60,7 +60,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Load(walFiles)
 
 		if len(*repo.wal.fullLog) != 0 {
-			t.Fatalf("Expected no events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 		if repo.Root != nil {
 			t.Fatalf("repo.Root should not exist")
@@ -118,10 +118,11 @@ func TestWalMerge(t *testing.T) {
 		f.Close()
 
 		//runtime.Breakpoint()
-		repo.Refresh(walFiles, true)
+		fullLog, _ := repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 
 		if len(*repo.wal.fullLog) != 2 {
-			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 
 		repo.Match([][]rune{}, true)
@@ -131,10 +132,10 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		if (*repo.wal.fullLog)[0].listItemID != matches[0].id {
-			t.Fatal("First match listItemID should match first eventLog")
+			t.Fatal("First match listItemID should match first EventLog")
 		}
 		if (*repo.wal.fullLog)[1].listItemID != matches[1].id {
-			t.Fatal("Second match listItemID should match second eventLog")
+			t.Fatal("Second match listItemID should match second EventLog")
 		}
 
 		if (*repo.wal.fullLog)[0].eventType != addEvent {
@@ -284,10 +285,11 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(walFiles, true)
+		fullLog, _ := repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 
 		if len(*repo.wal.fullLog) != 8 {
-			t.Fatalf("Expected 8 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 
 		repo.Match([][]rune{}, true)
@@ -297,16 +299,16 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		if (*repo.wal.fullLog)[1].line != string(line0) {
-			t.Fatal("First match line should match first eventLog")
+			t.Fatal("First match line should match first EventLog")
 		}
 		if (*repo.wal.fullLog)[3].line != string(line1) {
-			t.Fatal("Second match line should match second eventLog")
+			t.Fatal("Second match line should match second EventLog")
 		}
 		if (*repo.wal.fullLog)[5].line != string(line2) {
-			t.Fatal("Third match line should match third eventLog")
+			t.Fatal("Third match line should match third EventLog")
 		}
 		if (*repo.wal.fullLog)[7].line != string(line3) {
-			t.Fatal("Fourth match line should match fourth eventLog")
+			t.Fatal("Fourth match line should match fourth EventLog")
 		}
 	})
 	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
@@ -379,7 +381,8 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(walFiles, true)
+		fullLog, _ := repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
@@ -408,7 +411,7 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		if len(*repo.wal.fullLog) != 2 {
-			t.Fatalf("Expected 2 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 
 		for i := range [2]int{} {
@@ -430,7 +433,8 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		repo.Delete(1)
-		repo.Refresh(walFiles, true)
+		fullLog, _ = repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 		preSaveLog = *repo.wal.fullLog
 
 		// Re-write the same remote WAL
@@ -443,7 +447,8 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(walFiles, true)
+		fullLog, _ = repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
@@ -456,7 +461,7 @@ func TestWalMerge(t *testing.T) {
 
 		// Event log should still be len == 3 as the second log was pre-existing
 		if len(*repo.wal.fullLog) != 3 {
-			t.Fatalf("Expected 3 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected 3 events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 
 		if repo.Root.child != nil {
@@ -581,10 +586,11 @@ func TestWalMerge(t *testing.T) {
 		}
 		f.Close()
 
-		repo.Refresh(walFiles, true)
+		fullLog, _ := repo.Refresh(walFiles, true)
+		repo.Replay(fullLog)
 
 		if len(*repo.wal.fullLog) != 4 {
-			t.Fatalf("Expected 4 events in WAL eventLog but had %d", len(*repo.wal.fullLog))
+			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.wal.fullLog))
 		}
 
 		repo.Match([][]rune{}, true)

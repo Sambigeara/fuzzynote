@@ -121,29 +121,45 @@ func main() {
 
 	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
+	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
+	// loop, and only add to channel for processing if there's any changes that need syncing
+	replayEvts := make(chan *[]service.EventLog)
+	go func() {
+		for {
+			var wfs []service.WalFile
+			fullSync := false
+
+			select {
+			case <-partialRefreshTicker.C:
+				wfs = localWalFiles
+			case <-remoteRefreshTicker.C:
+				wfs = remoteWalFiles
+			case <-fullRefreshTicker.C:
+				wfs = allWalFiles
+				fullSync = true
+			}
+			term.S.PostEvent(&client.RefreshKey{})
+
+			if fullLog, err := listRepo.Refresh(wfs, fullSync); err == nil {
+				if len(*fullLog) > 0 {
+					replayEvts <- fullLog
+				}
+			} else {
+				log.Fatalf("Failed on sync: %v", err)
+			}
+		}
+	}()
+
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
 	keyPressEvts := make(chan tcell.Event)
 	go func() {
 		for {
 			select {
-			case <-partialRefreshTicker.C:
-				err := listRepo.Refresh(localWalFiles, false)
-				if err != nil {
-					log.Fatalf("Failed on partial sync: %v", err)
+			case fullLog := <-replayEvts:
+				if err := listRepo.Replay(fullLog); err != nil {
+					log.Fatal(err)
 				}
-				term.S.PostEvent(&client.RefreshKey{})
-			case <-remoteRefreshTicker.C:
-				err := listRepo.Refresh(remoteWalFiles, false)
-				if err != nil {
-					log.Fatalf("Failed on remote sync: %v", err)
-				}
-			case <-fullRefreshTicker.C:
-				err := listRepo.Refresh(allWalFiles, true)
-				if err != nil {
-					log.Fatalf("Failed on full sync: %v", err)
-				}
-				term.S.PostEvent(&client.RefreshKey{})
 			case ev := <-keyPressEvts:
 				cont, err := term.HandleKeyEvent(ev)
 				if err != nil {
