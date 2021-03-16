@@ -549,7 +549,9 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 
 	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
 	// w.log) we've already processed all of them, so return early
-	if !fullSync && len(*pendingLogs) == 0 && len(newFileNames) == 0 {
+	// However, this does NOT apply in an existing local/new remote scenario. In this case, we need to
+	// flush all local changes up to the remote as per a full sync.
+	if !fullSync && len(*pendingLogs) == 0 && len(newFileNames) == 0 && len(allFileNames) > 0 {
 		return w.fullLog, nil
 	}
 
@@ -573,7 +575,9 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	// On full sync, we want to flush the product of all merged logs to a new file as we're effectively
 	// aggregating all. We then remove all other files
 	var eventsToFlush []EventLog
-	if fullSync {
+	// If the remote is empty but we have any logs locally (e.g. existing local/new remote scenarios)
+	// we need to flush up all changes as per the fullSync
+	if fullSync || len(allFileNames) == 0 {
 		eventsToFlush = processedWithNewEvents
 	} else {
 		// Grab any aggregated pending local changes
