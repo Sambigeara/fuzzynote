@@ -86,7 +86,7 @@ func NewDBListRepo(rootDir string, walFiles []WalFile) *DBListRepo {
 }
 
 func (r *DBListRepo) processEventLog(e eventType, id uint64, targetID uint64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
-	el := eventLog{
+	el := EventLog{
 		uuid:             originUUID,
 		targetUUID:       targetUUID,
 		unixNanoTime:     time.Now().UnixNano(),
