@@ -406,7 +406,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			}
 			el.note = &note
 		}
-	} else {
+	} else if schemaVersionID == 2 {
 		item := walItemSchema2{}
 		err := binary.Read(b, binary.LittleEndian, &item)
 		if err != nil {
