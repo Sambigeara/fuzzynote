@@ -121,6 +121,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 		childCreationTime = childItem.creationTime
 		newUUID = childItem.originUUID
 	}
+	// TODO ideally we'd use the same unixtime for log creation and the listItem creation time for Add()
 	now := time.Now().UnixNano()
 	r.processEventLog(addEvent, now, childCreationTime, line, note, newUUID, newUUID)
 	r.addUndoLog(addEvent, now, childCreationTime, newUUID, newUUID, line, note, line, note)
