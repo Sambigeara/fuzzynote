@@ -47,7 +47,7 @@ func TestTransactionUndo(t *testing.T) {
 		if logItem.eventType != addEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
-		if logItem.listItemID != matches[0].id {
+		if logItem.listItemCreationTime != matches[0].creationTime {
 			t.Errorf("Event log list item should have the same id")
 		}
 		if (repo.eventLogger.curIdx) != 1 {
@@ -183,7 +183,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 		listItem := matches[0]
-		if logItem.listItemID != listItem.id {
+		if logItem.listItemCreationTime != listItem.creationTime {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -213,7 +213,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the new line")
 		}
 
-		if logItem2.listItemID != listItem2.id {
+		if logItem2.listItemCreationTime != listItem2.creationTime {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -234,7 +234,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		if logItem3.listItemID != listItem2.id {
+		if logItem3.listItemCreationTime != listItem2.creationTime {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
@@ -257,7 +257,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		if logItem4.listItemID != listItem.id {
+		if logItem4.listItemCreationTime != listItem.creationTime {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 

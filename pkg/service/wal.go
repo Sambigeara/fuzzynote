@@ -12,8 +12,8 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"time"
 	//"runtime"
+	"time"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -22,7 +22,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 2
+const latestWalSchemaID uint16 = 1
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
@@ -58,14 +58,14 @@ func NewWal(walFiles []WalFile) *Wal {
 }
 
 type walItemSchema1 struct {
-	UUID             uuid
-	TargetUUID       uuid
-	ListItemID       uint64
-	TargetListItemID uint64
-	UnixTime         int64
-	EventType        eventType
-	LineLength       uint64
-	NoteLength       uint64
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	EventTime                  int64
+	EventType                  eventType
+	LineLength                 uint64
+	NoteLength                 uint64
 }
 
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
@@ -82,14 +82,14 @@ const (
 )
 
 type EventLog struct {
-	uuid             uuid
-	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
-	targetUUID       uuid
-	targetListItemID uint64
-	unixNanoTime     int64
-	eventType        eventType
-	line             string
-	note             *[]byte
+	uuid                       uuid
+	targetUUID                 uuid
+	listItemCreationTime       int64
+	targetListItemCreationTime int64
+	unixNanoTime               int64
+	eventType                  eventType
+	line                       string
+	note                       *[]byte
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -182,8 +182,8 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
-	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemID)]
-	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemID)]
+	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]
+	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
@@ -196,12 +196,8 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	var err error
 	switch e.eventType {
 	case addEvent:
-		root, item, err = r.wal.add(root, e.line, e.note, targetItem, e.uuid)
-		item.id = e.listItemID
-		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.id)] = item
-		if item.id >= r.NextID {
-			r.NextID = item.id + 1
-		}
+		root, item, err = r.wal.add(root, e.listItemCreationTime, e.line, e.note, targetItem, e.uuid)
+		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.creationTime)] = item
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -222,7 +218,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		}
 	case deleteEvent:
 		root, err = r.wal.del(root, item)
-		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemID))
+		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime))
 	case moveUpEvent:
 		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
@@ -246,15 +242,16 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	return root, item, err
 }
 
-func (w *Wal) add(root *ListItem, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	if note == nil {
 		note = &[]byte{}
 	}
 	newItem := &ListItem{
-		Line:       line,
-		child:      childItem,
-		Note:       note,
-		originUUID: uuid,
+		originUUID:   uuid,
+		creationTime: creationTime,
+		child:        childItem,
+		Line:         line,
+		Note:         note,
 	}
 
 	// If `child` is nil, it's the first item in the list so set as root and return
@@ -365,9 +362,9 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 	if err != nil {
 		return nil, err
 	}
-	el.listItemID = item.ListItemID
-	el.targetListItemID = item.TargetListItemID
-	el.unixNanoTime = item.UnixTime
+	el.listItemCreationTime = item.ListItemCreationTime
+	el.targetListItemCreationTime = item.TargetListItemCreationTime
+	el.unixNanoTime = item.EventTime
 	el.uuid = item.UUID
 	el.targetUUID = item.TargetUUID
 	el.eventType = item.EventType
@@ -601,14 +598,14 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 				lenNote = uint64(len(*(item.note)))
 			}
 			i := walItemSchema1{
-				UUID:             item.uuid,
-				TargetUUID:       item.targetUUID,
-				ListItemID:       item.listItemID,
-				TargetListItemID: item.targetListItemID,
-				UnixTime:         item.unixNanoTime,
-				EventType:        item.eventType,
-				LineLength:       lenLine,
-				NoteLength:       lenNote,
+				UUID:                       item.uuid,
+				TargetUUID:                 item.targetUUID,
+				ListItemCreationTime:       item.listItemCreationTime,
+				TargetListItemCreationTime: item.targetListItemCreationTime,
+				EventTime:                  item.unixNanoTime,
+				EventType:                  item.eventType,
+				LineLength:                 lenLine,
+				NoteLength:                 lenNote,
 			}
 			data := []interface{}{
 				i,
