@@ -1,9 +1,9 @@
 package service
 
 import (
-	"fmt"
-	//"runtime"
-	//"os"
+//"fmt"
+//"runtime"
+//"os"
 )
 
 type eventType uint16
@@ -20,15 +20,15 @@ var oppositeEvent = map[eventType]eventType{
 }
 
 type undoEventLog struct {
-	uuid             uuid
-	targetUUID       uuid
-	eventType        eventType
-	listItemID       uint64
-	targetListItemID uint64
-	undoLine         string
-	undoNote         *[]byte
-	redoLine         string
-	redoNote         *[]byte
+	uuid                       uuid
+	targetUUID                 uuid
+	eventType                  eventType
+	listItemCreationTime       int64
+	targetListItemCreationTime int64
+	undoLine                   string
+	undoNote                   *[]byte
+	redoLine                   string
+	redoNote                   *[]byte
 }
 
 // DbEventLogger is used for in-mem undo/redo mechanism
@@ -49,17 +49,17 @@ func NewDbEventLogger() *DbEventLogger {
 	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e eventType, listItemID uint64, targetListItemID uint64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
+func (r *DBListRepo) addUndoLog(e eventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
 	ev := undoEventLog{
-		uuid:             originUUID,
-		targetUUID:       targetUUID,
-		eventType:        e,
-		listItemID:       listItemID,
-		targetListItemID: targetListItemID,
-		undoLine:         oldLine,
-		undoNote:         oldNote,
-		redoLine:         newLine,
-		redoNote:         newNote,
+		uuid:                       originUUID,
+		targetUUID:                 targetUUID,
+		eventType:                  e,
+		listItemCreationTime:       creationTime,
+		targetListItemCreationTime: targetCreationTime,
+		undoLine:                   oldLine,
+		undoNote:                   oldNote,
+		redoLine:                   newLine,
+		redoNote:                   newNote,
 	}
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten
@@ -71,9 +71,4 @@ func (r *DBListRepo) addUndoLog(e eventType, listItemID uint64, targetListItemID
 	r.eventLogger.curIdx++
 
 	return nil
-}
-
-// TODO use this
-func getListItemKey(uuid uuid, listItemID uint64) listItemKey {
-	return listItemKey(fmt.Sprintf(listItemKeyPattern, uuid, listItemID))
 }
