@@ -44,13 +44,13 @@ func TestServiceStoreLoad(t *testing.T) {
 		defer clearUp(repo)
 
 		oldItem := ListItem{
-			Line: "Old newly created line",
-			id:   uint64(1),
+			Line:         "Old newly created line",
+			creationTime: int64(1),
 		}
 		newItem := ListItem{
-			Line:   "New newly created line",
-			parent: &oldItem,
-			id:     uint64(2),
+			Line:         "New newly created line",
+			parent:       &oldItem,
+			creationTime: int64(2),
 		}
 		oldItem.child = &newItem
 
@@ -82,18 +82,18 @@ func TestServiceStoreLoad(t *testing.T) {
 			t.Errorf("File schema %d: Expected %s but got %s", repo.latestFileSchemaID, newItem.Line, root.Line)
 		}
 
-		expectedID := uint64(2)
-		if root.id != expectedID {
-			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.id)
+		expectedID := int64(2)
+		if root.creationTime != expectedID {
+			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.creationTime)
 		}
 
 		if root.parent.Line != oldItem.Line {
 			t.Errorf("File schema %d: Expected %s but got %s", repo.latestFileSchemaID, root.parent.Line, oldItem.Line)
 		}
 
-		expectedID = uint64(1)
-		if root.parent.id != expectedID {
-			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.parent.id)
+		expectedID = int64(1)
+		if root.parent.creationTime != expectedID {
+			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.parent.creationTime)
 		}
 	})
 }
@@ -127,11 +127,6 @@ func TestServiceAdd(t *testing.T) {
 
 		if newItem != item1.child {
 			t.Errorf("New item should be original root's child")
-		}
-
-		expectedID := uint64(3)
-		if newItem.id != expectedID {
-			t.Errorf("Expected id %d but got %d", expectedID, newItem.id)
 		}
 
 		if repo.Root != newItem {
