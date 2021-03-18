@@ -60,8 +60,6 @@ type ListItem struct {
 	parent       *ListItem
 	matchChild   *ListItem
 	matchParent  *ListItem
-	// TODO remove
-	id uint64
 }
 
 type bits uint32

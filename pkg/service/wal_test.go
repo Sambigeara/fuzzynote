@@ -81,7 +81,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Second item")
 		data := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -92,7 +92,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			line0,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       2,
@@ -131,11 +131,11 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.fullLog))
 		}
 
-		if (*repo.wal.fullLog)[0].listItemID != matches[0].id {
-			t.Fatal("First match listItemID should match first EventLog")
+		if (*repo.wal.fullLog)[0].listItemCreationTime != matches[0].creationTime {
+			t.Fatal("First match listItemCreationTime should match first EventLog")
 		}
-		if (*repo.wal.fullLog)[1].listItemID != matches[1].id {
-			t.Fatal("Second match listItemID should match second EventLog")
+		if (*repo.wal.fullLog)[1].listItemCreationTime != matches[1].creationTime {
+			t.Fatal("Second match listItemCreationTime should match second EventLog")
 		}
 
 		if (*repo.wal.fullLog)[0].eventType != addEvent {
@@ -167,7 +167,7 @@ func TestWalMerge(t *testing.T) {
 		line2 := []byte("Third item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -177,7 +177,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -188,7 +188,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			line0,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       2,
@@ -198,7 +198,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       2,
@@ -229,7 +229,7 @@ func TestWalMerge(t *testing.T) {
 		line3 := []byte("Fourth item")
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
 				ListItemCreationTime:       1,
@@ -239,7 +239,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
 				ListItemCreationTime:       1,
@@ -250,7 +250,7 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			line1,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
 				ListItemCreationTime:       2,
@@ -260,7 +260,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
 				ListItemCreationTime:       2,
@@ -326,7 +326,7 @@ func TestWalMerge(t *testing.T) {
 		line0 := []byte("First item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -356,7 +356,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Second item")
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
 				ListItemCreationTime:       1,
@@ -489,7 +489,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Updated item")
 		localData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -499,7 +499,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -511,7 +511,7 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			// Deviates here
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -537,7 +537,7 @@ func TestWalMerge(t *testing.T) {
 
 		remoteData := []interface{}{
 			latestWalSchemaID,
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -547,7 +547,7 @@ func TestWalMerge(t *testing.T) {
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
-			walItemSchema2{
+			walItemSchema1{
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,
 				ListItemCreationTime:       1,
@@ -559,7 +559,7 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			// Deviates here
-			walItemSchema2{
+			walItemSchema1{
 				// UUID will be same as item.originUUID
 				UUID:                       repo.wal.uuid,
 				TargetUUID:                 repo.wal.uuid,

@@ -22,7 +22,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 2
+const latestWalSchemaID uint16 = 1
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
@@ -58,17 +58,6 @@ func NewWal(walFiles []WalFile) *Wal {
 }
 
 type walItemSchema1 struct {
-	UUID             uuid
-	TargetUUID       uuid
-	ListItemID       uint64
-	TargetListItemID uint64
-	UnixTime         int64
-	EventType        eventType
-	LineLength       uint64
-	NoteLength       uint64
-}
-
-type walItemSchema2 struct {
 	UUID                       uuid
 	TargetUUID                 uuid
 	ListItemCreationTime       int64
@@ -101,9 +90,6 @@ type EventLog struct {
 	eventType                  eventType
 	line                       string
 	note                       *[]byte
-	// TODO Remove listItemFields after migration
-	listItemID       uint64 // auto-incrementing ID, unique for a given DB UUID
-	targetListItemID uint64
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -371,69 +357,32 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 	// TODO this is a hacky fix. Instantiate the note just in case
 	el.note = &[]byte{}
 
-	// TODO remove earlier version after migration
-	if schemaVersionID == 1 {
-		item := walItemSchema1{}
-		err := binary.Read(b, binary.LittleEndian, &item)
+	item := walItemSchema1{}
+	err := binary.Read(b, binary.LittleEndian, &item)
+	if err != nil {
+		return nil, err
+	}
+	el.listItemCreationTime = item.ListItemCreationTime
+	el.targetListItemCreationTime = item.TargetListItemCreationTime
+	el.unixNanoTime = item.EventTime
+	el.uuid = item.UUID
+	el.targetUUID = item.TargetUUID
+	el.eventType = item.EventType
+
+	line := make([]byte, item.LineLength)
+	err = binary.Read(b, binary.LittleEndian, &line)
+	if err != nil {
+		return nil, err
+	}
+	el.line = string(line)
+
+	if item.NoteLength > 0 {
+		note := make([]byte, item.NoteLength)
+		err = binary.Read(b, binary.LittleEndian, &note)
 		if err != nil {
 			return nil, err
 		}
-		el.listItemID = item.ListItemID
-		el.targetListItemID = item.TargetListItemID
-		el.unixNanoTime = item.UnixTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
-
-		// This is a backwards compatibility hack. Use the existing listItemIDs to set the unix times.
-		// The times will be completely wrong, but all we care about for now is uniqueness (and maybe ordering later)
-		// so this is fine.
-		el.listItemCreationTime = int64(item.ListItemID)
-		el.targetListItemCreationTime = int64(item.TargetListItemID)
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(b, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(b, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
-	} else if schemaVersionID == 2 {
-		item := walItemSchema2{}
-		err := binary.Read(b, binary.LittleEndian, &item)
-		if err != nil {
-			return nil, err
-		}
-		el.listItemCreationTime = item.ListItemCreationTime
-		el.targetListItemCreationTime = item.TargetListItemCreationTime
-		el.unixNanoTime = item.EventTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(b, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(b, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.note = &note
-		}
+		el.note = &note
 	}
 	return &el, nil
 }
@@ -648,7 +597,7 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 			if item.note != nil {
 				lenNote = uint64(len(*(item.note)))
 			}
-			i := walItemSchema2{
+			i := walItemSchema1{
 				UUID:                       item.uuid,
 				TargetUUID:                 item.targetUUID,
 				ListItemCreationTime:       item.listItemCreationTime,
