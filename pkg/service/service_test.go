@@ -129,11 +129,6 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("New item should be original root's child")
 		}
 
-		expectedID := uint64(3)
-		if newItem.id != expectedID {
-			t.Errorf("Expected id %d but got %d", expectedID, newItem.id)
-		}
-
 		if repo.Root != newItem {
 			t.Errorf("item2 should be new root")
 		}

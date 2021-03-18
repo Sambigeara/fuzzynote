@@ -92,7 +92,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 		eventType:                  e,
 		uuid:                       originUUID,
 		targetUUID:                 targetUUID,
-		unixNanoTime:               creationTime,
+		unixNanoTime:               time.Now().UnixNano(),
 		listItemCreationTime:       creationTime,
 		targetListItemCreationTime: targetCreationTime,
 		line:                       newLine,
