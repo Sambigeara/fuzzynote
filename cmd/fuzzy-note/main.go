@@ -38,7 +38,7 @@ func main() {
 		Editor              string `conf:"default:vim"`
 		LocalRefreshFreqMs  uint16 `conf:"default:1000"`
 		RemoteRefreshFreqMs uint16 `conf:"default:2000"`
-		FullRefreshFreqMs   uint16 `conf:"default:60000"`
+		FullRefreshFreqMs   uint16 `conf:"default:10000"`
 	}
 
 	// Instantiate default root direct in case it's not set
@@ -121,6 +121,10 @@ func main() {
 
 	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
+	// Manually but asynchronously schedule a fullRefresh to run on start
+	onStart := make(chan bool, 1)
+	onStart <- true
+
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	replayEvts := make(chan *[]service.EventLog)
@@ -134,6 +138,7 @@ func main() {
 				wfs = localWalFiles
 			case <-remoteRefreshTicker.C:
 				wfs = remoteWalFiles
+			case <-onStart:
 			case <-fullRefreshTicker.C:
 				wfs = allWalFiles
 				fullSync = true
