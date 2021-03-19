@@ -720,11 +720,27 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-	// Handle any offsets that need to be accounted for due to unexpected search line mutations
-	// behind the scenes
-	oldSearchLen := t.getLenSearchBox()
+	// Handle any offsets that occurred due to other collaborators interacting with the same list
+	// at the same time
 	t.matches, err = t.db.Match(t.search, t.showHidden)
-	posDiff[0] += t.getLenSearchBox() - oldSearchLen
+	if relativeY >= reservedTopLines && relativeY-reservedTopLines < len(t.matches) {
+		// We need to ignore the case where the previous current line has been deleted. The item that
+		// will then be under the cursor will have moved up, and hence the Offset will reflect that, but
+		// in this particular case, we want the cursor to remain in the same position.
+		// Therefore, check the offset of the child matchItem - if it's 1 less than the current (we need to
+		// account for _other_ changes that could have occurred too), then subtract one from the actionable
+		// offset. HOWEVER, we only do this for deletions, not additions, so assert on negative currentOffset
+		// too.
+		currentOffset := t.matches[relativeY-reservedTopLines].Offset
+		idxAbove := relativeY - 1
+		if currentOffset != 0 && (idxAbove >= reservedTopLines && idxAbove-reservedTopLines < len(t.matches) &&
+			t.matches[idxAbove-reservedTopLines].Offset == 0 ||
+			// Also, if idxAbove is zero, we're on the root/top item, so we don't want to move up now either
+			idxAbove == 0) {
+			currentOffset++
+		}
+		posDiff[1] += currentOffset
+	}
 
 	// N available item slots
 	nItemSlots := t.h - reservedTopLines
