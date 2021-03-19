@@ -33,10 +33,6 @@ type ListRepo interface {
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
-type listItemKey string
-
-const listItemKeyPattern = "%v_%v"
-
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root               *ListItem
@@ -46,6 +42,7 @@ type DBListRepo struct {
 	wal                *Wal
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
+	listItemMatchIdx   map[string]int
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -82,6 +79,7 @@ func NewDBListRepo(rootDir string, walFiles []WalFile) *DBListRepo {
 		wal:                NewWal(walFiles),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
+		listItemMatchIdx:   make(map[string]int),
 	}
 }
 
@@ -272,6 +270,7 @@ type MatchItem struct {
 	Line     string
 	Note     *[]byte
 	IsHidden bool
+	Offset   int
 }
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
@@ -289,6 +288,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 		return res, nil
 	}
 
+	//var curIdx, curOffset int
+	var curIdx int
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -313,10 +314,20 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 			}
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
+				// If it exists, retrieve the previous position, compare it to the new position,
+				// and return the offset with the MatchItem. Otherwise, keep at the default 0.
+				//
+				// We set the default to 1 because it will only use the default value when we're adding new items
+				// and therefore they won't exist in the map (but also want to bump down all items below).
+				offset := 1
+				if oldIdx, exists := r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)]; exists {
+					offset = curIdx - oldIdx
+				}
 				res = append(res, MatchItem{
 					cur.Line,
 					cur.Note,
 					cur.IsHidden,
+					offset,
 				})
 
 				if lastCur != nil {
@@ -324,6 +335,11 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 				}
 				cur.matchChild = lastCur
 				lastCur = cur
+
+				// Set the new idx for the next iteration
+				// TODO figure out a clean way to remove old items. Maybe create a new map and override at the end.
+				r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)] = curIdx
+				curIdx++
 			}
 		}
 
