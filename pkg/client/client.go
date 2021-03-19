@@ -731,14 +731,15 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 		// account for _other_ changes that could have occurred too), then subtract one from the actionable
 		// offset. HOWEVER, we only do this for deletions, not additions, so assert on negative currentOffset
 		// too.
-		//currentOffset := t.matches[relativeY-reservedTopLines].Offset
-		//if relativeY-1 >= reservedTopLines && relativeY-1-reservedTopLines < len(t.matches) &&
-		//    //    currentOffset <= 0 &&
-		//    t.matches[relativeY-1-reservedTopLines].Offset == currentOffset-1 {
-		//    posDiff[1] += currentOffset
-		//    //currentOffset++
-		//}
-		posDiff[1] += t.matches[relativeY-reservedTopLines].Offset
+		currentOffset := t.matches[relativeY-reservedTopLines].Offset
+		idxAbove := relativeY - 1
+		if currentOffset != 0 && (idxAbove >= reservedTopLines && idxAbove-reservedTopLines < len(t.matches) &&
+			t.matches[idxAbove-reservedTopLines].Offset == 0 ||
+			// Also, if idxAbove is zero, we're on the root/top item, so we don't want to move up now either
+			idxAbove == 0) {
+			currentOffset++
+		}
+		posDiff[1] += currentOffset
 	}
 
 	// N available item slots
