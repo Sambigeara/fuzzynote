@@ -514,7 +514,13 @@ func compact(wal *[]EventLog) *[]EventLog {
 			keysToPurge[key] = true
 			continue
 		}
-		compactedWal = append([]EventLog{e}, compactedWal...)
+		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
+		// returning
+		compactedWal = append(compactedWal, e)
+	}
+	// Reverse
+	for i, j := 0, len(compactedWal)-1; i < j; i, j = i+1, j-1 {
+		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
 	}
 	return &compactedWal
 }
