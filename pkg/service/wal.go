@@ -277,7 +277,10 @@ func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte,
 // Update will update the line or note of an existing ListItem
 func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	listItem.Line = line
-	listItem.Note = note
+	// Only update if the note is not null
+	if note != nil {
+		listItem.Note = note
+	}
 	return listItem, nil
 }
 
