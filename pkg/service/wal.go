@@ -494,6 +494,31 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
+func compact(wal *[]EventLog) *[]EventLog {
+	// Traverse from most recent to most distant logs. Delete events under the following circumstances:
+	// - if they are Delete events
+	// - if they are Add or Update events and a more recent Update exists (keep earliest, remove rest)
+	// keysToPurge value is a bool, if true, we've found a `Delete` and therefore we ignore all subsequent
+	// events. If it's false, we are just collapsing all `Update` events.
+	keysToPurge := make(map[string]bool)
+	compactedWal := []EventLog{}
+	for i := len(*wal) - 1; i >= 0; i-- {
+		e := (*wal)[i]
+		key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
+		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent || e.eventType == addEvent) {
+			continue
+		}
+		if e.eventType == updateEvent {
+			keysToPurge[key] = false
+		} else if e.eventType == deleteEvent {
+			keysToPurge[key] = true
+			continue
+		}
+		compactedWal = append([]EventLog{e}, compactedWal...)
+	}
+	return &compactedWal
+}
+
 func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	//runtime.Breakpoint()
 
@@ -584,6 +609,8 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 		eventsToFlush = *pendingLogs
 		w.pendingRemoteLogs[wf] = &[]EventLog{}
 	}
+
+	eventsToFlush = *(compact(&eventsToFlush))
 
 	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
 	if fullSync || len(eventsToFlush) > 0 {
