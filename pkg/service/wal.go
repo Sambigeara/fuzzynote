@@ -491,6 +491,32 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
+func compact(wal *[]EventLog) *[]EventLog {
+	// Traverse from most recent to most distant logs. Omit any events that follow any Delete or Update
+	// events. Update events will always store all of the relevant data (so are equivalent to Adds with linked
+	// nodes etc).
+	keysToPurge := make(map[string]struct{})
+	compactedWal := []EventLog{}
+	for i := len(*wal) - 1; i >= 0; i-- {
+		e := (*wal)[i]
+		key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
+		if _, purged := keysToPurge[key]; purged {
+			continue
+		}
+		if e.eventType == updateEvent || e.eventType == deleteEvent {
+			keysToPurge[key] = struct{}{}
+		}
+		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
+		// returning
+		compactedWal = append(compactedWal, e)
+	}
+	// Reverse
+	for i, j := 0, len(compactedWal)-1; i < j; i, j = i+1, j-1 {
+		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
+	}
+	return &compactedWal
+}
+
 func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	//runtime.Breakpoint()
 
@@ -581,6 +607,8 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 		eventsToFlush = *pendingLogs
 		w.pendingRemoteLogs[wf] = &[]EventLog{}
 	}
+
+	eventsToFlush = *(compact(&eventsToFlush))
 
 	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
 	if fullSync || len(eventsToFlush) > 0 {
