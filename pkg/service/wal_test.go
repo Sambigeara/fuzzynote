@@ -48,6 +48,182 @@ func TestEventEquality(t *testing.T) {
 	})
 }
 
+func TestWalCompact(t *testing.T) {
+	t.Run("Check removes all before delete", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		el := []EventLog{
+			EventLog{
+				unixNanoTime: eventTime,
+				uuid:         uuid,
+				eventType:    addEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveUpEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    deleteEvent,
+		})
+
+		compactedWal := *(compact(&el))
+		if len(compactedWal) != 1 {
+			t.Fatalf("Compacted wal should only have the delete event remaining")
+		}
+
+		if compactedWal[0].eventType != deleteEvent {
+			t.Fatalf("Compacted wal should only have the delete event remaining")
+		}
+	})
+	t.Run("Check removes all updates before most recent update", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		el := []EventLog{
+			EventLog{
+				unixNanoTime: eventTime,
+				uuid:         uuid,
+				eventType:    addEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveUpEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveDownEvent,
+		})
+
+		compactedWal := *(compact(&el))
+		if len(compactedWal) != 4 {
+			t.Fatalf("Compacted wal should only have the most recent updateEvent, the move events and the original addEvent")
+		}
+
+		if compactedWal[0].eventType != addEvent {
+			t.Fatalf("First event should be the original addEvent")
+		}
+		if compactedWal[1].eventType != moveUpEvent {
+			t.Fatalf("Second event should be a moveUpEvent")
+		}
+		if compactedWal[2].eventType != updateEvent {
+			t.Fatalf("Third event should be an updateEvent")
+		}
+		if compactedWal[3].eventType != moveDownEvent {
+			t.Fatalf("Third event should be a moveDownEvent")
+		}
+	})
+	t.Run("Check add and move wals remain untouched", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		el := []EventLog{
+			EventLog{
+				unixNanoTime: eventTime,
+				uuid:         uuid,
+				eventType:    addEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveUpEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveDownEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveDownEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    hideEvent,
+		})
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    showEvent,
+		})
+
+		compactedWal := *(compact(&el))
+		if len(compactedWal) != 6 {
+			t.Fatalf("Compacted wal should be untouched")
+		}
+	})
+	t.Run("Check persists Note created in earlier Update", func(t *testing.T) {
+		// This is pretty much a pointless test, because it only works if we explicitly pass Note on
+		// all subsequent Updates (as is required behaviour). I'm leaving it in for now as it might
+		// serve as a reminder later on if I stumble across it :shrug:
+		walFiles := []WalFile{NewLocalWalFile(rootDir)}
+		repo := NewDBListRepo(rootDir, walFiles)
+		os.Mkdir(rootDir, os.ModePerm)
+		f, _ := os.Create(rootPath)
+		defer f.Close()
+		defer clearUp(repo)
+
+		repo.Add("", nil, 0)
+		repo.Match([][]rune{}, true)
+		expectedString := "hello"
+		expectedNote := []byte(expectedString)
+		repo.Update("", &expectedNote, 0)
+		repo.Update("", &expectedNote, 0)
+
+		fullLog, _ := repo.Refresh(walFiles, false)
+		repo.Replay(fullLog)
+
+		if string(*repo.Root.Note) != expectedString {
+			t.Fatalf("Note should have been persisted from the earlier updateEvent")
+		}
+	})
+}
+
 func TestWalMerge(t *testing.T) {
 	t.Run("Start empty db", func(t *testing.T) {
 		walFiles := []WalFile{NewLocalWalFile(rootDir)}
