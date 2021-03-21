@@ -26,14 +26,8 @@ func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) (*[]EventLog, error) 
 	var err error
 	fullLog := &[]EventLog{}
 	for _, wf := range wfs {
-		lenFullLog := len(*r.wal.fullLog)
 		if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
 			return fullLog, err
-		}
-		// Take initial lengths of fullLog. If this is unchanged after sync, no changes have occurred so
-		// don't bother rebuilding the list in `Replay`
-		if lenFullLog == len(*fullLog) {
-			continue
 		}
 	}
 	return fullLog, nil
