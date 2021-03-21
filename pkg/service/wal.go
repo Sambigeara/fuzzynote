@@ -492,19 +492,22 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 }
 
 func compact(wal *[]EventLog) *[]EventLog {
-	// Traverse from most recent to most distant logs. Omit any events that follow any Delete or Update
-	// events. Update events will always store all of the relevant data (so are equivalent to Adds with linked
-	// nodes etc).
-	keysToPurge := make(map[string]struct{})
+	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
+	// - Any events preceding a deleteEvent
+	// - Any updateEvent preceding the most recent updateEvent
+	// WARNING: Omitting addEvents/moveEvents leads to weird behaviour during Replay at the mo. Be warned.
+	keysToPurge := make(map[string]bool)
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
-		if _, purged := keysToPurge[key]; purged {
+		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent) {
 			continue
 		}
-		if e.eventType == updateEvent || e.eventType == deleteEvent {
-			keysToPurge[key] = struct{}{}
+		if e.eventType == updateEvent {
+			keysToPurge[key] = false
+		} else if e.eventType == deleteEvent {
+			keysToPurge[key] = true
 		}
 		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
 		// returning

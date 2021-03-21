@@ -122,7 +122,6 @@ func TestWalCompact(t *testing.T) {
 			eventType:    moveUpEvent,
 		})
 		eventTime++
-		expectedTime := eventTime
 		el = append(el, EventLog{
 			unixNanoTime: eventTime,
 			uuid:         uuid,
@@ -136,19 +135,21 @@ func TestWalCompact(t *testing.T) {
 		})
 
 		compactedWal := *(compact(&el))
-		if len(compactedWal) != 2 {
-			t.Fatalf("Compacted wal should only have the most recent updateEvent and the moveDownEvent remaining")
+		if len(compactedWal) != 4 {
+			t.Fatalf("Compacted wal should only have the most recent updateEvent, the move events and the original addEvent")
 		}
 
-		if compactedWal[0].eventType != updateEvent {
-			t.Fatalf("First event should be an updateEvent")
+		if compactedWal[0].eventType != addEvent {
+			t.Fatalf("First event should be the original addEvent")
 		}
-		if compactedWal[0].unixNanoTime != expectedTime {
-			t.Fatal()
+		if compactedWal[1].eventType != moveUpEvent {
+			t.Fatalf("Second event should be a moveUpEvent")
 		}
-
-		if compactedWal[1].eventType != moveDownEvent {
-			t.Fatalf("First event should be a moveDownEvent")
+		if compactedWal[2].eventType != updateEvent {
+			t.Fatalf("Third event should be an updateEvent")
+		}
+		if compactedWal[3].eventType != moveDownEvent {
+			t.Fatalf("Third event should be a moveDownEvent")
 		}
 	})
 	t.Run("Check add and move wals remain untouched", func(t *testing.T) {
