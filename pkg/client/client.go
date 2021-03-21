@@ -467,6 +467,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 					log.Fatal(err)
 				}
 			}
+			t.horizOffset = 0
 		case tcell.KeyCtrlO:
 			if relativeY != 0 {
 				if err := t.S.Suspend(); err == nil {
