@@ -197,40 +197,9 @@ func TestWalCompact(t *testing.T) {
 		}
 	})
 	t.Run("Check persists Note created in earlier Update", func(t *testing.T) {
-		uuid := uuid(1)
-		eventTime := time.Now().UnixNano()
-		el := []EventLog{
-			EventLog{
-				unixNanoTime: eventTime,
-				uuid:         uuid,
-				eventType:    addEvent,
-			},
-		}
-		eventTime++
-		expectedString := "hello"
-		note := []byte(expectedString)
-		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
-			note:         &note,
-		})
-		eventTime++
-		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
-		})
-
-		compactedWal := *(compact(&el))
-		if len(compactedWal) != 1 {
-			t.Fatalf("Compacted wal should only have the most recent updateEvent")
-		}
-
-		if compactedWal[0].eventType != updateEvent {
-			t.Fatalf("First event should be an updateEvent")
-		}
-
+		// This is pretty much a pointless test, because it only works if we explicitly pass Note on
+		// all subsequent Updates (as is required behaviour). I'm leaving it in for now as it might
+		// serve as a reminder later on if I stumble across it :shrug:
 		walFiles := []WalFile{NewLocalWalFile(rootDir)}
 		repo := NewDBListRepo(rootDir, walFiles)
 		os.Mkdir(rootDir, os.ModePerm)
@@ -238,7 +207,15 @@ func TestWalCompact(t *testing.T) {
 		defer f.Close()
 		defer clearUp(repo)
 
-		repo.Replay(&compactedWal)
+		repo.Add("", nil, 0)
+		repo.Match([][]rune{}, true)
+		expectedString := "hello"
+		expectedNote := []byte(expectedString)
+		repo.Update("", &expectedNote, 0)
+		repo.Update("", &expectedNote, 0)
+
+		fullLog, _ := repo.Refresh(walFiles, false)
+		repo.Replay(fullLog)
 
 		if string(*repo.Root.Note) != expectedString {
 			t.Fatalf("Note should have been persisted from the earlier updateEvent")
