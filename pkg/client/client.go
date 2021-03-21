@@ -724,20 +724,36 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// at the same time
 	t.matches, err = t.db.Match(t.search, t.showHidden)
 	if relativeY >= reservedTopLines && relativeY-reservedTopLines < len(t.matches) {
-		// We need to ignore the case where the previous current line has been deleted. The item that
-		// will then be under the cursor will have moved up, and hence the Offset will reflect that, but
-		// in this particular case, we want the cursor to remain in the same position.
-		// Therefore, check the offset of the child matchItem - if it's 1 less than the current (we need to
-		// account for _other_ changes that could have occurred too), then subtract one from the actionable
-		// offset. HOWEVER, we only do this for deletions, not additions, so assert on negative currentOffset
-		// too.
 		currentOffset := t.matches[relativeY-reservedTopLines].Offset
-		idxAbove := relativeY - 1
-		if currentOffset != 0 && (idxAbove >= reservedTopLines && idxAbove-reservedTopLines < len(t.matches) &&
-			t.matches[idxAbove-reservedTopLines].Offset == 0 ||
-			// Also, if idxAbove is zero, we're on the root/top item, so we don't want to move up now either
-			idxAbove == 0) {
-			currentOffset++
+		oneAbove := relativeY - 1
+		oneBelow := relativeY + 1
+		// If the current matchItem is the top/root, and the offset < 0, set it to 0
+		if relativeY-reservedTopLines == 0 && currentOffset < 0 {
+			currentOffset = 0
+		} else if currentOffset != 0 && oneAbove >= reservedTopLines {
+			childMatchItem := t.matches[oneAbove-reservedTopLines]
+			if childMatchItem.Offset-1 == currentOffset {
+				// When the previous current line has been deleted. The item that will then be under the cursor will
+				// have moved up, and hence the Offset will reflect that, but in this particular case, we want the
+				// cursor to remain in the same position.
+				// Therefore, check the offset of the child matchItem - if it's 1 less than the current (we need to
+				// account for _other_ changes that could have occurred too), then subtract one from the actionable
+				// offset. HOWEVER, we only do this for deletions, not additions, so assert on negative currentOffset
+				// too.
+				currentOffset++
+			} else if childMatchItem.Offset+2 == currentOffset {
+				// On MoveUp actions, we move the item up and attempt to follow it, but the item we swop with has a
+				// +1 diff applied to it, so it cancels it out. In this case, if the offset of the current is 2 more than
+				// the offset of the child matchItem, subtract another decrement from the currentOffset.
+				currentOffset--
+			}
+		} else if oneBelow-reservedTopLines < len(t.matches) {
+			// Likewise on MoveDown, we need to account for the opposite
+			// NOTE: this is only the case when on the top line (e.g. root item)
+			parentMatchItem := t.matches[oneBelow-reservedTopLines]
+			if parentMatchItem.Offset-2 == currentOffset {
+				currentOffset++
+			}
 		}
 		posDiff[1] += currentOffset
 	}
