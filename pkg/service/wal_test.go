@@ -48,6 +48,112 @@ func TestEventEquality(t *testing.T) {
 	})
 }
 
+func TestWalCompact(t *testing.T) {
+	t.Run("Check removes all before delete", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		el := []EventLog{
+			EventLog{
+				unixNanoTime: eventTime,
+				uuid:         uuid,
+				eventType:    addEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveUpEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    deleteEvent,
+		})
+
+		compactedWal := *(compact(&el))
+		if len(compactedWal) != 1 {
+			t.Fatalf("Compacted wal should only have the delete event remaining")
+		}
+
+		if compactedWal[0].eventType != deleteEvent {
+			t.Fatalf("Compacted wal should only have the delete event remaining")
+		}
+	})
+
+	t.Run("Check removes all updates before most recent update", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		el := []EventLog{
+			EventLog{
+				unixNanoTime: eventTime,
+				uuid:         uuid,
+				eventType:    addEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveUpEvent,
+		})
+		eventTime++
+		expectedTime := eventTime
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    updateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime: eventTime,
+			uuid:         uuid,
+			eventType:    moveDownEvent,
+		})
+
+		compactedWal := *(compact(&el))
+		if len(compactedWal) != 2 {
+			t.Fatalf("Compacted wal should only have the most recent updateEvent and the moveDownEvent remaining")
+		}
+
+		if compactedWal[0].eventType != updateEvent {
+			t.Fatalf("First event should be an addEvent")
+		}
+		if compactedWal[0].unixNanoTime != expectedTime {
+			t.Fatal()
+		}
+
+		if compactedWal[1].eventType != moveDownEvent {
+			t.Fatalf("First event should be a moveDownEvent")
+		}
+	})
+}
+
 func TestWalMerge(t *testing.T) {
 	t.Run("Start empty db", func(t *testing.T) {
 		walFiles := []WalFile{NewLocalWalFile(rootDir)}

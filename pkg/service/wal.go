@@ -496,8 +496,8 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Delete events under the following circumstances:
-	// - if they are Delete events
-	// - if they are Add or Update events and a more recent Update exists (keep earliest, remove rest)
+	// - if they are any type, and follow on from a Delete event
+	// - if they are Add, Update or Move* events and a more recent Update exists (keep earliest, remove rest)
 	// keysToPurge value is a bool, if true, we've found a `Delete` and therefore we ignore all subsequent
 	// events. If it's false, we are just collapsing all `Update` events.
 	keysToPurge := make(map[string]bool)
@@ -505,14 +505,15 @@ func compact(wal *[]EventLog) *[]EventLog {
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
-		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent || e.eventType == addEvent) {
+		if isDelete, purged := keysToPurge[key]; purged && (isDelete ||
+			e.eventType == updateEvent || e.eventType == addEvent ||
+			e.eventType == moveUpEvent || e.eventType == moveDownEvent) {
 			continue
 		}
 		if e.eventType == updateEvent {
 			keysToPurge[key] = false
 		} else if e.eventType == deleteEvent {
 			keysToPurge[key] = true
-			continue
 		}
 		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
 		// returning
