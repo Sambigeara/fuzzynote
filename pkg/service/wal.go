@@ -604,7 +604,8 @@ func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	// If the remote is empty but we have any logs locally (e.g. existing local/new remote scenarios)
 	// we need to flush up all changes as per the fullSync
 	if fullSync || len(allFileNames) == 0 {
-		eventsToFlush = *(compact(&processedWithNewEvents))
+		//eventsToFlush = *(compact(&processedWithNewEvents))
+		eventsToFlush = processedWithNewEvents
 	} else {
 		// Grab any aggregated pending local changes
 		eventsToFlush = *pendingLogs
