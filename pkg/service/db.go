@@ -26,7 +26,7 @@ func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) (*[]EventLog, error) 
 	var err error
 	fullLog := &[]EventLog{}
 	for _, wf := range wfs {
-		if fullLog, err = r.wal.sync(wf, fullSync); err != nil {
+		if fullLog, err = r.wal.pull(wf, fullSync); err != nil {
 			return fullLog, err
 		}
 	}

@@ -520,6 +520,82 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
+func (w *Wal) pull(wf WalFile, fullSync bool) (*[]EventLog, error) {
+	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
+	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	newMergedWal := []EventLog{}
+	// TODO put the processedPartialWals map on the WalFile and check this within getFileNamesMatchingPattern
+	for _, fileName := range allFileNames {
+		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
+			newWal, err := wf.generateLogFromFile(fileName)
+			if err != nil {
+				log.Fatal(err)
+			}
+			newMergedWal = *(merge(&newMergedWal, &newWal))
+			// Add to the processed cache
+			w.processedPartialWals[wf][fileName] = struct{}{}
+		}
+	}
+
+	return &newMergedWal, nil
+}
+
+func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
+	var b bytes.Buffer
+	// Write the schema ID
+	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, item := range *wal {
+		lenLine := uint64(len([]byte(item.line)))
+		var lenNote uint64
+		if item.note != nil {
+			lenNote = uint64(len(*(item.note)))
+		}
+		i := walItemSchema1{
+			UUID:                       item.uuid,
+			TargetUUID:                 item.targetUUID,
+			ListItemCreationTime:       item.listItemCreationTime,
+			TargetListItemCreationTime: item.targetListItemCreationTime,
+			EventTime:                  item.unixNanoTime,
+			EventType:                  item.eventType,
+			LineLength:                 lenLine,
+			NoteLength:                 lenNote,
+		}
+		data := []interface{}{
+			i,
+			[]byte(item.line),
+		}
+		if item.note != nil {
+			data = append(data, item.note)
+		}
+		for _, v := range data {
+			err = binary.Write(&b, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+				log.Fatal(err)
+			}
+		}
+	}
+	return &b, nil
+}
+
+func (w *Wal) push(wf WalFile, partialWal *bytes.Buffer, walName string) error {
+	err := wf.flush(partialWal, walName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Add it straight to the cache to avoid processing it in the future
+	//w.processedPartialWals[wf][walName] = struct{}{}
+	return nil
+}
+
 func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
 	//runtime.Breakpoint()
 
