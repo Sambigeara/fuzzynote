@@ -152,6 +152,10 @@ func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
+func (wf *s3FileWal) getTicker() {
+	<-wf.RefreshTicker.C
+}
+
 func exitErrorf(msg string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, msg+"\n", args...)
 	os.Exit(1)

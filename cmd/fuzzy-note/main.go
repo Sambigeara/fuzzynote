@@ -91,9 +91,11 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(cfg.Root, os.ModePerm)
 
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(cfg.Root)
+
 	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.Root)
-	localWalFiles := []service.WalFile{localWalFile}
-	remoteWalFiles := []service.WalFile{}
+	listRepo.RegisterRemote(localWalFile)
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
 		s3FileWal := service.NewS3FileWal(
@@ -104,13 +106,8 @@ func main() {
 			cfg.S3.Prefix,
 			cfg.Root,
 		)
-		remoteWalFiles = append(remoteWalFiles, s3FileWal)
+		listRepo.RegisterRemote(s3FileWal)
 	}
-
-	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root)
-
-	listRepo.RegisterRemote(localWalFile)
 
 	// List instantiation
 	err = listRepo.Load()
@@ -127,7 +124,7 @@ func main() {
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	replayEvts := make(chan *[]service.EventLog)
-	allWalFiles := append(localWalFiles, remoteWalFiles...)
+
 	listRepo.Start(replayEvts, localWalFile)
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
@@ -147,7 +144,7 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
-					err := listRepo.Save(allWalFiles)
+					err := listRepo.Save()
 					if err != nil {
 						log.Fatal(err)
 					}

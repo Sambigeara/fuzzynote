@@ -97,6 +97,7 @@ type WalFile interface {
 	flush(*bytes.Buffer, string) error
 	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
+	getTicker()
 }
 
 type localWalFile struct {
@@ -185,6 +186,10 @@ func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
 
 func (wf *localWalFile) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
+}
+
+func (wf *localWalFile) getTicker() {
+	<-wf.RefreshTicker.C
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -541,7 +546,7 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
-func (wf *localWalFile) pull(walChan chan (*[]EventLog)) error {
+func pull(wf WalFile, walChan chan (*[]EventLog)) error {
 	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
 	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
@@ -665,11 +670,11 @@ func (r *DBListRepo) Push(el EventLog, wfs []WalFile) error {
 	return nil
 }
 
-func consumeWals(wf *localWalFile, walChan chan (*[]EventLog)) error {
+func consumeWals(wf WalFile, walChan chan (*[]EventLog)) error {
 	go func() error {
 		for {
-			<-wf.RefreshTicker.C
-			if err := wf.pull(walChan); err != nil {
+			wf.getTicker()
+			if err := pull(wf, walChan); err != nil {
 				return err
 			}
 		}

@@ -102,7 +102,7 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 }
 
 // Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save(wfs []WalFile) error {
+func (r *DBListRepo) Save() error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -115,7 +115,7 @@ func (r *DBListRepo) Save(wfs []WalFile) error {
 		return err
 	}
 
-	//for _, wf := range wfs {
+	//for _, wf := range r.wal.walFiles {
 	//    r.wal.sync(wf, false)
 	//}
 
@@ -127,16 +127,15 @@ func (r *DBListRepo) RegisterRemote(wf WalFile) {
 }
 
 func (r *DBListRepo) Start(walChan chan (*[]EventLog), localWalFile *localWalFile) error {
-	consumeWals(localWalFile, walChan)
-	//for _, wf := range r.wal.walFiles {
-	//    r.wal.consumeWals(wf, walChan)
-	//}
+	//consumeWals(localWalFile, walChan)
+	for _, wf := range r.wal.walFiles {
+		consumeWals(wf, walChan)
+	}
 
-	wfs := []WalFile{localWalFile}
 	go func() {
 		for {
 			ev := <-r.EventsChan
-			r.Push(ev, wfs)
+			r.Push(ev, r.wal.walFiles)
 		}
 	}()
 
