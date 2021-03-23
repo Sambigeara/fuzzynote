@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
-	"time"
+	//"time"
 	//"runtime"
 
 	"github.com/ardanlabs/conf"
@@ -91,11 +91,13 @@ func main() {
 	// Make sure the root directory exists
 	os.Mkdir(cfg.Root, os.ModePerm)
 
-	localWalFiles := []service.WalFile{service.NewLocalWalFile(cfg.Root)}
+	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.Root)
+	localWalFiles := []service.WalFile{localWalFile}
 	remoteWalFiles := []service.WalFile{}
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
 		s3FileWal := service.NewS3FileWal(
+			cfg.RemoteRefreshFreqMs,
 			cfg.S3.Key,
 			cfg.S3.Secret,
 			cfg.S3.Bucket,
@@ -104,67 +106,42 @@ func main() {
 		)
 		remoteWalFiles = append(remoteWalFiles, s3FileWal)
 	}
-	allWalFiles := append(localWalFiles, remoteWalFiles...)
 
 	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, allWalFiles)
+	listRepo := service.NewDBListRepo(cfg.Root)
+
+	listRepo.RegisterRemote(localWalFile)
 
 	// List instantiation
-	err = listRepo.Load(localWalFiles)
+	err = listRepo.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.LocalRefreshFreqMs))
-	remoteRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.RemoteRefreshFreqMs))
-	fullRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.FullRefreshFreqMs))
-
 	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
 	// Manually but asynchronously schedule a fullRefresh to run on start
-	onStart := make(chan bool, 1)
-	onStart <- true
+	//onStart := make(chan bool, 1)
+	//onStart <- true
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	replayEvts := make(chan *[]service.EventLog)
-	go func() {
-		for {
-			var wfs []service.WalFile
-			fullSync := false
-
-			select {
-			case <-partialRefreshTicker.C:
-				wfs = localWalFiles
-			case <-remoteRefreshTicker.C:
-				wfs = remoteWalFiles
-			case <-onStart:
-			case <-fullRefreshTicker.C:
-				wfs = allWalFiles
-				fullSync = true
-			}
-			term.S.PostEvent(&client.RefreshKey{})
-
-			if fullLog, err := listRepo.Refresh(wfs, fullSync); err == nil {
-				if len(*fullLog) > 0 {
-					replayEvts <- fullLog
-				}
-			} else {
-				log.Fatalf("Failed on sync: %v", err)
-			}
-		}
-	}()
+	allWalFiles := append(localWalFiles, remoteWalFiles...)
+	listRepo.Start(replayEvts, localWalFile)
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
 	keyPressEvts := make(chan tcell.Event)
+
 	go func() {
 		for {
 			select {
-			case fullLog := <-replayEvts:
-				if err := listRepo.Replay(fullLog); err != nil {
+			case partialWal := <-replayEvts:
+				if err := listRepo.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
+				term.S.PostEvent(&client.RefreshKey{})
 			case ev := <-keyPressEvts:
 				cont, err := term.HandleKeyEvent(ev)
 				if err != nil {
@@ -174,9 +151,7 @@ func main() {
 					if err != nil {
 						log.Fatal(err)
 					}
-					partialRefreshTicker.Stop()
-					remoteRefreshTicker.Stop()
-					fullRefreshTicker.Stop()
+					listRepo.Finish(localWalFile)
 					os.Exit(0)
 				}
 			}

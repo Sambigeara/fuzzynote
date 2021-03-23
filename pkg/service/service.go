@@ -43,6 +43,7 @@ type DBListRepo struct {
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
 	listItemMatchIdx   map[string]int
+	EventsChan         chan (EventLog)
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -71,15 +72,16 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, walFiles []WalFile) *DBListRepo {
+func NewDBListRepo(rootDir string) *DBListRepo {
 	rootPath := path.Join(rootDir, rootFileName)
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(walFiles),
+		wal:                NewWal(),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 		listItemMatchIdx:   make(map[string]int),
+		EventsChan:         make(chan (EventLog)),
 	}
 }
 
@@ -94,6 +96,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 		line:                       newLine,
 		note:                       newNote,
 	}
+	r.EventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
 	r.Root, _, err = r.CallFunctionForEventLog(r.Root, el)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -15,6 +16,7 @@ import (
 )
 
 type s3FileWal struct {
+	RefreshTicker        *time.Ticker
 	svc                  *s3.S3
 	downloader           *s3manager.Downloader
 	uploader             *s3manager.Uploader
@@ -26,7 +28,7 @@ type s3FileWal struct {
 	prefix               string
 }
 
-func NewS3FileWal(key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
+func NewS3FileWal(refreshFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
 		Credentials: credentials.NewStaticCredentials(key, secret, ""),
@@ -36,6 +38,7 @@ func NewS3FileWal(key string, secret string, bucket string, prefix string, local
 	}
 
 	return &s3FileWal{
+		RefreshTicker:        time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 		svc:                  s3.New(sess),
 		downloader:           s3manager.NewDownloader(sess),
 		uploader:             s3manager.NewUploader(sess),
@@ -138,6 +141,15 @@ func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 		exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
 	}
 	return nil
+}
+
+func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
+	_, exists := wf.processedPartialWals[fileName]
+	return exists
+}
+
+func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWals[fileName] = struct{}{}
 }
 
 func exitErrorf(msg string, args ...interface{}) {

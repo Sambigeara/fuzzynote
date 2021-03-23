@@ -22,20 +22,22 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-func (r *DBListRepo) Refresh(wfs []WalFile, fullSync bool) (*[]EventLog, error) {
-	var err error
-	fullLog := &[]EventLog{}
-	for _, wf := range wfs {
-		if fullLog, err = r.wal.pull(wf, fullSync); err != nil {
-			return fullLog, err
-		}
-	}
-	return fullLog, nil
-}
+//func (r *DBListRepo) Refresh(wfs []WalFile) (*[]EventLog, error) {
+//    var err error
+//    aggregatedLog := &[]EventLog{}
+//    newLog := &[]EventLog{}
+//    for _, wf := range wfs {
+//        if newLog, err = r.wal.pull(wf); err != nil {
+//            return aggregatedLog, err
+//        }
+//        aggregatedLog = merge(aggregatedLog, newLog)
+//    }
+//    return aggregatedLog, nil
+//}
 
 // Load is called on initial startup. It instantiates the app, and deserialises and displays
 // default LineItems
-func (r *DBListRepo) Load(wfs []WalFile) error {
+func (r *DBListRepo) Load() error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -66,15 +68,15 @@ func (r *DBListRepo) Load(wfs []WalFile) error {
 	}
 
 	// Load the WAL into memory
-	fullLog, err := r.Refresh(wfs, false)
-	if err != nil {
-		return err
-	}
-	if len(*fullLog) > 0 {
-		if err = r.Replay(fullLog); err != nil {
-			return err
-		}
-	}
+	//fullLog, err := r.Refresh(wfs)
+	//if err != nil {
+	//    return err
+	//}
+	//if len(*fullLog) > 0 {
+	//    if err = r.Replay(fullLog); err != nil {
+	//        return err
+	//    }
+	//}
 
 	return nil
 }
@@ -113,9 +115,35 @@ func (r *DBListRepo) Save(wfs []WalFile) error {
 		return err
 	}
 
-	for _, wf := range wfs {
-		r.wal.sync(wf, false)
-	}
+	//for _, wf := range wfs {
+	//    r.wal.sync(wf, false)
+	//}
 
+	return nil
+}
+
+func (r *DBListRepo) RegisterRemote(wf WalFile) {
+	r.wal.walFiles = append(r.wal.walFiles, wf)
+}
+
+func (r *DBListRepo) Start(walChan chan (*[]EventLog), localWalFile *localWalFile) error {
+	consumeWals(localWalFile, walChan)
+	//for _, wf := range r.wal.walFiles {
+	//    r.wal.consumeWals(wf, walChan)
+	//}
+
+	wfs := []WalFile{localWalFile}
+	go func() {
+		for {
+			ev := <-r.EventsChan
+			r.Push(ev, wfs)
+		}
+	}()
+
+	return nil
+}
+
+func (r *DBListRepo) Finish(localWalFile *localWalFile) error {
+	localWalFile.RefreshTicker.Stop()
 	return nil
 }
