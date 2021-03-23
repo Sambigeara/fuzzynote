@@ -98,6 +98,8 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
 	if err != nil {
 		// If the file has been removed, skip, as it means another process has already merged
 		// and deleted this one
+		// TODO there's a chance a file will have been deleted by the cleanup task. If this is the
+		// case we should just fail silently and return.
 		if _, ok := err.(awserr.Error); !ok {
 			// process SDK error
 			exitErrorf("Unable to download item %q, %v", fileName, err)
