@@ -116,13 +116,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// We retrieve keypresses from tcell through a blocking function call which can't be used
-	// in the main select below
-	keyPressEvts := make(chan tcell.Event)
-
 	// Create terminal client
 	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
+	// We need atomicity between wal pull/replays and handling of keypress events, as we need
+	// events to operate on a predictable state (rather than a keypress being applied to state
+	// that differs from when the user intended due to async updates).
+	// Therefore, we consume tcell events into a channel, and consume from it in the same loop
+	// as the pull/replay loop.
+	keyPressEvts := make(chan tcell.Event)
 	go func() {
 		for {
 			select {
@@ -146,6 +148,8 @@ func main() {
 		}
 	}()
 
+	// This is the main loop of operation in the app.
+	// We consume all term events into our own channel (handled above).
 	for {
 		keyPressEvts <- term.S.PollEvent()
 	}

@@ -36,7 +36,7 @@ type listItemSchema1 struct {
 //}
 
 // Start instantiates the app and begins push/pull for all WalFiles
-func (r *DBListRepo) Start(walChan chan (*[]EventLog)) error {
+func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)

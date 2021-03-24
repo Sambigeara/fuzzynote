@@ -32,7 +32,7 @@ type Wal struct {
 	listItemTracker   map[string]*ListItem
 	latestWalSchemaID uint16
 	walFiles          []WalFile
-	eventsChan        chan (EventLog)
+	eventsChan        chan EventLog
 }
 
 func generateUUID() uuid {
@@ -46,7 +46,7 @@ func NewWal() *Wal {
 		log:               &[]EventLog{},
 		fullLog:           &[]EventLog{},
 		listItemTracker:   make(map[string]*ListItem),
-		eventsChan:        make(chan (EventLog)),
+		eventsChan:        make(chan EventLog),
 		//walFiles:             []WalFile{},
 	}
 	return &wal
@@ -548,7 +548,7 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
-func pull(wf WalFile, walChan chan (*[]EventLog)) error {
+func pull(wf WalFile, walChan chan *[]EventLog) error {
 	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
 	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
@@ -674,7 +674,7 @@ func (w *Wal) push(el EventLog, wfs []WalFile) error {
 	return nil
 }
 
-func (w *Wal) startSync(walChan chan (*[]EventLog)) error {
+func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	// pull from these WalFiles
 	for _, wf := range w.walFiles {
 		// TODO figure out how to trigger initial pull straight off the bat
