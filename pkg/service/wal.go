@@ -614,7 +614,7 @@ func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
 	return &b, nil
 }
 
-func (w *Wal) Push(el EventLog, wfs []WalFile) error {
+func (w *Wal) push(el EventLog, wfs []WalFile) error {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -622,6 +622,8 @@ func (w *Wal) Push(el EventLog, wfs []WalFile) error {
 		log.Fatal(err)
 	}
 
+	// TODO this needs to go back to batch sending events in WALs for WalFiles with lower
+	// frequency push
 	eventsToFlush := []EventLog{el}
 
 	for _, item := range eventsToFlush {
@@ -672,30 +674,25 @@ func (w *Wal) Push(el EventLog, wfs []WalFile) error {
 	return nil
 }
 
-func consumeWals(wf WalFile, walChan chan (*[]EventLog)) error {
-	go func() error {
-		for {
-			wf.awaitTicker()
-			if err := pull(wf, walChan); err != nil {
-				return err
-			}
-		}
-	}()
-	return nil
-}
-
 func (w *Wal) startSync(walChan chan (*[]EventLog)) error {
-	// Pull from these WalFiles
+	// pull from these WalFiles
 	for _, wf := range w.walFiles {
 		// TODO figure out how to trigger initial pull straight off the bat
-		consumeWals(wf, walChan)
+		go func(wf WalFile) error {
+			for {
+				wf.awaitTicker()
+				if err := pull(wf, walChan); err != nil {
+					return err
+				}
+			}
+		}(wf)
 	}
 
-	// Push to these WalFiles
+	// push to these WalFiles
 	go func() {
 		for {
 			ev := <-w.eventsChan
-			w.Push(ev, w.walFiles)
+			w.push(ev, w.walFiles)
 		}
 	}()
 
