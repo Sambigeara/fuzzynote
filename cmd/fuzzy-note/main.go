@@ -38,7 +38,7 @@ func main() {
 		Editor              string `conf:"default:vim"`
 		LocalRefreshFreqMs  uint16 `conf:"default:1000"`
 		RemoteRefreshFreqMs uint16 `conf:"default:2000"`
-		FullRefreshFreqMs   uint16 `conf:"default:10000"`
+		GatherRefreshFreqMs uint16 `conf:"default:10000"`
 	}
 
 	// Instantiate default root direct in case it's not set
@@ -92,12 +92,13 @@ func main() {
 	listRepo := service.NewDBListRepo(cfg.Root)
 
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.Root)
+	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.GatherRefreshFreqMs, cfg.Root)
 	listRepo.RegisterWalFile(localWalFile)
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
 		s3FileWal := service.NewS3FileWal(
 			cfg.RemoteRefreshFreqMs,
+			cfg.GatherRefreshFreqMs,
 			cfg.S3.Key,
 			cfg.S3.Secret,
 			cfg.S3.Bucket,

@@ -22,19 +22,6 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-//func (r *DBListRepo) Refresh(wfs []WalFile) (*[]EventLog, error) {
-//    var err error
-//    aggregatedLog := &[]EventLog{}
-//    newLog := &[]EventLog{}
-//    for _, wf := range wfs {
-//        if newLog, err = r.wal.pull(wf); err != nil {
-//            return aggregatedLog, err
-//        }
-//        aggregatedLog = merge(aggregatedLog, newLog)
-//    }
-//    return aggregatedLog, nil
-//}
-
 // Start instantiates the app and begins push/pull for all WalFiles
 func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
@@ -66,20 +53,7 @@ func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 		r.wal.uuid = fileHeader.UUID
 	}
 
-	// Load the WAL into memory
-	//fullLog, err := r.Refresh(wfs)
-	//if err != nil {
-	//    return err
-	//}
-	//if len(*fullLog) > 0 {
-	//    if err = r.Replay(fullLog); err != nil {
-	//        return err
-	//    }
-	//}
-
-	r.wal.startSync(walChan)
-
-	return nil
+	return r.wal.startSync(walChan)
 }
 
 func (r *DBListRepo) flushPrimary(f *os.File) error {

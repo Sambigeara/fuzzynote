@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	//"regexp"
 	//"runtime"
 	"time"
@@ -98,22 +99,25 @@ type WalFile interface {
 	flush(*bytes.Buffer, string) error
 	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
-	awaitTicker()
-	stopTicker()
+	awaitPull()
+	awaitGather()
+	stopTickers()
 }
 
 type localWalFile struct {
 	fileMutex            *lockedfile.File
 	rootDir              string
 	RefreshTicker        *time.Ticker
+	GatherTicker         *time.Ticker
 	processedPartialWals map[string]struct{}
 	//syncFilePath string
 }
 
-func NewLocalWalFile(refreshFrequency uint16, rootDir string) *localWalFile {
+func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
 	return &localWalFile{
 		rootDir:              rootDir,
 		RefreshTicker:        time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:         time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals: make(map[string]struct{}),
 		//syncFilePath: path.Join(rootDir, syncFile),
 	}
@@ -186,12 +190,17 @@ func (wf *localWalFile) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) awaitTicker() {
+func (wf *localWalFile) awaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *localWalFile) stopTicker() {
+func (wf *localWalFile) awaitGather() {
+	<-wf.GatherTicker.C
+}
+
+func (wf *localWalFile) stopTickers() {
 	wf.RefreshTicker.Stop()
+	wf.GatherTicker.Stop()
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -614,7 +623,7 @@ func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
 	return &b, nil
 }
 
-func (w *Wal) push(el EventLog, wfs []WalFile) error {
+func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -622,11 +631,7 @@ func (w *Wal) push(el EventLog, wfs []WalFile) error {
 		log.Fatal(err)
 	}
 
-	// TODO this needs to go back to batch sending events in WALs for WalFiles with lower
-	// frequency push
-	eventsToFlush := []EventLog{el}
-
-	for _, item := range eventsToFlush {
+	for _, item := range *el {
 		lenLine := uint64(len([]byte(item.line)))
 		var lenNote uint64
 		if item.note != nil {
@@ -659,40 +664,98 @@ func (w *Wal) push(el EventLog, wfs []WalFile) error {
 	}
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
-	for _, wf := range wfs {
-		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
-		go func(wf WalFile) {
-			err := wf.flush(&b, randomWal)
-			if err != nil {
-				log.Fatal(err)
+	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
+	go func(wf WalFile) {
+		err := wf.flush(&b, randomWal)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Add it straight to the cache to avoid processing it in the future
+		wf.setProcessedPartialWals(randomWal)
+	}(wf)
+
+	return nil
+}
+
+// gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
+// to delete the old ones
+func (w *Wal) gather(wf WalFile) error {
+	filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Gather origin files
+	mergedWal := []EventLog{}
+	for _, fileName := range originFiles {
+		wal, err := wf.generateLogFromFile(fileName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		mergedWal = *(merge(&mergedWal, &wal))
+	}
+
+	// Flush the gathered Wal to ALL walfiles
+	// TODO actual proper error handling in push
+	// Use a WaitGroup so we can run all pushes async but then assert on completion before deleting files
+	// from origin walfile
+	var wg sync.WaitGroup
+	for _, tempWf := range w.walFiles {
+		wg.Add(1)
+		go func(tempWf WalFile) error {
+			if err := w.push(&mergedWal, tempWf); err != nil {
+				return err
 			}
-			// Add it straight to the cache to avoid processing it in the future
-			wf.setProcessedPartialWals(randomWal)
-		}(wf)
+			wg.Done()
+			return nil
+		}(tempWf)
+	}
+	wg.Wait()
+
+	// Schedule a delete on the files
+	for _, fileName := range originFiles {
+		// TODO proper error handling here too
+		wf.removeFile(fileName)
 	}
 
 	return nil
 }
 
 func (w *Wal) startSync(walChan chan *[]EventLog) error {
-	// pull from these WalFiles
 	for _, wf := range w.walFiles {
-		// TODO figure out how to trigger initial pull straight off the bat
+		// Pull from WalFiles individually
 		go func(wf WalFile) error {
 			for {
-				wf.awaitTicker()
+				wf.awaitPull()
 				if err := pull(wf, walChan); err != nil {
+					return err
+				}
+			}
+		}(wf)
+
+		// Schedule gather tasks
+		go func(wf WalFile) error {
+			for {
+				wf.awaitGather()
+				if err := w.gather(wf); err != nil {
 					return err
 				}
 			}
 		}(wf)
 	}
 
-	// push to these WalFiles
+	// Push to all WalFiles
 	go func() {
 		for {
 			ev := <-w.eventsChan
-			w.push(ev, w.walFiles)
+			// Push same event to all WalFiles
+			el := []EventLog{ev}
+			for _, wf := range w.walFiles {
+				go func() {
+					w.push(&el, wf)
+				}()
+			}
 		}
 	}()
 
@@ -701,7 +764,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 
 func (w *Wal) finish() error {
 	for _, wf := range w.walFiles {
-		wf.stopTicker()
+		wf.stopTickers()
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 
 type s3FileWal struct {
 	RefreshTicker        *time.Ticker
+	GatherTicker         *time.Ticker
 	svc                  *s3.S3
 	downloader           *s3manager.Downloader
 	uploader             *s3manager.Uploader
@@ -28,7 +29,7 @@ type s3FileWal struct {
 	prefix               string
 }
 
-func NewS3FileWal(refreshFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
+func NewS3FileWal(refreshFrequency uint16, cleanUpFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
 		Credentials: credentials.NewStaticCredentials(key, secret, ""),
@@ -39,6 +40,7 @@ func NewS3FileWal(refreshFrequency uint16, key string, secret string, bucket str
 
 	return &s3FileWal{
 		RefreshTicker:        time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:         time.NewTicker(time.Millisecond * time.Duration(cleanUpFrequency)),
 		svc:                  s3.New(sess),
 		downloader:           s3manager.NewDownloader(sess),
 		uploader:             s3manager.NewUploader(sess),
@@ -115,6 +117,7 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	// Delete the item
 	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
 	if err != nil {
+		// TODO if file not exists, return silently
 		exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
 	}
 
@@ -150,12 +153,17 @@ func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) awaitTicker() {
+func (wf *s3FileWal) awaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *s3FileWal) stopTicker() {
+func (wf *s3FileWal) awaitGather() {
+	<-wf.GatherTicker.C
+}
+
+func (wf *s3FileWal) stopTickers() {
 	wf.RefreshTicker.Stop()
+	wf.GatherTicker.Stop()
 }
 
 func exitErrorf(msg string, args ...interface{}) {
