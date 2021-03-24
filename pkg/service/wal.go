@@ -32,6 +32,7 @@ type Wal struct {
 	listItemTracker   map[string]*ListItem
 	latestWalSchemaID uint16
 	walFiles          []WalFile
+	eventsChan        chan (EventLog)
 }
 
 func generateUUID() uuid {
@@ -45,6 +46,7 @@ func NewWal() *Wal {
 		log:               &[]EventLog{},
 		fullLog:           &[]EventLog{},
 		listItemTracker:   make(map[string]*ListItem),
+		eventsChan:        make(chan (EventLog)),
 		//walFiles:             []WalFile{},
 	}
 	return &wal
@@ -88,7 +90,6 @@ type EventLog struct {
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
 	getRootDir() string
-	getLocalRootDir() string
 	lock() error
 	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
@@ -97,7 +98,8 @@ type WalFile interface {
 	flush(*bytes.Buffer, string) error
 	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
-	getTicker()
+	awaitTicker()
+	stopTicker()
 }
 
 type localWalFile struct {
@@ -118,10 +120,6 @@ func NewLocalWalFile(refreshFrequency uint16, rootDir string) *localWalFile {
 }
 
 func (wf *localWalFile) getRootDir() string {
-	return wf.rootDir
-}
-
-func (wf *localWalFile) getLocalRootDir() string {
 	return wf.rootDir
 }
 
@@ -188,8 +186,12 @@ func (wf *localWalFile) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) getTicker() {
+func (wf *localWalFile) awaitTicker() {
 	<-wf.RefreshTicker.C
+}
+
+func (wf *localWalFile) stopTicker() {
+	wf.RefreshTicker.Stop()
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -612,7 +614,7 @@ func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
 	return &b, nil
 }
 
-func (r *DBListRepo) Push(el EventLog, wfs []WalFile) error {
+func (w *Wal) Push(el EventLog, wfs []WalFile) error {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -654,7 +656,7 @@ func (r *DBListRepo) Push(el EventLog, wfs []WalFile) error {
 		}
 	}
 
-	randomUUID := fmt.Sprintf("%v%v", r.wal.uuid, generateUUID())
+	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
 	for _, wf := range wfs {
 		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
 		go func(wf WalFile) {
@@ -673,11 +675,35 @@ func (r *DBListRepo) Push(el EventLog, wfs []WalFile) error {
 func consumeWals(wf WalFile, walChan chan (*[]EventLog)) error {
 	go func() error {
 		for {
-			wf.getTicker()
+			wf.awaitTicker()
 			if err := pull(wf, walChan); err != nil {
 				return err
 			}
 		}
 	}()
+	return nil
+}
+
+func (w *Wal) startSync(walChan chan (*[]EventLog)) error {
+	// Pull from these WalFiles
+	for _, wf := range w.walFiles {
+		consumeWals(wf, walChan)
+	}
+
+	// Push to these WalFiles
+	go func() {
+		for {
+			ev := <-w.eventsChan
+			w.Push(ev, w.walFiles)
+		}
+	}()
+
+	return nil
+}
+
+func (w *Wal) finish() error {
+	for _, wf := range w.walFiles {
+		wf.stopTicker()
+	}
 	return nil
 }

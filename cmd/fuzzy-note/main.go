@@ -88,14 +88,12 @@ func main() {
 		log.Fatalf("main : Parsing Config : %v", err)
 	}
 
-	// Make sure the root directory exists
-	os.Mkdir(cfg.Root, os.ModePerm)
-
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(cfg.Root)
 
+	// Create and register local app WalFile (based in root directory)
 	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.Root)
-	listRepo.RegisterRemote(localWalFile)
+	listRepo.RegisterWalFile(localWalFile)
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
 		s3FileWal := service.NewS3FileWal(
@@ -106,35 +104,30 @@ func main() {
 			cfg.S3.Prefix,
 			cfg.Root,
 		)
-		listRepo.RegisterRemote(s3FileWal)
+		listRepo.RegisterWalFile(s3FileWal)
 	}
-
-	// List instantiation
-	err = listRepo.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
-
-	// Manually but asynchronously schedule a fullRefresh to run on start
-	//onStart := make(chan bool, 1)
-	//onStart <- true
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
-	replayEvts := make(chan *[]service.EventLog)
+	walChan := make(chan *[]service.EventLog)
 
-	listRepo.Start(replayEvts, localWalFile)
+	// List instantiation
+	err = listRepo.Start(walChan)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// We retrieve keypresses from tcell through a blocking function call which can't be used
 	// in the main select below
 	keyPressEvts := make(chan tcell.Event)
 
+	// Create terminal client
+	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
+
 	go func() {
 		for {
 			select {
-			case partialWal := <-replayEvts:
+			case partialWal := <-walChan:
 				if err := listRepo.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
@@ -144,11 +137,10 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
-					err := listRepo.Save()
+					err := listRepo.Stop()
 					if err != nil {
 						log.Fatal(err)
 					}
-					listRepo.Finish(localWalFile)
 					os.Exit(0)
 				}
 			}

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"time"
 )
@@ -43,7 +44,6 @@ type DBListRepo struct {
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
 	listItemMatchIdx   map[string]int
-	EventsChan         chan (EventLog)
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -73,6 +73,9 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(rootDir string) *DBListRepo {
+	// Make sure the root directory exists
+	os.Mkdir(rootDir, os.ModePerm)
+
 	rootPath := path.Join(rootDir, rootFileName)
 	return &DBListRepo{
 		rootPath:           rootPath,
@@ -81,7 +84,6 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 		listItemMatchIdx:   make(map[string]int),
-		EventsChan:         make(chan (EventLog)),
 	}
 }
 
@@ -96,7 +98,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 		line:                       newLine,
 		note:                       newNote,
 	}
-	r.EventsChan <- el
+	r.wal.eventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
 	r.Root, _, err = r.CallFunctionForEventLog(r.Root, el)

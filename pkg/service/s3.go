@@ -55,10 +55,6 @@ func (wf *s3FileWal) getRootDir() string {
 	return wf.prefix
 }
 
-func (wf *s3FileWal) getLocalRootDir() string {
-	return wf.localRootDir
-}
-
 // TODO get rid of these
 func (wf *s3FileWal) lock() error {
 	return nil
@@ -154,8 +150,12 @@ func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) getTicker() {
+func (wf *s3FileWal) awaitTicker() {
 	<-wf.RefreshTicker.C
+}
+
+func (wf *s3FileWal) stopTicker() {
+	wf.RefreshTicker.Stop()
 }
 
 func exitErrorf(msg string, args ...interface{}) {

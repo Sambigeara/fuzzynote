@@ -35,9 +35,8 @@ type listItemSchema1 struct {
 //    return aggregatedLog, nil
 //}
 
-// Load is called on initial startup. It instantiates the app, and deserialises and displays
-// default LineItems
-func (r *DBListRepo) Load() error {
+// Start instantiates the app and begins push/pull for all WalFiles
+func (r *DBListRepo) Start(walChan chan (*[]EventLog)) error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -78,6 +77,8 @@ func (r *DBListRepo) Load() error {
 	//    }
 	//}
 
+	r.wal.startSync(walChan)
+
 	return nil
 }
 
@@ -101,8 +102,8 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 	return nil
 }
 
-// Save is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Save() error {
+// Stop is called on app shutdown. It flushes all state changes in memory to disk
+func (r *DBListRepo) Stop() error {
 	f, err := os.Create(r.rootPath)
 	if err != nil {
 		log.Fatal(err)
@@ -115,34 +116,11 @@ func (r *DBListRepo) Save() error {
 		return err
 	}
 
-	//for _, wf := range r.wal.walFiles {
-	//    r.wal.sync(wf, false)
-	//}
+	r.wal.finish()
 
 	return nil
 }
 
-func (r *DBListRepo) RegisterRemote(wf WalFile) {
+func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	r.wal.walFiles = append(r.wal.walFiles, wf)
-}
-
-func (r *DBListRepo) Start(walChan chan (*[]EventLog), localWalFile *localWalFile) error {
-	//consumeWals(localWalFile, walChan)
-	for _, wf := range r.wal.walFiles {
-		consumeWals(wf, walChan)
-	}
-
-	go func() {
-		for {
-			ev := <-r.EventsChan
-			r.Push(ev, r.wal.walFiles)
-		}
-	}()
-
-	return nil
-}
-
-func (r *DBListRepo) Finish(localWalFile *localWalFile) error {
-	localWalFile.RefreshTicker.Stop()
-	return nil
 }
