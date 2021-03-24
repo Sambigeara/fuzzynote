@@ -687,6 +687,7 @@ func consumeWals(wf WalFile, walChan chan (*[]EventLog)) error {
 func (w *Wal) startSync(walChan chan (*[]EventLog)) error {
 	// Pull from these WalFiles
 	for _, wf := range w.walFiles {
+		// TODO figure out how to trigger initial pull straight off the bat
 		consumeWals(wf, walChan)
 	}
 
