@@ -108,21 +108,21 @@ type WalFile interface {
 }
 
 type localWalFile struct {
-	fileMutex            *lockedfile.File
-	rootDir              string
-	RefreshTicker        *time.Ticker
-	GatherTicker         *time.Ticker
-	processedPartialWals map[string]struct{}
-	//syncFilePath string
+	fileMutex                *lockedfile.File
+	rootDir                  string
+	RefreshTicker            *time.Ticker
+	GatherTicker             *time.Ticker
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock chan bool
 }
 
 func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
 	return &localWalFile{
-		rootDir:              rootDir,
-		RefreshTicker:        time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:         time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
-		processedPartialWals: make(map[string]struct{}),
-		//syncFilePath: path.Join(rootDir, syncFile),
+		rootDir:                  rootDir,
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: make(chan bool, 1),
 	}
 }
 
@@ -185,12 +185,16 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 }
 
 func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock <- true
 	_, exists := wf.processedPartialWals[fileName]
+	<-wf.processedPartialWalsLock
 	return exists
 }
 
 func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock <- true
 	wf.processedPartialWals[fileName] = struct{}{}
+	<-wf.processedPartialWalsLock
 }
 
 func (wf *localWalFile) awaitPull() {
@@ -681,8 +685,10 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
 func (w *Wal) gather(wf WalFile) error {
-	filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
-	originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	//filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
+	originFiles, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -702,22 +708,10 @@ func (w *Wal) gather(wf WalFile) error {
 		mergedWal = *(merge(&mergedWal, &wal))
 	}
 
-	// Flush the gathered Wal to ALL walfiles
-	// TODO actual proper error handling in push
-	// Use a WaitGroup so we can run all pushes async but then assert on completion before deleting files
-	// from origin walfile
-	//var wg sync.WaitGroup
-	//for _, tempWf := range w.walFiles {
-	//    wg.Add(1)
-	//    go func(tempWf WalFile) error {
+	// Flush the gathered Wal
 	if err := w.push(&mergedWal, wf); err != nil {
 		return err
 	}
-	//wg.Done()
-	//return nil
-	//    }(tempWf)
-	//}
-	//wg.Wait()
 
 	// Schedule a delete on the files
 	for _, fileName := range originFiles {
@@ -729,6 +723,23 @@ func (w *Wal) gather(wf WalFile) error {
 }
 
 func (w *Wal) startSync(walChan chan *[]EventLog) error {
+	// Run an initial blocking load from the local walfile (and put onto channel for immediate
+	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
+	// due to cache, so small amount of duplicated code required).
+	var localEl *[]EventLog
+	var err error
+	if localEl, err = pull(w.localWalFile); err != nil {
+		return err
+	}
+	for _, wf := range w.walFiles {
+		if wf != w.localWalFile {
+			go func() { w.push(localEl, wf) }()
+		}
+	}
+	go func() {
+		walChan <- localEl
+	}()
+
 	// Run a concurrent/synchronous pull on all walfiles individually on app start
 	// This also gathers any new Wals that may have appeared locally whilst the app was off
 	// Push these to all walfiles
@@ -740,16 +751,14 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		for {
 			el := <-startUpWalChan
 			for _, wf := range w.walFiles {
-				go func(wf WalFile) {
-					w.push(el, wf)
-				}(wf)
+				go func() { w.push(el, wf) }()
 			}
 		}
 	}()
 
-	var err error
 	for _, wf := range w.walFiles {
 		// Pull all wals on startup into a channel to push to all walfiles in the loop above
+		// No need to exclude localWalFile as processedPartialWals will deal with that
 		go func(wf WalFile) error {
 			var el *[]EventLog
 			if el, err = pull(wf); err != nil {
@@ -794,9 +803,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			el := <-w.eventsChan
 			// Push same events to all WalFiles
 			for _, wf := range w.walFiles {
-				go func() {
-					w.push(&el, wf)
-				}()
+				go func() { w.push(&el, wf) }()
 			}
 		}
 	}()

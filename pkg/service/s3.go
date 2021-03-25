@@ -16,17 +16,18 @@ import (
 )
 
 type s3FileWal struct {
-	RefreshTicker        *time.Ticker
-	GatherTicker         *time.Ticker
-	svc                  *s3.S3
-	downloader           *s3manager.Downloader
-	uploader             *s3manager.Uploader
-	processedPartialWals map[string]struct{}
-	localRootDir         string
-	key                  string
-	secret               string
-	bucket               string
-	prefix               string
+	RefreshTicker            *time.Ticker
+	GatherTicker             *time.Ticker
+	svc                      *s3.S3
+	downloader               *s3manager.Downloader
+	uploader                 *s3manager.Uploader
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock chan bool
+	localRootDir             string
+	key                      string
+	secret                   string
+	bucket                   string
+	prefix                   string
 }
 
 func NewS3FileWal(refreshFrequency uint16, cleanUpFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
@@ -39,17 +40,18 @@ func NewS3FileWal(refreshFrequency uint16, cleanUpFrequency uint16, key string, 
 	}
 
 	return &s3FileWal{
-		RefreshTicker:        time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:         time.NewTicker(time.Millisecond * time.Duration(cleanUpFrequency)),
-		svc:                  s3.New(sess),
-		downloader:           s3manager.NewDownloader(sess),
-		uploader:             s3manager.NewUploader(sess),
-		processedPartialWals: make(map[string]struct{}),
-		localRootDir:         localRootDir,
-		key:                  key,
-		secret:               secret,
-		bucket:               bucket,
-		prefix:               prefix,
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cleanUpFrequency)),
+		svc:                      s3.New(sess),
+		downloader:               s3manager.NewDownloader(sess),
+		uploader:                 s3manager.NewUploader(sess),
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: make(chan bool, 1),
+		localRootDir:             localRootDir,
+		key:                      key,
+		secret:                   secret,
+		bucket:                   bucket,
+		prefix:                   prefix,
 	}
 }
 
@@ -159,12 +161,16 @@ func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 }
 
 func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock <- true
 	_, exists := wf.processedPartialWals[fileName]
+	<-wf.processedPartialWalsLock
 	return exists
 }
 
 func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock <- true
 	wf.processedPartialWals[fileName] = struct{}{}
+	<-wf.processedPartialWalsLock
 }
 
 func (wf *s3FileWal) awaitPull() {
