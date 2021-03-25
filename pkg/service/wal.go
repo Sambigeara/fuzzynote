@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	//"sync"
 	"time"
 
 	//"sync"
@@ -51,7 +52,6 @@ func NewWal(localWalFile *localWalFile) *Wal {
 		listItemTracker:   make(map[string]*ListItem),
 		eventsChan:        make(chan []EventLog),
 		localWalFile:      localWalFile,
-		//walFiles:             []WalFile{},
 	}
 	return &wal
 }
@@ -636,6 +636,9 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 		log.Fatal(err)
 	}
 
+	// Compact the Wal
+	el = compact(el)
+
 	for _, item := range *el {
 		lenLine := uint64(len([]byte(item.line)))
 		var lenNote uint64
@@ -670,14 +673,11 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
 	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
-	go func(wf WalFile) {
-		err := wf.flush(&b, randomWal)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// Add it straight to the cache to avoid processing it in the future
-		wf.setProcessedPartialWals(randomWal)
-	}(wf)
+	if err = wf.flush(&b, randomWal); err != nil {
+		log.Fatal(err)
+	}
+	// Add it straight to the cache to avoid processing it in the future
+	wf.setProcessedPartialWals(randomWal)
 
 	return nil
 }
@@ -812,6 +812,17 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 }
 
 func (w *Wal) finish() error {
+	// TODO duplication
+	// Retrieve all local wal names
+	filePathPattern := path.Join(w.localWalFile.getRootDir(), walFilePattern)
+	localFileNames, _ := w.localWalFile.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	// Flush full log to local walfile
+	w.push(w.log, w.localWalFile)
+	// Delete allFileNames
+	for _, fileName := range localFileNames {
+		w.localWalFile.removeFile(fileName)
+	}
+
 	for _, wf := range w.walFiles {
 		wf.stopTickers()
 	}
