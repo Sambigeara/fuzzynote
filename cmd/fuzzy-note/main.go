@@ -88,11 +88,15 @@ func main() {
 		log.Fatalf("main : Parsing Config : %v", err)
 	}
 
-	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root)
-
 	// Create and register local app WalFile (based in root directory)
 	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.GatherRefreshFreqMs, cfg.Root)
+
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile)
+	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
+	// Wal independently (there are certain operations that require us to only target the local walfile rather
+	// that all).
+	// We still need to register it as we all all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {

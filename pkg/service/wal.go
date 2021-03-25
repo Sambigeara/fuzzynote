@@ -33,22 +33,24 @@ type Wal struct {
 	fullLog           *[]EventLog // fullLog is a historical log of events
 	listItemTracker   map[string]*ListItem
 	latestWalSchemaID uint16
+	localWalFile      *localWalFile
 	walFiles          []WalFile
-	eventsChan        chan EventLog
+	eventsChan        chan []EventLog
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal() *Wal {
+func NewWal(localWalFile *localWalFile) *Wal {
 	wal := Wal{
 		uuid:              generateUUID(),
 		latestWalSchemaID: latestWalSchemaID,
 		log:               &[]EventLog{},
 		fullLog:           &[]EventLog{},
 		listItemTracker:   make(map[string]*ListItem),
-		eventsChan:        make(chan EventLog),
+		eventsChan:        make(chan []EventLog),
+		localWalFile:      localWalFile,
 		//walFiles:             []WalFile{},
 	}
 	return &wal
@@ -558,7 +560,7 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
-func pull(wf WalFile, walChan chan *[]EventLog) error {
+func pull(wf WalFile) (*[]EventLog, error) {
 	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
 	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
@@ -577,9 +579,7 @@ func pull(wf WalFile, walChan chan *[]EventLog) error {
 			wf.setProcessedPartialWals(fileName)
 		}
 	}
-	walChan <- &newMergedWal
-
-	return nil
+	return &newMergedWal, nil
 }
 
 func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
@@ -747,12 +747,15 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		}
 	}()
 
+	var err error
 	for _, wf := range w.walFiles {
 		// Pull all wals on startup into a channel to push to all walfiles in the loop above
 		go func(wf WalFile) error {
-			if err := pull(wf, startUpWalChan); err != nil {
+			var el *[]EventLog
+			if el, err = pull(wf); err != nil {
 				return err
 			}
+			startUpWalChan <- el
 			return nil
 		}(wf)
 
@@ -760,8 +763,16 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		go func(wf WalFile) error {
 			for {
 				wf.awaitPull()
-				if err := pull(wf, walChan); err != nil {
+				var el *[]EventLog
+				if el, err = pull(wf); err != nil {
 					return err
+				}
+				walChan <- el
+				// We want the local walfile to be a complete source of truth,
+				// so every time we pull from any _other_ walfile, schedule a push
+				// to the local one
+				if wf != w.localWalFile && len(*el) > 0 {
+					w.push(el, w.localWalFile)
 				}
 			}
 		}(wf)
@@ -780,9 +791,8 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	// Push to all WalFiles
 	go func() {
 		for {
-			ev := <-w.eventsChan
-			// Push same event to all WalFiles
-			el := []EventLog{ev}
+			el := <-w.eventsChan
+			// Push same events to all WalFiles
 			for _, wf := range w.walFiles {
 				go func() {
 					w.push(&el, wf)

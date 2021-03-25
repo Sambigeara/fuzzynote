@@ -72,7 +72,7 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string) *DBListRepo {
+func NewDBListRepo(rootDir string, localWalFile *localWalFile) *DBListRepo {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
@@ -80,7 +80,7 @@ func NewDBListRepo(rootDir string) *DBListRepo {
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(),
+		wal:                NewWal(localWalFile),
 		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 		listItemMatchIdx:   make(map[string]int),
@@ -98,7 +98,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 		line:                       newLine,
 		note:                       newNote,
 	}
-	r.wal.eventsChan <- el
+	r.wal.eventsChan <- []EventLog{el}
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
 	r.Root, _, err = r.CallFunctionForEventLog(r.Root, el)
