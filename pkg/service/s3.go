@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -15,18 +16,21 @@ import (
 )
 
 type s3FileWal struct {
-	svc                  *s3.S3
-	downloader           *s3manager.Downloader
-	uploader             *s3manager.Uploader
-	processedPartialWals map[string]struct{}
-	localRootDir         string
-	key                  string
-	secret               string
-	bucket               string
-	prefix               string
+	RefreshTicker            *time.Ticker
+	GatherTicker             *time.Ticker
+	svc                      *s3.S3
+	downloader               *s3manager.Downloader
+	uploader                 *s3manager.Uploader
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock chan bool
+	localRootDir             string
+	key                      string
+	secret                   string
+	bucket                   string
+	prefix                   string
 }
 
-func NewS3FileWal(key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
+func NewS3FileWal(refreshFrequency uint16, cleanUpFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
 		Credentials: credentials.NewStaticCredentials(key, secret, ""),
@@ -36,24 +40,23 @@ func NewS3FileWal(key string, secret string, bucket string, prefix string, local
 	}
 
 	return &s3FileWal{
-		svc:                  s3.New(sess),
-		downloader:           s3manager.NewDownloader(sess),
-		uploader:             s3manager.NewUploader(sess),
-		processedPartialWals: make(map[string]struct{}),
-		localRootDir:         localRootDir,
-		key:                  key,
-		secret:               secret,
-		bucket:               bucket,
-		prefix:               prefix,
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cleanUpFrequency)),
+		svc:                      s3.New(sess),
+		downloader:               s3manager.NewDownloader(sess),
+		uploader:                 s3manager.NewUploader(sess),
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: make(chan bool, 1),
+		localRootDir:             localRootDir,
+		key:                      key,
+		secret:                   secret,
+		bucket:                   bucket,
+		prefix:                   prefix,
 	}
 }
 
 func (wf *s3FileWal) getRootDir() string {
 	return wf.prefix
-}
-
-func (wf *s3FileWal) getLocalRootDir() string {
-	return wf.localRootDir
 }
 
 // TODO get rid of these
@@ -95,9 +98,16 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
 	if err != nil {
 		// If the file has been removed, skip, as it means another process has already merged
 		// and deleted this one
-		if _, ok := err.(awserr.Error); !ok {
-			// process SDK error
-			exitErrorf("Unable to download item %q, %v", fileName, err)
+
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			//case "NoSuchKey": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
+			//    return []EventLog{}, nil
+			case s3.ErrCodeNoSuchKey:
+				return []EventLog{}, nil
+			default:
+				exitErrorf("Unable to download item %q, %v", fileName, err)
+			}
 		}
 	}
 
@@ -114,7 +124,17 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	// Delete the item
 	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
 	if err != nil {
-		exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			//case "NotFound": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
+			//    return nil
+			case s3.ErrCodeNoSuchKey:
+				return nil
+			default:
+				exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
+			}
+		}
+
 	}
 
 	err = wf.svc.WaitUntilObjectNotExists(&s3.HeadObjectInput{
@@ -138,6 +158,32 @@ func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 		exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
 	}
 	return nil
+}
+
+func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock <- true
+	_, exists := wf.processedPartialWals[fileName]
+	<-wf.processedPartialWalsLock
+	return exists
+}
+
+func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock <- true
+	wf.processedPartialWals[fileName] = struct{}{}
+	<-wf.processedPartialWalsLock
+}
+
+func (wf *s3FileWal) awaitPull() {
+	<-wf.RefreshTicker.C
+}
+
+func (wf *s3FileWal) awaitGather() {
+	<-wf.GatherTicker.C
+}
+
+func (wf *s3FileWal) stopTickers() {
+	wf.RefreshTicker.Stop()
+	wf.GatherTicker.Stop()
 }
 
 func exitErrorf(msg string, args ...interface{}) {

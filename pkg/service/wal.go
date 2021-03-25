@@ -11,9 +11,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
-	//"runtime"
 	"time"
+
+	//"sync"
+	//"regexp"
+	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -26,33 +28,30 @@ const latestWalSchemaID uint16 = 1
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
-	uuid                 uuid
-	log                  *[]EventLog // log represents a fresh set of events (unique from the historical log below)
-	fullLog              *[]EventLog // fullLog is a historical log of events
-	listItemTracker      map[string]*ListItem
-	processedPartialWals map[WalFile]map[string]struct{}
-	latestWalSchemaID    uint16
-	pendingRemoteLogs    map[WalFile]*[]EventLog
+	uuid              uuid
+	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
+	fullLog           *[]EventLog // fullLog is a historical log of events
+	listItemTracker   map[string]*ListItem
+	latestWalSchemaID uint16
+	localWalFile      *localWalFile
+	walFiles          []WalFile
+	eventsChan        chan []EventLog
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(walFiles []WalFile) *Wal {
+func NewWal(localWalFile *localWalFile) *Wal {
 	wal := Wal{
-		uuid:                 generateUUID(),
-		latestWalSchemaID:    latestWalSchemaID,
-		log:                  &[]EventLog{},
-		fullLog:              &[]EventLog{},
-		listItemTracker:      make(map[string]*ListItem),
-		processedPartialWals: make(map[WalFile]map[string]struct{}),
-		pendingRemoteLogs:    make(map[WalFile]*[]EventLog),
-	}
-	// Instantiate processedPartialWals and pendingRemoteLogs caches
-	for _, wf := range walFiles {
-		wal.processedPartialWals[wf] = make(map[string]struct{})
-		wal.pendingRemoteLogs[wf] = &[]EventLog{}
+		uuid:              generateUUID(),
+		latestWalSchemaID: latestWalSchemaID,
+		log:               &[]EventLog{},
+		fullLog:           &[]EventLog{},
+		listItemTracker:   make(map[string]*ListItem),
+		eventsChan:        make(chan []EventLog),
+		localWalFile:      localWalFile,
+		//walFiles:             []WalFile{},
 	}
 	return &wal
 }
@@ -95,35 +94,39 @@ type EventLog struct {
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
 	getRootDir() string
-	getLocalRootDir() string
 	lock() error
 	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
 	flush(*bytes.Buffer, string) error
+	isPartialWalProcessed(string) bool
+	setProcessedPartialWals(string)
+	awaitPull()
+	awaitGather()
+	stopTickers()
 }
 
 type localWalFile struct {
-	//syncFilePath string
-	fileMutex *lockedfile.File
-	rootDir   string
-	//processedPartialWals map[string]struct{}
+	fileMutex                *lockedfile.File
+	rootDir                  string
+	RefreshTicker            *time.Ticker
+	GatherTicker             *time.Ticker
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock chan bool
 }
 
-func NewLocalWalFile(rootDir string) *localWalFile {
+func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
 	return &localWalFile{
-		//syncFilePath: path.Join(rootDir, syncFile),
-		rootDir: rootDir,
-		//processedPartialWals: make(map[string]struct{}),
+		rootDir:                  rootDir,
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: make(chan bool, 1),
 	}
 }
 
 func (wf *localWalFile) getRootDir() string {
-	return wf.rootDir
-}
-
-func (wf *localWalFile) getLocalRootDir() string {
 	return wf.rootDir
 }
 
@@ -179,6 +182,32 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	defer f.Close()
 	f.Write(b.Bytes())
 	return nil
+}
+
+func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock <- true
+	_, exists := wf.processedPartialWals[fileName]
+	<-wf.processedPartialWalsLock
+	return exists
+}
+
+func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock <- true
+	wf.processedPartialWals[fileName] = struct{}{}
+	<-wf.processedPartialWalsLock
+}
+
+func (wf *localWalFile) awaitPull() {
+	<-wf.RefreshTicker.C
+}
+
+func (wf *localWalFile) awaitGather() {
+	<-wf.GatherTicker.C
+}
+
+func (wf *localWalFile) stopTickers() {
+	wf.RefreshTicker.Stop()
+	wf.GatherTicker.Stop()
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -330,19 +359,16 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
-func (r *DBListRepo) Replay(fullLog *[]EventLog) error {
+func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	// Merge with any new local events which may have occurred during sync
-	// TODO refactor
-	r.wal.fullLog = merge(fullLog, r.wal.log)
-	// Reset r.wal.log
-	r.wal.log = &[]EventLog{}
+	r.wal.log = merge(r.wal.log, partialWal)
 	// If no events, do nothing and return nil
-	if len(*r.wal.fullLog) == 0 {
+	if len(*r.wal.log) == 0 {
 		return nil
 	}
 
 	var root *ListItem
-	for _, e := range *r.wal.fullLog {
+	for _, e := range *r.wal.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic, because dragons lie within
 		root, _, _ = r.CallFunctionForEventLog(root, e)
@@ -445,9 +471,27 @@ func checkEquality(event1 EventLog, event2 EventLog) int {
 }
 
 func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
+	mergedEl := []EventLog{}
+	if len(*wal1) == 0 && len(*wal2) == 0 {
+		return &mergedEl
+	} else if len(*wal1) == 0 {
+		return wal2
+	} else if len(*wal2) == 0 {
+		return wal1
+	}
+
+	// Before merging, check to see that the the most recent from one wal isn't older than the oldest from another.
+	// If that is the case, append the newer to the older and return.
+	if checkEquality((*wal1)[0], (*wal2)[len(*wal2)-1]) == rightEventOlder {
+		mergedEl = append(*wal2, *wal1...)
+		return &mergedEl
+	} else if checkEquality((*wal2)[0], (*wal1)[len(*wal1)-1]) == rightEventOlder {
+		mergedEl = append(*wal1, *wal2...)
+		return &mergedEl
+	}
+
 	// Adopt a two pointer approach
 	i, j := 0, 0
-	mergedEl := []EventLog{}
 	// We can use an empty log here because it will never be equal to in the checkEquality calls below
 	lastEvent := EventLog{}
 	for i < len(*wal1) || j < len(*wal2) {
@@ -520,146 +564,256 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
-func (w *Wal) sync(wf WalFile, fullSync bool) (*[]EventLog, error) {
-	//runtime.Breakpoint()
-
-	//
-	// LOAD AND MERGE ALL WALs
-	//
-
-	// TODO only local wal needs a lock so remove interface functions and implement here
-	err := wf.lock()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer wf.unlock()
-
-	// We need any recent local changes to be flushed to all WalFiles, but we only process one at a time.
-	// Therefore, propagate any recent local changes to all other WalFiles
-	if !fullSync && len(*w.log) > 0 {
-		// It will always exist (due to pre-instantiation) but might be empty
-		for otherWalFile, otherLog := range w.pendingRemoteLogs {
-			if otherWalFile != wf {
-				w.pendingRemoteLogs[otherWalFile] = merge(otherLog, w.log)
-			}
-		}
-	}
-
+func pull(wf WalFile) (*[]EventLog, error) {
 	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
-
 	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	newFileNames := []string{}
-	// TODO put the processedPartialWals map on the WalFile and check this within getFileNamesMatchingPattern
-	for _, fileName := range allFileNames {
-		if _, exists := w.processedPartialWals[wf][fileName]; !exists {
-			newFileNames = append(newFileNames, fileName)
-		}
-	}
-
-	// ONLY remove files prefixed with the local UUID. This is import when handling remote WalFile locations and
-	// enables us to handle distributed merge without any distrbuted file mutex mechanisms (etc).
-	if fullSync {
-		localReg, _ := regexp.Compile(fmt.Sprintf(filePathPattern, fmt.Sprintf("%v[0-9]+", w.uuid)))
-		for _, fileName := range allFileNames {
-			if localReg.MatchString(fileName) {
-				defer wf.removeFile(fileName)
-			}
-		}
-	}
-
-	// Grab any pending logs and join with new local events early for the comparison below
-	pendingLogs := merge(w.pendingRemoteLogs[wf], w.log)
-
-	// For partial syncs, if no new files were found, (and there are no new local logs to flush in
-	// w.log) we've already processed all of them, so return early
-	// However, this does NOT apply in an existing local/new remote scenario. In this case, we need to
-	// flush all local changes up to the remote as per a full sync.
-	if !fullSync && len(*pendingLogs) == 0 && len(newFileNames) == 0 && len(allFileNames) > 0 {
-		return w.fullLog, nil
-	}
 
 	newMergedWal := []EventLog{}
-	// Iterate over the new files and generate a new log of events
-	for _, fileName := range newFileNames {
-		newWal, err := wf.generateLogFromFile(fileName)
-		if err != nil {
-			log.Fatal(err)
+	for _, fileName := range allFileNames {
+		if !wf.isPartialWalProcessed(fileName) {
+			newWal, err := wf.generateLogFromFile(fileName)
+			if err != nil {
+				log.Fatal(err)
+			}
+			newMergedWal = *(merge(&newMergedWal, &newWal))
+			// Add to the processed cache
+			wf.setProcessedPartialWals(fileName)
 		}
-		newMergedWal = *(merge(&newMergedWal, &newWal))
-		// Add to the processed cache
-		w.processedPartialWals[wf][fileName] = struct{}{}
 	}
-	processedWithNewEvents := *(merge(w.log, merge(w.fullLog, &newMergedWal)))
+	return &newMergedWal, nil
+}
 
-	//
-	// SAVE AND FLUSH TO A SINGLE WAL
-	//
-
-	// On full sync, we want to flush the product of all merged logs to a new file as we're effectively
-	// aggregating all. We then remove all other files
-	var eventsToFlush []EventLog
-	// If the remote is empty but we have any logs locally (e.g. existing local/new remote scenarios)
-	// we need to flush up all changes as per the fullSync
-	if fullSync || len(allFileNames) == 0 {
-		//eventsToFlush = *(compact(&processedWithNewEvents))
-		eventsToFlush = processedWithNewEvents
-	} else {
-		// Grab any aggregated pending local changes
-		eventsToFlush = *pendingLogs
-		w.pendingRemoteLogs[wf] = &[]EventLog{}
+func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
+	var b bytes.Buffer
+	// Write the schema ID
+	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	// The only time we don't want to flush is when eventsToFlush is empty and we're not doing a full sync
-	if fullSync || len(eventsToFlush) > 0 {
-		var b bytes.Buffer
-		// Write the schema ID
-		err = binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
-		if err != nil {
-			log.Fatal(err)
+	for _, item := range *wal {
+		lenLine := uint64(len([]byte(item.line)))
+		var lenNote uint64
+		if item.note != nil {
+			lenNote = uint64(len(*(item.note)))
 		}
+		i := walItemSchema1{
+			UUID:                       item.uuid,
+			TargetUUID:                 item.targetUUID,
+			ListItemCreationTime:       item.listItemCreationTime,
+			TargetListItemCreationTime: item.targetListItemCreationTime,
+			EventTime:                  item.unixNanoTime,
+			EventType:                  item.eventType,
+			LineLength:                 lenLine,
+			NoteLength:                 lenNote,
+		}
+		data := []interface{}{
+			i,
+			[]byte(item.line),
+		}
+		if item.note != nil {
+			data = append(data, item.note)
+		}
+		for _, v := range data {
+			err = binary.Write(&b, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+				log.Fatal(err)
+			}
+		}
+	}
+	return &b, nil
+}
 
-		for _, item := range eventsToFlush {
-			lenLine := uint64(len([]byte(item.line)))
-			var lenNote uint64
-			if item.note != nil {
-				lenNote = uint64(len(*(item.note)))
-			}
-			i := walItemSchema1{
-				UUID:                       item.uuid,
-				TargetUUID:                 item.targetUUID,
-				ListItemCreationTime:       item.listItemCreationTime,
-				TargetListItemCreationTime: item.targetListItemCreationTime,
-				EventTime:                  item.unixNanoTime,
-				EventType:                  item.eventType,
-				LineLength:                 lenLine,
-				NoteLength:                 lenNote,
-			}
-			data := []interface{}{
-				i,
-				[]byte(item.line),
-			}
-			if item.note != nil {
-				data = append(data, item.note)
-			}
-			for _, v := range data {
-				err = binary.Write(&b, binary.LittleEndian, v)
-				if err != nil {
-					fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-					log.Fatal(err)
-				}
+func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+	var b bytes.Buffer
+	// Write the schema ID
+	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, item := range *el {
+		lenLine := uint64(len([]byte(item.line)))
+		var lenNote uint64
+		if item.note != nil {
+			lenNote = uint64(len(*(item.note)))
+		}
+		i := walItemSchema1{
+			UUID:                       item.uuid,
+			TargetUUID:                 item.targetUUID,
+			ListItemCreationTime:       item.listItemCreationTime,
+			TargetListItemCreationTime: item.targetListItemCreationTime,
+			EventTime:                  item.unixNanoTime,
+			EventType:                  item.eventType,
+			LineLength:                 lenLine,
+			NoteLength:                 lenNote,
+		}
+		data := []interface{}{
+			i,
+			[]byte(item.line),
+		}
+		if item.note != nil {
+			data = append(data, item.note)
+		}
+		for _, v := range data {
+			err = binary.Write(&b, binary.LittleEndian, v)
+			if err != nil {
+				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+				log.Fatal(err)
 			}
 		}
-		randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), fmt.Sprintf("%v%v", w.uuid, generateUUID()))
-		err = wf.flush(&b, randomWal)
+	}
+
+	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
+	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
+	go func(wf WalFile) {
+		err := wf.flush(&b, randomWal)
 		if err != nil {
 			log.Fatal(err)
 		}
 		// Add it straight to the cache to avoid processing it in the future
-		w.processedPartialWals[wf][randomWal] = struct{}{}
+		wf.setProcessedPartialWals(randomWal)
+	}(wf)
+
+	return nil
+}
+
+// gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
+// to delete the old ones
+func (w *Wal) gather(wf WalFile) error {
+	//filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
+	originFiles, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	return &processedWithNewEvents, nil
+	// If there's only 1 file, there's no point gathering them, so return
+	if len(originFiles) <= 1 {
+		return nil
+	}
+
+	// Gather origin files
+	mergedWal := []EventLog{}
+	for _, fileName := range originFiles {
+		wal, err := wf.generateLogFromFile(fileName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		mergedWal = *(merge(&mergedWal, &wal))
+	}
+
+	// Flush the gathered Wal
+	if err := w.push(&mergedWal, wf); err != nil {
+		return err
+	}
+
+	// Schedule a delete on the files
+	for _, fileName := range originFiles {
+		// TODO proper error handling here too
+		wf.removeFile(fileName)
+	}
+
+	return nil
+}
+
+func (w *Wal) startSync(walChan chan *[]EventLog) error {
+	// Run an initial blocking load from the local walfile (and put onto channel for immediate
+	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
+	// due to cache, so small amount of duplicated code required).
+	var localEl *[]EventLog
+	var err error
+	if localEl, err = pull(w.localWalFile); err != nil {
+		return err
+	}
+	for _, wf := range w.walFiles {
+		if wf != w.localWalFile {
+			go func() { w.push(localEl, wf) }()
+		}
+	}
+	go func() {
+		walChan <- localEl
+	}()
+
+	// Run a concurrent/synchronous pull on all walfiles individually on app start
+	// This also gathers any new Wals that may have appeared locally whilst the app was off
+	// Push these to all walfiles
+	startUpWalChan := make(chan *[]EventLog)
+
+	// The following loop watches for any wals pulled on load within the first go func in the
+	// main walfile loop below
+	go func() {
+		for {
+			el := <-startUpWalChan
+			for _, wf := range w.walFiles {
+				go func() { w.push(el, wf) }()
+			}
+		}
+	}()
+
+	for _, wf := range w.walFiles {
+		// Pull all wals on startup into a channel to push to all walfiles in the loop above
+		// No need to exclude localWalFile as processedPartialWals will deal with that
+		go func(wf WalFile) error {
+			var el *[]EventLog
+			if el, err = pull(wf); err != nil {
+				return err
+			}
+			startUpWalChan <- el
+			return nil
+		}(wf)
+
+		// Schedule async pull from walfiles individually
+		go func(wf WalFile) error {
+			for {
+				wf.awaitPull()
+				var el *[]EventLog
+				if el, err = pull(wf); err != nil {
+					return err
+				}
+				walChan <- el
+				// We want the local walfile to be a complete source of truth,
+				// so every time we pull from any _other_ walfile, schedule a push
+				// to the local one
+				if wf != w.localWalFile && len(*el) > 0 {
+					w.push(el, w.localWalFile)
+				}
+			}
+		}(wf)
+
+		// Schedule gather tasks
+		go func(wf WalFile) error {
+			for {
+				wf.awaitGather()
+				if err := w.gather(wf); err != nil {
+					return err
+				}
+			}
+		}(wf)
+	}
+
+	// Push to all WalFiles
+	go func() {
+		for {
+			el := <-w.eventsChan
+			// Push same events to all WalFiles
+			for _, wf := range w.walFiles {
+				go func() { w.push(&el, wf) }()
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (w *Wal) finish() error {
+	for _, wf := range w.walFiles {
+		wf.stopTickers()
+	}
+	return nil
 }
