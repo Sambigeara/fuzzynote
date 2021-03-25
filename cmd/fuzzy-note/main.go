@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
-	"time"
+	//"time"
 	//"runtime"
 
 	"github.com/ardanlabs/conf"
@@ -38,7 +38,7 @@ func main() {
 		Editor              string `conf:"default:vim"`
 		LocalRefreshFreqMs  uint16 `conf:"default:1000"`
 		RemoteRefreshFreqMs uint16 `conf:"default:2000"`
-		FullRefreshFreqMs   uint16 `conf:"default:10000"`
+		GatherRefreshFreqMs uint16 `conf:"default:10000"`
 	}
 
 	// Instantiate default root direct in case it's not set
@@ -88,101 +88,73 @@ func main() {
 		log.Fatalf("main : Parsing Config : %v", err)
 	}
 
-	// Make sure the root directory exists
-	os.Mkdir(cfg.Root, os.ModePerm)
+	// Create and register local app WalFile (based in root directory)
+	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.GatherRefreshFreqMs, cfg.Root)
 
-	localWalFiles := []service.WalFile{service.NewLocalWalFile(cfg.Root)}
-	remoteWalFiles := []service.WalFile{}
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile)
+	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
+	// Wal independently (there are certain operations that require us to only target the local walfile rather
+	// that all).
+	// We still need to register it as we all all walfiles in the next line.
+	listRepo.RegisterWalFile(localWalFile)
 
 	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
 		s3FileWal := service.NewS3FileWal(
+			cfg.RemoteRefreshFreqMs,
+			cfg.GatherRefreshFreqMs,
 			cfg.S3.Key,
 			cfg.S3.Secret,
 			cfg.S3.Bucket,
 			cfg.S3.Prefix,
 			cfg.Root,
 		)
-		remoteWalFiles = append(remoteWalFiles, s3FileWal)
+		listRepo.RegisterWalFile(s3FileWal)
 	}
-	allWalFiles := append(localWalFiles, remoteWalFiles...)
 
-	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, allWalFiles)
+	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
+	// loop, and only add to channel for processing if there's any changes that need syncing
+	walChan := make(chan *[]service.EventLog)
 
-	// List instantiation
-	err = listRepo.Load(localWalFiles)
+	err = listRepo.Start(walChan)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	partialRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.LocalRefreshFreqMs))
-	remoteRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.RemoteRefreshFreqMs))
-	fullRefreshTicker := time.NewTicker(time.Millisecond * time.Duration(cfg.FullRefreshFreqMs))
-
+	// Create terminal client
 	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
-	// Manually but asynchronously schedule a fullRefresh to run on start
-	onStart := make(chan bool, 1)
-	onStart <- true
-
-	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
-	// loop, and only add to channel for processing if there's any changes that need syncing
-	replayEvts := make(chan *[]service.EventLog)
-	go func() {
-		for {
-			var wfs []service.WalFile
-			fullSync := false
-
-			select {
-			case <-partialRefreshTicker.C:
-				wfs = localWalFiles
-			case <-remoteRefreshTicker.C:
-				wfs = remoteWalFiles
-			case <-onStart:
-			case <-fullRefreshTicker.C:
-				wfs = allWalFiles
-				fullSync = true
-			}
-			term.S.PostEvent(&client.RefreshKey{})
-
-			if fullLog, err := listRepo.Refresh(wfs, fullSync); err == nil {
-				if len(*fullLog) > 0 {
-					replayEvts <- fullLog
-				}
-			} else {
-				log.Fatalf("Failed on sync: %v", err)
-			}
-		}
-	}()
-
-	// We retrieve keypresses from tcell through a blocking function call which can't be used
-	// in the main select below
+	// We need atomicity between wal pull/replays and handling of keypress events, as we need
+	// events to operate on a predictable state (rather than a keypress being applied to state
+	// that differs from when the user intended due to async updates).
+	// Therefore, we consume tcell events into a channel, and consume from it in the same loop
+	// as the pull/replay loop.
 	keyPressEvts := make(chan tcell.Event)
 	go func() {
 		for {
 			select {
-			case fullLog := <-replayEvts:
-				if err := listRepo.Replay(fullLog); err != nil {
+			case partialWal := <-walChan:
+				if err := listRepo.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
+				term.S.PostEvent(&client.RefreshKey{})
 			case ev := <-keyPressEvts:
 				cont, err := term.HandleKeyEvent(ev)
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
-					err := listRepo.Save(allWalFiles)
+					err := listRepo.Stop()
 					if err != nil {
 						log.Fatal(err)
 					}
-					partialRefreshTicker.Stop()
-					remoteRefreshTicker.Stop()
-					fullRefreshTicker.Stop()
 					os.Exit(0)
 				}
 			}
 		}
 	}()
 
+	// This is the main loop of operation in the app.
+	// We consume all term events into our own channel (handled above).
 	for {
 		keyPressEvts <- term.S.PollEvent()
 	}
