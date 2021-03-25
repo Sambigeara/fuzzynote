@@ -96,11 +96,16 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
 	if err != nil {
 		// If the file has been removed, skip, as it means another process has already merged
 		// and deleted this one
-		// TODO there's a chance a file will have been deleted by the cleanup task. If this is the
-		// case we should just fail silently and return.
-		if _, ok := err.(awserr.Error); !ok {
-			// process SDK error
-			exitErrorf("Unable to download item %q, %v", fileName, err)
+
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			//case "NoSuchKey": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
+			//    return []EventLog{}, nil
+			case s3.ErrCodeNoSuchKey:
+				return []EventLog{}, nil
+			default:
+				exitErrorf("Unable to download item %q, %v", fileName, err)
+			}
 		}
 	}
 
@@ -117,8 +122,17 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	// Delete the item
 	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
 	if err != nil {
-		// TODO if file not exists, return silently
-		exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			//case "NotFound": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
+			//    return nil
+			case s3.ErrCodeNoSuchKey:
+				return nil
+			default:
+				exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
+			}
+		}
+
 	}
 
 	err = wf.svc.WaitUntilObjectNotExists(&s3.HeadObjectInput{

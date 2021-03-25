@@ -11,10 +11,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sync"
+	"time"
+
+	//"sync"
 	//"regexp"
 	//"runtime"
-	"time"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -686,6 +687,11 @@ func (w *Wal) gather(wf WalFile) error {
 		log.Fatal(err)
 	}
 
+	// If there's only 1 file, there's no point gathering them, so return
+	if len(originFiles) <= 1 {
+		return nil
+	}
+
 	// Gather origin files
 	mergedWal := []EventLog{}
 	for _, fileName := range originFiles {
@@ -700,18 +706,18 @@ func (w *Wal) gather(wf WalFile) error {
 	// TODO actual proper error handling in push
 	// Use a WaitGroup so we can run all pushes async but then assert on completion before deleting files
 	// from origin walfile
-	var wg sync.WaitGroup
-	for _, tempWf := range w.walFiles {
-		wg.Add(1)
-		go func(tempWf WalFile) error {
-			if err := w.push(&mergedWal, tempWf); err != nil {
-				return err
-			}
-			wg.Done()
-			return nil
-		}(tempWf)
+	//var wg sync.WaitGroup
+	//for _, tempWf := range w.walFiles {
+	//    wg.Add(1)
+	//    go func(tempWf WalFile) error {
+	if err := w.push(&mergedWal, wf); err != nil {
+		return err
 	}
-	wg.Wait()
+	//wg.Done()
+	//return nil
+	//    }(tempWf)
+	//}
+	//wg.Wait()
 
 	// Schedule a delete on the files
 	for _, fileName := range originFiles {
@@ -723,8 +729,34 @@ func (w *Wal) gather(wf WalFile) error {
 }
 
 func (w *Wal) startSync(walChan chan *[]EventLog) error {
+	// Run a concurrent/synchronous pull on all walfiles individually on app start
+	// This also gathers any new Wals that may have appeared locally whilst the app was off
+	// Push these to all walfiles
+	startUpWalChan := make(chan *[]EventLog)
+
+	// The following loop watches for any wals pulled on load within the first go func in the
+	// main walfile loop below
+	go func() {
+		for {
+			el := <-startUpWalChan
+			for _, wf := range w.walFiles {
+				go func(wf WalFile) {
+					w.push(el, wf)
+				}(wf)
+			}
+		}
+	}()
+
 	for _, wf := range w.walFiles {
-		// Pull from WalFiles individually
+		// Pull all wals on startup into a channel to push to all walfiles in the loop above
+		go func(wf WalFile) error {
+			if err := pull(wf, startUpWalChan); err != nil {
+				return err
+			}
+			return nil
+		}(wf)
+
+		// Schedule async pull from walfiles individually
 		go func(wf WalFile) error {
 			for {
 				wf.awaitPull()
