@@ -731,41 +731,14 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	if localEl, err = pull(w.localWalFile); err != nil {
 		return err
 	}
+	go func() { walChan <- localEl }()
 	for _, wf := range w.walFiles {
 		if wf != w.localWalFile {
 			go func(wf WalFile) { w.push(localEl, wf) }(wf)
 		}
 	}
-	go func() { walChan <- localEl }()
-
-	// Run a concurrent/synchronous pull on all walfiles individually on app start
-	// This also gathers any new Wals that may have appeared locally whilst the app was off
-	// Push these to all walfiles
-	startUpWalChan := make(chan *[]EventLog)
-
-	// The following loop watches for any wals pulled on load within the first go func in the
-	// main walfile loop below
-	go func() {
-		for {
-			el := <-startUpWalChan
-			for _, wf := range w.walFiles {
-				go func(wf WalFile) { w.push(el, wf) }(wf)
-			}
-		}
-	}()
 
 	for _, wf := range w.walFiles {
-		// Pull all wals on startup into a channel to push to all walfiles in the loop above
-		// No need to exclude localWalFile as processedPartialWals will deal with that
-		go func(wf WalFile) error {
-			var el *[]EventLog
-			if el, err = pull(wf); err != nil {
-				return err
-			}
-			startUpWalChan <- el
-			return nil
-		}(wf)
-
 		// Schedule async pull from walfiles individually
 		go func(wf WalFile) error {
 			for {
@@ -777,7 +750,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 				walChan <- el
 				// We want the local walfile to be a complete source of truth,
 				// so every time we pull from any _other_ walfile, schedule a push
-				// to the local one
+				// to the local one.
 				if wf != w.localWalFile && len(*el) > 0 {
 					w.push(el, w.localWalFile)
 				}
