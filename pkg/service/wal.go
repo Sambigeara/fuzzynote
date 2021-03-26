@@ -637,7 +637,7 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	}
 
 	// Compact the Wal
-	el = compact(el)
+	//el = compact(el)
 
 	for _, item := range *el {
 		lenLine := uint64(len([]byte(item.line)))
@@ -733,12 +733,10 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 	for _, wf := range w.walFiles {
 		if wf != w.localWalFile {
-			go func() { w.push(localEl, wf) }()
+			go func(wf WalFile) { w.push(localEl, wf) }(wf)
 		}
 	}
-	go func() {
-		walChan <- localEl
-	}()
+	go func() { walChan <- localEl }()
 
 	// Run a concurrent/synchronous pull on all walfiles individually on app start
 	// This also gathers any new Wals that may have appeared locally whilst the app was off
@@ -751,7 +749,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		for {
 			el := <-startUpWalChan
 			for _, wf := range w.walFiles {
-				go func() { w.push(el, wf) }()
+				go func(wf WalFile) { w.push(el, wf) }(wf)
 			}
 		}
 	}()
@@ -803,7 +801,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			el := <-w.eventsChan
 			// Push same events to all WalFiles
 			for _, wf := range w.walFiles {
-				go func() { w.push(&el, wf) }()
+				go func(wf WalFile) { w.push(&el, wf) }(wf)
 			}
 		}
 	}()
