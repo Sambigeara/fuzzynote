@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
+	"mvdan.cc/xurls/v2"
 
 	"fuzzy-note/pkg/service"
 )
@@ -524,6 +526,12 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			// Copy functionality
 			if relativeY != reservedTopLines-1 {
 				t.copiedItem = t.curItem
+				// Attempt to match any urls in the line.
+				// If present, copy the first to the system clipboard.
+				rxRelaxed := xurls.Relaxed()
+				if url := rxRelaxed.FindString(t.curItem.Line); url != "" {
+					clipboard.WriteAll(url)
+				}
 			}
 		case tcell.KeyCtrlP:
 			// Paste functionality
