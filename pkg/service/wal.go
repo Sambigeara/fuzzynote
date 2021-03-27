@@ -685,10 +685,15 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
 func (w *Wal) gather(wf WalFile) error {
+	// Handle only origin wals
+	// TODO I think switching to this breaks other parts of the syncing process, use with caution
 	//filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
 	//originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+
+	// Handle ALL wals
 	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
 	originFiles, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -748,12 +753,6 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					return err
 				}
 				walChan <- el
-				// We want the local walfile to be a complete source of truth,
-				// so every time we pull from any _other_ walfile, schedule a push
-				// to the local one.
-				if wf != w.localWalFile && len(*el) > 0 {
-					w.push(el, w.localWalFile)
-				}
 			}
 		}(wf)
 
