@@ -92,7 +92,7 @@ func main() {
 	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.GatherRefreshFreqMs, cfg.Root)
 
 	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile)
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, cfg.RemoteRefreshFreqMs)
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
 	// Wal independently (there are certain operations that require us to only target the local walfile rather
 	// that all).

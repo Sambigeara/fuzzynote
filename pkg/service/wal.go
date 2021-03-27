@@ -31,27 +31,27 @@ const latestWalSchemaID uint16 = 1
 type Wal struct {
 	uuid              uuid
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
-	fullLog           *[]EventLog // fullLog is a historical log of events
-	listItemTracker   map[string]*ListItem
 	latestWalSchemaID uint16
+	listItemTracker   map[string]*ListItem
 	localWalFile      *localWalFile
 	walFiles          []WalFile
-	eventsChan        chan []EventLog
+	eventsChan        chan EventLog
+	pushTicker        *time.Ticker
 }
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-func NewWal(localWalFile *localWalFile) *Wal {
+func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
 	wal := Wal{
 		uuid:              generateUUID(),
-		latestWalSchemaID: latestWalSchemaID,
 		log:               &[]EventLog{},
-		fullLog:           &[]EventLog{},
+		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		eventsChan:        make(chan []EventLog),
 		localWalFile:      localWalFile,
+		eventsChan:        make(chan EventLog),
+		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
 	return &wal
 }
@@ -770,11 +770,28 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 
 	// Push to all WalFiles
 	go func() {
+		el := []EventLog{}
 		for {
-			el := <-w.eventsChan
-			// Push same events to all WalFiles
-			for _, wf := range w.walFiles {
-				go func(wf WalFile) { w.push(&el, wf) }(wf)
+			// The events chan contains single events. We want to aggregate them between intervals
+			// and then emit them in batches, for great efficiency gains.
+			select {
+			case e := <-w.eventsChan:
+				// Consume off of the channel and add to a ephemeral log
+				el = append(el, e)
+			case <-w.pushTicker.C:
+				// On ticks, flush what we've aggregated to all walfiles, and then reset the
+				// ephemeral log. If empty, skip.
+				if len(el) > 0 {
+					// We pass by reference, so we'll need to create a copy prior to sending to `push`
+					// otherwise the underlying el may change before `push` has a chance to process it
+					// If we start passing by value later on, this won't be required (as go will pass
+					// copies by default, I think).
+					elCopy := el
+					for _, wf := range w.walFiles {
+						go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
+					}
+					el = []EventLog{}
+				}
 			}
 		}
 	}()
@@ -793,6 +810,8 @@ func (w *Wal) finish() error {
 	for _, fileName := range localFileNames {
 		w.localWalFile.removeFile(fileName)
 	}
+
+	w.pushTicker.Stop()
 
 	for _, wf := range w.walFiles {
 		wf.stopTickers()
