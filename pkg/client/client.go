@@ -182,7 +182,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update(t.curItem.Line, &newDat, t.curY-reservedTopLines)
+	err = t.db.Update("", &newDat, t.curY-reservedTopLines)
 	if err != nil {
 		log.Fatal(err)
 	}
