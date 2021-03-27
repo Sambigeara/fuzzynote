@@ -273,7 +273,7 @@ func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
 			style = t.style
 		}
 
-		line := *r.Line
+		line := r.Line
 
 		// Truncate the full search string from any lines matching the entire thing,
 		// ignoring search operators
@@ -418,8 +418,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// match but not have the prefix truncated
 	offsetX := t.horizOffset + t.curX
 	lenHiddenMatchPrefix := 0
-	if t.curItem != nil && t.curItem.Line != nil &&
-		strings.HasPrefix(strings.ToLower(*t.curItem.Line), t.hiddenMatchPrefix) {
+	if t.curItem != nil &&
+		strings.HasPrefix(strings.ToLower(t.curItem.Line), t.hiddenMatchPrefix) {
 		lenHiddenMatchPrefix = len([]byte(t.hiddenMatchPrefix))
 	}
 	offsetX += lenHiddenMatchPrefix
@@ -456,7 +456,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 					}
 				}
 				newString := t.getNewLinePrefix()
-				err = t.db.Add(&newString, nil, relativeY)
+				err = t.db.Add(newString, nil, relativeY)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -497,11 +497,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				t.curX = t.getLenSearchBox()
 			} else {
 				// TODO
-				var lenLine int
-				if t.curItem.Line != nil {
-					lenLine = len([]rune(*t.curItem.Line))
-				}
-				t.curX = lenLine
+				t.curX = len([]rune(t.curItem.Line))
 			}
 			t.horizOffset = t.curX - t.w
 		case tcell.KeyCtrlV:
@@ -544,7 +540,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				if _, ok := t.selectedItems[relativeY-reservedTopLines]; ok {
 					delete(t.selectedItems, relativeY-reservedTopLines)
 				} else {
-					t.selectedItems[relativeY-reservedTopLines] = *t.matches[relativeY-reservedTopLines].Line
+					t.selectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines].Line
 				}
 			}
 		case tcell.KeyTab:
@@ -590,14 +586,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			} else {
 				// If cursor in 0 position and current line is empty, delete current line and go
 				// to end of previous line (if present)
-				var newLine []rune
-				if t.curItem.Line != nil {
-					newLine = []rune(*t.curItem.Line)
-				}
+				newLine := []rune(t.curItem.Line)
 				if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 					newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-					strLine := string(newLine)
-					err = t.db.Update(&strLine, nil, relativeY-reservedTopLines)
+					err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -639,14 +631,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			} else {
 				// If cursor in 0 position and current line is empty, delete current line and go
 				// to end of previous line (if present)
-				var newLine []rune
-				if t.curItem.Line != nil {
-					newLine = []rune(*t.curItem.Line)
-				}
+				newLine := []rune(t.curItem.Line)
 				if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 					newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-					strLine := string(newLine)
-					err = t.db.Update(&strLine, nil, relativeY-reservedTopLines)
+					err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -715,10 +703,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				}
 				posDiff[0]++
 			} else {
-				var newLine []rune
-				if t.curItem.Line != nil {
-					newLine = []rune(*t.curItem.Line)
-				}
+				newLine := []rune(t.curItem.Line)
 				// Insert characters at position
 				if len(newLine) == 0 || len(newLine) == offsetX {
 					newLine = append(newLine, ev.Rune())
@@ -727,7 +712,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				}
 				oldLen := len(newLine)
 				parsedNewLine := parseOperatorGroups(string(newLine))
-				err = t.db.Update(&parsedNewLine, nil, relativeY-reservedTopLines)
+				err = t.db.Update(parsedNewLine, nil, relativeY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -855,15 +840,11 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			}
 			t.curX = 0 // Prevent index < 0
 		} else {
-			var lenLine int
-			if t.curItem.Line != nil {
-				lenLine = len([]rune(*t.curItem.Line))
-			}
-			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < lenLine {
+			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 				t.horizOffset++
 			}
-			newXIdx = min(newXIdx, lenLine-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
-			t.curX = min(newXIdx, t.w-1)                                       // Prevent going out of range of the page
+			newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
+			t.curX = min(newXIdx, t.w-1)                                                           // Prevent going out of range of the page
 		}
 	}
 

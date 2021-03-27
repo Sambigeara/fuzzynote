@@ -25,9 +25,9 @@ type undoEventLog struct {
 	eventType                  eventType
 	listItemCreationTime       int64
 	targetListItemCreationTime int64
-	undoLine                   *string
+	undoLine                   string
 	undoNote                   *[]byte
-	redoLine                   *string
+	redoLine                   string
 	redoNote                   *[]byte
 }
 
@@ -41,15 +41,15 @@ type DbEventLogger struct {
 func NewDbEventLogger() *DbEventLogger {
 	el := undoEventLog{
 		eventType: nullEvent,
-		undoLine:  nil,
+		undoLine:  "",
 		undoNote:  nil,
-		redoLine:  nil,
+		redoLine:  "",
 		redoNote:  nil,
 	}
 	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e eventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine *string, oldNote *[]byte, newLine *string, newNote *[]byte) error {
+func (r *DBListRepo) addUndoLog(e eventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
 	ev := undoEventLog{
 		uuid:                       originUUID,
 		targetUUID:                 targetUUID,
