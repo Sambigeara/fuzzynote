@@ -155,7 +155,11 @@ func (t *Terminal) openEditorSession() error {
 
 	defer os.Remove(tmpfile.Name())
 
-	if _, err := tmpfile.Write(*t.curItem.Note); err != nil {
+	var note []byte
+	if t.curItem.Note != nil {
+		note = *t.curItem.Note
+	}
+	if _, err := tmpfile.Write(note); err != nil {
 		log.Fatal(err)
 		return err
 	}
@@ -585,7 +589,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				newLine := []rune(t.curItem.Line)
 				if t.horizOffset+t.curX > 0 && len(newLine) > 0 {
 					newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-					err = t.db.Update(string(newLine), t.curItem.Note, relativeY-reservedTopLines)
+					err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -630,8 +634,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				newLine := []rune(t.curItem.Line)
 				if len(newLine) > 0 && t.horizOffset+t.curX+lenHiddenMatchPrefix < len(newLine) {
 					newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-					//t.curItem.Line, err = t.db.Update(string(newLine), t.curItem.Note, relativeY-reservedTopLines)
-					err = t.db.Update(string(newLine), t.curItem.Note, relativeY-reservedTopLines)
+					err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -709,7 +712,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				}
 				oldLen := len(newLine)
 				parsedNewLine := parseOperatorGroups(string(newLine))
-				err = t.db.Update(parsedNewLine, t.curItem.Note, relativeY-reservedTopLines)
+				err = t.db.Update(parsedNewLine, nil, relativeY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
