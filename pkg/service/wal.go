@@ -776,7 +776,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			// and then emit them in batches, for great efficiency gains.
 			select {
 			case e := <-w.eventsChan:
-				// Consume off of the channel and add to a ephemeral log
+				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
 			case <-w.pushTicker.C:
 				// On ticks, flush what we've aggregated to all walfiles, and then reset the
