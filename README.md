@@ -47,8 +47,9 @@ Examples:
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
 - `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim
-- `Ctrl-c`: Copy current item into buffer
+- `Ctrl-c`: Copy current item into buffer. If there are any URLs in the string, copy the first into the system clipboard
 - `Ctrl-p`: Paste current item from buffer below current position
+- `Ctrl-_`: If there are any URLs in the string, open the first using the default browser
 
 ## Token operators
 

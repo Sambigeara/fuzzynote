@@ -6,13 +6,16 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
+	"mvdan.cc/xurls/v2"
 
 	"fuzzy-note/pkg/service"
 )
@@ -407,6 +410,32 @@ func (t *Terminal) getNewLinePrefix() string {
 	return newString
 }
 
+func matchFirstURL(line string) string {
+	// Attempt to match any urls in the line.
+	// If present, copy the first to the system clipboard.
+	rxRelaxed := xurls.Relaxed()
+	return rxRelaxed.FindString(line)
+}
+
+// open opens the specified URL in the default browser of the user.
+// https://stackoverflow.com/a/39324149
+func openURL(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start"}
+	case "darwin":
+		cmd = "open"
+	default: // "linux", "freebsd", "openbsd", "netbsd"
+		cmd = "xdg-open"
+	}
+	args = append(args, url)
+	return exec.Command(cmd, args...).Start()
+}
+
 func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
@@ -524,6 +553,15 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			// Copy functionality
 			if relativeY != reservedTopLines-1 {
 				t.copiedItem = t.curItem
+				if url := matchFirstURL(t.curItem.Line); url != "" {
+					clipboard.WriteAll(url)
+				}
+			}
+		case tcell.KeyCtrlUnderscore:
+			if relativeY != reservedTopLines-1 {
+				if url := matchFirstURL(t.curItem.Line); url != "" {
+					openURL(url)
+				}
 			}
 		case tcell.KeyCtrlP:
 			// Paste functionality
