@@ -22,8 +22,8 @@ const (
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Add(line string, note *[]byte, idx int) error
-	Update(line string, note *[]byte, idx int) error
+	Add(line *string, note *[]byte, idx int) error
+	Update(line *string, note *[]byte, idx int) error
 	Delete(idx int) error
 	MoveUp(idx int) (bool, error)
 	MoveDown(idx int) (bool, error)
@@ -49,7 +49,7 @@ type DBListRepo struct {
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	// TODO these can all be private now
-	Line         string
+	Line         *string
 	Note         *[]byte
 	IsHidden     bool
 	originUUID   uuid
@@ -87,7 +87,7 @@ func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uin
 	}
 }
 
-func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
+func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine *string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
 	el := EventLog{
 		eventType:                  e,
 		uuid:                       originUUID,
@@ -106,7 +106,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Add(line *string, note *[]byte, idx int) error {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
 		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
@@ -132,7 +132,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Update(line *string, note *[]byte, idx int) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
 		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
@@ -159,7 +159,7 @@ func (r *DBListRepo) Delete(idx int) error {
 		targetCreationTime = listItem.child.creationTime
 		targetUUID = listItem.child.originUUID
 	}
-	r.processEventLog(deleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.processEventLog(deleteEvent, listItem.creationTime, 0, nil, nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(deleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
 	return nil
 }
@@ -187,10 +187,10 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 		targetUUID = listItem.child.originUUID
 	}
 
-	r.processEventLog(moveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.processEventLog(moveUpEvent, listItem.creationTime, targetCreationTime, nil, nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if targetCreationTime != 0 {
-		r.addUndoLog(moveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		r.addUndoLog(moveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, nil, nil, nil, nil)
 		return true, nil
 	}
 	return false, nil
@@ -215,10 +215,10 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 		targetUUID = listItem.parent.originUUID
 	}
 
-	r.processEventLog(moveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.processEventLog(moveDownEvent, listItem.creationTime, targetCreationTime, nil, nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if targetCreationTime != 0 {
-		r.addUndoLog(moveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		r.addUndoLog(moveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, nil, nil, nil, nil)
 		return true, nil
 	}
 	return false, nil
@@ -235,12 +235,12 @@ func (r *DBListRepo) ToggleVisibility(idx int) error {
 	var evType eventType
 	if listItem.IsHidden {
 		evType = showEvent
-		r.addUndoLog(showEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		r.addUndoLog(showEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, nil, nil, nil, nil)
 	} else {
 		evType = hideEvent
-		r.addUndoLog(hideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		r.addUndoLog(hideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, nil, nil, nil, nil)
 	}
-	r.processEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.processEventLog(evType, listItem.creationTime, 0, nil, nil, listItem.originUUID, uuid(0))
 	return nil
 }
 
@@ -272,7 +272,7 @@ func (r *DBListRepo) Redo() error {
 
 // MatchItem holds all data required by the client
 type MatchItem struct {
-	Line     string
+	Line     *string
 	Note     *[]byte
 	IsHidden bool
 	Offset   int
@@ -307,12 +307,12 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 			for _, group := range keys {
 				// Match any items with empty Lines (this accounts for lines added when search is active)
 				// "active" listItems pass automatically to allow mid-search item editing
-				if len(cur.Line) == 0 {
+				if len(*cur.Line) == 0 {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
 				pattern, nChars := r.GetMatchPattern(group)
-				if !isMatch(group[nChars:], cur.Line, pattern) {
+				if !isMatch(group[nChars:], *cur.Line, pattern) {
 					matched = false
 					break
 				}

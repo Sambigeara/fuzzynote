@@ -87,7 +87,7 @@ type EventLog struct {
 	targetListItemCreationTime int64
 	unixNanoTime               int64
 	eventType                  eventType
-	line                       string
+	line                       *string
 	note                       *[]byte
 }
 
@@ -271,7 +271,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	return root, item, err
 }
 
-func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (w *Wal) add(root *ListItem, creationTime int64, line *string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -301,7 +301,7 @@ func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte,
 }
 
 // Update will update the line or note of an existing ListItem
-func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
+func (w *Wal) update(line *string, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	// We currently separate Line and Note updates even though they use the same interface
 	// This is to reduce wal size and also solves some race conditions for long held open
 	// notes, etc
@@ -396,12 +396,15 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 	el.targetUUID = item.TargetUUID
 	el.eventType = item.EventType
 
-	line := make([]byte, item.LineLength)
-	err = binary.Read(b, binary.LittleEndian, &line)
-	if err != nil {
-		return nil, err
+	if item.LineLength > 0 {
+		line := make([]byte, item.LineLength)
+		err = binary.Read(b, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		strLine := string(line)
+		el.line = &strLine
 	}
-	el.line = string(line)
 
 	if item.NoteLength > 0 {
 		note := make([]byte, item.NoteLength)
@@ -587,48 +590,6 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	return &newMergedWal, nil
 }
 
-func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
-	var b bytes.Buffer
-	// Write the schema ID
-	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, item := range *wal {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema1{
-			UUID:                       item.uuid,
-			TargetUUID:                 item.targetUUID,
-			ListItemCreationTime:       item.listItemCreationTime,
-			TargetListItemCreationTime: item.targetListItemCreationTime,
-			EventTime:                  item.unixNanoTime,
-			EventType:                  item.eventType,
-			LineLength:                 lenLine,
-			NoteLength:                 lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(&b, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-			}
-		}
-	}
-	return &b, nil
-}
-
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	var b bytes.Buffer
 	// Write the schema ID
@@ -641,8 +602,10 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	//el = compact(el)
 
 	for _, item := range *el {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
+		var lenNote, lenLine uint64
+		if item.line != nil {
+			lenLine = uint64(len([]byte(*(item.line))))
+		}
 		if item.note != nil {
 			lenNote = uint64(len(*(item.note)))
 		}
@@ -658,7 +621,10 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 		}
 		data := []interface{}{
 			i,
-			[]byte(item.line),
+		}
+		if item.line != nil {
+			byteString := []byte(*item.line)
+			data = append(data, byteString)
 		}
 		if item.note != nil {
 			data = append(data, item.note)
