@@ -56,6 +56,7 @@ func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
 	return &wal
 }
 
+// TODO remove
 type walItemSchema1 struct {
 	UUID                       uuid
 	TargetUUID                 uuid
@@ -396,6 +397,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
+	// TODO remove
 	if schemaVersionID == 1 {
 		item := walItemSchema1{}
 		err := binary.Read(b, binary.LittleEndian, &item)
