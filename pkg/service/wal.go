@@ -272,9 +272,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 }
 
 func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
-	if note == nil {
-		note = &[]byte{}
-	}
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -305,8 +302,14 @@ func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte,
 
 // Update will update the line or note of an existing ListItem
 func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	listItem.Line = line
-	listItem.Note = note
+	// We currently separate Line and Note updates even though they use the same interface
+	// This is to reduce wal size and also solves some race conditions for long held open
+	// notes, etc
+	if note != nil {
+		listItem.Note = note
+	} else {
+		listItem.Line = line
+	}
 	return listItem, nil
 }
 
@@ -380,8 +383,6 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 
 func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
-	// TODO this is a hacky fix. Instantiate the note just in case
-	el.note = &[]byte{}
 
 	item := walItemSchema1{}
 	err := binary.Read(b, binary.LittleEndian, &item)
