@@ -25,7 +25,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 1
+const latestWalSchemaID uint16 = 2
 
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
@@ -64,6 +64,18 @@ type walItemSchema1 struct {
 	EventTime                  int64
 	EventType                  eventType
 	LineLength                 uint64
+	NoteLength                 uint64
+}
+
+type walItemSchema2 struct {
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	EventTime                  int64
+	EventType                  eventType
+	LineLength                 uint64
+	NoteExists                 bool
 	NoteLength                 uint64
 }
 
@@ -384,32 +396,65 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
-	item := walItemSchema1{}
-	err := binary.Read(b, binary.LittleEndian, &item)
-	if err != nil {
-		return nil, err
-	}
-	el.listItemCreationTime = item.ListItemCreationTime
-	el.targetListItemCreationTime = item.TargetListItemCreationTime
-	el.unixNanoTime = item.EventTime
-	el.uuid = item.UUID
-	el.targetUUID = item.TargetUUID
-	el.eventType = item.EventType
-
-	line := make([]byte, item.LineLength)
-	err = binary.Read(b, binary.LittleEndian, &line)
-	if err != nil {
-		return nil, err
-	}
-	el.line = string(line)
-
-	if item.NoteLength > 0 {
-		note := make([]byte, item.NoteLength)
-		err = binary.Read(b, binary.LittleEndian, &note)
+	if schemaVersionID == 1 {
+		item := walItemSchema1{}
+		err := binary.Read(b, binary.LittleEndian, &item)
 		if err != nil {
 			return nil, err
 		}
-		el.note = &note
+		el.listItemCreationTime = item.ListItemCreationTime
+		el.targetListItemCreationTime = item.TargetListItemCreationTime
+		el.unixNanoTime = item.EventTime
+		el.uuid = item.UUID
+		el.targetUUID = item.TargetUUID
+		el.eventType = item.EventType
+
+		line := make([]byte, item.LineLength)
+		err = binary.Read(b, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(b, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
+	} else {
+		item := walItemSchema2{}
+		err := binary.Read(b, binary.LittleEndian, &item)
+		if err != nil {
+			return nil, err
+		}
+		el.listItemCreationTime = item.ListItemCreationTime
+		el.targetListItemCreationTime = item.TargetListItemCreationTime
+		el.unixNanoTime = item.EventTime
+		el.uuid = item.UUID
+		el.targetUUID = item.TargetUUID
+		el.eventType = item.EventType
+
+		line := make([]byte, item.LineLength)
+		err = binary.Read(b, binary.LittleEndian, &line)
+		if err != nil {
+			return nil, err
+		}
+		el.line = string(line)
+
+		if item.NoteExists {
+			el.note = &[]byte{}
+		}
+		if item.NoteLength > 0 {
+			note := make([]byte, item.NoteLength)
+			err = binary.Read(b, binary.LittleEndian, &note)
+			if err != nil {
+				return nil, err
+			}
+			el.note = &note
+		}
 	}
 	return &el, nil
 }
@@ -587,48 +632,6 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	return &newMergedWal, nil
 }
 
-func (w *Wal) buildPartialWal(wal *[]EventLog) (*bytes.Buffer, error) {
-	var b bytes.Buffer
-	// Write the schema ID
-	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, item := range *wal {
-		lenLine := uint64(len([]byte(item.line)))
-		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
-		}
-		i := walItemSchema1{
-			UUID:                       item.uuid,
-			TargetUUID:                 item.targetUUID,
-			ListItemCreationTime:       item.listItemCreationTime,
-			TargetListItemCreationTime: item.targetListItemCreationTime,
-			EventTime:                  item.unixNanoTime,
-			EventType:                  item.eventType,
-			LineLength:                 lenLine,
-			NoteLength:                 lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(item.line),
-		}
-		if item.note != nil {
-			data = append(data, item.note)
-		}
-		for _, v := range data {
-			err = binary.Write(&b, binary.LittleEndian, v)
-			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
-			}
-		}
-	}
-	return &b, nil
-}
-
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	var b bytes.Buffer
 	// Write the schema ID
@@ -640,28 +643,31 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	// Compact the Wal
 	//el = compact(el)
 
-	for _, item := range *el {
-		lenLine := uint64(len([]byte(item.line)))
+	for _, e := range *el {
+		lenLine := uint64(len([]byte(e.line)))
 		var lenNote uint64
-		if item.note != nil {
-			lenNote = uint64(len(*(item.note)))
+		noteExists := false
+		if e.note != nil {
+			noteExists = true
+			lenNote = uint64(len(*(e.note)))
 		}
-		i := walItemSchema1{
-			UUID:                       item.uuid,
-			TargetUUID:                 item.targetUUID,
-			ListItemCreationTime:       item.listItemCreationTime,
-			TargetListItemCreationTime: item.targetListItemCreationTime,
-			EventTime:                  item.unixNanoTime,
-			EventType:                  item.eventType,
+		i := walItemSchema2{
+			UUID:                       e.uuid,
+			TargetUUID:                 e.targetUUID,
+			ListItemCreationTime:       e.listItemCreationTime,
+			TargetListItemCreationTime: e.targetListItemCreationTime,
+			EventTime:                  e.unixNanoTime,
+			EventType:                  e.eventType,
 			LineLength:                 lenLine,
+			NoteExists:                 noteExists,
 			NoteLength:                 lenNote,
 		}
 		data := []interface{}{
 			i,
-			[]byte(item.line),
+			[]byte(e.line),
 		}
-		if item.note != nil {
-			data = append(data, item.note)
+		if e.note != nil {
+			data = append(data, e.note)
 		}
 		for _, v := range data {
 			err = binary.Write(&b, binary.LittleEndian, v)
