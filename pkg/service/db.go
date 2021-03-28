@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
+	"time"
 	//"runtime"
 )
 
@@ -76,6 +78,56 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 	return nil
 }
 
+// WARNING use with caution
+// This is an emergency function which will generate a new Wal based off of the ListItems in the app.
+// The output will be a wal consisting of addEvents and hideEvents
+func (r *DBListRepo) forceOverrideWal() {
+	overrideWal := []EventLog{}
+	// We need to implement a nasty and non-guaranteed hack here, but it's only super
+	// temporary. In order to ensure uniqueness, each record needs to have it's own UUID.
+	// We don't know how many records there will be without traversing, and because I'm
+	// lazy, it's easier just to preset `now` to 1 year ago and increment a nanosecond
+	// at a time
+	now := time.Now().AddDate(-1, 0, 0).UnixNano()
+
+	// Go to the oldest item
+	item := r.Root
+	if item == nil {
+		return
+	}
+	for item.parent != nil {
+		item = item.parent
+	}
+
+	for item != nil {
+		el := EventLog{
+			uuid:                       item.originUUID,
+			targetUUID:                 0,
+			listItemCreationTime:       item.creationTime,
+			targetListItemCreationTime: 0,
+			unixNanoTime:               now,
+			eventType:                  addEvent,
+			line:                       item.Line,
+			note:                       item.Note,
+		}
+		overrideWal = append(overrideWal, el)
+		now++
+
+		if item.IsHidden {
+			el.eventType = hideEvent
+			el.unixNanoTime = now
+			overrideWal = append(overrideWal, el)
+			now++
+		}
+		item = item.child
+	}
+
+	b := buildByteWal(&overrideWal)
+
+	viewName := fmt.Sprintf(path.Join(r.wal.localWalFile.getRootDir(), "override_%v.db"), time.Now().UnixNano())
+	r.wal.localWalFile.flush(b, viewName)
+}
+
 // Stop is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Stop() error {
 	f, err := os.Create(r.rootPath)
@@ -91,6 +143,8 @@ func (r *DBListRepo) Stop() error {
 	}
 
 	r.wal.finish()
+
+	//r.forceOverrideWal()
 
 	return nil
 }
