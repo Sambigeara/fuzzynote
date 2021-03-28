@@ -192,7 +192,7 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 
 	r.processEventLog(moveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
-	if targetCreationTime != 0 {
+	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
 		r.addUndoLog(moveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
 		return true, nil
 	}
@@ -220,7 +220,7 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 
 	r.processEventLog(moveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
-	if targetCreationTime != 0 {
+	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
 		r.addUndoLog(moveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
 		return true, nil
 	}
