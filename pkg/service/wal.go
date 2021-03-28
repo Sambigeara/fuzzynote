@@ -223,7 +223,7 @@ func (wf *localWalFile) stopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, error) {
 	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]
 	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)]
 
@@ -232,7 +232,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
 	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
-		return root, nil, nil
+		return root, nil
 	}
 
 	var err error
@@ -256,32 +256,33 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
-			root, item, err = r.CallFunctionForEventLog(root, addEl)
+			root, err = r.CallFunctionForEventLog(root, addEl)
 		}
 	case deleteEvent:
 		root, err = r.wal.del(root, item)
 		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime))
 	case moveUpEvent:
-		// If targetItem is nil, we avoid the callback and thus avoid the cursor move event
 		if targetItem == nil {
-			return root, nil, nil
+			return root, err
 		}
-		newChild := targetItem.child
-		newParent := targetItem
-		root, err = r.wal.moveItem(root, item, newChild, newParent)
+		root, err = r.wal.del(root, item)
+		root, item, err = r.wal.add(root, item.creationTime, item.Line, item.Note, targetItem.child, item.originUUID)
+		// Need to override the listItemTracker to ensure pointers are correct
+		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
 	case moveDownEvent:
 		if targetItem == nil {
-			return root, nil, nil
+			return root, err
 		}
-		newChild := targetItem
-		newParent := targetItem.parent
-		root, err = r.wal.moveItem(root, item, newChild, newParent)
+		root, err = r.wal.del(root, item)
+		root, item, err = r.wal.add(root, item.creationTime, item.Line, item.Note, targetItem, item.originUUID)
+		// Need to override the listItemTracker to ensure pointers are correct
+		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
 	case showEvent:
 		err = r.wal.setVisibility(item, true)
 	case hideEvent:
 		err = r.wal.setVisibility(item, false)
 	}
-	return root, item, err
+	return root, err
 }
 
 func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
@@ -341,35 +342,6 @@ func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	return root, nil
 }
 
-func (w *Wal) moveItem(root *ListItem, item *ListItem, newChild *ListItem, newParent *ListItem) (*ListItem, error) {
-	// Close off gap from source location (for whole dataset)
-	if item.child != nil {
-		item.child.parent = item.parent
-	}
-	if item.parent != nil {
-		item.parent.child = item.child
-	}
-
-	// Insert item into new position based on Matched pointers
-	item.child = newChild
-	item.parent = newParent
-
-	// Update pointers at target location
-	if newParent != nil {
-		newParent.child = item
-	}
-	if newChild != nil {
-		newChild.parent = item
-	}
-
-	// Update root if required
-	// for loop because it might have to traverse multiple times
-	for root.child != nil {
-		root = root.child
-	}
-	return root, nil
-}
-
 func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 	item.IsHidden = !isVisible
 	return nil
@@ -387,7 +359,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	for _, e := range *r.wal.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic, because dragons lie within
-		root, _, _ = r.CallFunctionForEventLog(root, e)
+		root, _ = r.CallFunctionForEventLog(root, e)
 	}
 
 	r.Root = root
@@ -634,7 +606,7 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	return &newMergedWal, nil
 }
 
-func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -679,10 +651,15 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 			}
 		}
 	}
+	return &b
+}
+
+func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
 	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
-	if err = wf.flush(&b, randomWal); err != nil {
+	if err := wf.flush(b, randomWal); err != nil {
 		log.Fatal(err)
 	}
 	// Add it straight to the cache to avoid processing it in the future
