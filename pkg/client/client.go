@@ -448,6 +448,14 @@ func openURL(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
+func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
+	l := 0
+	if strings.HasPrefix(strings.ToLower(line), hiddenMatchPrefix) {
+		l = len([]byte(hiddenMatchPrefix))
+	}
+	return l
+}
+
 func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
@@ -459,9 +467,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// match but not have the prefix truncated
 	offsetX := t.horizOffset + t.curX
 	lenHiddenMatchPrefix := 0
-	if t.curItem != nil &&
-		strings.HasPrefix(strings.ToLower(t.curItem.Line), t.hiddenMatchPrefix) {
-		lenHiddenMatchPrefix = len([]byte(t.hiddenMatchPrefix))
+	if t.curItem != nil {
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.curItem.Line, t.hiddenMatchPrefix)
 	}
 	offsetX += lenHiddenMatchPrefix
 	var err error
@@ -869,7 +876,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	// Then refresh the X position based on vertical position and curItem
 
-	// If we've moved up for down, clear the horizontal offset
+	// If we've moved up or down, clear the horizontal offset
 	if posDiff[1] > 0 || posDiff[1] < 0 {
 		t.horizOffset = 0
 	}
@@ -893,6 +900,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if newXIdx > t.w-1 && t.horizOffset+t.w-1 < len(t.curItem.Line) {
 				t.horizOffset++
 			}
+			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
+			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
+			// before the cursor sets to the end of the line and we're at risk of an index error).
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.curItem.Line, t.hiddenMatchPrefix)
 			newXIdx = min(newXIdx, len([]rune(t.curItem.Line))-t.horizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
 			t.curX = min(newXIdx, t.w-1)                                                           // Prevent going out of range of the page
 		}
