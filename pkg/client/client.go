@@ -32,8 +32,8 @@ const (
 type Terminal struct {
 	db                service.ListRepo
 	search            [][]rune
-	matches           []service.MatchItem
-	curItem           *service.MatchItem // The currently selected item
+	matches           []service.ListItem
+	curItem           *service.ListItem // The currently selected item
 	S                 tcell.Screen
 	style             tcell.Style
 	promptStyle       tcell.Style
@@ -44,7 +44,7 @@ type Terminal struct {
 	horizOffset       int // The index of the first displayed char in the curItem
 	showHidden        bool
 	selectedItems     map[int]string // struct{} is more space efficient than bool
-	copiedItem        *service.MatchItem
+	copiedItem        *service.ListItem
 	hiddenMatchPrefix string    // The common string that we want to truncate from each line
 	previousKey       tcell.Key // Keep track of the previous keypress
 	footerMessage     string    // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
@@ -247,7 +247,7 @@ func (t *Terminal) resizeScreen() {
 	t.h = h - reservedBottomLines
 }
 
-func (t *Terminal) paint(matches []service.MatchItem, saveWarning bool) error {
+func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.S)
 

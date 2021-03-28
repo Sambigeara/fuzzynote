@@ -30,7 +30,7 @@ type ListRepo interface {
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, showHidden bool) ([]MatchItem, error)
+	Match(keys [][]rune, showHidden bool) ([]ListItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 }
 
@@ -52,6 +52,7 @@ type ListItem struct {
 	Line         string
 	Note         *[]byte
 	IsHidden     bool
+	Offset       int
 	originUUID   uuid
 	creationTime int64
 	child        *ListItem
@@ -270,24 +271,16 @@ func (r *DBListRepo) Redo() error {
 	return nil
 }
 
-// MatchItem holds all data required by the client
-type MatchItem struct {
-	Line     string
-	Note     *[]byte
-	IsHidden bool
-	Offset   int
-}
-
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	cur := r.Root
 	var lastCur *ListItem
 
 	r.matchListItems = []*ListItem{}
-	res := []MatchItem{}
+	res := []ListItem{}
 
 	if cur == nil {
 		return res, nil
@@ -320,7 +313,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
 				// If it exists, retrieve the previous position, compare it to the new position,
-				// and return the offset with the MatchItem. Otherwise, keep at the default 0.
+				// and return the offset with the ListItem. Otherwise, keep at the default 0.
 				//
 				// We set the default to 1 because it will only use the default value when we're adding new items
 				// and therefore they won't exist in the map (but also want to bump down all items below).
@@ -328,11 +321,11 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]MatchItem, error) 
 				if oldIdx, exists := r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)]; exists {
 					offset = curIdx - oldIdx
 				}
-				res = append(res, MatchItem{
-					cur.Line,
-					cur.Note,
-					cur.IsHidden,
-					offset,
+				res = append(res, ListItem{
+					Line:     cur.Line,
+					Note:     cur.Note,
+					IsHidden: cur.IsHidden,
+					Offset:   offset,
 				})
 
 				if lastCur != nil {
