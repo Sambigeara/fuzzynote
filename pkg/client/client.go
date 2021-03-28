@@ -413,8 +413,20 @@ func (t *Terminal) getNewLinePrefix() string {
 func matchFirstURL(line string) string {
 	// Attempt to match any urls in the line.
 	// If present, copy the first to the system clipboard.
-	rxRelaxed := xurls.Relaxed()
-	return rxRelaxed.FindString(line)
+	// Try "Strict" match first. This only matches if scheme is included.
+	rxStrict := xurls.Strict()
+	var match string
+	if match = rxStrict.FindString(line); match == "" {
+		// Otherwise, if we succeed on a "Relaxed" match, we can infer
+		// that the scheme wasn't present. The darwin/macOS `open` command
+		// expects full URLs with scheme, so do a brute force prepend of
+		// `http://` to see if that works.
+		rxRelaxed := xurls.Relaxed()
+		if match = rxRelaxed.FindString(line); match != "" {
+			match = fmt.Sprintf("http://%s", match)
+		}
+	}
+	return match
 }
 
 // open opens the specified URL in the default browser of the user.
