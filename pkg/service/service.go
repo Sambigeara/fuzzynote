@@ -15,9 +15,10 @@ type (
 
 const (
 	// This is THE date that Golang needs to determine custom formatting
-	rootFileName   = "primary.db"
-	walFilePattern = "wal_%v.db"
-	syncFile       = "_sync_lock.db"
+	rootFileName    = "primary.db"
+	walFilePattern  = "wal_%v.db"
+	viewFilePattern = "view_%v.db"
+	syncFile        = "_sync_lock.db"
 )
 
 // ListRepo represents the main interface to the in-mem ListItem store
@@ -32,6 +33,7 @@ type ListRepo interface {
 	Redo() error
 	Match(keys [][]rune, showHidden bool) ([]ListItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
+	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
 
 // DBListRepo is an implementation of the ListRepo interface
@@ -102,7 +104,7 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 	r.wal.eventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
-	r.Root, _, err = r.CallFunctionForEventLog(r.Root, el)
+	r.Root, err = r.CallFunctionForEventLog(r.Root, el)
 	return err
 }
 
@@ -321,12 +323,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				if oldIdx, exists := r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)]; exists {
 					offset = curIdx - oldIdx
 				}
-				res = append(res, ListItem{
-					Line:     cur.Line,
-					Note:     cur.Note,
-					IsHidden: cur.IsHidden,
-					Offset:   offset,
-				})
+				cur.Offset = offset
+				res = append(res, *cur)
 
 				if lastCur != nil {
 					lastCur.matchParent = cur
@@ -347,4 +345,34 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 
 		cur = cur.parent
 	}
+}
+
+func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
+	matchedItems, _ := r.Match(matchKeys, showHidden)
+
+	// Now we have our list of matchedItems, we need to iterate over them to retrieve all originUUID:creationTime keys
+	// which map to the wal entries
+	logKeys := make(map[string]struct{})
+	for _, i := range matchedItems {
+		logKeys[fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)] = struct{}{}
+	}
+
+	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
+	// for ListItems retrieved above.
+	// IMPORTANT: we also need to include ALL deleteEvent logs, as otherwise we may end up with orphaned items in the
+	// target view.
+	partialWal := []EventLog{}
+	for _, e := range *r.wal.log {
+		if _, exists := logKeys[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]; exists || e.eventType == deleteEvent {
+			partialWal = append(partialWal, e)
+		}
+	}
+
+	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
+	// retrieve and handle the wal (for now)
+	// Use the current time to generate the name
+	b := buildByteWal(&partialWal)
+	viewName := fmt.Sprintf(path.Join(r.wal.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
+	r.wal.localWalFile.flush(b, viewName)
+	return nil
 }
