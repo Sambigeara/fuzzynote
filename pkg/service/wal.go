@@ -11,12 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	//"sync"
 	"time"
-
-	//"sync"
-	//"regexp"
-	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -582,6 +577,51 @@ func compact(wal *[]EventLog) *[]EventLog {
 		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
 	}
 	return &compactedWal
+}
+
+func (w *Wal) generatePartialView(matchItems []ListItem) *[]EventLog {
+	partialWal := []EventLog{}
+
+	if len(matchItems) == 0 {
+		return &partialWal
+	}
+
+	// Before we build update and visibility events from the selected ListItems, we need to collect
+	// all deleteEvents and add them to the partialWal. If any events have previously been pushed up
+	// but since have been locally deleted, this is the only way the remote will ever know (otherwise
+	// we end up with orphaned items).
+	//for _, e := range *w.log {
+	//    if e.eventType == deleteEvent {
+	//        partialWal = append(partialWal, e)
+	//    }
+	//}
+
+	now := time.Now().UnixNano()
+	// Iterate over the matchItems backwards. We're adding with no referenced target, so it will ultimately
+	// be `add`ing to the root (this way we ensure expected ordering in the output list)
+	for i := len(matchItems) - 1; i >= 0; i-- {
+		item := matchItems[i]
+		// We use updateEvents because we're building copies of pre-existing EventLogs, rather than
+		// new ones.
+		el := EventLog{
+			uuid:                       item.originUUID,
+			targetUUID:                 0,
+			listItemCreationTime:       item.creationTime,
+			targetListItemCreationTime: 0,
+			unixNanoTime:               now,
+			eventType:                  updateEvent,
+			line:                       item.Line,
+			note:                       item.Note,
+		}
+		partialWal = append(partialWal, el)
+
+		if item.IsHidden {
+			el.eventType = hideEvent
+			el.unixNanoTime = now
+			partialWal = append(partialWal, el)
+		}
+	}
+	return &partialWal
 }
 
 func pull(wf WalFile) (*[]EventLog, error) {
