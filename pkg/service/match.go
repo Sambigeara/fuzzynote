@@ -57,10 +57,10 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 		return NoMatchPattern, 0
 	}
 	pattern := FuzzyMatchPattern
-	if sub[0] == '#' {
+	if sub[0] == '=' {
 		pattern = FullMatchPattern
 		if len(sub) > 1 {
-			// Inverse string match if a search group begins with `#!`
+			// Inverse string match if a search group begins with `=!`
 			if sub[1] == '!' {
 				pattern = InverseMatchPattern
 			}
@@ -70,7 +70,7 @@ func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
 	return pattern, nChars
 }
 
-// If a matching group starts with `#` do a substring match, otherwise do a fuzzy search
+// If a matching group starts with `=` do a substring match, otherwise do a fuzzy search
 func isMatch(sub []rune, full string, pattern matchPattern) bool {
 	if len(sub) == 0 {
 		return true

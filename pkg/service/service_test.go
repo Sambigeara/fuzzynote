@@ -802,7 +802,7 @@ func TestServiceMatch(t *testing.T) {
 		defer clearUp(repo)
 
 		search := [][]rune{
-			[]rune{'#', 's', 'e', 'c', 'o', 'n', 'd'},
+			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
 		_, err := repo.Match(search, true)
 		matches := repo.matchListItems
@@ -953,7 +953,7 @@ func TestServiceMatch(t *testing.T) {
 		defer clearUp(repo)
 
 		search := [][]rune{
-			[]rune{'#', '!', 's', 'e', 'c', 'o', 'n', 'd'},
+			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
 		_, err := repo.Match(search, true)
 		matches := repo.matchListItems

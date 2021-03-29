@@ -383,7 +383,7 @@ func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	if len(prefix) == 0 {
 		return [][]rune{}
 	}
-	return [][]rune{[]rune(fmt.Sprintf("#%s", prefix))}
+	return [][]rune{[]rune(fmt.Sprintf("=%s", prefix))}
 }
 
 type RefreshKey struct {
@@ -496,7 +496,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				}
 			} else {
 				// Add a new item below current cursor position
-				// This will insert the contents of the current search string (omitting search args like `#`)
+				// This will insert the contents of the current search string (omitting search args like `=`)
 				var err error
 				if relativeY == reservedTopLines-1 {
 					if len(t.search) > 0 {

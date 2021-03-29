@@ -12,13 +12,13 @@ Run the bin direct `./bin/fzn` or add to your PATH (soz, haven't yet gotten my h
 
 ## Search
 
-The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `#`. To inverse string match (on full strings), prepend the search group with `#!`.
+The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `=`. To inverse string match (on full strings), prepend the search group with `=!`.
 
 Examples:
 
 - `foo` will match `fobo`
-- `#foo` will not match on `fobo`, but will match on `foo`
-- `#!foo` will ignore any lines with the **full** string `foo` in it
+- `=foo` will not match on `fobo`, but will match on `foo`
+- `=!foo` will ignore any lines with the **full** string `foo` in it
 
 ## Controls
 
