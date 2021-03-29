@@ -11,12 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	//"sync"
 	"time"
-
-	//"sync"
-	//"regexp"
-	//"runtime"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -265,16 +260,14 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		if targetItem == nil || targetItem.child == nil {
 			return root, err
 		}
-		root, err = r.wal.del(root, item)
-		root, item, err = r.wal.add(root, item.creationTime, item.Line, item.Note, targetItem.child, item.originUUID)
+		root, item, err = r.wal.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
 	case moveDownEvent:
 		if targetItem == nil {
 			return root, err
 		}
-		root, err = r.wal.del(root, item)
-		root, item, err = r.wal.add(root, item.creationTime, item.Line, item.Note, targetItem, item.originUUID)
+		root, item, err = r.wal.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
 	case showEvent:
@@ -340,6 +333,13 @@ func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	}
 
 	return root, nil
+}
+
+func (w *Wal) move(root *ListItem, item *ListItem, childItem *ListItem) (*ListItem, *ListItem, error) {
+	var err error
+	root, err = w.del(root, item)
+	root, item, err = w.add(root, item.creationTime, item.Line, item.Note, childItem, item.originUUID)
+	return root, item, err
 }
 
 func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
@@ -582,6 +582,42 @@ func compact(wal *[]EventLog) *[]EventLog {
 		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
 	}
 	return &compactedWal
+}
+
+func (w *Wal) generatePartialView(matchItems []ListItem) error {
+	// Now we have our list of matchItems, we need to iterate over them to retrieve all originUUID:creationTime keys
+	// which map to the wal entries
+	logKeys := make(map[string]struct{})
+	for _, item := range matchItems {
+		logKeys[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = struct{}{}
+	}
+
+	// TODO figure out how to deal with this!!!
+	// This is a bit of a strange one, but there is an edge case that occurs from addEvents referencing items which
+	// do not exist in the partialWal - because the item will not exist, the item will shoot to the top of the list.
+	// This is actually expected behaviour (and is idempotent and mergeable), however, for user-friendliness, to ensure
+	// expected ordering in the output partial view, we will manually add move* events to the matched items to force them
+	// into the expected locations but with all child pointers attached direct. This _does_ have the side-effect of ultimately
+	// grouping the items in the origin (if/when the remote wal is merged back in), but this is probably preferred.
+
+	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
+	// for ListItems retrieved above.
+	// IMPORTANT: we also need to include ALL deleteEvent logs, as otherwise we may end up with orphaned items in the
+	// target view.
+	partialWal := []EventLog{}
+	for _, e := range *w.log {
+		if _, exists := logKeys[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]; exists || e.eventType == deleteEvent {
+			partialWal = append(partialWal, e)
+		}
+	}
+
+	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
+	// retrieve and handle the wal (for now)
+	// Use the current time to generate the name
+	b := buildByteWal(&partialWal)
+	viewName := fmt.Sprintf(path.Join(w.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
+	w.localWalFile.flush(b, viewName)
+	return nil
 }
 
 func pull(wf WalFile) (*[]EventLog, error) {

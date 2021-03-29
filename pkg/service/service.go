@@ -14,7 +14,6 @@ type (
 )
 
 const (
-	// This is THE date that Golang needs to determine custom formatting
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
 	viewFilePattern = "view_%v.db"
@@ -39,7 +38,6 @@ type ListRepo interface {
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root               *ListItem
-	NextID             uint64
 	rootPath           string
 	eventLogger        *DbEventLogger
 	wal                *Wal
@@ -84,7 +82,6 @@ func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uin
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
 		wal:                NewWal(localWalFile, pushFrequency),
-		NextID:             1,
 		latestFileSchemaID: fileSchemaID(3),
 		listItemMatchIdx:   make(map[string]int),
 	}
@@ -349,30 +346,5 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _ := r.Match(matchKeys, showHidden)
-
-	// Now we have our list of matchedItems, we need to iterate over them to retrieve all originUUID:creationTime keys
-	// which map to the wal entries
-	logKeys := make(map[string]struct{})
-	for _, i := range matchedItems {
-		logKeys[fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)] = struct{}{}
-	}
-
-	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
-	// for ListItems retrieved above.
-	// IMPORTANT: we also need to include ALL deleteEvent logs, as otherwise we may end up with orphaned items in the
-	// target view.
-	partialWal := []EventLog{}
-	for _, e := range *r.wal.log {
-		if _, exists := logKeys[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]; exists || e.eventType == deleteEvent {
-			partialWal = append(partialWal, e)
-		}
-	}
-
-	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
-	// retrieve and handle the wal (for now)
-	// Use the current time to generate the name
-	b := buildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(r.wal.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
-	r.wal.localWalFile.flush(b, viewName)
-	return nil
+	return r.wal.generatePartialView(matchedItems)
 }
