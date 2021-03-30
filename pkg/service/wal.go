@@ -22,6 +22,10 @@ func init() {
 
 const latestWalSchemaID uint16 = 2
 
+func generateUUID() uuid {
+	return uuid(rand.Uint32())
+}
+
 // Wal manages the state of the WAL, via all update functions and replay functionality
 type Wal struct {
 	uuid              uuid
@@ -32,10 +36,6 @@ type Wal struct {
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
-}
-
-func generateUUID() uuid {
-	return uuid(rand.Uint32())
 }
 
 func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
@@ -97,6 +97,12 @@ type EventLog struct {
 	eventType                  eventType
 	line                       string
 	note                       *[]byte
+}
+
+func (e *EventLog) getKeys() (string, string) {
+	key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
+	targetKey := fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)
+	return key, targetKey
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -219,8 +225,9 @@ func (wf *localWalFile) stopTickers() {
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, error) {
-	item := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]
-	targetItem := r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)]
+	key, targetKey := e.getKeys()
+	item := r.wal.listItemTracker[key]
+	targetItem := r.wal.listItemTracker[targetKey]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
@@ -234,7 +241,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	switch e.eventType {
 	case addEvent:
 		root, item, err = r.wal.add(root, e.listItemCreationTime, e.line, e.note, targetItem, e.uuid)
-		r.wal.listItemTracker[fmt.Sprintf("%d:%d", e.uuid, item.creationTime)] = item
+		r.wal.listItemTracker[key] = item
 	case updateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -255,21 +262,21 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		}
 	case deleteEvent:
 		root, err = r.wal.del(root, item)
-		delete(r.wal.listItemTracker, fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime))
+		delete(r.wal.listItemTracker, key)
 	case moveUpEvent:
 		if targetItem == nil || targetItem.child == nil {
 			return root, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
-		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
+		r.wal.listItemTracker[key] = item
 	case moveDownEvent:
 		if targetItem == nil {
 			return root, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
-		r.wal.listItemTracker[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = item
+		r.wal.listItemTracker[key] = item
 	case showEvent:
 		err = r.wal.setVisibility(item, true)
 	case hideEvent:
@@ -564,7 +571,7 @@ func compact(wal *[]EventLog) *[]EventLog {
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
-		key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
+		key, _ := e.getKeys()
 		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent) {
 			continue
 		}
@@ -589,7 +596,7 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// which map to the wal entries
 	logKeys := make(map[string]struct{})
 	for _, item := range matchItems {
-		logKeys[fmt.Sprintf("%d:%d", item.originUUID, item.creationTime)] = struct{}{}
+		logKeys[item.getKey()] = struct{}{}
 	}
 
 	// TODO figure out how to deal with this!!!
@@ -606,7 +613,8 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// target view.
 	partialWal := []EventLog{}
 	for _, e := range *w.log {
-		if _, exists := logKeys[fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)]; exists || e.eventType == deleteEvent {
+		key, _ := e.getKeys()
+		if _, exists := logKeys[key]; exists || e.eventType == deleteEvent {
 			partialWal = append(partialWal, e)
 		}
 	}

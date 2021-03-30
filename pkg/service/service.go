@@ -20,6 +20,17 @@ const (
 	syncFile        = "_sync_lock.db"
 )
 
+type bits uint32
+
+const (
+	hidden bits = 1 << iota
+)
+
+func set(b, flag bits) bits    { return b | flag }
+func clear(b, flag bits) bits  { return b &^ flag }
+func toggle(b, flag bits) bits { return b ^ flag }
+func has(b, flag bits) bool    { return b&flag != 0 }
+
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) error
@@ -46,6 +57,21 @@ type DBListRepo struct {
 	listItemMatchIdx   map[string]int
 }
 
+// NewDBListRepo returns a pointer to a new instance of DBListRepo
+func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uint16) *DBListRepo {
+	// Make sure the root directory exists
+	os.Mkdir(rootDir, os.ModePerm)
+
+	rootPath := path.Join(rootDir, rootFileName)
+	return &DBListRepo{
+		rootPath:           rootPath,
+		eventLogger:        NewDbEventLogger(),
+		wal:                NewWal(localWalFile, pushFrequency),
+		latestFileSchemaID: fileSchemaID(3),
+		listItemMatchIdx:   make(map[string]int),
+	}
+}
+
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	// TODO these can all be private now
@@ -61,30 +87,8 @@ type ListItem struct {
 	matchParent  *ListItem
 }
 
-type bits uint32
-
-const (
-	hidden bits = 1 << iota
-)
-
-func set(b, flag bits) bits    { return b | flag }
-func clear(b, flag bits) bits  { return b &^ flag }
-func toggle(b, flag bits) bits { return b ^ flag }
-func has(b, flag bits) bool    { return b&flag != 0 }
-
-// NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uint16) *DBListRepo {
-	// Make sure the root directory exists
-	os.Mkdir(rootDir, os.ModePerm)
-
-	rootPath := path.Join(rootDir, rootFileName)
-	return &DBListRepo{
-		rootPath:           rootPath,
-		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(localWalFile, pushFrequency),
-		latestFileSchemaID: fileSchemaID(3),
-		listItemMatchIdx:   make(map[string]int),
-	}
+func (i *ListItem) getKey() string {
+	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
 func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
@@ -316,8 +320,9 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				//
 				// We set the default to 1 because it will only use the default value when we're adding new items
 				// and therefore they won't exist in the map (but also want to bump down all items below).
+				key := cur.getKey()
 				offset := 1
-				if oldIdx, exists := r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)]; exists {
+				if oldIdx, exists := r.listItemMatchIdx[key]; exists {
 					offset = curIdx - oldIdx
 				}
 				cur.Offset = offset
@@ -331,7 +336,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 
 				// Set the new idx for the next iteration
 				// TODO figure out a clean way to remove old items. Maybe create a new map and override at the end.
-				r.listItemMatchIdx[fmt.Sprintf("%d:%d", cur.originUUID, cur.creationTime)] = curIdx
+				r.listItemMatchIdx[key] = curIdx
 				curIdx++
 			}
 		}
