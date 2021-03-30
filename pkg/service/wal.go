@@ -264,7 +264,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		root, err = r.wal.del(root, item)
 		delete(r.wal.listItemTracker, key)
 	case moveUpEvent:
-		if targetItem == nil || targetItem.child == nil {
+		if targetItem == nil {
 			return root, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem.child)
