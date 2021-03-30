@@ -119,19 +119,18 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	var childCreationTime int64
 	// In order to be able to resolve child node from the tracker mapping, we need UUIDs to be consistent
 	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
-	// This is (conveniently) in line with intended behaviour for now. If we merge a remote, it makes sense
-	// to attribute new items to that WAL when adding below focused items.
-	// TODO actually, this should RESOLVE with the original UUID, but set with the local!!!
-	newUUID := r.wal.uuid
+	childUUID := uuid(0)
 	if idx > 0 {
 		childItem := r.matchListItems[idx-1]
 		childCreationTime = childItem.creationTime
-		newUUID = childItem.originUUID
+		childUUID = childItem.originUUID
 	}
 	// TODO ideally we'd use the same unixtime for log creation and the listItem creation time for Add()
+	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
+	// listItem.creationTime
 	now := time.Now().UnixNano()
-	r.processEventLog(addEvent, now, childCreationTime, line, note, newUUID, newUUID)
-	r.addUndoLog(addEvent, now, childCreationTime, newUUID, newUUID, line, note, line, note)
+	r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
+	r.addUndoLog(addEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
 	return nil
 }
 
