@@ -13,7 +13,6 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/gdamore/tcell/v2/encoding"
-	"github.com/jpillora/longestcommon"
 	"github.com/mattn/go-runewidth"
 	"mvdan.cc/xurls/v2"
 
@@ -374,12 +373,29 @@ func (t *Terminal) getLenSearchBox() int {
 	return lenSearchBox
 }
 
+func longestCommonPrefix(strs []string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	// Assume prefix
+	prefix := strs[0]
+	for i := 1; i < len(strs); i++ {
+		for !strings.HasPrefix(strs[i], prefix) {
+			prefix = prefix[0 : len(prefix)-1]
+			if len(prefix) == 0 {
+				return ""
+			}
+		}
+	}
+	return prefix
+}
+
 func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	var lines []string
 	for _, line := range selectedItems {
-		lines = append(lines, line)
+		lines = append(lines, strings.TrimSpace(line))
 	}
-	prefix := strings.TrimSpace(longestcommon.Prefix(lines))
+	prefix := strings.TrimSpace(longestCommonPrefix(lines))
 	if len(prefix) == 0 {
 		return [][]rune{}
 	}
