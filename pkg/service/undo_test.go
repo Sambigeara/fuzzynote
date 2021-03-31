@@ -94,7 +94,7 @@ func TestTransactionUndo(t *testing.T) {
 		updatedLine := "Updated item"
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
-		repo.Update(updatedLine, &[]byte{}, 0)
+		repo.Update(updatedLine, nil, 0)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -352,7 +352,7 @@ func TestTransactionUndo(t *testing.T) {
 		matches := repo.matchListItems
 
 		newLine := "a"
-		repo.Update(newLine, &[]byte{}, 0)
+		repo.Update(newLine, nil, 0)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -463,7 +463,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		newLine := "Updated line"
-		repo.Update(newLine, &[]byte{}, 0)
+		repo.Update(newLine, nil, 0)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have the nullEvent, addEvent and overriding updateEvent")
