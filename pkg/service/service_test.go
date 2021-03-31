@@ -1,16 +1,20 @@
 package service
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
-	//"runtime"
 	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
-const rootDir string = "folder_to_delete"
+const (
+	rootDir           = "folder_to_delete"
+	testPushFrequency = 60000
+)
 
 var rootPath = path.Join(rootDir, rootFileName)
 
@@ -36,70 +40,72 @@ func clearUp(r *DBListRepo) {
 	}
 }
 
-func TestServiceStoreLoad(t *testing.T) {
-	t.Run("Stores to file and loads back", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+func generateProcessingWalChan() chan *[]EventLog {
+	testWalChan := make(chan *[]EventLog)
+	go func() {
+		for {
+			<-testWalChan
+		}
+	}()
+	return testWalChan
+}
+
+func TestServicePushPull(t *testing.T) {
+	t.Run("Pushes to file and pulls back", func(t *testing.T) {
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		oldItem := ListItem{
-			Line:         "Old newly created line",
-			creationTime: int64(1),
+		now := time.Now().UnixNano()
+		wal := []EventLog{
+			EventLog{
+				uuid:                       repo.wal.uuid,
+				targetUUID:                 0,
+				listItemCreationTime:       now,
+				targetListItemCreationTime: 0,
+				unixNanoTime:               now,
+				eventType:                  addEvent,
+				line:                       "Old newly created line",
+			},
 		}
-		newItem := ListItem{
-			Line:         "New newly created line",
-			parent:       &oldItem,
-			creationTime: int64(2),
-		}
-		oldItem.child = &newItem
+		now++
+		wal = append(wal, EventLog{
+			uuid:                       repo.wal.uuid,
+			targetUUID:                 0,
+			listItemCreationTime:       now,
+			targetListItemCreationTime: 0,
+			unixNanoTime:               now,
+			eventType:                  addEvent,
+			line:                       "New newly created line",
+		})
 
-		repo.Root = &newItem
-		repo.NextID = 3
-		err := repo.Save([]WalFile{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.wal.push(&wal, localWalFile)
+		// Clear the cache to make sure we can pick the file up again
+		localWalFile.processedPartialWals = make(map[string]struct{})
+		newWal, _ := pull(localWalFile)
 
-		// Check file schema version has been written correctly
-		f, _ := os.OpenFile(repo.rootPath, os.O_CREATE, 0644)
-		var fileSchema uint16
-		binary.Read(f, binary.LittleEndian, &fileSchema)
-		expectedSchemaID := uint16(3)
-		if fileSchema != expectedSchemaID {
-			t.Errorf("Incorrect set file schema. Expected %d but got %d", expectedSchemaID, fileSchema)
-		}
-		f.Close()
-
-		err = repo.Load([]WalFile{})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		root := repo.Root
-
-		if root.Line != newItem.Line {
-			t.Errorf("File schema %d: Expected %s but got %s", repo.latestFileSchemaID, newItem.Line, root.Line)
+		if len(wal) != len(*newWal) {
+			t.Error("Pulled wal should be the same as the pushed one")
 		}
 
-		expectedID := int64(2)
-		if root.creationTime != expectedID {
-			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.creationTime)
-		}
-
-		if root.parent.Line != oldItem.Line {
-			t.Errorf("File schema %d: Expected %s but got %s", repo.latestFileSchemaID, root.parent.Line, oldItem.Line)
-		}
-
-		expectedID = int64(1)
-		if root.parent.creationTime != expectedID {
-			t.Errorf("File schema %d: Expected %d but got %d", repo.latestFileSchemaID, expectedID, root.parent.creationTime)
+		// Check equality of wals
+		for i := range wal {
+			oldEvent := wal[i]
+			newEvent := (*newWal)[i]
+			if !(cmp.Equal(oldEvent, newEvent, cmp.AllowUnexported(oldEvent, newEvent))) {
+				t.Fatalf("Old event %v does not equal new event %v at index %d", oldEvent, newEvent, i)
+			}
 		}
 	})
 }
 
 func TestServiceAdd(t *testing.T) {
-	repo := NewDBListRepo(rootDir, []WalFile{})
+	localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	testWalChan := generateProcessingWalChan()
+	repo.Start(testWalChan)
 	repo.Add("Old existing created line", nil, 0)
 	repo.Add("New existing created line", nil, 0)
 
@@ -227,7 +233,9 @@ func TestServiceAdd(t *testing.T) {
 	})
 
 	t.Run("Add new item to empty list", func(t *testing.T) {
-		repo := NewDBListRepo("test", []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 
 		newLine := "First item in list"
 		repo.Add(newLine, nil, 0)
@@ -260,8 +268,11 @@ func TestServiceAdd(t *testing.T) {
 }
 
 func TestServiceDelete(t *testing.T) {
+	testWalChan := generateProcessingWalChan()
 	t.Run("Delete item from head of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -304,7 +315,9 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -343,7 +356,9 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -388,8 +403,11 @@ func TestServiceDelete(t *testing.T) {
 }
 
 func TestServiceMove(t *testing.T) {
+	testWalChan := generateProcessingWalChan()
 	t.Run("Move item up from bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -413,39 +431,41 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches = repo.matchListItems
 
-		if repo.Root != item1 {
+		if repo.Root.getKey() != item1.getKey() {
 			t.Errorf("item1 should still be root")
 		}
-		if matches[0] != item1 {
+		if matches[0].getKey() != item1.getKey() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[1] != item3 {
+		if matches[1].getKey() != item3.getKey() {
 			t.Errorf("item3 should have moved up one")
 		}
-		if matches[2] != item2 {
+		if matches[2].getKey() != item2.getKey() {
 			t.Errorf("item2 should have moved down one")
 		}
 
-		if item3.child != item1 {
+		if matches[1].child.getKey() != item1.getKey() {
 			t.Errorf("Moved item child should now be root")
 		}
-		if item3.parent != item2 {
+		if matches[1].parent.getKey() != item2.getKey() {
 			t.Errorf("Moved item parent should be previous child")
 		}
 
-		if repo.Root.parent != item3 {
+		if repo.Root.parent.getKey() != item3.getKey() {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if item2.child != item3 {
+		if matches[2].child.getKey() != item3.getKey() {
 			t.Errorf("New lowest parent should be newly moved item")
 		}
-		if item2.parent != nil {
+		if matches[2].parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
 	})
 
 	t.Run("Move item up from middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -468,39 +488,41 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		if repo.Root != item2 {
+		if repo.Root.getKey() != item2.getKey() {
 			t.Errorf("item2 should have become root")
 		}
-		if matches[0] != item2 {
+		if matches[0].getKey() != item2.getKey() {
 			t.Errorf("item2 should have become root")
 		}
-		if matches[1] != item1 {
+		if matches[1].getKey() != item1.getKey() {
 			t.Errorf("previous root should have moved up one")
 		}
-		if matches[2] != item3 {
+		if matches[2].getKey() != item3.getKey() {
 			t.Errorf("previous oldest should have stayed the same")
 		}
 
-		if item2.child != nil {
+		if matches[0].child != nil {
 			t.Errorf("Moved item child should be null")
 		}
-		if item2.parent != item1 {
+		if matches[0].parent != item1 {
 			t.Errorf("Moved item parent should be previous root")
 		}
 
-		if item1.parent != item3 {
+		if matches[1].parent.getKey() != item3.getKey() {
 			t.Errorf("Old root parent should be unchanged oldest item")
 		}
-		if item1.child != item2 {
+		if matches[1].child.getKey() != item2.getKey() {
 			t.Errorf("Old root child should be new root item")
 		}
-		if item3.child != item1 {
+		if matches[2].child.getKey() != item1.getKey() {
 			t.Errorf("Lowest parent's child should be old root")
 		}
 	})
 
 	t.Run("Move item up from top", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -523,22 +545,24 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		if repo.Root != item1 {
+		if repo.Root.getKey() != item1.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[0] != item1 {
+		if matches[0].getKey() != item1.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[1] != item2 {
+		if matches[1].getKey() != item2.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[2] != item3 {
+		if matches[2].getKey() != item3.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
 
 	t.Run("Move item down from top", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -561,39 +585,41 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		if repo.Root != item2 {
+		if repo.Root.getKey() != item2.getKey() {
 			t.Errorf("item2 should now be root")
 		}
-		if matches[0] != item2 {
+		if matches[0].getKey() != item2.getKey() {
 			t.Errorf("item2 should now be root")
 		}
-		if matches[1] != item1 {
+		if matches[1].getKey() != item1.getKey() {
 			t.Errorf("item1 should have moved down one")
 		}
-		if matches[2] != item3 {
+		if matches[2].getKey() != item3.getKey() {
 			t.Errorf("item3 should still be at the bottom")
 		}
 
-		if item1.child != item2 {
+		if matches[1].child.getKey() != item2.getKey() {
 			t.Errorf("Moved item child should now be root")
 		}
-		if item3.child != item1 {
+		if matches[2].child.getKey() != item1.getKey() {
 			t.Errorf("Oldest item's child should be previous child")
 		}
 
-		if repo.Root.parent != item1 {
+		if repo.Root.parent.getKey() != item1.getKey() {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if item3.child != item1 {
+		if matches[2].child.getKey() != item1.getKey() {
 			t.Errorf("Lowest parent should be newly moved item")
 		}
-		if item3.parent != nil {
+		if matches[2].parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
 	})
 
 	t.Run("Move item down from middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -616,39 +642,41 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		if repo.Root != item1 {
+		if repo.Root.getKey() != item1.getKey() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[0] != item1 {
+		if matches[0].getKey() != item1.getKey() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[1] != item3 {
+		if matches[1].getKey() != item3.getKey() {
 			t.Errorf("previous oldest should have moved up one")
 		}
-		if matches[2] != item2 {
+		if matches[2].getKey() != item2.getKey() {
 			t.Errorf("moved item should now be oldest")
 		}
 
-		if item2.child != item3 {
+		if matches[2].child.getKey() != item3.getKey() {
 			t.Errorf("Moved item child should be previous oldest")
 		}
-		if item2.parent != nil {
+		if matches[2].parent != nil {
 			t.Errorf("Moved item child should be null")
 		}
 
-		if item3.parent != item2 {
+		if matches[1].parent.getKey() != item2.getKey() {
 			t.Errorf("Previous oldest parent should be new oldest item")
 		}
-		if item3.child != item1 {
+		if matches[1].child.getKey() != item1.getKey() {
 			t.Errorf("Previous oldest child should be unchanged root item")
 		}
-		if item1.parent != item3 {
+		if matches[0].parent.getKey() != item3.getKey() {
 			t.Errorf("Root's parent should be moved item")
 		}
 	})
 
 	t.Run("Move item down from bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -672,22 +700,24 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches = repo.matchListItems
 
-		if repo.Root != item1 {
+		if repo.Root.getKey() != item1.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[0] != item1 {
+		if matches[0].getKey() != item1.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[1] != item2 {
+		if matches[1].getKey() != item2.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[2] != item3 {
+		if matches[2].getKey() != item3.getKey() {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
 
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -717,48 +747,48 @@ func TestServiceMove(t *testing.T) {
 		repo.Match([][]rune{}, true)
 		matches := repo.matchListItems
 
-		if repo.Root != item2 {
+		if repo.Root.getKey() != item2.getKey() {
 			t.Errorf("Root should be previous middle")
 		}
-		if matches[0] != item2 {
+		if matches[0].getKey() != item2.getKey() {
 			t.Errorf("Root should be previous middle")
 		}
-		if matches[1] != item3 {
+		if matches[1].getKey() != item3.getKey() {
 			t.Errorf("Previous oldest should have moved up one")
 		}
-		if matches[2] != item1 {
+		if matches[2].getKey() != item1.getKey() {
 			t.Errorf("Preview root should have moved to the bottom")
 		}
 
-		if item2.child != nil {
+		if matches[0].child != nil {
 			t.Errorf("New root should have nil child")
 		}
-		if item2.parent != item3 {
+		if matches[0].parent.getKey() != item3.getKey() {
 			t.Errorf("New root parent should remain unchanged after two moves")
 		}
 
-		if item3.parent != item1 {
+		if matches[1].parent.getKey() != item1.getKey() {
 			t.Errorf("Previous oldest's parent should be old root")
 		}
-		if item3.child != item2 {
+		if matches[1].child.getKey() != item2.getKey() {
 			t.Errorf("Previous oldest's child should have unchanged child")
 		}
-		if item1.child != item3 {
+		if matches[2].child.getKey() != item3.getKey() {
 			t.Errorf("New oldest child should be old oldest")
 		}
-		if item1.parent != nil {
+		if matches[2].parent != nil {
 			t.Errorf("New oldest should have no parent")
 		}
 	})
 }
 
 func TestServiceUpdate(t *testing.T) {
-	repo := NewDBListRepo(rootDir, []WalFile{})
+	localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	repo.Start(generateProcessingWalChan())
 	repo.Add("Third", nil, 0)
 	repo.Add("Second", nil, 0)
 	repo.Add("First", nil, 0)
-
-	item2 := repo.Root.parent
 
 	os.Mkdir(rootDir, os.ModePerm)
 	defer clearUp(repo)
@@ -767,7 +797,7 @@ func TestServiceUpdate(t *testing.T) {
 	repo.Match([][]rune{}, true)
 
 	expectedLine := "Oooo I'm new"
-	err := repo.Update(expectedLine, &[]byte{}, 1)
+	err := repo.Update(expectedLine, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -780,14 +810,17 @@ func TestServiceUpdate(t *testing.T) {
 		t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 	}
 
-	if item2.Line != expectedLine {
-		t.Errorf("Expected %s but got %s", expectedLine, item2.Line)
+	if matches[1].Line != expectedLine {
+		t.Errorf("Expected %s but got %s", expectedLine, matches[1].Line)
 	}
 }
 
 func TestServiceMatch(t *testing.T) {
+	testWalChan := generateProcessingWalChan()
 	t.Run("Full match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -863,7 +896,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -939,7 +974,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
 		repo.Add("Third", nil, 0)
@@ -976,7 +1013,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, []WalFile{})
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1005,43 +1044,43 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
 
-		if repo.Root != item3 {
+		if repo.Root.getKey() != item3.getKey() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[0] != item3 {
+		if matches[0].getKey() != item3.getKey() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[1] != item1 {
+		if matches[1].getKey() != item1.getKey() {
 			t.Errorf("item1 should now be the lowest item")
 		}
 
-		if item3.child != nil {
+		if matches[0].child != nil {
 			t.Errorf("Moved item child should now be nil")
 		}
-		if item3.matchChild != nil {
+		if matches[0].matchChild != nil {
 			t.Errorf("Moved item matchChild should now be nil")
 		}
-		if item3.parent != item1 {
+		if matches[0].parent.getKey() != item1.getKey() {
 			t.Errorf("Moved item parent should be previous root")
 		}
-		if item3.matchParent != item1 {
+		if matches[0].matchParent.getKey() != item1.getKey() {
 			t.Errorf("Moved item matchParent should be previous root")
 		}
 
-		if item1.child != item3 {
+		if item1.child.getKey() != matches[0].getKey() {
 			t.Errorf("Previous root child should be moved item")
 		}
-		if item1.matchChild != item3 {
+		if item1.matchChild.getKey() != matches[0].getKey() {
 			t.Errorf("Previous root matchChild should be moved item")
 		}
-		if item1.parent != item2 {
+		if item1.parent.getKey() != item2.getKey() {
 			t.Errorf("Previous root parent should be unchanged")
 		}
 		if item1.matchParent != nil {
 			t.Errorf("Previous root matchParent should be nil")
 		}
 
-		if item2.child != item1 {
+		if item2.child.getKey() != item1.getKey() {
 			t.Errorf("Should be item1")
 		}
 		if item2.matchChild != nil {
@@ -1056,8 +1095,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
-		walFiles := []WalFile{NewLocalWalFile(rootDir)}
-		repo := NewDBListRepo(rootDir, walFiles)
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1083,10 +1123,8 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		//runtime.Breakpoint()
-		repo.Save(walFiles)
-		repo = NewDBListRepo(rootDir, walFiles)
-		repo.Load(walFiles)
+		repo.Start(testWalChan)
+		repo.Stop()
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
 
@@ -1141,8 +1179,9 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
-		walFiles := []WalFile{NewLocalWalFile(rootDir)}
-		repo := NewDBListRepo(rootDir, walFiles)
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
@@ -1168,9 +1207,6 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Save(walFiles)
-		repo = NewDBListRepo(rootDir, walFiles)
-		repo.Load(walFiles)
 		repo.Match([][]rune{}, false)
 		matches = repo.matchListItems
 
