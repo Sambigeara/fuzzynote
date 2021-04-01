@@ -289,7 +289,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 	}
 
 	//var curIdx, curOffset int
-	var curIdx int
+	curIdx, aggregateOffset := 0, 0
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -315,14 +315,20 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
 				// If it exists, retrieve the previous position, compare it to the new position,
-				// and return the offset with the ListItem. Otherwise, keep at the default 0.
+				// and return the offset with the ListItem (accounting for the aggregate counter - see below).
 				//
-				// We set the default to 1 because it will only use the default value when we're adding new items
-				// and therefore they won't exist in the map (but also want to bump down all items below).
+				// If the key doesn't exist, it's because it's a new item. In this instance, we need to increment
+				// a counter which we'll add to the offset of each matched item below. E.g. if you are on position 1
+				// and a remote user adds two items at position 0 and then 1 (between a single refresh cycle), the
+				// current item will be at idx 1, and will only have an offset of 1. Given two items were added, we
+				// need to account for the offset
+				// TODO apply opposite logic for items which are no longer present, decrement the counter
 				key := cur.getKey()
-				offset := 1
+				offset := aggregateOffset
 				if oldIdx, exists := r.listItemMatchIdx[key]; exists {
 					offset = curIdx - oldIdx
+				} else {
+					aggregateOffset++
 				}
 				cur.Offset = offset
 				res = append(res, *cur)
@@ -334,7 +340,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				lastCur = cur
 
 				// Set the new idx for the next iteration
-				// TODO figure out a clean way to remove old items. Maybe create a new map and override at the end.
 				r.listItemMatchIdx[key] = curIdx
 				curIdx++
 			}
