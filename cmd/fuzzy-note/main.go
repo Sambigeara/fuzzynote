@@ -5,43 +5,27 @@ import (
 	"log"
 	"os"
 	"path"
-	//"time"
-	//"runtime"
 
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
-	"gopkg.in/yaml.v2"
-	//"github.com/rogpeppe/go-internal/lockedfile"
 
 	"fuzzy-note/pkg/client"
 	"fuzzy-note/pkg/service"
 )
 
-const refreshFile = "_refresh_lock.db"
+const (
+	namespace   = "FZN"
+	refreshFile = "_refresh_lock.db"
+)
 
 func main() {
-	//runtime.Breakpoint()
-
-	// Before parsing generic config, we need to infer the project root, as there may be a config
-	// file present, and we need to follow a certain precedence (CLI/envvars over file config)
-	// This leads to a weird clienvvar/file/clienvvar parse process which seems weird, but works for now
-	type s3 struct {
-		Key    string `conf:"env:S3_KEY,flag:s3-key"`
-		Secret string `conf:"env:S3_SECRET,flag:s3-secret"`
-		Bucket string `conf:"env:S3_BUCKET,flag:s3-bucket"`
-		Prefix string `conf:"env:S3_PREFIX,flag:s3-prefix"`
-	}
 	var cfg struct {
-		Root                string
-		Colour              string
-		S3                  s3
-		Editor              string `conf:"default:vim"`
-		LocalRefreshFreqMs  uint16 `conf:"default:1000"`
-		RemoteRefreshFreqMs uint16 `conf:"default:2000"`
-		GatherRefreshFreqMs uint16 `conf:"default:10000"`
+		Root   string
+		Colour string `conf:"default:light"`
+		Editor string `conf:"default:vim"`
 	}
 
-	// Instantiate default root direct in case it's not set
+	// Pre-instantiate default root direct (can't pass value dynamically to default above)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatal(err)
@@ -49,7 +33,6 @@ func main() {
 	cfg.Root = path.Join(home, ".fzn/")
 
 	// Override if set via CLI/envvar
-	namespace := "FZN"
 	if err := conf.Parse(os.Args[1:], namespace, &cfg); err != nil {
 		// Handle `--help` on first attempt of parsing inputs
 		if err == conf.ErrHelpWanted {
@@ -63,52 +46,29 @@ func main() {
 		log.Fatalf("main : Parsing Root Config : %v", err)
 	}
 
-	// We can now specify our general config for use when parsing yaml (if available) and then CLI/envvars,
-	// in that order.
-	// Because we're using the same cfg to parse file and cli/envvar, we can't rely on the supported `default`
-	// tags, so pre-set any defaults prior to parsing
-	cfg.Colour = "light"
-	cfg.S3.Prefix = "main"
+	//cfg.Colour = "light"
+	//cfg.S3.Prefix = "main"
 
-	// Initially retrieve config from the config file, if available
-	cfgFile := path.Join(cfg.Root, ".config.yml")
-	f, err := os.Open(cfgFile)
-	// If no errors (e.g. file definitely exists) attempt to parse config
-	if err == nil {
-		decoder := yaml.NewDecoder(f)
-		err = decoder.Decode(&cfg)
-		if err != nil {
-			log.Fatalf("main : Parsing File Config : %v", err)
-		}
-		defer f.Close()
-	}
-
-	// Then run through CLI/envvar config retrieval, and override and settings if applicable
-	if err := conf.Parse(os.Args[1:], namespace, &cfg); err != nil {
-		log.Fatalf("main : Parsing Config : %v", err)
-	}
+	localRefreshFrequency := uint16(1000)
+	localGatherFrequency := uint16(10000)
 
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalWalFile(cfg.LocalRefreshFreqMs, cfg.GatherRefreshFreqMs, cfg.Root)
+	localWalFile := service.NewLocalWalFile(localRefreshFrequency, localGatherFrequency, cfg.Root)
 
 	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, cfg.RemoteRefreshFreqMs)
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, localRefreshFrequency)
+
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
 	// Wal independently (there are certain operations that require us to only target the local walfile rather
 	// that all).
 	// We still need to register it as we all all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
-	if cfg.S3.Key != "" && cfg.S3.Secret != "" && cfg.S3.Bucket != "" && cfg.S3.Prefix != "" {
-		s3FileWal := service.NewS3FileWal(
-			cfg.RemoteRefreshFreqMs,
-			cfg.GatherRefreshFreqMs,
-			cfg.S3.Key,
-			cfg.S3.Secret,
-			cfg.S3.Bucket,
-			cfg.S3.Prefix,
-			cfg.Root,
-		)
+	remotes := service.GetRemotesConfig(cfg.Root)
+
+	for _, r := range remotes.S3 {
+		// TODO gracefully deal with missing config
+		s3FileWal := service.NewS3FileWal(r, cfg.Root)
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
