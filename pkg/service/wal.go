@@ -119,6 +119,8 @@ type WalFile interface {
 	awaitPull()
 	awaitGather()
 	stopTickers()
+	getMode() Mode
+	getPushMatchTerm() []rune
 }
 
 type localWalFile struct {
@@ -222,6 +224,14 @@ func (wf *localWalFile) awaitGather() {
 func (wf *localWalFile) stopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
+}
+
+func (wf *localWalFile) getMode() Mode {
+	return Sync
+}
+
+func (wf *localWalFile) getPushMatchTerm() []rune {
+	return []rune{}
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -698,7 +708,39 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	return &b
 }
 
+func getMatchedWal(el *[]EventLog, matchTerm []rune) *[]EventLog {
+	if len(matchTerm) == 0 {
+		return el
+	}
+	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
+	keys := make(map[string]struct{})
+	for _, e := range *el {
+		// For now (for safety) use full pattern matching
+		if isMatch(matchTerm, e.line, FullMatchPattern) {
+			k, _ := e.getKeys()
+			keys[k] = struct{}{}
+		}
+	}
+
+	filteredWal := []EventLog{}
+	// Do a second iteration using the map above, and build a Wal which includes any logs which
+	// fulfilled the match term at some point in it's history.
+	// This is particularly useful because if an item previously matched the term, but now doesn't,
+	// it will be removed from the remote (thus preventing any orphaned items).
+	for _, e := range *el {
+		k, _ := e.getKeys()
+		if _, exists := keys[k]; exists {
+			filteredWal = append(filteredWal, e)
+		}
+	}
+	return &filteredWal
+}
+
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+	// Filter wal if required
+	el = getMatchedWal(el, wf.getPushMatchTerm())
+
+	// Apply any filtering based on Push match configuration
 	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
@@ -786,15 +828,17 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			}
 		}(wf)
 
-		// Schedule gather tasks
-		go func(wf WalFile) error {
-			for {
-				wf.awaitGather()
-				if err := w.gather(wf); err != nil {
-					return err
+		if wf.getMode() == Sync || wf.getMode() == Push {
+			// Schedule gather tasks
+			go func(wf WalFile) error {
+				for {
+					wf.awaitGather()
+					if err := w.gather(wf); err != nil {
+						return err
+					}
 				}
-			}
-		}(wf)
+			}(wf)
+		}
 	}
 
 	// Push to all WalFiles
@@ -817,7 +861,9 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// copies by default, I think).
 					elCopy := el
 					for _, wf := range w.walFiles {
-						go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
+						if wf.getMode() == Sync || wf.getMode() == Push {
+							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
+						}
 					}
 					el = []EventLog{}
 				}

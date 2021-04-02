@@ -28,13 +28,12 @@ type s3FileWal struct {
 	secret                   string
 	bucket                   string
 	prefix                   string
+	mode                     Mode
+	pushMatchTerm            []rune
 }
 
 func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 	// Handle defaults if not set
-	if cfg.Prefix == "" {
-		cfg.Prefix = "main"
-	}
 	if cfg.RefreshFreqMs == 0 {
 		cfg.RefreshFreqMs = 2000
 	}
@@ -63,6 +62,8 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 		secret:                   cfg.Secret,
 		bucket:                   cfg.Bucket,
 		prefix:                   cfg.Prefix,
+		mode:                     cfg.Mode,
+		pushMatchTerm:            []rune(cfg.Match),
 	}
 }
 
@@ -195,6 +196,14 @@ func (wf *s3FileWal) awaitGather() {
 func (wf *s3FileWal) stopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
+}
+
+func (wf *s3FileWal) getMode() Mode {
+	return wf.mode
+}
+
+func (wf *s3FileWal) getPushMatchTerm() []rune {
+	return wf.pushMatchTerm
 }
 
 func exitErrorf(msg string, args ...interface{}) {

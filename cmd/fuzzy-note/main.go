@@ -67,6 +67,10 @@ func main() {
 	remotes := service.GetRemotesConfig(cfg.Root)
 
 	for _, r := range remotes.S3 {
+		// centralise this logic across different remote types when relevant
+		if (r.Mode == service.Push || r.Mode == service.Sync) && r.Match == "" && !r.MatchAll {
+			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")
+		}
 		// TODO gracefully deal with missing config
 		s3FileWal := service.NewS3FileWal(r, cfg.Root)
 		listRepo.RegisterWalFile(s3FileWal)
