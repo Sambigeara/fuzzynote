@@ -30,28 +30,39 @@ type s3FileWal struct {
 	prefix                   string
 }
 
-func NewS3FileWal(refreshFrequency uint16, cleanUpFrequency uint16, key string, secret string, bucket string, prefix string, localRootDir string) *s3FileWal {
+func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
+	// Handle defaults if not set
+	if cfg.Prefix == "" {
+		cfg.Prefix = "main"
+	}
+	if cfg.RefreshFreqMs == 0 {
+		cfg.RefreshFreqMs = 2000
+	}
+	if cfg.GatherFreqMs == 0 {
+		cfg.GatherFreqMs = 10000
+	}
+
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
-		Credentials: credentials.NewStaticCredentials(key, secret, ""),
+		Credentials: credentials.NewStaticCredentials(cfg.Key, cfg.Secret, ""),
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	return &s3FileWal{
-		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cleanUpFrequency)),
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(cfg.RefreshFreqMs)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cfg.GatherFreqMs)),
 		svc:                      s3.New(sess),
 		downloader:               s3manager.NewDownloader(sess),
 		uploader:                 s3manager.NewUploader(sess),
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: make(chan bool, 1),
-		localRootDir:             localRootDir,
-		key:                      key,
-		secret:                   secret,
-		bucket:                   bucket,
-		prefix:                   prefix,
+		localRootDir:             root,
+		key:                      cfg.Key,
+		secret:                   cfg.Secret,
+		bucket:                   cfg.Bucket,
+		prefix:                   cfg.Prefix,
 	}
 }
 
