@@ -114,6 +114,7 @@ type WalFile interface {
 	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
 	flush(*bytes.Buffer, string) error
+	// TODO could we do a `getProcessedPartialWalMap() ...`?
 	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
 	awaitPull()
@@ -121,6 +122,7 @@ type WalFile interface {
 	stopTickers()
 	getMode() Mode
 	getPushMatchTerm() []rune
+	getProcessedEventMap() *map[string]struct{}
 }
 
 type localWalFile struct {
@@ -232,6 +234,11 @@ func (wf *localWalFile) getMode() Mode {
 
 func (wf *localWalFile) getPushMatchTerm() []rune {
 	return []rune{}
+}
+
+func (wf *localWalFile) getProcessedEventMap() *map[string]struct{} {
+	// localWalFile has no use for this, so return a stub
+	return &map[string]struct{}{}
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -708,17 +715,16 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	return &b
 }
 
-func getMatchedWal(el *[]EventLog, matchTerm []rune) *[]EventLog {
+func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) *[]EventLog {
 	if len(matchTerm) == 0 {
 		return el
 	}
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
-	keys := make(map[string]struct{})
 	for _, e := range *el {
 		// For now (for safety) use full pattern matching
 		if isMatch(matchTerm, e.line, FullMatchPattern) {
 			k, _ := e.getKeys()
-			keys[k] = struct{}{}
+			(*keys)[k] = struct{}{}
 		}
 	}
 
@@ -729,7 +735,7 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune) *[]EventLog {
 	// it will be removed from the remote (thus preventing any orphaned items).
 	for _, e := range *el {
 		k, _ := e.getKeys()
-		if _, exists := keys[k]; exists {
+		if _, exists := (*keys)[k]; exists {
 			filteredWal = append(filteredWal, e)
 		}
 	}
@@ -738,7 +744,7 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune) *[]EventLog {
 
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	// Filter wal if required
-	el = getMatchedWal(el, wf.getPushMatchTerm())
+	el = getMatchedWal(el, wf.getPushMatchTerm(), wf.getProcessedEventMap())
 
 	// Apply any filtering based on Push match configuration
 	b := buildByteWal(el)

@@ -30,6 +30,7 @@ type s3FileWal struct {
 	prefix                   string
 	mode                     Mode
 	pushMatchTerm            []rune
+	processedEventMap        *map[string]struct{}
 }
 
 func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
@@ -64,6 +65,7 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 		prefix:                   cfg.Prefix,
 		mode:                     cfg.Mode,
 		pushMatchTerm:            []rune(cfg.Match),
+		processedEventMap:        &map[string]struct{}{},
 	}
 }
 
@@ -204,6 +206,11 @@ func (wf *s3FileWal) getMode() Mode {
 
 func (wf *s3FileWal) getPushMatchTerm() []rune {
 	return wf.pushMatchTerm
+}
+
+func (wf *s3FileWal) getProcessedEventMap() *map[string]struct{} {
+	// localWalFile has no use for this, so return a stub
+	return wf.processedEventMap
 }
 
 func exitErrorf(msg string, args ...interface{}) {
