@@ -809,9 +809,10 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-	// Account for any explicit moves
+	matchIdx := relativeY - reservedTopLines
+	// Adjust with any explicit moves
 	matchIdx += posDiff[1]
-
+	// Set itemKey to the client's current curItem
 	if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
 		itemKey = t.matches[matchIdx].Key()
 	}
@@ -896,8 +897,6 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// screen if there is an offset available at the top
 	// TODO change this, follow the cursor...
 	t.curY = min(newYIdx, reservedTopLines+len(t.matches)-1)
-	// Reset matchIdx
-	matchIdx = t.curY + t.vertOffset - reservedTopLines
 
 	isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
 
@@ -906,7 +905,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	if isSearchLine {
 		t.curItem = nil
 	} else {
-		t.curItem = &t.matches[matchIdx]
+		t.curItem = &t.matches[t.curY-reservedTopLines+t.vertOffset]
 	}
 
 	// Then refresh the X position based on vertical position and curItem
