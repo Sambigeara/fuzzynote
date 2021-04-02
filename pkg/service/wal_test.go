@@ -768,3 +768,174 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 }
+
+func TestWalFilter(t *testing.T) {
+	t.Run("Check includes matching item", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
+			listItemCreationTime: creationTime,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		if len(*matchedWal) != 2 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check includes matching and non matching items", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "",
+			listItemCreationTime: creationTime + 1,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		if len(*matchedWal) != 2 {
+			t.Fatalf("Matched wal should not include the non matching event")
+		}
+	})
+	t.Run("Check includes previously matching item", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "",
+			listItemCreationTime: creationTime,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		if len(*matchedWal) != 3 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check doesn't include non matching items", func(t *testing.T) {
+		// We currently only operate on full matches
+		matchTerm := "fobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "",
+			listItemCreationTime: creationTime,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		if len(*matchedWal) != 0 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check includes matching item mid line", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "something something foobar",
+			listItemCreationTime: creationTime,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		if len(*matchedWal) != 3 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+}
