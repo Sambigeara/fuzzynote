@@ -24,7 +24,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log should instantiate with a null event log at idx zero")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		if len(matches) != 0 {
@@ -45,7 +45,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log should have one null and one real event in it")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		logItem := repo.eventLogger.log[1]
@@ -64,7 +64,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 
 		if len(matches) != 0 {
@@ -92,7 +92,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo.Add(line, nil, 0)
 
 		updatedLine := "Updated item"
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		repo.Update(updatedLine, nil, 0)
 
@@ -116,7 +116,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Oldest event log entry should be of type AddEvent")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if matches[0].Line != updatedLine {
 			t.Errorf("List item should have the updated line")
@@ -134,7 +134,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to one")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Errorf("Undo should have updated the item, not deleted it")
@@ -155,7 +155,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to zero")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 0 {
 			t.Errorf("Second undo should have deleted the item")
@@ -189,7 +189,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		listItem := matches[0]
 		if logItem.listItemCreationTime != listItem.creationTime {
@@ -198,7 +198,7 @@ func TestTransactionUndo(t *testing.T) {
 
 		line2 := "Another item"
 		repo.Add(line2, nil, 1)
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		idx := 1
 		listItem2 := matches[idx]
@@ -248,7 +248,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		repo.Delete(0)
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 
 		if len(repo.eventLogger.log) != 5 {
@@ -282,7 +282,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to three")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Errorf("Undo should have added the original item back in")
@@ -303,7 +303,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to two")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 2 {
 			t.Errorf("Undo should have added the second original item back in")
@@ -325,7 +325,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to three")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Errorf("Undo should have removed the second original item again")
@@ -348,7 +348,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		newLine := "a"
@@ -365,7 +365,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event log entry should be of type UpdateEvent")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if matches[0].Line != newLine {
 			t.Errorf("List item should now have the new line")
@@ -383,7 +383,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to one")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if matches[0].Line != "" {
 			t.Errorf("Undo should have removed the line")
@@ -404,7 +404,7 @@ func TestTransactionUndo(t *testing.T) {
 
 		// TODO problem is, looking ahead to next log item for `Redo` redoes the old PRE state
 		// Idea: store old and new state in the log item lines, Undo sets to old, Redo sets to new
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if matches[0].Line != newLine {
 			t.Errorf("Redo should have added the line back in")
@@ -427,11 +427,11 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should be set to one")
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		repo.Delete(0)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 0 {
 			t.Errorf("Item should have been deleted")
@@ -449,7 +449,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Errorf("Item should have been added back in")
@@ -480,7 +480,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Errorf("There should still be one match")
