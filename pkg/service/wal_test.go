@@ -275,7 +275,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.log))
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
@@ -442,7 +442,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.wal.log))
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 4 {
 			t.Fatalf("Expected 4 matches items but had %d", len(*repo.wal.log))
@@ -534,7 +534,7 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
@@ -559,7 +559,7 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ = pull(localWalFile)
 		repo.Replay(eventLog)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(matches))
@@ -748,7 +748,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.wal.log))
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("Expected 1 matches items but had %d", len(*repo.wal.log))

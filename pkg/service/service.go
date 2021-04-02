@@ -33,15 +33,15 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Add(line string, note *[]byte, idx int) error
+	Add(line string, note *[]byte, idx int) (string, error)
 	Update(line string, note *[]byte, idx int) error
-	Delete(idx int) error
+	Delete(idx int) (string, error)
 	MoveUp(idx int) (bool, error)
 	MoveDown(idx int) (bool, error)
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, showHidden bool) ([]ListItem, error)
+	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
@@ -54,7 +54,6 @@ type DBListRepo struct {
 	wal                *Wal
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
-	listItemMatchIdx   map[string]int
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -68,7 +67,6 @@ func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uin
 		eventLogger:        NewDbEventLogger(),
 		wal:                NewWal(localWalFile, pushFrequency),
 		latestFileSchemaID: fileSchemaID(3),
-		listItemMatchIdx:   make(map[string]int),
 	}
 }
 
@@ -87,11 +85,11 @@ type ListItem struct {
 	matchParent  *ListItem
 }
 
-func (i *ListItem) getKey() string {
+func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
+func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
 		eventType:                  e,
 		uuid:                       originUUID,
@@ -105,15 +103,17 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 	r.wal.eventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
-	r.Root, err = r.CallFunctionForEventLog(r.Root, el)
-	return err
+	var item *ListItem
+	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
+	return item, err
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+// It returns a string representing the unique key of the newly created item
+func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
-		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
+		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
 
 	var childCreationTime int64
@@ -129,9 +129,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
+	newItem, _ := r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
 	r.addUndoLog(addEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
-	return nil
+	return newItem.Key(), nil
 }
 
 // Update will update the line or note of an existing ListItem
@@ -149,9 +149,9 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 }
 
 // Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(idx int) error {
+func (r *DBListRepo) Delete(idx int) (string, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return "", errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -164,7 +164,11 @@ func (r *DBListRepo) Delete(idx int) error {
 	}
 	r.processEventLog(deleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(deleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
-	return nil
+	key := ""
+	if listItem.child != nil {
+		key = listItem.child.Key()
+	}
+	return key, nil
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -275,7 +279,7 @@ func (r *DBListRepo) Redo() error {
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	cur := r.Root
@@ -284,12 +288,13 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 	r.matchListItems = []*ListItem{}
 	res := []ListItem{}
 
+	newPos := -1
 	if cur == nil {
-		return res, nil
+		return res, newPos, nil
 	}
 
-	//var curIdx, curOffset int
-	var curIdx int
+	idx := 0
+	listItemMatchIdx := make(map[string]int)
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -314,17 +319,23 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 			}
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
+				// TODO "if you were here, you'll now be here", in form of array of offsets?? Using previous match
+				// set as a base??
+				// [
+				//     5, Previous idx=0 moved 5 up
+				//     -2, previous idx=1 moved 2 down etc
+				// ]
+				// maybe can be added to ListItem.Offset (maybe this is what I was trying to achieve the first time round)
+
 				// If it exists, retrieve the previous position, compare it to the new position,
-				// and return the offset with the ListItem. Otherwise, keep at the default 0.
+				// and return the offset with the ListItem (accounting for the aggregate counter - see below).
 				//
-				// We set the default to 1 because it will only use the default value when we're adding new items
-				// and therefore they won't exist in the map (but also want to bump down all items below).
-				key := cur.getKey()
-				offset := 1
-				if oldIdx, exists := r.listItemMatchIdx[key]; exists {
-					offset = curIdx - oldIdx
-				}
-				cur.Offset = offset
+				// If the key doesn't exist, it's because it's a new item. In this instance, we need to increment
+				// a counter which we'll add to the offset of each matched item below. E.g. if you are on position 1
+				// and a remote user adds two items at position 0 and then 1 (between a single refresh cycle), the
+				// current item will be at idx 1, and will only have an offset of 1. Given two items were added, we
+				// need to account for the offset
+				// TODO apply opposite logic for items which are no longer present, decrement the counter
 				res = append(res, *cur)
 
 				if lastCur != nil {
@@ -334,21 +345,21 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				lastCur = cur
 
 				// Set the new idx for the next iteration
-				// TODO figure out a clean way to remove old items. Maybe create a new map and override at the end.
-				r.listItemMatchIdx[key] = curIdx
-				curIdx++
+				listItemMatchIdx[cur.Key()] = idx
+				idx++
 			}
 		}
-
 		if cur.parent == nil {
-			return res, nil
+			if p, exists := listItemMatchIdx[curKey]; exists {
+				newPos = p
+			}
+			return res, newPos, nil
 		}
-
 		cur = cur.parent
 	}
 }
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
-	matchedItems, _ := r.Match(matchKeys, showHidden)
+	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
 	return r.wal.generatePartialView(matchedItems)
 }
