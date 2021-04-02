@@ -117,12 +117,12 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		err := repo.Add(newLine, nil, 0)
+		_, err := repo.Add(newLine, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		newItem := matches[0]
 
@@ -159,17 +159,17 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item at end of list", func(t *testing.T) {
 		newLine := "I should be last"
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		oldLen := len(matches)
 		oldParent := matches[len(matches)-1]
 
-		err := repo.Add(newLine, nil, oldLen)
+		_, err := repo.Add(newLine, nil, oldLen)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 		newItem := matches[len(matches)-1]
 
@@ -206,12 +206,12 @@ func TestServiceAdd(t *testing.T) {
 		oldParent := item1.parent
 
 		newIdx := 2
-		err := repo.Add(newLine, nil, newIdx)
+		_, err := repo.Add(newLine, nil, newIdx)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		expectedItem := matches[newIdx]
@@ -240,7 +240,7 @@ func TestServiceAdd(t *testing.T) {
 		newLine := "First item in list"
 		repo.Add(newLine, nil, 0)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		if len(matches) != 1 {
@@ -282,14 +282,14 @@ func TestServiceDelete(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
-		err := repo.Delete(0)
+		_, err := repo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		if matches[0] != item2 {
@@ -327,14 +327,14 @@ func TestServiceDelete(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
-		err := repo.Delete(2)
+		_, err := repo.Delete(2)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		expectedLen := 2
@@ -369,14 +369,14 @@ func TestServiceDelete(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
-		err := repo.Delete(1)
+		_, err := repo.Delete(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		if matches[0] != item1 {
@@ -420,7 +420,7 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		_, err := repo.MoveUp(len(matches) - 1)
@@ -428,33 +428,33 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 
-		if repo.Root.getKey() != item1.getKey() {
+		if repo.Root.Key() != item1.Key() {
 			t.Errorf("item1 should still be root")
 		}
-		if matches[0].getKey() != item1.getKey() {
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[1].getKey() != item3.getKey() {
+		if matches[1].Key() != item3.Key() {
 			t.Errorf("item3 should have moved up one")
 		}
-		if matches[2].getKey() != item2.getKey() {
+		if matches[2].Key() != item2.Key() {
 			t.Errorf("item2 should have moved down one")
 		}
 
-		if matches[1].child.getKey() != item1.getKey() {
+		if matches[1].child.Key() != item1.Key() {
 			t.Errorf("Moved item child should now be root")
 		}
-		if matches[1].parent.getKey() != item2.getKey() {
+		if matches[1].parent.Key() != item2.Key() {
 			t.Errorf("Moved item parent should be previous child")
 		}
 
-		if repo.Root.parent.getKey() != item3.getKey() {
+		if repo.Root.parent.Key() != item3.Key() {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if matches[2].child.getKey() != item3.getKey() {
+		if matches[2].child.Key() != item3.Key() {
 			t.Errorf("New lowest parent should be newly moved item")
 		}
 		if matches[2].parent != nil {
@@ -478,26 +478,26 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		_, err := repo.MoveUp(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
-		if repo.Root.getKey() != item2.getKey() {
+		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 should have become root")
 		}
-		if matches[0].getKey() != item2.getKey() {
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("item2 should have become root")
 		}
-		if matches[1].getKey() != item1.getKey() {
+		if matches[1].Key() != item1.Key() {
 			t.Errorf("previous root should have moved up one")
 		}
-		if matches[2].getKey() != item3.getKey() {
+		if matches[2].Key() != item3.Key() {
 			t.Errorf("previous oldest should have stayed the same")
 		}
 
@@ -508,13 +508,13 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("Moved item parent should be previous root")
 		}
 
-		if matches[1].parent.getKey() != item3.getKey() {
+		if matches[1].parent.Key() != item3.Key() {
 			t.Errorf("Old root parent should be unchanged oldest item")
 		}
-		if matches[1].child.getKey() != item2.getKey() {
+		if matches[1].child.Key() != item2.Key() {
 			t.Errorf("Old root child should be new root item")
 		}
-		if matches[2].child.getKey() != item1.getKey() {
+		if matches[2].child.Key() != item1.Key() {
 			t.Errorf("Lowest parent's child should be old root")
 		}
 	})
@@ -535,26 +535,26 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		_, err := repo.MoveUp(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
-		if repo.Root.getKey() != item1.getKey() {
+		if repo.Root.Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[0].getKey() != item1.getKey() {
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[1].getKey() != item2.getKey() {
+		if matches[1].Key() != item2.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[2].getKey() != item3.getKey() {
+		if matches[2].Key() != item3.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
@@ -575,40 +575,40 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		_, err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
-		if repo.Root.getKey() != item2.getKey() {
+		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 should now be root")
 		}
-		if matches[0].getKey() != item2.getKey() {
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("item2 should now be root")
 		}
-		if matches[1].getKey() != item1.getKey() {
+		if matches[1].Key() != item1.Key() {
 			t.Errorf("item1 should have moved down one")
 		}
-		if matches[2].getKey() != item3.getKey() {
+		if matches[2].Key() != item3.Key() {
 			t.Errorf("item3 should still be at the bottom")
 		}
 
-		if matches[1].child.getKey() != item2.getKey() {
+		if matches[1].child.Key() != item2.Key() {
 			t.Errorf("Moved item child should now be root")
 		}
-		if matches[2].child.getKey() != item1.getKey() {
+		if matches[2].child.Key() != item1.Key() {
 			t.Errorf("Oldest item's child should be previous child")
 		}
 
-		if repo.Root.parent.getKey() != item1.getKey() {
+		if repo.Root.parent.Key() != item1.Key() {
 			t.Errorf("Root parent should be newly moved item")
 		}
-		if matches[2].child.getKey() != item1.getKey() {
+		if matches[2].child.Key() != item1.Key() {
 			t.Errorf("Lowest parent should be newly moved item")
 		}
 		if matches[2].parent != nil {
@@ -632,43 +632,43 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		_, err := repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
-		if repo.Root.getKey() != item1.getKey() {
+		if repo.Root.Key() != item1.Key() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[0].getKey() != item1.getKey() {
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("Root should have remained the same")
 		}
-		if matches[1].getKey() != item3.getKey() {
+		if matches[1].Key() != item3.Key() {
 			t.Errorf("previous oldest should have moved up one")
 		}
-		if matches[2].getKey() != item2.getKey() {
+		if matches[2].Key() != item2.Key() {
 			t.Errorf("moved item should now be oldest")
 		}
 
-		if matches[2].child.getKey() != item3.getKey() {
+		if matches[2].child.Key() != item3.Key() {
 			t.Errorf("Moved item child should be previous oldest")
 		}
 		if matches[2].parent != nil {
 			t.Errorf("Moved item child should be null")
 		}
 
-		if matches[1].parent.getKey() != item2.getKey() {
+		if matches[1].parent.Key() != item2.Key() {
 			t.Errorf("Previous oldest parent should be new oldest item")
 		}
-		if matches[1].child.getKey() != item1.getKey() {
+		if matches[1].child.Key() != item1.Key() {
 			t.Errorf("Previous oldest child should be unchanged root item")
 		}
-		if matches[0].parent.getKey() != item3.getKey() {
+		if matches[0].parent.Key() != item3.Key() {
 			t.Errorf("Root's parent should be moved item")
 		}
 	})
@@ -689,7 +689,7 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
 		_, err := repo.MoveDown(len(matches) - 1)
@@ -697,19 +697,19 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches = repo.matchListItems
 
-		if repo.Root.getKey() != item1.getKey() {
+		if repo.Root.Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[0].getKey() != item1.getKey() {
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[1].getKey() != item2.getKey() {
+		if matches[1].Key() != item2.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
-		if matches[2].getKey() != item3.getKey() {
+		if matches[2].Key() != item3.Key() {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
@@ -730,7 +730,7 @@ func TestServiceMove(t *testing.T) {
 		defer clearUp(repo)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 
 		_, err := repo.MoveDown(0)
 		if err != nil {
@@ -738,42 +738,42 @@ func TestServiceMove(t *testing.T) {
 		}
 
 		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		_, err = repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true)
+		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 
-		if repo.Root.getKey() != item2.getKey() {
+		if repo.Root.Key() != item2.Key() {
 			t.Errorf("Root should be previous middle")
 		}
-		if matches[0].getKey() != item2.getKey() {
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("Root should be previous middle")
 		}
-		if matches[1].getKey() != item3.getKey() {
+		if matches[1].Key() != item3.Key() {
 			t.Errorf("Previous oldest should have moved up one")
 		}
-		if matches[2].getKey() != item1.getKey() {
+		if matches[2].Key() != item1.Key() {
 			t.Errorf("Preview root should have moved to the bottom")
 		}
 
 		if matches[0].child != nil {
 			t.Errorf("New root should have nil child")
 		}
-		if matches[0].parent.getKey() != item3.getKey() {
+		if matches[0].parent.Key() != item3.Key() {
 			t.Errorf("New root parent should remain unchanged after two moves")
 		}
 
-		if matches[1].parent.getKey() != item1.getKey() {
+		if matches[1].parent.Key() != item1.Key() {
 			t.Errorf("Previous oldest's parent should be old root")
 		}
-		if matches[1].child.getKey() != item2.getKey() {
+		if matches[1].child.Key() != item2.Key() {
 			t.Errorf("Previous oldest's child should have unchanged child")
 		}
-		if matches[2].child.getKey() != item3.getKey() {
+		if matches[2].child.Key() != item3.Key() {
 			t.Errorf("New oldest child should be old oldest")
 		}
 		if matches[2].parent != nil {
@@ -794,7 +794,7 @@ func TestServiceUpdate(t *testing.T) {
 	defer clearUp(repo)
 
 	// Call matches to trigger matchListItems creation
-	repo.Match([][]rune{}, true)
+	repo.Match([][]rune{}, true, "")
 
 	expectedLine := "Oooo I'm new"
 	err := repo.Update(expectedLine, nil, 1)
@@ -802,7 +802,7 @@ func TestServiceUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo.Match([][]rune{}, true)
+	repo.Match([][]rune{}, true, "")
 	matches := repo.matchListItems
 
 	expectedLen := 3
@@ -837,7 +837,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, err := repo.Match(search, true)
+		_, _, err := repo.Match(search, true, "")
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -915,7 +915,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
 		}
-		_, err := repo.Match(search, true)
+		_, _, err := repo.Match(search, true, "")
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -992,7 +992,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, err := repo.Match(search, true)
+		_, _, err := repo.Match(search, true, "")
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -1027,13 +1027,13 @@ func TestServiceMatch(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches := repo.matchListItems
 
 		_, err := repo.MoveUp(len(matches) - 1)
@@ -1041,16 +1041,16 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches = repo.matchListItems
 
-		if repo.Root.getKey() != item3.getKey() {
+		if repo.Root.Key() != item3.Key() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[0].getKey() != item3.getKey() {
+		if matches[0].Key() != item3.Key() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[1].getKey() != item1.getKey() {
+		if matches[1].Key() != item1.Key() {
 			t.Errorf("item1 should now be the lowest item")
 		}
 
@@ -1060,27 +1060,27 @@ func TestServiceMatch(t *testing.T) {
 		if matches[0].matchChild != nil {
 			t.Errorf("Moved item matchChild should now be nil")
 		}
-		if matches[0].parent.getKey() != item1.getKey() {
+		if matches[0].parent.Key() != item1.Key() {
 			t.Errorf("Moved item parent should be previous root")
 		}
-		if matches[0].matchParent.getKey() != item1.getKey() {
+		if matches[0].matchParent.Key() != item1.Key() {
 			t.Errorf("Moved item matchParent should be previous root")
 		}
 
-		if item1.child.getKey() != matches[0].getKey() {
+		if item1.child.Key() != matches[0].Key() {
 			t.Errorf("Previous root child should be moved item")
 		}
-		if item1.matchChild.getKey() != matches[0].getKey() {
+		if item1.matchChild.Key() != matches[0].Key() {
 			t.Errorf("Previous root matchChild should be moved item")
 		}
-		if item1.parent.getKey() != item2.getKey() {
+		if item1.parent.Key() != item2.Key() {
 			t.Errorf("Previous root parent should be unchanged")
 		}
 		if item1.matchParent != nil {
 			t.Errorf("Previous root matchParent should be nil")
 		}
 
-		if item2.child.getKey() != item1.getKey() {
+		if item2.child.Key() != item1.Key() {
 			t.Errorf("Should be item1")
 		}
 		if item2.matchChild != nil {
@@ -1109,13 +1109,13 @@ func TestServiceMatch(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches := repo.matchListItems
 
 		_, err := repo.MoveUp(len(matches) - 1)
@@ -1125,7 +1125,7 @@ func TestServiceMatch(t *testing.T) {
 
 		repo.Start(testWalChan)
 		repo.Stop()
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches = repo.matchListItems
 
 		if repo.Root.Line != item3.Line {
@@ -1193,13 +1193,13 @@ func TestServiceMatch(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp(repo)
 
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches := repo.matchListItems
 
 		_, err := repo.MoveDown(0)
@@ -1207,7 +1207,7 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, false)
+		repo.Match([][]rune{}, false, "")
 		matches = repo.matchListItems
 
 		if repo.Root.Line != item2.Line {
