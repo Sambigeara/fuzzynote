@@ -921,7 +921,34 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "foobar",
+			line:                 "something something foobar",
+			listItemCreationTime: creationTime,
+		})
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		if len(*matchedWal) != 2 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check includes matching item after updates", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "f",
 			listItemCreationTime: creationTime,
 		})
 		eventTime++
@@ -929,13 +956,124 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "something something foobar",
+			line:                 "fo",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foo",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foob",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "fooba",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foobar",
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm))
-		if len(*matchedWal) != 3 {
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		if len(*matchedWal) != 7 {
 			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check includes matching item no add with update", func(t *testing.T) {
+		matchTerm := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+				line:                 "foobar",
+			},
+		}
+
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		if len(*matchedWal) != 1 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+}
+
+func TestWalReplay(t *testing.T) {
+	localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	t.Run("Check add creates item", func(t *testing.T) {
+		line := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+				line:                 line,
+			},
+		}
+
+		repo.wal.log = &[]EventLog{}
+		repo.Replay(&el)
+		repo.Match([][]rune{}, true, "")
+		matches := repo.matchListItems
+
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != line {
+			t.Fatalf("The item line should be %s", line)
+		}
+	})
+	t.Run("Check update creates item", func(t *testing.T) {
+		line := "foobar"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            updateEvent,
+				listItemCreationTime: creationTime,
+				line:                 line,
+			},
+		}
+
+		repo.wal.log = &[]EventLog{}
+		repo.Replay(&el)
+		repo.Match([][]rune{}, true, "")
+		matches := repo.matchListItems
+
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != line {
+			t.Fatalf("The item line should be %s", line)
 		}
 	})
 }
