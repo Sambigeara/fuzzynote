@@ -539,9 +539,24 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			} else {
 				// Copy into buffer in case we're moving it elsewhere
 				t.copiedItem = t.curItem
-				itemKey, err = t.db.Delete(relativeY - 1)
-				if err != nil {
-					log.Fatal(err)
+				if relativeY-1 != len(t.matches)-1 {
+					// Default behaviour on delete is to return and set position to the child item.
+					// We don't want to do that here, so ignore the itemKey return from Delete, and
+					// increment the Y position.
+					// Because we increment, the key passed to Match below will exist and therefore
+					// will resolve properly.
+					_, err = t.db.Delete(relativeY - 1)
+					if err != nil {
+						log.Fatal(err)
+					}
+					posDiff[1]++
+				} else {
+					// APART from when calling CtrlD on the bottom item, in which case use the default
+					// behaviour and target the child for new positioning
+					itemKey, err = t.db.Delete(relativeY - 1)
+					if err != nil {
+						log.Fatal(err)
+					}
 				}
 			}
 			t.horizOffset = 0
