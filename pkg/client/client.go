@@ -73,7 +73,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 
 	showHidden := false
 
-	matches, err := db.Match([][]rune{}, showHidden, "")
+	matches, _, err := db.Match([][]rune{}, showHidden, "")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -539,7 +539,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			} else {
 				// Copy into buffer in case we're moving it elsewhere
 				t.copiedItem = t.curItem
-				err := t.db.Delete(relativeY - 1)
+				itemKey, err = t.db.Delete(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -678,7 +678,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 					}
 					posDiff[0]--
 				} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-					err := t.db.Delete(relativeY - 1)
+					itemKey, err = t.db.Delete(relativeY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -722,7 +722,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 						log.Fatal(err)
 					}
 				} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-					err := t.db.Delete(relativeY - 1)
+					itemKey, err = t.db.Delete(relativeY - 1)
 					if err != nil {
 						log.Fatal(err)
 					}
@@ -809,9 +809,9 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-	matchIdx := relativeY - reservedTopLines
+	matchIdx := relativeY - reservedTopLines // -1
 	// Adjust with any explicit moves
-	matchIdx += posDiff[1]
+	matchIdx = min(matchIdx+posDiff[1], len(t.matches)-1)
 	// Set itemKey to the client's current curItem
 	if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
 		itemKey = t.matches[matchIdx].Key()
@@ -819,93 +819,31 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
-	t.matches, err = t.db.Match(t.search, t.showHidden, itemKey)
-	if relativeY >= reservedTopLines && relativeY-reservedTopLines < len(t.matches) {
-		currentOffset := t.matches[relativeY-reservedTopLines].Offset
-		oneAbove := relativeY - 1
-		oneBelow := relativeY + 1
-		// If the current matchItem is the top/root, and the offset < 0, set it to 0
-		if relativeY-reservedTopLines == 0 && currentOffset < 0 {
-			currentOffset = 0
-		} else if currentOffset != 0 && oneAbove >= reservedTopLines {
-			childMatchItem := t.matches[oneAbove-reservedTopLines]
-			if childMatchItem.Offset-1 == currentOffset {
-				// When the previous current line has been deleted. The item that will then be under the cursor will
-				// have moved up, and hence the Offset will reflect that, but in this particular case, we want the
-				// cursor to remain in the same position.
-				// Therefore, check the offset of the child matchItem - if it's 1 less than the current (we need to
-				// account for _other_ changes that could have occurred too), then subtract one from the actionable
-				// offset. HOWEVER, we only do this for deletions, not additions, so assert on negative currentOffset
-				// too.
-				currentOffset++
-			} else if childMatchItem.Offset+2 == currentOffset {
-				// On MoveUp actions, we move the item up and attempt to follow it, but the item we swop with has a
-				// +1 diff applied to it, so it cancels it out. In this case, if the offset of the current is 2 more than
-				// the offset of the child matchItem, subtract another decrement from the currentOffset.
-				currentOffset--
-			}
-		} else if oneBelow-reservedTopLines < len(t.matches) {
-			// Likewise on MoveDown, we need to account for the opposite
-			// NOTE: this is only the case when on the top line (e.g. root item)
-			parentMatchItem := t.matches[oneBelow-reservedTopLines]
-			if parentMatchItem.Offset-2 == currentOffset {
-				currentOffset++
-			}
-		}
-		posDiff[1] += currentOffset
-	}
+	t.matches, matchIdx, err = t.db.Match(t.search, t.showHidden, itemKey)
 
-	// N available item slots
-	nItemSlots := t.h - reservedTopLines
+	windowSize := t.h - reservedTopLines - reservedBottomLines
 
-	// Before doing anything with vertical positioning, we need to automatically reduce available
-	// offset if there are unused visible lines
-	linesToClear := nItemSlots - len(t.matches) + t.vertOffset
-	if linesToClear > 0 {
-		t.vertOffset = max(0, t.vertOffset-linesToClear)
-	}
-
-	// Change vertical cursor position based on a number of constraints.
-	// This needs to happen after matches have been refreshed, but before setting a new curItem
-	newYIdx := t.curY + posDiff[1] // Apply diff from ops
-
-	// If there are hidden items above the top displayed item, shift all down 1
-	if newYIdx < reservedTopLines-1 {
-		if t.vertOffset > 0 {
-			t.vertOffset--
-		}
-		newYIdx = reservedTopLines - 1
-	}
-
-	// Cater for hidden items below
-	if newYIdx > t.h-1 {
-		// N items still available below the top offset (aka any hidden at the top of the list)
-		nItemsBelowOffset := len(t.matches) - t.vertOffset
-
-		// N items remaining BELOW the item slots (aka visible portion of the list)
-		nItemsBelowInvisible := nItemsBelowOffset - nItemSlots
-
-		if nItemsBelowInvisible > 0 {
-			t.vertOffset++
+	t.curY = 0
+	if matchIdx >= 0 {
+		if matchIdx < t.vertOffset {
+			t.vertOffset = matchIdx
+			t.curY = reservedTopLines
+		} else if matchIdx >= t.vertOffset+windowSize {
+			t.vertOffset = matchIdx - windowSize
+			t.curY = reservedTopLines + windowSize
+		} else {
+			t.curY = matchIdx - t.vertOffset + reservedTopLines
 		}
 	}
-	// Prevent going out of range of screen
-	newYIdx = min(newYIdx, t.h-1)
-
-	// Prevent going out of range of returned matches
-	// This needs knowledge of the vertOffset as we will never show empty lines at the bottom of the
-	// screen if there is an offset available at the top
-	// TODO change this, follow the cursor...
-	t.curY = min(newYIdx, reservedTopLines+len(t.matches)-1)
 
 	isSearchLine := t.curY <= reservedTopLines-1 // `- 1` for 0 idx
 
 	// Set curItem before establishing max X position based on the len of the curItem line (to avoid
 	// nonexistent array indexes). If on search line, just set to nil
-	if isSearchLine {
+	if isSearchLine || len(t.matches) == 0 {
 		t.curItem = nil
 	} else {
-		t.curItem = &t.matches[t.curY-reservedTopLines+t.vertOffset]
+		t.curItem = &t.matches[matchIdx]
 	}
 
 	// Then refresh the X position based on vertical position and curItem

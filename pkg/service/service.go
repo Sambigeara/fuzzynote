@@ -35,13 +35,13 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) (string, error)
 	Update(line string, note *[]byte, idx int) error
-	Delete(idx int) error
+	Delete(idx int) (string, error)
 	MoveUp(idx int) (bool, error)
 	MoveDown(idx int) (bool, error)
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, error)
+	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
@@ -54,7 +54,6 @@ type DBListRepo struct {
 	wal                *Wal
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
-	listItemMatchIdx   map[string]int
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -68,7 +67,6 @@ func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uin
 		eventLogger:        NewDbEventLogger(),
 		wal:                NewWal(localWalFile, pushFrequency),
 		latestFileSchemaID: fileSchemaID(3),
-		listItemMatchIdx:   make(map[string]int),
 	}
 }
 
@@ -151,9 +149,9 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 }
 
 // Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(idx int) error {
+func (r *DBListRepo) Delete(idx int) (string, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return "", errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -166,7 +164,11 @@ func (r *DBListRepo) Delete(idx int) error {
 	}
 	r.processEventLog(deleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(deleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
-	return nil
+	key := ""
+	if listItem.child != nil {
+		key = listItem.child.Key()
+	}
+	return key, nil
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -277,7 +279,7 @@ func (r *DBListRepo) Redo() error {
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	cur := r.Root
@@ -286,12 +288,13 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 	r.matchListItems = []*ListItem{}
 	res := []ListItem{}
 
+	newPos := -1
 	if cur == nil {
-		return res, nil
+		return res, newPos, nil
 	}
 
-	//var idx, curOffset int
-	idx, aggregateOffset := 0, 0
+	idx := 0
+	listItemMatchIdx := make(map[string]int)
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -333,14 +336,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 				// current item will be at idx 1, and will only have an offset of 1. Given two items were added, we
 				// need to account for the offset
 				// TODO apply opposite logic for items which are no longer present, decrement the counter
-				key := cur.Key()
-				offset := aggregateOffset
-				if oldIdx, exists := r.listItemMatchIdx[key]; exists {
-					offset = idx - oldIdx
-				} else {
-					aggregateOffset++
-				}
-				cur.Offset = offset
 				res = append(res, *cur)
 
 				if lastCur != nil {
@@ -350,20 +345,21 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 				lastCur = cur
 
 				// Set the new idx for the next iteration
-				r.listItemMatchIdx[key] = idx
+				listItemMatchIdx[cur.Key()] = idx
 				idx++
 			}
 		}
-
 		if cur.parent == nil {
-			return res, nil
+			if p, exists := listItemMatchIdx[curKey]; exists {
+				newPos = p
+			}
+			return res, newPos, nil
 		}
-
 		cur = cur.parent
 	}
 }
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
-	matchedItems, _ := r.Match(matchKeys, showHidden, "")
+	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
 	return r.wal.generatePartialView(matchedItems)
 }
