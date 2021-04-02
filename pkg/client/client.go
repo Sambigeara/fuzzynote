@@ -73,7 +73,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 
 	showHidden := false
 
-	matches, err := db.Match([][]rune{}, showHidden)
+	matches, err := db.Match([][]rune{}, showHidden, "")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -475,6 +475,13 @@ func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
+	// itemKey represents the unique identifying key for the ListItem. We set it explicitly only
+	// when creating new ListItems via the Add interface, so we can tell the backend what our
+	// current item is when asking for Matches (and adjusting for cursor offsets due to live collab)
+	// If itemKey is empty by the time we reach the Match call, we offset any movement against our
+	// existing match set (e.g. for Move*) and then default to matchedItem.Key()
+	itemKey := ""
+
 	// matchIdx accounts for any offset and reserved lines at the top - it represents the true index
 	// of the item in the match set
 	matchIdx := t.curY + t.vertOffset - reservedTopLines
@@ -522,7 +529,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 					}
 				}
 				newString := t.getNewLinePrefix()
-				err = t.db.Add(newString, nil, matchIdx+1)
+				itemKey, err = t.db.Add(newString, nil, matchIdx+1)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -605,7 +612,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 		case tcell.KeyCtrlP:
 			// Paste functionality
 			if t.copiedItem != nil {
-				err := t.db.Add(t.copiedItem.Line, nil, matchIdx+1)
+				itemKey, err = t.db.Add(t.copiedItem.Line, nil, matchIdx+1)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -803,12 +810,16 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
+	// Account for any explicit moves
+	matchIdx += posDiff[1]
+
+	if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
+		itemKey = t.matches[matchIdx].Key()
+	}
+
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
-	t.matches, err = t.db.Match(t.search, t.showHidden)
-
-	// Account for any explicit moves
-	matchIdx = min(matchIdx+posDiff[1], len(t.matches)-1)
+	t.matches, err = t.db.Match(t.search, t.showHidden, itemKey)
 
 	if matchIdx >= 0 && matchIdx < len(t.matches) {
 		currentOffset := t.matches[matchIdx].Offset
@@ -880,16 +891,18 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 	// screen if there is an offset available at the top
 	// TODO change this, follow the cursor...
 	t.curY = min(newYIdx, reservedTopLines+len(t.matches)-1)
+	// Reset matchIdx
+	matchIdx = t.curY + t.vertOffset - reservedTopLines
 
 	// Reset
-	isSearchLine = matchIdx == -1
+	isSearchLine = matchIdx < 0
 
 	// Set curItem before establishing max X position based on the len of the curItem line (to avoid
 	// nonexistent array indexes). If on search line, just set to nil
 	if isSearchLine {
 		t.curItem = nil
 	} else {
-		t.curItem = &t.matches[t.curY-reservedTopLines+t.vertOffset]
+		t.curItem = &t.matches[matchIdx]
 	}
 
 	// Then refresh the X position based on vertical position and curItem

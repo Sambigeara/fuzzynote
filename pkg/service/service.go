@@ -33,7 +33,7 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
-	Add(line string, note *[]byte, idx int) error
+	Add(line string, note *[]byte, idx int) (string, error)
 	Update(line string, note *[]byte, idx int) error
 	Delete(idx int) error
 	MoveUp(idx int) (bool, error)
@@ -41,7 +41,7 @@ type ListRepo interface {
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
-	Match(keys [][]rune, showHidden bool) ([]ListItem, error)
+	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
@@ -87,11 +87,11 @@ type ListItem struct {
 	matchParent  *ListItem
 }
 
-func (i *ListItem) getKey() string {
+func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) error {
+func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
 		eventType:                  e,
 		uuid:                       originUUID,
@@ -105,15 +105,17 @@ func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCrea
 	r.wal.eventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
 	var err error
-	r.Root, err = r.CallFunctionForEventLog(r.Root, el)
-	return err
+	var item *ListItem
+	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
+	return item, err
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
+// It returns a string representing the unique key of the newly created item
+func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
-		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
+		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
 
 	var childCreationTime int64
@@ -129,9 +131,9 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) error {
 	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
+	newItem, _ := r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
 	r.addUndoLog(addEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
-	return nil
+	return newItem.Key(), nil
 }
 
 // Update will update the line or note of an existing ListItem
@@ -275,7 +277,7 @@ func (r *DBListRepo) Redo() error {
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
 // fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
+func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, error) {
 	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
 
 	cur := r.Root
@@ -288,8 +290,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 		return res, nil
 	}
 
-	//var curIdx, curOffset int
-	curIdx, aggregateOffset := 0, 0
+	//var idx, curOffset int
+	idx, aggregateOffset := 0, 0
 	for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
@@ -314,6 +316,14 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 			}
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
+				// TODO "if you were here, you'll now be here", in form of array of offsets?? Using previous match
+				// set as a base??
+				// [
+				//     5, Previous idx=0 moved 5 up
+				//     -2, previous idx=1 moved 2 down etc
+				// ]
+				// maybe can be added to ListItem.Offset (maybe this is what I was trying to achieve the first time round)
+
 				// If it exists, retrieve the previous position, compare it to the new position,
 				// and return the offset with the ListItem (accounting for the aggregate counter - see below).
 				//
@@ -323,10 +333,10 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				// current item will be at idx 1, and will only have an offset of 1. Given two items were added, we
 				// need to account for the offset
 				// TODO apply opposite logic for items which are no longer present, decrement the counter
-				key := cur.getKey()
+				key := cur.Key()
 				offset := aggregateOffset
 				if oldIdx, exists := r.listItemMatchIdx[key]; exists {
-					offset = curIdx - oldIdx
+					offset = idx - oldIdx
 				} else {
 					aggregateOffset++
 				}
@@ -340,8 +350,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 				lastCur = cur
 
 				// Set the new idx for the next iteration
-				r.listItemMatchIdx[key] = curIdx
-				curIdx++
+				r.listItemMatchIdx[key] = idx
+				idx++
 			}
 		}
 
@@ -354,6 +364,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool) ([]ListItem, error) {
 }
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
-	matchedItems, _ := r.Match(matchKeys, showHidden)
+	matchedItems, _ := r.Match(matchKeys, showHidden, "")
 	return r.wal.generatePartialView(matchedItems)
 }

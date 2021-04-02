@@ -224,7 +224,7 @@ func (wf *localWalFile) stopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, error) {
+func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
 	item := r.wal.listItemTracker[key]
 	targetItem := r.wal.listItemTracker[targetKey]
@@ -234,7 +234,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
 	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
-		return root, nil
+		return root, item, nil
 	}
 
 	var err error
@@ -258,21 +258,21 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
-			root, err = r.CallFunctionForEventLog(root, addEl)
+			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
 	case deleteEvent:
 		root, err = r.wal.del(root, item)
 		delete(r.wal.listItemTracker, key)
 	case moveUpEvent:
 		if targetItem == nil {
-			return root, err
+			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[key] = item
 	case moveDownEvent:
 		if targetItem == nil {
-			return root, err
+			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
@@ -282,7 +282,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	case hideEvent:
 		err = r.wal.setVisibility(item, false)
 	}
-	return root, err
+	return root, item, err
 }
 
 func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
@@ -366,7 +366,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	for _, e := range *r.wal.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic, because dragons lie within
-		root, _ = r.CallFunctionForEventLog(root, e)
+		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
 	r.Root = root
@@ -596,7 +596,7 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// which map to the wal entries
 	logKeys := make(map[string]struct{})
 	for _, item := range matchItems {
-		logKeys[item.getKey()] = struct{}{}
+		logKeys[item.Key()] = struct{}{}
 	}
 
 	// TODO figure out how to deal with this!!!
