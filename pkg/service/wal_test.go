@@ -789,11 +789,13 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "foobar",
+			line:                 matchTerm,
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -816,7 +818,7 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "foobar",
+			line:                 matchTerm,
 			listItemCreationTime: creationTime,
 		})
 		eventTime++
@@ -828,7 +830,9 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime + 1,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
 			t.Fatalf("Matched wal should not include the non matching event")
 		}
@@ -851,7 +855,7 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "foobar",
+			line:                 matchTerm,
 			listItemCreationTime: creationTime,
 		})
 		eventTime++
@@ -863,7 +867,9 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 3 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -899,7 +905,9 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 0 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -922,17 +930,18 @@ func TestWalFilter(t *testing.T) {
 			unixNanoTime:         eventTime,
 			uuid:                 uuid,
 			eventType:            updateEvent,
-			line:                 "something something foobar",
+			line:                 fmt.Sprintf("something something %s", matchTerm),
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
 	})
 	t.Run("Check includes matching item after updates", func(t *testing.T) {
-		matchTerm := "foobar"
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
 		creationTime := eventTime
@@ -993,7 +1002,9 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune("foobar")
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 7 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -1009,19 +1020,21 @@ func TestWalFilter(t *testing.T) {
 				uuid:                 uuid,
 				eventType:            addEvent,
 				listItemCreationTime: creationTime,
-				line:                 "foobar",
+				line:                 matchTerm,
 			},
 		}
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
+		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf.pushMatchTerm = []rune(matchTerm)
+		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 1 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
 	})
 	t.Run("Check includes matching item after post replay updates", func(t *testing.T) {
-		repo := NewDBListRepo(rootDir, NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir), testPushFrequency)
+		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		defer clearUp()
-		matchTerm := "foo"
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
 		creationTime := eventTime
@@ -1089,7 +1102,8 @@ func TestWalFilter(t *testing.T) {
 			t.Fatalf("The item line should be %s", "foo ")
 		}
 
-		matchedWal := getMatchedWal(repo.wal.log, []rune(matchTerm), &map[string]struct{}{})
+		localWalFile.pushMatchTerm = []rune("foo")
+		matchedWal := getMatchedWal(repo.wal.log, localWalFile)
 		if len(*matchedWal) != 5 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}

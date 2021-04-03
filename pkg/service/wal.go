@@ -135,6 +135,8 @@ type localWalFile struct {
 	processedPartialWalsLock *sync.Mutex
 	mode                     Mode
 	pushMatchTerm            []rune
+	processedEventLock       *sync.Mutex
+	processedEventMap        map[string]struct{}
 }
 
 func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
@@ -146,6 +148,8 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		processedPartialWalsLock: &sync.Mutex{},
 		mode:                     Sync,
 		pushMatchTerm:            []rune{},
+		processedEventLock:       &sync.Mutex{},
+		processedEventMap:        make(map[string]struct{}),
 	}
 }
 
@@ -242,12 +246,18 @@ func (wf *localWalFile) getPushMatchTerm() []rune {
 }
 
 func (wf *localWalFile) setProcessedEvent(fileName string) {
-	// Stub
+	// TODO these are currently duplicated across walfiles, think of a more graceful
+	// boundary for reuse
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	wf.processedEventMap[fileName] = struct{}{}
 }
 
 func (wf *localWalFile) isEventProcessed(fileName string) bool {
-	// Stub
-	return true
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	_, exists := wf.processedEventMap[fileName]
+	return exists
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
