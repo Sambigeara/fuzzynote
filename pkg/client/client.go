@@ -506,7 +506,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if len(t.selectedItems) > 0 {
 				t.selectedItems = make(map[int]string)
 			} else {
-				t.curY = 0 // TODO
+				t.vertOffset = 0
+				relativeY = 0
 			}
 		case tcell.KeyEnter:
 			if len(t.selectedItems) > 0 {
@@ -754,24 +755,20 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 		case tcell.KeyPgUp:
 			if relativeY > reservedTopLines-1 {
 				// Move the current item up and follow with cursor
-				moved, err := t.db.MoveUp(relativeY - 1)
-				if err != nil {
+				if err = t.db.MoveUp(relativeY - 1); err != nil {
 					log.Fatal(err)
 				}
-				if moved {
-					posDiff[1]--
-				}
+				// Set itemKey to current to ensure the cursor follows it
+				itemKey = t.curItem.Key()
 			}
 		case tcell.KeyPgDn:
 			if relativeY > reservedTopLines-1 {
 				// Move the current item down and follow with cursor
-				moved, err := t.db.MoveDown(relativeY - 1)
-				if err != nil {
+				if err = t.db.MoveDown(relativeY - 1); err != nil {
 					log.Fatal(err)
 				}
-				if moved {
-					posDiff[1]++
-				}
+				// Set itemKey to current to ensure the cursor follows it
+				itemKey = t.curItem.Key()
 			}
 		case tcell.KeyDown:
 			posDiff[1]++
@@ -824,7 +821,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-	matchIdx := relativeY - reservedTopLines // -1
+	matchIdx := relativeY - reservedTopLines
 	// Adjust with any explicit moves
 	matchIdx = min(matchIdx+posDiff[1], len(t.matches)-1)
 	// Set itemKey to the client's current curItem

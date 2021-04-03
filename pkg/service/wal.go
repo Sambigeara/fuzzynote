@@ -13,8 +13,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
 func init() {
@@ -109,8 +107,6 @@ func (e *EventLog) getKeys() (string, string) {
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
 	getRootDir() string
-	lock() error
-	unlock() error
 	getFileNamesMatchingPattern(string) ([]string, error)
 	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
@@ -127,7 +123,6 @@ type WalFile interface {
 }
 
 type localWalFile struct {
-	fileMutex                *lockedfile.File
 	rootDir                  string
 	RefreshTicker            *time.Ticker
 	GatherTicker             *time.Ticker
@@ -155,20 +150,6 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 
 func (wf *localWalFile) getRootDir() string {
 	return wf.rootDir
-}
-
-func (wf *localWalFile) lock() error {
-	var err error
-	wf.fileMutex, err = lockedfile.Create(path.Join(wf.rootDir, syncFile))
-	if err != nil {
-		return fmt.Errorf("error creating wal sync lock: %s", err)
-	}
-	return nil
-}
-
-func (wf *localWalFile) unlock() error {
-	wf.fileMutex.Close()
-	return nil
 }
 
 func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
