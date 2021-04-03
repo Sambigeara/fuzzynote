@@ -1,7 +1,6 @@
 package service
 
 import (
-	"log"
 	"os"
 	"path"
 
@@ -51,7 +50,9 @@ func GetRemotesConfig(root string) remotes {
 		decoder := yaml.NewDecoder(f)
 		err = decoder.Decode(&r)
 		if err != nil {
-			log.Fatalf("main : Parsing File Config : %v", err)
+			//log.Fatalf("main : Parsing File Config : %v", err)
+			// TODO handle with appropriate error message
+			return r
 		}
 		defer f.Close()
 	}
