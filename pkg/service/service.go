@@ -36,8 +36,8 @@ type ListRepo interface {
 	Add(line string, note *[]byte, idx int) (string, error)
 	Update(line string, note *[]byte, idx int) error
 	Delete(idx int) (string, error)
-	MoveUp(idx int) (bool, error)
-	MoveDown(idx int) (bool, error)
+	MoveUp(idx int) error
+	MoveDown(idx int) error
 	ToggleVisibility(idx int) error
 	Undo() error
 	Redo() error
@@ -179,9 +179,9 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveUp(idx int) (bool, error) {
+func (r *DBListRepo) MoveUp(idx int) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return false, errors.New("ListItem idx out of bounds")
+		return errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -204,16 +204,15 @@ func (r *DBListRepo) MoveUp(idx int) (bool, error) {
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
 		r.addUndoLog(moveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
-		return true, nil
 	}
-	return false, nil
+	return nil
 }
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveDown(idx int) (bool, error) {
+func (r *DBListRepo) MoveDown(idx int) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return false, errors.New("ListItem idx out of bounds")
+		return errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
@@ -232,9 +231,8 @@ func (r *DBListRepo) MoveDown(idx int) (bool, error) {
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
 		r.addUndoLog(moveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
-		return true, nil
 	}
-	return false, nil
+	return nil
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
