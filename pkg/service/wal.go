@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
@@ -114,11 +115,15 @@ type WalFile interface {
 	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
 	flush(*bytes.Buffer, string) error
-	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
+	isPartialWalProcessed(string) bool
 	awaitPull()
 	awaitGather()
 	stopTickers()
+	getMode() Mode
+	getPushMatchTerm() []rune
+	setProcessedEvent(string)
+	isEventProcessed(string) bool
 }
 
 type localWalFile struct {
@@ -127,7 +132,11 @@ type localWalFile struct {
 	RefreshTicker            *time.Ticker
 	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock chan bool
+	processedPartialWalsLock *sync.Mutex
+	mode                     Mode
+	pushMatchTerm            []rune
+	processedEventLock       *sync.Mutex
+	processedEventMap        map[string]struct{}
 }
 
 func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
@@ -136,7 +145,11 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: make(chan bool, 1),
+		processedPartialWalsLock: &sync.Mutex{},
+		mode:                     Sync,
+		pushMatchTerm:            []rune{},
+		processedEventLock:       &sync.Mutex{},
+		processedEventMap:        make(map[string]struct{}),
 	}
 }
 
@@ -198,17 +211,17 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
-	wf.processedPartialWalsLock <- true
-	_, exists := wf.processedPartialWals[fileName]
-	<-wf.processedPartialWalsLock
-	return exists
+func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) setProcessedPartialWals(fileName string) {
-	wf.processedPartialWalsLock <- true
-	wf.processedPartialWals[fileName] = struct{}{}
-	<-wf.processedPartialWalsLock
+func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	_, exists := wf.processedPartialWals[fileName]
+	return exists
 }
 
 func (wf *localWalFile) awaitPull() {
@@ -222,6 +235,29 @@ func (wf *localWalFile) awaitGather() {
 func (wf *localWalFile) stopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
+}
+
+func (wf *localWalFile) getMode() Mode {
+	return wf.mode
+}
+
+func (wf *localWalFile) getPushMatchTerm() []rune {
+	return wf.pushMatchTerm
+}
+
+func (wf *localWalFile) setProcessedEvent(fileName string) {
+	// TODO these are currently duplicated across walfiles, think of a more graceful
+	// boundary for reuse
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	wf.processedEventMap[fileName] = struct{}{}
+}
+
+func (wf *localWalFile) isEventProcessed(fileName string) bool {
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	_, exists := wf.processedEventMap[fileName]
+	return exists
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -355,17 +391,24 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 }
 
 func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
-	// Merge with any new local events which may have occurred during sync
-	r.wal.log = merge(r.wal.log, partialWal)
-	// If no events, do nothing and return nil
-	if len(*r.wal.log) == 0 {
+	// No point merging with an empty partialWal
+	if len(*partialWal) == 0 {
 		return nil
 	}
+
+	// Merge with any new local events which may have occurred during sync
+	r.wal.log = merge(r.wal.log, partialWal)
+
+	// Clear the listItemTracker for all full Replays
+	// This map is also used by the main service interface CRUD endpoints, but we can
+	// clear it here because both the CRUD ops and these Replays run in the same loop,
+	// so we won't get any contention.
+	r.wal.listItemTracker = make(map[string]*ListItem)
 
 	var root *ListItem
 	for _, e := range *r.wal.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
-		// caller logic, because dragons lie within
+		// caller logic
 		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
@@ -698,7 +741,37 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	return &b
 }
 
+func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
+	matchTerm := wf.getPushMatchTerm()
+
+	if len(matchTerm) == 0 {
+		return el
+	}
+	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
+	for _, e := range *el {
+		// For now (for safety) use full pattern matching
+		if isMatch(matchTerm, e.line, FullMatchPattern) {
+			k, _ := e.getKeys()
+			wf.setProcessedEvent(k)
+		}
+	}
+
+	filteredWal := []EventLog{}
+	// Do a second iteration using the map above, and build a Wal which includes any logs which
+	// fulfilled the match term at some point in it's history.
+	for _, e := range *el {
+		k, _ := e.getKeys()
+		if wf.isEventProcessed(k) {
+			filteredWal = append(filteredWal, e)
+		}
+	}
+	return &filteredWal
+}
+
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+	// Apply any filtering based on Push match configuration
+	el = getMatchedWal(el, wf)
+
 	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
@@ -786,15 +859,17 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			}
 		}(wf)
 
-		// Schedule gather tasks
-		go func(wf WalFile) error {
-			for {
-				wf.awaitGather()
-				if err := w.gather(wf); err != nil {
-					return err
+		if wf.getMode() == Sync || wf.getMode() == Push {
+			// Schedule gather tasks
+			go func(wf WalFile) error {
+				for {
+					wf.awaitGather()
+					if err := w.gather(wf); err != nil {
+						return err
+					}
 				}
-			}
-		}(wf)
+			}(wf)
+		}
 	}
 
 	// Push to all WalFiles
@@ -817,7 +892,9 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// copies by default, I think).
 					elCopy := el
 					for _, wf := range w.walFiles {
-						go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
+						if wf.getMode() == Sync || wf.getMode() == Push {
+							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
+						}
 					}
 					el = []EventLog{}
 				}

@@ -8,11 +8,20 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type Mode string
+
+const (
+	Push Mode = "push"
+	Pull Mode = "pull"
+	Sync Mode = "sync"
+)
+
 type remote struct {
-	UUID  string
-	Name  string
+	//UUID  string
+	//Name  string
+	//Mode  Mode
 	Mode  string
-	Match []string
+	Match string
 }
 
 type s3Remote struct {
@@ -22,6 +31,9 @@ type s3Remote struct {
 	Prefix        string
 	RefreshFreqMs uint16
 	GatherFreqMs  uint16
+	Mode          Mode
+	Match         string
+	MatchAll      bool
 	//remote
 }
 
