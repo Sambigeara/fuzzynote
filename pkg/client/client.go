@@ -506,7 +506,8 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if len(t.selectedItems) > 0 {
 				t.selectedItems = make(map[int]string)
 			} else {
-				t.curY = 0 // TODO
+				t.vertOffset = 0
+				relativeY = 0
 			}
 		case tcell.KeyEnter:
 			if len(t.selectedItems) > 0 {
@@ -824,7 +825,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 
 	t.hiddenMatchPrefix = t.getHiddenLinePrefix(t.search)
 
-	matchIdx := relativeY - reservedTopLines // -1
+	matchIdx := relativeY - reservedTopLines
 	// Adjust with any explicit moves
 	matchIdx = min(matchIdx+posDiff[1], len(t.matches)-1)
 	// Set itemKey to the client's current curItem
