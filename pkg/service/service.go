@@ -308,9 +308,9 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 		if showHidden || !cur.IsHidden {
 			matched := true
 			for _, group := range keys {
-				// Match any items with empty Lines (this accounts for lines added when search is active)
-				// "active" listItems pass automatically to allow mid-search item editing
-				if len(cur.Line) == 0 {
+				// Match the currently selected item.
+				// Also, match any items with empty Lines (this accounts for lines added when search is active)
+				if cur.Key() == curKey || len(cur.Line) == 0 {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
