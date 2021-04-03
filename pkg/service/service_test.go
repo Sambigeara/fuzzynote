@@ -37,8 +37,6 @@ func clearUp() {
 		os.Remove(wal)
 	}
 
-	os.Remove(path.Join(rootDir, syncFile))
-	os.Remove(path.Join(otherRootDir, syncFile))
 	os.Remove(rootDir)
 	os.Remove(otherRootDir)
 

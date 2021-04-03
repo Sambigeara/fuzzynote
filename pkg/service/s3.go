@@ -76,15 +76,6 @@ func (wf *s3FileWal) getRootDir() string {
 	return wf.prefix
 }
 
-// TODO get rid of these
-func (wf *s3FileWal) lock() error {
-	return nil
-}
-
-func (wf *s3FileWal) unlock() error {
-	return nil
-}
-
 func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{

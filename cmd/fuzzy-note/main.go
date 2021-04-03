@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	namespace   = "FZN"
-	refreshFile = "_refresh_lock.db"
+	namespace = "FZN"
 )
 
 func main() {

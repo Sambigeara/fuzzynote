@@ -17,7 +17,6 @@ const (
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
 	viewFilePattern = "view_%v.db"
-	syncFile        = "_sync_lock.db"
 )
 
 type bits uint32
