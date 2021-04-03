@@ -325,23 +325,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 			}
 			if matched {
 				r.matchListItems = append(r.matchListItems, cur)
-				// TODO "if you were here, you'll now be here", in form of array of offsets?? Using previous match
-				// set as a base??
-				// [
-				//     5, Previous idx=0 moved 5 up
-				//     -2, previous idx=1 moved 2 down etc
-				// ]
-				// maybe can be added to ListItem.Offset (maybe this is what I was trying to achieve the first time round)
-
-				// If it exists, retrieve the previous position, compare it to the new position,
-				// and return the offset with the ListItem (accounting for the aggregate counter - see below).
-				//
-				// If the key doesn't exist, it's because it's a new item. In this instance, we need to increment
-				// a counter which we'll add to the offset of each matched item below. E.g. if you are on position 1
-				// and a remote user adds two items at position 0 and then 1 (between a single refresh cycle), the
-				// current item will be at idx 1, and will only have an offset of 1. Given two items were added, we
-				// need to account for the offset
-				// TODO apply opposite logic for items which are no longer present, decrement the counter
 				res = append(res, *cur)
 
 				if lastCur != nil {
