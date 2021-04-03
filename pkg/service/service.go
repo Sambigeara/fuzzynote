@@ -116,7 +116,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
 
-	var childCreationTime int64
+	childCreationTime := int64(0)
 	// In order to be able to resolve child node from the tracker mapping, we need UUIDs to be consistent
 	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
 	childUUID := uuid(0)
@@ -141,10 +141,16 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 	}
 
 	listItem := r.matchListItems[idx]
+	childCreationTime := int64(0)
+	childUUID := uuid(0)
+	if listItem.child != nil {
+		childCreationTime = listItem.child.creationTime
+		childUUID = listItem.child.originUUID
+	}
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
 	r.addUndoLog(updateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
-	r.processEventLog(updateEvent, listItem.creationTime, 0, line, note, listItem.originUUID, uuid(0))
+	r.processEventLog(updateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
 	return nil
 }
 

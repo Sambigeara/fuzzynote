@@ -13,7 +13,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		err := repo.Undo()
 		if err != nil {
@@ -36,7 +36,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -86,7 +86,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -169,7 +169,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -339,7 +339,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Add("", nil, 0)
 
@@ -415,7 +415,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		repo.Start(testWalChan)
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		originalLine := "Original line"
 		repo.Add(originalLine, nil, 0)
