@@ -742,8 +742,6 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) 
 	filteredWal := []EventLog{}
 	// Do a second iteration using the map above, and build a Wal which includes any logs which
 	// fulfilled the match term at some point in it's history.
-	// This is particularly useful because if an item previously matched the term, but now doesn't,
-	// it will be removed from the remote (thus preventing any orphaned items).
 	for _, e := range *el {
 		k, _ := e.getKeys()
 		if _, exists := (*keys)[k]; exists {
