@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
@@ -114,15 +115,15 @@ type WalFile interface {
 	generateLogFromFile(string) ([]EventLog, error)
 	removeFile(string) error
 	flush(*bytes.Buffer, string) error
-	// TODO could we do a `getProcessedPartialWalMap() ...`?
-	isPartialWalProcessed(string) bool
 	setProcessedPartialWals(string)
+	isPartialWalProcessed(string) bool
 	awaitPull()
 	awaitGather()
 	stopTickers()
 	getMode() Mode
 	getPushMatchTerm() []rune
-	getProcessedEventMap() *map[string]struct{}
+	setProcessedEvent(string)
+	isEventProcessed(string) bool
 }
 
 type localWalFile struct {
@@ -131,7 +132,7 @@ type localWalFile struct {
 	RefreshTicker            *time.Ticker
 	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock chan bool
+	processedPartialWalsLock *sync.Mutex
 	mode                     Mode
 	pushMatchTerm            []rune
 }
@@ -142,7 +143,7 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: make(chan bool, 1),
+		processedPartialWalsLock: &sync.Mutex{},
 		mode:                     Sync,
 		pushMatchTerm:            []rune{},
 	}
@@ -206,17 +207,17 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
-	wf.processedPartialWalsLock <- true
-	_, exists := wf.processedPartialWals[fileName]
-	<-wf.processedPartialWalsLock
-	return exists
+func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) setProcessedPartialWals(fileName string) {
-	wf.processedPartialWalsLock <- true
-	wf.processedPartialWals[fileName] = struct{}{}
-	<-wf.processedPartialWalsLock
+func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	_, exists := wf.processedPartialWals[fileName]
+	return exists
 }
 
 func (wf *localWalFile) awaitPull() {
@@ -240,9 +241,13 @@ func (wf *localWalFile) getPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *localWalFile) getProcessedEventMap() *map[string]struct{} {
-	// localWalFile has no use for this, so return a stub
-	return &map[string]struct{}{}
+func (wf *localWalFile) setProcessedEvent(fileName string) {
+	// Stub
+}
+
+func (wf *localWalFile) isEventProcessed(fileName string) bool {
+	// Stub
+	return true
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -726,7 +731,9 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	return &b
 }
 
-func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) *[]EventLog {
+func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
+	matchTerm := wf.getPushMatchTerm()
+
 	if len(matchTerm) == 0 {
 		return el
 	}
@@ -735,7 +742,7 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) 
 		// For now (for safety) use full pattern matching
 		if isMatch(matchTerm, e.line, FullMatchPattern) {
 			k, _ := e.getKeys()
-			(*keys)[k] = struct{}{}
+			wf.setProcessedEvent(k)
 		}
 	}
 
@@ -744,7 +751,7 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) 
 	// fulfilled the match term at some point in it's history.
 	for _, e := range *el {
 		k, _ := e.getKeys()
-		if _, exists := (*keys)[k]; exists {
+		if wf.isEventProcessed(k) {
 			filteredWal = append(filteredWal, e)
 		}
 	}
@@ -752,10 +759,9 @@ func getMatchedWal(el *[]EventLog, matchTerm []rune, keys *map[string]struct{}) 
 }
 
 func (w *Wal) push(el *[]EventLog, wf WalFile) error {
-	// Filter wal if required
-	el = getMatchedWal(el, wf.getPushMatchTerm(), wf.getProcessedEventMap())
-
 	// Apply any filtering based on Push match configuration
+	el = getMatchedWal(el, wf)
+
 	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())

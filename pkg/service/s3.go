@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -22,7 +23,7 @@ type s3FileWal struct {
 	downloader               *s3manager.Downloader
 	uploader                 *s3manager.Uploader
 	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock chan bool
+	processedPartialWalsLock *sync.Mutex
 	localRootDir             string
 	key                      string
 	secret                   string
@@ -30,7 +31,8 @@ type s3FileWal struct {
 	prefix                   string
 	mode                     Mode
 	pushMatchTerm            []rune
-	processedEventMap        *map[string]struct{}
+	processedEventMap        map[string]struct{}
+	processedEventLock       *sync.Mutex
 }
 
 func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
@@ -57,7 +59,7 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 		downloader:               s3manager.NewDownloader(sess),
 		uploader:                 s3manager.NewUploader(sess),
 		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: make(chan bool, 1),
+		processedPartialWalsLock: &sync.Mutex{},
 		localRootDir:             root,
 		key:                      cfg.Key,
 		secret:                   cfg.Secret,
@@ -65,7 +67,8 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 		prefix:                   cfg.Prefix,
 		mode:                     cfg.Mode,
 		pushMatchTerm:            []rune(cfg.Match),
-		processedEventMap:        &map[string]struct{}{},
+		processedEventMap:        make(map[string]struct{}),
+		processedEventLock:       &sync.Mutex{},
 	}
 }
 
@@ -174,17 +177,17 @@ func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
-	wf.processedPartialWalsLock <- true
-	_, exists := wf.processedPartialWals[fileName]
-	<-wf.processedPartialWalsLock
-	return exists
+func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
-	wf.processedPartialWalsLock <- true
-	wf.processedPartialWals[fileName] = struct{}{}
-	<-wf.processedPartialWalsLock
+func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	_, exists := wf.processedPartialWals[fileName]
+	return exists
 }
 
 func (wf *s3FileWal) awaitPull() {
@@ -208,9 +211,17 @@ func (wf *s3FileWal) getPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *s3FileWal) getProcessedEventMap() *map[string]struct{} {
-	// localWalFile has no use for this, so return a stub
-	return wf.processedEventMap
+func (wf *s3FileWal) setProcessedEvent(fileName string) {
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	wf.processedEventMap[fileName] = struct{}{}
+}
+
+func (wf *s3FileWal) isEventProcessed(fileName string) bool {
+	wf.processedEventLock.Lock()
+	defer wf.processedEventLock.Unlock()
+	_, exists := wf.processedEventMap[fileName]
+	return exists
 }
 
 func exitErrorf(msg string, args ...interface{}) {
