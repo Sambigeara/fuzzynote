@@ -276,15 +276,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		// becomes tricky to deal with child IDs
 		if item != nil {
 			item, err = r.wal.update(e.line, e.note, item)
-			// This covers edge cases that occurs during partial wal loads/compact etc. Because we pass
-			// a fresh nil root through to the CallFunctionForEventLog, and have to cover cases where
-			// we only have a list of updateEvents, we need to ensure that we set the root if it's not
-			// set. If this does occur, we can confidently just set root == this item, because this case
-			// will only arise on the first updateEvent, which will be the equivalent of an add with no
-			// target child (e.g. the root)
-			if root == nil {
-				root = item
-			}
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
@@ -392,6 +383,12 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 
 	// Merge with any new local events which may have occurred during sync
 	r.wal.log = merge(r.wal.log, partialWal)
+
+	// Clear the listItemTracker for all full Replays
+	// This map is also used by the main service interface CRUD endpoints, but we can
+	// clear it here because both the CRUD ops and these Replays run in the same loop,
+	// so we won't get any contention.
+	r.wal.listItemTracker = make(map[string]*ListItem)
 
 	var root *ListItem
 	for _, e := range *r.wal.log {
