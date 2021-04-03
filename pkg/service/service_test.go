@@ -13,21 +13,34 @@ import (
 
 const (
 	rootDir           = "folder_to_delete"
+	otherRootDir      = "other_folder_to_delete"
 	testPushFrequency = 60000
 )
 
-var rootPath = path.Join(rootDir, rootFileName)
+var (
+	rootPath      = path.Join(rootDir, rootFileName)
+	otherRootPath = path.Join(otherRootDir, rootFileName)
+)
 
-func clearUp(r *DBListRepo) {
+func clearUp() {
 	os.Remove(rootPath)
+	os.Remove(otherRootPath)
 
 	walPathPattern := fmt.Sprintf(path.Join(rootDir, walFilePattern), "*")
 	wals, _ := filepath.Glob(walPathPattern)
 	for _, wal := range wals {
 		os.Remove(wal)
 	}
+	walPathPattern = fmt.Sprintf(path.Join(otherRootDir, walFilePattern), "*")
+	wals, _ = filepath.Glob(walPathPattern)
+	for _, wal := range wals {
+		os.Remove(wal)
+	}
+
 	os.Remove(path.Join(rootDir, syncFile))
+	os.Remove(path.Join(otherRootDir, syncFile))
 	os.Remove(rootDir)
+	os.Remove(otherRootDir)
 
 	files, err := filepath.Glob("wal_*.db")
 	if err != nil {
@@ -56,7 +69,7 @@ func TestServicePushPull(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		now := time.Now().UnixNano()
 		wal := []EventLog{
@@ -113,7 +126,7 @@ func TestServiceAdd(t *testing.T) {
 	item2 := repo.Root.parent
 
 	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp(repo)
+	defer clearUp()
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
@@ -280,7 +293,7 @@ func TestServiceDelete(t *testing.T) {
 		item2 := repo.Root.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -325,7 +338,7 @@ func TestServiceDelete(t *testing.T) {
 		item2 := repo.Root.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -367,7 +380,7 @@ func TestServiceDelete(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -417,7 +430,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -475,7 +488,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -532,7 +545,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -572,7 +585,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -629,7 +642,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -686,7 +699,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -727,7 +740,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -791,7 +804,7 @@ func TestServiceUpdate(t *testing.T) {
 	repo.Add("First", nil, 0)
 
 	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp(repo)
+	defer clearUp()
 
 	// Call matches to trigger matchListItems creation
 	repo.Match([][]rune{}, true, "")
@@ -832,7 +845,7 @@ func TestServiceMatch(t *testing.T) {
 		item5 := repo.Root.parent.parent.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -910,7 +923,7 @@ func TestServiceMatch(t *testing.T) {
 		item5 := repo.Root.parent.parent.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
@@ -987,7 +1000,7 @@ func TestServiceMatch(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -1025,7 +1038,7 @@ func TestServiceMatch(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 
@@ -1107,7 +1120,7 @@ func TestServiceMatch(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 
@@ -1191,7 +1204,7 @@ func TestServiceMatch(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 

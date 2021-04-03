@@ -206,7 +206,7 @@ func TestWalMerge(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		f, _ := os.Create(rootPath)
 		defer f.Close()
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Start(testWalChan)
 
@@ -222,7 +222,7 @@ func TestWalMerge(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Start(testWalChan)
 
@@ -300,7 +300,7 @@ func TestWalMerge(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Start(testWalChan)
 
@@ -466,7 +466,7 @@ func TestWalMerge(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Start(testWalChan)
 
@@ -553,6 +553,7 @@ func TestWalMerge(t *testing.T) {
 		preSaveLog := *repo.wal.log
 		localWalFile = NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
 		repo = NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		defer clearUp()
 		repo.Start(testWalChan)
 		localWalFile = NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
 		localWalFile.processedPartialWals = make(map[string]struct{})
@@ -631,7 +632,7 @@ func TestWalMerge(t *testing.T) {
 		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		os.Mkdir(rootDir, os.ModePerm)
 		os.Create(rootPath)
-		defer clearUp(repo)
+		defer clearUp()
 
 		repo.Start(testWalChan)
 
@@ -792,7 +793,7 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
 		if len(*matchedWal) != 2 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -827,7 +828,7 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime + 1,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
 		if len(*matchedWal) != 2 {
 			t.Fatalf("Matched wal should not include the non matching event")
 		}
@@ -862,7 +863,7 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
 		if len(*matchedWal) != 3 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -898,7 +899,7 @@ func TestWalFilter(t *testing.T) {
 			listItemCreationTime: creationTime,
 		})
 
-		matchedWal := getMatchedWal(&el, []rune(matchTerm))
+		matchedWal := getMatchedWal(&el, []rune(matchTerm), &map[string]struct{}{})
 		if len(*matchedWal) != 0 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -1017,11 +1018,175 @@ func TestWalFilter(t *testing.T) {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
 	})
+	t.Run("Check includes matching item after post replay updates", func(t *testing.T) {
+		repo := NewDBListRepo(rootDir, NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir), testPushFrequency)
+		defer clearUp()
+		matchTerm := "foo"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "f",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "fo",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foo",
+			listItemCreationTime: creationTime,
+		})
+
+		repo.wal.log = &[]EventLog{}
+		repo.Replay(&el)
+		repo.Match([][]rune{}, true, "")
+		matches := repo.matchListItems
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo" {
+			t.Fatalf("The item line should be %s", "foo")
+		}
+
+		eventTime++
+		newEl := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            updateEvent,
+				line:                 "foo ",
+				listItemCreationTime: creationTime,
+			},
+		}
+		repo.Replay(&newEl)
+		repo.Match([][]rune{}, true, "")
+		matches = repo.matchListItems
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo " {
+			t.Fatalf("The item line should be %s", "foo ")
+		}
+
+		matchedWal := getMatchedWal(repo.wal.log, []rune(matchTerm), &map[string]struct{}{})
+		if len(*matchedWal) != 5 {
+			t.Fatalf("Matched wal should have the same number of events")
+		}
+	})
+	t.Run("Check includes matching item after remote flushes further matching updates", func(t *testing.T) {
+		walFile1 := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		// Both repos will talk to the same walfile, but we'll have to instantiate separately, as repo1
+		// needs to set explicit match params
+		repo1 := NewDBListRepo(rootDir, walFile1, testPushFrequency)
+		defer clearUp()
+		walFile2 := NewLocalWalFile(testPushFrequency, testPushFrequency, otherRootDir)
+		// Create copy
+		filteredWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, otherRootDir)
+		filteredWalFile.pushMatchTerm = []rune("foo")
+		repo1.RegisterWalFile(filteredWalFile)
+		repo2 := NewDBListRepo(otherRootDir, walFile2, testPushFrequency)
+
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "f",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "fo",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foo",
+			listItemCreationTime: creationTime,
+		})
+
+		// repo1 pushes filtered wal to shared walfile
+		repo1.wal.push(&el, filteredWalFile)
+		// repo2 pulls from shared walfile
+		filteredEl, _ := pull(walFile2)
+		// After replay, the remote repo should see a single matched item
+		repo2.Replay(filteredEl)
+		repo2.Match([][]rune{}, true, "")
+		matches := repo2.matchListItems
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo" {
+			t.Fatalf("The item line should be %s", "foo ")
+		}
+
+		// Add another update event in original repo
+		eventTime++
+		el = []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            updateEvent,
+				line:                 "foo ",
+				listItemCreationTime: creationTime,
+			},
+		}
+
+		repo1.wal.push(&el, filteredWalFile)
+		filteredEl, _ = pull(walFile2)
+		repo2.Replay(filteredEl)
+		repo2.Match([][]rune{}, true, "")
+		matches = repo2.matchListItems
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo " {
+			t.Fatalf("The item line should be %s", "foo ")
+		}
+	})
 }
 
 func TestWalReplay(t *testing.T) {
-	localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	repo := NewDBListRepo(rootDir, NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir), testPushFrequency)
+	defer clearUp()
 	t.Run("Check add creates item", func(t *testing.T) {
 		line := "foobar"
 		uuid := uuid(1)
@@ -1073,6 +1238,76 @@ func TestWalReplay(t *testing.T) {
 			t.Fatalf("There should be one matched item")
 		}
 		if matches[0].Line != line {
+			t.Fatalf("The item line should be %s", line)
+		}
+	})
+	t.Run("Check merge of updates replays correctly", func(t *testing.T) {
+		line := "foo"
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		creationTime := eventTime
+		el := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            addEvent,
+				listItemCreationTime: creationTime,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "f",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "fo",
+			listItemCreationTime: creationTime,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			unixNanoTime:         eventTime,
+			uuid:                 uuid,
+			eventType:            updateEvent,
+			line:                 "foo",
+			listItemCreationTime: creationTime,
+		})
+
+		repo.wal.log = &[]EventLog{}
+		repo.Replay(&el)
+		repo.Match([][]rune{}, true, "")
+		matches := repo.matchListItems
+
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo" {
+			t.Fatalf("The item line should be %s", line)
+		}
+
+		newEl := []EventLog{
+			EventLog{
+				unixNanoTime:         eventTime,
+				uuid:                 uuid,
+				eventType:            updateEvent,
+				line:                 "foo ",
+				listItemCreationTime: creationTime,
+			},
+		}
+		repo.Replay(&newEl)
+		repo.Match([][]rune{}, true, "")
+		matches = repo.matchListItems
+
+		if len(matches) != 1 {
+			t.Fatalf("There should be one matched item")
+		}
+		if matches[0].Line != "foo " {
 			t.Fatalf("The item line should be %s", line)
 		}
 	})

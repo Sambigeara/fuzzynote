@@ -132,6 +132,8 @@ type localWalFile struct {
 	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock chan bool
+	mode                     Mode
+	pushMatchTerm            []rune
 }
 
 func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
@@ -141,6 +143,8 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: make(chan bool, 1),
+		mode:                     Sync,
+		pushMatchTerm:            []rune{},
 	}
 }
 
@@ -229,11 +233,11 @@ func (wf *localWalFile) stopTickers() {
 }
 
 func (wf *localWalFile) getMode() Mode {
-	return Sync
+	return wf.mode
 }
 
 func (wf *localWalFile) getPushMatchTerm() []rune {
-	return []rune{}
+	return wf.pushMatchTerm
 }
 
 func (wf *localWalFile) getProcessedEventMap() *map[string]struct{} {
@@ -272,6 +276,15 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		// becomes tricky to deal with child IDs
 		if item != nil {
 			item, err = r.wal.update(e.line, e.note, item)
+			// This covers edge cases that occurs during partial wal loads/compact etc. Because we pass
+			// a fresh nil root through to the CallFunctionForEventLog, and have to cover cases where
+			// we only have a list of updateEvents, we need to ensure that we set the root if it's not
+			// set. If this does occur, we can confidently just set root == this item, because this case
+			// will only arise on the first updateEvent, which will be the equivalent of an add with no
+			// target child (e.g. the root)
+			if root == nil {
+				root = item
+			}
 		} else {
 			addEl := e
 			addEl.eventType = addEvent
@@ -372,17 +385,18 @@ func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
 }
 
 func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
-	// Merge with any new local events which may have occurred during sync
-	r.wal.log = merge(r.wal.log, partialWal)
-	// If no events, do nothing and return nil
-	if len(*r.wal.log) == 0 {
+	// No point merging with an empty partialWal
+	if len(*partialWal) == 0 {
 		return nil
 	}
+
+	// Merge with any new local events which may have occurred during sync
+	r.wal.log = merge(r.wal.log, partialWal)
 
 	var root *ListItem
 	for _, e := range *r.wal.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
-		// caller logic, because dragons lie within
+		// caller logic
 		root, _, _ = r.CallFunctionForEventLog(root, e)
 	}
 
