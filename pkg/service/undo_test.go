@@ -15,7 +15,7 @@ func TestTransactionUndo(t *testing.T) {
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The event logger index should increment to 1")
 		}
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +122,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should have the updated line")
 		}
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +143,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		err = repo.Undo()
+		_, err = repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -270,7 +270,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem ptr should be consistent with the original")
 		}
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,7 +291,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		err = repo.Undo()
+		_, err = repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -313,7 +313,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the original line")
 		}
 
-		err = repo.Redo()
+		_, err = repo.Redo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -371,7 +371,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("List item should now have the new line")
 		}
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -390,7 +390,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 		//fmt.Println(repo.eventLogger.curIdx)
 
-		err = repo.Redo()
+		_, err = repo.Redo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,7 +444,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to one")
 		}
 
-		err := repo.Undo()
+		_, err := repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -475,7 +475,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to 2")
 		}
 
-		err = repo.Undo()
+		_, err = repo.Undo()
 		if err != nil {
 			t.Fatal(err)
 		}

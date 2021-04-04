@@ -37,9 +37,9 @@ type ListRepo interface {
 	Delete(idx int) (string, error)
 	MoveUp(idx int) error
 	MoveDown(idx int) error
-	ToggleVisibility(idx int) error
-	Undo() error
-	Redo() error
+	ToggleVisibility(idx int) (string, error)
+	Undo() (string, error)
+	Redo() (string, error)
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
 	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
@@ -235,49 +235,56 @@ func (r *DBListRepo) MoveDown(idx int) error {
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
-func (r *DBListRepo) ToggleVisibility(idx int) error {
+func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
+		return "", errors.New("ListItem idx out of bounds")
 	}
 
 	listItem := r.matchListItems[idx]
 
 	var evType eventType
+	var itemKey string
 	if listItem.IsHidden {
 		evType = showEvent
 		r.addUndoLog(showEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		// Cursor should remain on newly visible key
+		itemKey = listItem.Key()
 	} else {
 		evType = hideEvent
 		r.addUndoLog(hideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		// Set itemKey to parent if available, else child (e.g. bottom of list)
+		if listItem.matchParent != nil {
+			itemKey = listItem.matchParent.Key()
+		} else if listItem.matchChild != nil {
+			itemKey = listItem.matchChild.Key()
+		}
 	}
 	r.processEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
-	return nil
+	return itemKey, nil
 }
 
-func (r *DBListRepo) Undo() error {
+func (r *DBListRepo) Undo() (string, error) {
 	if r.eventLogger.curIdx > 0 {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
 
-		r.processEventLog(oppositeEvent[uel.eventType], uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
-		var err error
+		listItem, err := r.processEventLog(oppositeEvent[uel.eventType], uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx--
-		return err
+		return listItem.Key(), err
 	}
-	return nil
+	return "", nil
 }
 
-func (r *DBListRepo) Redo() error {
+func (r *DBListRepo) Redo() (string, error) {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
 
-		r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
-		var err error
+		listItem, err := r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx++
-		return err
+		return listItem.Key(), err
 	}
-	return nil
+	return "", nil
 }
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
