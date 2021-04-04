@@ -840,17 +840,15 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			}
 		}(wf)
 
-		if wf.getMode() == Sync || wf.getMode() == Push {
-			// Schedule gather tasks
-			go func(wf WalFile) error {
-				for {
-					wf.awaitGather()
-					if err := w.gather(wf); err != nil {
-						return err
-					}
+		// Schedule gather tasks
+		go func(wf WalFile) error {
+			for {
+				wf.awaitGather()
+				if err := w.gather(wf); err != nil {
+					return err
 				}
-			}(wf)
-		}
+			}
+		}(wf)
 	}
 
 	// Push to all WalFiles
