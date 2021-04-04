@@ -592,18 +592,18 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if relativeY == reservedTopLines-1 {
 				t.showHidden = !t.showHidden
 			} else {
-				err = t.db.ToggleVisibility(relativeY - 1)
+				itemKey, err = t.db.ToggleVisibility(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
 				}
 			}
 		case tcell.KeyCtrlU:
-			err := t.db.Undo()
+			itemKey, err = t.db.Undo()
 			if err != nil {
 				log.Fatal(err)
 			}
 		case tcell.KeyCtrlR:
-			err := t.db.Redo()
+			itemKey, err = t.db.Redo()
 			if err != nil {
 				log.Fatal(err)
 			}
