@@ -41,13 +41,13 @@ func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) {
 			_, message, err := ws.conn.ReadMessage()
 			if err != nil {
 				log.Println("read:", err)
-				return
 			}
 			// TODO decode from b64??
 			strWal, _ := b64.StdEncoding.DecodeString(string(message))
 			buf := bytes.NewBuffer([]byte(strWal))
-			el, _ := buildFromFile(buf)
-			walChan <- &el
+			if el, err := buildFromFile(buf); err == nil {
+				walChan <- &el
+			}
 		}
 	}()
 }
