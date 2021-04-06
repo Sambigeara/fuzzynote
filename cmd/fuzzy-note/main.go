@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	//"runtime"
 
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
@@ -73,6 +74,13 @@ func main() {
 		// TODO gracefully deal with missing config
 		s3FileWal := service.NewS3FileWal(r, cfg.Root)
 		listRepo.RegisterWalFile(s3FileWal)
+	}
+
+	var ws *service.WebsocketTarget
+	//runtime.Breakpoint()
+	if remotes.Websocket.URLString != "" {
+		ws = service.NewWebsocketTarget(remotes.Websocket)
+		listRepo.RegisterWebsocket(ws)
 	}
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
