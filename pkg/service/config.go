@@ -19,11 +19,13 @@ type remote struct {
 	//UUID  string
 	//Name  string
 	//Mode  Mode
-	Mode  string
-	Match string
+	Mode     string
+	Match    string
+	MatchAll bool
 }
 
 type s3Remote struct {
+	// TODO use struct composition
 	Key           string
 	Secret        string
 	Bucket        string
@@ -36,8 +38,17 @@ type s3Remote struct {
 	//remote
 }
 
+type websocketRemote struct {
+	// TODO use struct composition
+	URLString string
+	Mode      Mode
+	Match     string
+	MatchAll  bool
+}
+
 type remotes struct {
-	S3 []s3Remote
+	S3        []s3Remote
+	Websocket websocketRemote `yaml:",omitempty"`
 }
 
 func GetRemotesConfig(root string) remotes {
