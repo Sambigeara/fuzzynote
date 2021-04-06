@@ -97,3 +97,7 @@ func (r *DBListRepo) Stop() error {
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	r.wal.walFiles = append(r.wal.walFiles, wf)
 }
+
+func (r *DBListRepo) RegisterWebsocket(ws *WebsocketTarget) {
+	r.wal.websocket = ws
+}

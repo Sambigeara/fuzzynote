@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	//b64 "encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ type Wal struct {
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
+	websocket         *WebsocketTarget
 }
 
 func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
@@ -851,6 +853,11 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		}(wf)
 	}
 
+	// Consume from the websocket, if available
+	if w.websocket != nil {
+		w.websocket.consume(walChan)
+	}
+
 	// Push to all WalFiles
 	go func() {
 		el := []EventLog{}
@@ -859,6 +866,10 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			// and then emit them in batches, for great efficiency gains.
 			select {
 			case e := <-w.eventsChan:
+				// Write in real time to the websocket, if present
+				if w.websocket != nil {
+					w.websocket.push(e)
+				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
 			case <-w.pushTicker.C:

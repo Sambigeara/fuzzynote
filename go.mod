@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go v1.37.30
 	github.com/gdamore/tcell/v2 v2.2.0
 	github.com/google/go-cmp v0.5.5
+	github.com/gorilla/websocket v1.4.2
 	github.com/mattn/go-runewidth v0.0.10
 	gopkg.in/yaml.v2 v2.2.8
 	mvdan.cc/xurls/v2 v2.2.0
