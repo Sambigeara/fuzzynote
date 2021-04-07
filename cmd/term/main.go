@@ -10,8 +10,8 @@ import (
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
 
-	"fuzzy-note/pkg/client"
-	"fuzzy-note/pkg/service"
+	"fuzzynote/pkg/service"
+	"fuzzynote/pkg/term"
 )
 
 const (
@@ -92,8 +92,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create terminal client
-	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
+	// Create term client
+	t := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
@@ -108,9 +108,9 @@ func main() {
 				if err := listRepo.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
-				term.S.PostEvent(&client.RefreshKey{})
+				t.S.PostEvent(&term.RefreshKey{})
 			case ev := <-keyPressEvts:
-				cont, err := term.HandleKeyEvent(ev)
+				cont, err := t.HandleKeyEvent(ev)
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
@@ -127,6 +127,6 @@ func main() {
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
 	for {
-		keyPressEvts <- term.S.PollEvent()
+		keyPressEvts <- t.S.PollEvent()
 	}
 }

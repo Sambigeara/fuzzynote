@@ -1,12 +1,19 @@
 build:
-	go build -o bin/fzn ./cmd/fuzzy-note
+	go build -o bin/fzn ./cmd/term
+
+build-wasm:
+	env GOARCH=wasm GOOS=js go build -o web/app.wasm ./cmd/web/main.go
+	go build -o bin/fzn-server ./cmd/web/
+
+run:
+	./bin/fzn-server
 
 test:
 	go test ./... -count=1
 
 debug:
-	dlv debug ./cmd/fuzzy-note/main.go
-	#dlv debug ./cmd/fuzzy-note/main.go -- --root=test
+	dlv debug ./cmd/term/main.go
+	#dlv debug ./cmd/term/main.go -- --root=test
 
 test-debug:
 	dlv test pkg/service/*

@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	//b64 "encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -14,6 +13,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	//b64 "encoding/base64"
+
+	"nhooyr.io/websocket"
 )
 
 func init() {
@@ -32,20 +34,21 @@ type Wal struct {
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
-	localWalFile      *localWalFile
+	localWalFile      WalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
 	websocket         *WebsocketTarget
+	websocketLive     bool
 }
 
-func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
+func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
 	wal := Wal{
 		uuid:              generateUUID(),
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		localWalFile:      localWalFile,
+		localWalFile:      walFile, // TODO naming
 		eventsChan:        make(chan EventLog),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
@@ -108,20 +111,20 @@ func (e *EventLog) getKeys() (string, string) {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	getRootDir() string
-	getFileNamesMatchingPattern(string) ([]string, error)
-	generateLogFromFile(string) ([]EventLog, error)
-	removeFile(string) error
-	flush(*bytes.Buffer, string) error
-	setProcessedPartialWals(string)
-	isPartialWalProcessed(string) bool
-	awaitPull()
-	awaitGather()
-	stopTickers()
-	getMode() Mode
-	getPushMatchTerm() []rune
-	setProcessedEvent(string)
-	isEventProcessed(string) bool
+	GetRootDir() string
+	GetFileNamesMatchingPattern(string) ([]string, error)
+	GenerateLogFromFile(string) ([]EventLog, error)
+	RemoveFile(string) error
+	Flush(*bytes.Buffer, string) error
+	SetProcessedPartialWals(string)
+	IsPartialWalProcessed(string) bool
+	AwaitPull()
+	AwaitGather()
+	StopTickers()
+	GetMode() Mode
+	GetPushMatchTerm() []rune
+	SetProcessedEvent(string)
+	IsEventProcessed(string) bool
 }
 
 type localWalFile struct {
@@ -150,11 +153,11 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 	}
 }
 
-func (wf *localWalFile) getRootDir() string {
+func (wf *localWalFile) GetRootDir() string {
 	return wf.rootDir
 }
 
-func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+func (wf *localWalFile) GetFileNamesMatchingPattern(matchPattern string) ([]string, error) {
 	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -162,7 +165,7 @@ func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]stri
 	return fileNames, nil
 }
 
-func (wf *localWalFile) generateLogFromFile(fileName string) ([]EventLog, error) {
+func (wf *localWalFile) GenerateLogFromFile(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
@@ -180,11 +183,11 @@ func (wf *localWalFile) generateLogFromFile(fileName string) ([]EventLog, error)
 	return wal, nil
 }
 
-func (wf *localWalFile) removeFile(fileName string) error {
+func (wf *localWalFile) RemoveFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
+func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -194,41 +197,41 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+func (wf *localWalFile) SetProcessedPartialWals(fileName string) {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+func (wf *localWalFile) IsPartialWalProcessed(fileName string) bool {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[fileName]
 	return exists
 }
 
-func (wf *localWalFile) awaitPull() {
+func (wf *localWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *localWalFile) awaitGather() {
+func (wf *localWalFile) AwaitGather() {
 	<-wf.GatherTicker.C
 }
 
-func (wf *localWalFile) stopTickers() {
+func (wf *localWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
 }
 
-func (wf *localWalFile) getMode() Mode {
+func (wf *localWalFile) GetMode() Mode {
 	return wf.mode
 }
 
-func (wf *localWalFile) getPushMatchTerm() []rune {
+func (wf *localWalFile) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *localWalFile) setProcessedEvent(fileName string) {
+func (wf *localWalFile) SetProcessedEvent(fileName string) {
 	// TODO these are currently duplicated across walfiles, think of a more graceful
 	// boundary for reuse
 	wf.processedEventLock.Lock()
@@ -236,7 +239,7 @@ func (wf *localWalFile) setProcessedEvent(fileName string) {
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) isEventProcessed(fileName string) bool {
+func (wf *localWalFile) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]
@@ -649,28 +652,28 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
 	b := buildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(w.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
-	w.localWalFile.flush(b, viewName)
+	viewName := fmt.Sprintf(path.Join(w.localWalFile.GetRootDir(), viewFilePattern), time.Now().UnixNano())
+	w.localWalFile.Flush(b, viewName)
 	return nil
 }
 
 func pull(wf WalFile) (*[]EventLog, error) {
-	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
-	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRootDir(), walFilePattern)
+	allFileNames, err := wf.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	newMergedWal := []EventLog{}
 	for _, fileName := range allFileNames {
-		if !wf.isPartialWalProcessed(fileName) {
-			newWal, err := wf.generateLogFromFile(fileName)
+		if !wf.IsPartialWalProcessed(fileName) {
+			newWal, err := wf.GenerateLogFromFile(fileName)
 			if err != nil {
 				log.Fatal(err)
 			}
 			newMergedWal = *(merge(&newMergedWal, &newWal))
 			// Add to the processed cache
-			wf.setProcessedPartialWals(fileName)
+			wf.SetProcessedPartialWals(fileName)
 		}
 	}
 	return &newMergedWal, nil
@@ -725,7 +728,7 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 }
 
 func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
-	matchTerm := wf.getPushMatchTerm()
+	matchTerm := wf.GetPushMatchTerm()
 
 	if len(matchTerm) == 0 {
 		return el
@@ -735,7 +738,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 		// For now (for safety) use full pattern matching
 		if isMatch(matchTerm, e.line, FullMatchPattern) {
 			k, _ := e.getKeys()
-			wf.setProcessedEvent(k)
+			wf.SetProcessedEvent(k)
 		}
 	}
 
@@ -744,7 +747,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	// fulfilled the match term at some point in it's history.
 	for _, e := range *el {
 		k, _ := e.getKeys()
-		if wf.isEventProcessed(k) {
+		if wf.IsEventProcessed(k) {
 			filteredWal = append(filteredWal, e)
 		}
 	}
@@ -758,12 +761,12 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
-	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
-	if err := wf.flush(b, randomWal); err != nil {
+	randomWal := fmt.Sprintf(path.Join(wf.GetRootDir(), walFilePattern), randomUUID)
+	if err := wf.Flush(b, randomWal); err != nil {
 		log.Fatal(err)
 	}
 	// Add it straight to the cache to avoid processing it in the future
-	wf.setProcessedPartialWals(randomWal)
+	wf.SetProcessedPartialWals(randomWal)
 
 	return nil
 }
@@ -773,12 +776,12 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 func (w *Wal) gather(wf WalFile) error {
 	// Handle only origin wals
 	// TODO I think switching to this breaks other parts of the syncing process, use with caution
-	//filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
-	//originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	//filePathPattern := path.Join(wf.GetRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//originFiles, err := wf.GetFileNamesMatchingPattern(filePathPattern)
 
 	// Handle ALL wals
-	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
-	originFiles, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRootDir(), walFilePattern)
+	originFiles, err := wf.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 
 	if err != nil {
 		log.Fatal(err)
@@ -792,7 +795,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Gather origin files
 	mergedWal := []EventLog{}
 	for _, fileName := range originFiles {
-		wal, err := wf.generateLogFromFile(fileName)
+		wal, err := wf.GenerateLogFromFile(fileName)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -807,7 +810,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Schedule a delete on the files
 	for _, fileName := range originFiles {
 		// TODO proper error handling here too
-		wf.removeFile(fileName)
+		wf.RemoveFile(fileName)
 	}
 
 	return nil
@@ -833,7 +836,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		// Schedule async pull from walfiles individually
 		go func(wf WalFile) error {
 			for {
-				wf.awaitPull()
+				wf.AwaitPull()
 				var el *[]EventLog
 				if el, err = pull(wf); err != nil {
 					return err
@@ -845,7 +848,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		// Schedule gather tasks
 		go func(wf WalFile) error {
 			for {
-				wf.awaitGather()
+				wf.AwaitGather()
 				if err := w.gather(wf); err != nil {
 					return err
 				}
@@ -855,7 +858,15 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 
 	// Consume from the websocket, if available
 	if w.websocket != nil {
-		w.websocket.consume(walChan)
+		go func() {
+			// Check for stop signal
+			for {
+				err := w.websocket.consume(walChan)
+				if err != nil {
+					return
+				}
+			}
+		}()
 	}
 
 	// Push to all WalFiles
@@ -873,7 +884,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
 			case <-w.pushTicker.C:
-				// On ticks, flush what we've aggregated to all walfiles, and then reset the
+				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				if len(el) > 0 {
 					// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -882,7 +893,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// copies by default, I think).
 					elCopy := el
 					for _, wf := range w.walFiles {
-						if wf.getMode() == Sync || wf.getMode() == Push {
+						if wf.GetMode() == Sync || wf.GetMode() == Push {
 							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
 						}
 					}
@@ -898,19 +909,21 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 func (w *Wal) finish() error {
 	// TODO duplication
 	// Retrieve all local wal names
-	filePathPattern := path.Join(w.localWalFile.getRootDir(), walFilePattern)
-	localFileNames, _ := w.localWalFile.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(w.localWalFile.GetRootDir(), walFilePattern)
+	localFileNames, _ := w.localWalFile.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
 	// Delete allFileNames
 	for _, fileName := range localFileNames {
-		w.localWalFile.removeFile(fileName)
+		w.localWalFile.RemoveFile(fileName)
 	}
 
 	w.pushTicker.Stop()
 
 	for _, wf := range w.walFiles {
-		wf.stopTickers()
+		wf.StopTickers()
 	}
+
+	w.websocket.conn.Close(websocket.StatusNormalClosure, "")
 	return nil
 }

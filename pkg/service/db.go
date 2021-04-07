@@ -56,6 +56,12 @@ func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 	return r.wal.startSync(walChan)
 }
 
+func (r *DBListRepo) StartWeb(walChan chan *[]EventLog) error {
+	// TODO retrieve uuid from persistent state somewhere
+	r.wal.uuid = generateUUID()
+	return r.wal.startSync(walChan)
+}
+
 func (r *DBListRepo) flushPrimary(f *os.File) error {
 	// Truncate and move to start of file just in case
 	f.Truncate(0)

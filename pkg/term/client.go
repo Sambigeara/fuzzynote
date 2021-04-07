@@ -1,4 +1,4 @@
-package client
+package term
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"mvdan.cc/xurls/v2"
 
-	"fuzzy-note/pkg/service"
+	"fuzzynote/pkg/service"
 )
 
 const (

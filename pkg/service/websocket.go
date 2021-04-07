@@ -2,11 +2,13 @@ package service
 
 import (
 	"bytes"
+	"context"
 	b64 "encoding/base64"
 	"log"
 	"net/url"
+	"time"
 
-	"github.com/gorilla/websocket"
+	"nhooyr.io/websocket"
 )
 
 type WebsocketTarget struct {
@@ -17,12 +19,15 @@ type WebsocketTarget struct {
 }
 
 func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
 	url, err := url.Parse(cfg.URLString)
 	if err != nil {
 		// TODO fail silently - do not use websocket
 		log.Fatal("broken url:", err)
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(url.String(), nil)
+	conn, _, err := websocket.Dial(ctx, url.String(), nil)
 	if err != nil {
 		// TODO fail silently - do not use websocket
 		log.Fatal("dial:", err)
@@ -35,32 +40,28 @@ func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
 	}
 }
 
-func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) {
-	go func() {
-		for {
-			_, message, err := ws.conn.ReadMessage()
-			if err != nil {
-				log.Println("read:", err)
-			}
-			// TODO decode from b64??
-			strWal, _ := b64.StdEncoding.DecodeString(string(message))
-			buf := bytes.NewBuffer([]byte(strWal))
-			if el, err := buildFromFile(buf); err == nil {
-				walChan <- &el
-			}
-		}
-	}()
+func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) error {
+	var err error
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, message, err := ws.conn.Read(ctx)
+	if err != nil {
+		log.Println("read:", err)
+	}
+	strWal, _ := b64.StdEncoding.DecodeString(string(message))
+	buf := bytes.NewBuffer([]byte(strWal))
+	if el, err := buildFromFile(buf); err == nil {
+		walChan <- &el
+	}
+	return err
 }
 
 func (ws *WebsocketTarget) push(el EventLog) {
-	// TODO encode to b64??
-	// for ref
-	//strWal := b64.StdEncoding.EncodeToString(b)
-	//b, _ = b64.StdEncoding.DecodeString(strWal)
-	//el = getMatchedWal(el, wf)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	b := buildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
-	err := ws.conn.WriteMessage(websocket.TextMessage, []byte(b64Wal))
+	err := ws.conn.Write(ctx, websocket.MessageText, []byte(b64Wal))
 	if err != nil {
 		log.Println("write:", err)
 		return

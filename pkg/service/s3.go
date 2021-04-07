@@ -72,15 +72,15 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 	}
 }
 
-func (wf *s3FileWal) getRootDir() string {
+func (wf *s3FileWal) GetRootDir() string {
 	return wf.prefix
 }
 
-func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+func (wf *s3FileWal) GetFileNamesMatchingPattern(matchPattern string) ([]string, error) {
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(wf.bucket),
-		Prefix: aws.String(wf.getRootDir()),
+		Prefix: aws.String(wf.GetRootDir()),
 	})
 	if err != nil {
 		exitErrorf("Unable to list items in bucket %q, %v", wf.bucket, err)
@@ -93,7 +93,7 @@ func (wf *s3FileWal) getFileNamesMatchingPattern(matchPattern string) ([]string,
 	return fileNames, nil
 }
 
-func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
+func (wf *s3FileWal) GenerateLogFromFile(fileName string) ([]EventLog, error) {
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 
@@ -128,7 +128,7 @@ func (wf *s3FileWal) generateLogFromFile(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *s3FileWal) removeFile(fileName string) error {
+func (wf *s3FileWal) RemoveFile(fileName string) error {
 	// Delete the item
 	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
 	if err != nil {
@@ -156,7 +156,7 @@ func (wf *s3FileWal) removeFile(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
+func (wf *s3FileWal) Flush(b *bytes.Buffer, fileName string) error {
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
@@ -168,47 +168,47 @@ func (wf *s3FileWal) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *s3FileWal) setProcessedPartialWals(fileName string) {
+func (wf *s3FileWal) SetProcessedPartialWals(fileName string) {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) isPartialWalProcessed(fileName string) bool {
+func (wf *s3FileWal) IsPartialWalProcessed(fileName string) bool {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[fileName]
 	return exists
 }
 
-func (wf *s3FileWal) awaitPull() {
+func (wf *s3FileWal) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *s3FileWal) awaitGather() {
+func (wf *s3FileWal) AwaitGather() {
 	<-wf.GatherTicker.C
 }
 
-func (wf *s3FileWal) stopTickers() {
+func (wf *s3FileWal) StopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
 }
 
-func (wf *s3FileWal) getMode() Mode {
+func (wf *s3FileWal) GetMode() Mode {
 	return wf.mode
 }
 
-func (wf *s3FileWal) getPushMatchTerm() []rune {
+func (wf *s3FileWal) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *s3FileWal) setProcessedEvent(fileName string) {
+func (wf *s3FileWal) SetProcessedEvent(fileName string) {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) isEventProcessed(fileName string) bool {
+func (wf *s3FileWal) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]
