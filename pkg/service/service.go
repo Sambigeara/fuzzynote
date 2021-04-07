@@ -56,7 +56,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *DBListRepo {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
