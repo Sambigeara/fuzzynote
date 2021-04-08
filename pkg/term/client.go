@@ -541,6 +541,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				// Copy into buffer in case we're moving it elsewhere
 				t.copiedItem = t.curItem
 				if relativeY-1 != len(t.matches)-1 {
+					// TODO make `==` and reorder
 					// Default behaviour on delete is to return and set position to the child item.
 					// We don't want to do that here, so ignore the itemKey return from Delete, and
 					// increment the Y position.

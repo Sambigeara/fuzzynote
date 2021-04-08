@@ -65,10 +65,10 @@ type Page struct {
 
 	db *service.DBListRepo
 
-	CurIdx    int
-	CurKey    string
+	curIdx    int
+	curKey    string
 	match     string
-	ListItems []service.ListItem
+	ListItems []service.ListItem // Public attribute to allow for updates https://go-app.dev/components#exported-fields
 	walChan   chan *[]service.EventLog
 }
 
@@ -93,8 +93,7 @@ func (p *Page) loadDB() {
 func (p *Page) OnMount(ctx app.Context) {
 	p.loadDB()
 
-	// Instantiate values
-	p.CurIdx = -1 // Search line
+	p.curIdx = -1 // Default to search line
 
 	// TODO remove this, just blocking pull/push on the browserWalFile for now
 	if tempBlock != nil {
@@ -113,14 +112,16 @@ func (p *Page) OnMount(ctx app.Context) {
 				log.Fatal(err)
 			}
 
-			p.ListItems, p.CurIdx, _ = p.db.Match([][]rune{[]rune(p.match)}, false, p.CurKey)
+			p.ListItems, p.curIdx, _ = p.db.Match([][]rune{[]rune(p.match)}, false, p.curKey)
 
-			if elem := app.Window().GetElementByID(strconv.Itoa(p.CurIdx)); !elem.IsNull() {
+			if elem := app.Window().GetElementByID(strconv.Itoa(p.curIdx)); !elem.IsNull() {
 				elem.Call("focus")
 			}
 
 			// TODO Temp "hack" to bring html state back in line with JS (probably specifically
 			// for input text)
+			// At the moment, adding a line onto the bottom will not move the cursor down (another
+			// side affect of this issue, perhaps)
 			for i, item := range p.ListItems {
 				if elem := app.Window().GetElementByID(strconv.Itoa(i)); !elem.IsNull() {
 					elem.Set("value", item.Line)
@@ -179,7 +180,7 @@ func (p *Page) getKey(idx int) string {
 
 func (p *Page) focus(ctx app.Context, e app.Event) {
 	idx, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-	p.CurKey = p.getKey(idx)
+	p.curKey = p.getKey(idx)
 }
 
 func (p *Page) handleMatchChange(ctx app.Context, e app.Event) {
@@ -195,28 +196,47 @@ func (p *Page) handleListItemChange(ctx app.Context, e app.Event) {
 	p.db.Update(s, nil, id)
 }
 
+// TODO figure out more appropriate function name
 func (p *Page) handleNav(ctx app.Context, e app.Event) {
-	// Non mutation, movement-only events
+	//e.PreventDefault()
 	key := e.Get("key").String()
-	switch key {
-	case "Enter":
-		//e.PreventDefault()
-		id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-		p.CurKey, _ = p.db.Add("", nil, id+1)
-		p.walChan <- &[]service.EventLog{}
-	case "ArrowUp":
-		if p.CurIdx >= 0 {
-			p.CurIdx--
-			p.CurKey = p.getKey(p.CurIdx)
-			p.walChan <- &[]service.EventLog{}
+	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
+	if e.Get("ctrlKey").Bool() {
+		switch key {
+		case "d":
+			if p.curIdx == len(p.ListItems)-1 {
+				p.curKey, _ = p.db.Delete(id)
+			} else {
+				p.db.Delete(id)
+				p.curKey = p.getKey(p.curIdx + 1)
+			}
+		default:
+			return
 		}
-	case "ArrowDown":
-		if p.CurIdx < len(p.ListItems)-1 {
-			p.CurIdx++
-			p.CurKey = p.getKey(p.CurIdx)
-			p.walChan <- &[]service.EventLog{}
+	} else {
+		switch key {
+		case "Enter":
+			p.curKey, _ = p.db.Add("", nil, id+1)
+		case "Backspace":
+			// If the current line is empty, backspace will delete it
+			if p.curIdx >= 0 && p.curIdx < len(p.ListItems) && len(p.ListItems[p.curIdx].Line) == 0 {
+				p.curKey, _ = p.db.Delete(id)
+				e.PreventDefault()
+			}
+		case "ArrowUp":
+			if p.curIdx >= 0 {
+				p.curKey = p.getKey(p.curIdx - 1)
+			}
+		case "ArrowDown":
+			if p.curIdx < len(p.ListItems)-1 {
+				p.curKey = p.getKey(p.curIdx + 1)
+			}
+		default:
+			return
 		}
 	}
+	// We only want to add an event on keys handled in this function
+	p.walChan <- &[]service.EventLog{}
 }
 
 //func (p *Page) setCursorPos(elem app.Value) {
