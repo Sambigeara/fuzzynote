@@ -2,14 +2,19 @@ package web
 
 import (
 	"bytes"
+	//"fmt"
 	"log"
 	"strconv"
 	"sync"
-	"time"
+	//"unicode"
 
 	"github.com/maxence-charriere/go-app/v8/pkg/app"
 
 	"fuzzynote/pkg/service"
+)
+
+var (
+	tempBlock chan struct{}
 )
 
 type browserWalFile struct {
@@ -46,8 +51,8 @@ func (wf *browserWalFile) RemoveFile(fileName string) error             { return
 func (wf *browserWalFile) Flush(b *bytes.Buffer, fileName string) error { return nil }
 func (wf *browserWalFile) SetProcessedPartialWals(partialWal string)    {}
 func (wf *browserWalFile) IsPartialWalProcessed(partialWal string) bool { return false }
-func (wf *browserWalFile) AwaitPull()                                   { time.Sleep(10) }
-func (wf *browserWalFile) AwaitGather()                                 { time.Sleep(10) }
+func (wf *browserWalFile) AwaitPull()                                   { <-tempBlock }
+func (wf *browserWalFile) AwaitGather()                                 { <-tempBlock }
 func (wf *browserWalFile) StopTickers()                                 {}
 func (wf *browserWalFile) GetMode() service.Mode                        { return wf.mode }
 func (wf *browserWalFile) GetPushMatchTerm() []rune                     { return wf.pushMatchTerm }
@@ -60,9 +65,16 @@ type Page struct {
 
 	db *service.DBListRepo
 
-	curIdx    int
+	CurIdx    int
+	CurKey    string
 	match     string
-	listItems []service.ListItem
+	ListItems []service.ListItem
+	walChan   chan *[]service.EventLog
+}
+
+type changeEvent struct {
+	ctx app.Context
+	e   app.Event
 }
 
 func (p *Page) loadDB() {
@@ -81,21 +93,43 @@ func (p *Page) loadDB() {
 func (p *Page) OnMount(ctx app.Context) {
 	p.loadDB()
 
-	walChan := make(chan *[]service.EventLog)
-	if err := p.db.StartWeb(walChan); err != nil {
+	// Instantiate values
+	p.CurIdx = -1 // Search line
+
+	// TODO remove this, just blocking pull/push on the browserWalFile for now
+	if tempBlock != nil {
+		tempBlock = make(chan struct{})
+	}
+
+	p.walChan = make(chan *[]service.EventLog)
+	if err := p.db.StartWeb(p.walChan); err != nil {
 		log.Fatal(err)
 	}
 
-	go func() {
+	ctx.Async(func() {
 		for {
-			partialWal := <-walChan
+			partialWal := <-p.walChan
 			if err := p.db.Replay(partialWal); err != nil {
 				log.Fatal(err)
 			}
-			p.listItems, _, _ = p.db.Match([][]rune{[]rune(p.match)}, false, "")
+
+			p.ListItems, p.CurIdx, _ = p.db.Match([][]rune{[]rune(p.match)}, false, p.CurKey)
+
+			if elem := app.Window().GetElementByID(strconv.Itoa(p.CurIdx)); !elem.IsNull() {
+				elem.Call("focus")
+			}
+
+			// TODO Temp "hack" to bring html state back in line with JS (probably specifically
+			// for input text)
+			for i, item := range p.ListItems {
+				if elem := app.Window().GetElementByID(strconv.Itoa(i)); !elem.IsNull() {
+					elem.Set("value", item.Line)
+				}
+			}
+
 			p.Update()
 		}
-	}()
+	})
 }
 
 func (p *Page) OnDismount(ctx app.Context) {
@@ -106,96 +140,92 @@ func (p *Page) OnDismount(ctx app.Context) {
 }
 
 func (p *Page) Render() app.UI {
-	return app.Ul().Body(
+	return app.Div().Body(
 		app.Input().
 			ID(strconv.Itoa(-1)).
 			Value(p.match).
-			OnKeyup(p.onKey).
-			OnInput(p.OnMatchChange),
-		app.Range(p.listItems).Slice(func(i int) app.UI {
-			//return app.Li().Text((p.listItems)[i].Line)
-			return app.Input().
-				ID(strconv.Itoa(i)).
-				Value((p.listItems)[i].Line).
-				//Class(func() string {
-				//    ret := ""
-				//    if i == p.curIdx {
-				//        ret = "focus"
-				//    }
-				//    return ret
-				//}()).
-				OnKeyup(p.onKey).
-				OnInput(p.OnListItemChange)
-		}),
-	).OnClick(p.focus)
+			OnInput(p.handleMatchChange).
+			OnKeyDown(p.handleNav).
+			OnClick(p.focus),
+		app.Stack().
+			//Center().
+			Vertical().
+			Content(
+				app.Range(p.ListItems).Slice(func(i int) app.UI {
+					return app.Input().
+						ID(strconv.Itoa(i)).
+						Value((p.ListItems)[i].Line).
+						OnInput(p.handleListItemChange).
+						OnKeyDown(p.handleNav).
+						OnClick(p.focus)
+					//return app.Span().
+					//    ContentEditable(true).
+					//    ID(strconv.Itoa(i)).
+					//    Text((p.ListItems)[i].Line).
+					//    OnInput(p.handleListItemChange).
+					//    OnKeyDown(p.handleNav).
+					//    OnClick(p.focus)
+				})),
+	)
 }
 
-func (p *Page) curKey() string {
+func (p *Page) getKey(idx int) string {
 	key := ""
-	if p.curIdx >= 0 && p.curIdx < len(p.listItems) {
-		key = p.listItems[p.curIdx].Key()
+	if idx >= 0 && idx < len(p.ListItems) {
+		key = p.ListItems[idx].Key()
 	}
 	return key
 }
 
 func (p *Page) focus(ctx app.Context, e app.Event) {
-	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-	p.curIdx = id
+	idx, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
+	p.CurKey = p.getKey(idx)
 }
 
-func (p *Page) onKey(ctx app.Context, e app.Event) {
-	//foo := ctx.JSSrc.Get("keyCode").String() // Name field is modified
+func (p *Page) handleMatchChange(ctx app.Context, e app.Event) {
+	s := ctx.JSSrc.Get("value").String()
+	p.match = s // Name field is modified
+	p.walChan <- &[]service.EventLog{}
+}
+
+func (p *Page) handleListItemChange(ctx app.Context, e app.Event) {
+	s := ctx.JSSrc.Get("value").String()
+	//s := ctx.JSSrc.Get("innerText").String()
+	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
+	p.db.Update(s, nil, id)
+}
+
+func (p *Page) handleNav(ctx app.Context, e app.Event) {
+	// Non mutation, movement-only events
 	key := e.Get("key").String()
-	log.Printf("Key is: %v", key)
-	//e.PreventDefault()
 	switch key {
 	case "Enter":
+		//e.PreventDefault()
 		id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-		p.db.Add("", nil, id+1)
-		p.curIdx++
+		p.CurKey, _ = p.db.Add("", nil, id+1)
+		p.walChan <- &[]service.EventLog{}
 	case "ArrowUp":
-		if p.curIdx > -1 {
-			p.curIdx--
+		if p.CurIdx >= 0 {
+			p.CurIdx--
+			p.CurKey = p.getKey(p.CurIdx)
+			p.walChan <- &[]service.EventLog{}
 		}
 	case "ArrowDown":
-		if p.curIdx < len(p.listItems)-1 {
-			p.curIdx++
+		if p.CurIdx < len(p.ListItems)-1 {
+			p.CurIdx++
+			p.CurKey = p.getKey(p.CurIdx)
+			p.walChan <- &[]service.EventLog{}
 		}
 	}
-	if elem := app.Window().GetElementByID(strconv.Itoa(p.curIdx)); !elem.IsNull() {
-		elem.Call("focus")
-	}
 }
 
-func (p *Page) OnMatchChange(ctx app.Context, e app.Event) {
-	p.match = ctx.JSSrc.Get("value").String() // Name field is modified
-	p.listItems, _, _ = p.db.Match([][]rune{[]rune(p.match)}, false, p.curKey())
-	p.Update()
-}
+//func (p *Page) setCursorPos(elem app.Value) {
+//    r := app.Window().Get("document").Call("createRange")
+//    s := app.Window().Call("getSelection")
 
-func (p *Page) OnListItemChange(ctx app.Context, e app.Event) {
-	newLine := ctx.JSSrc.Get("value").String()
-	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-	p.db.Update(newLine, nil, id)
-	//p.listItems[id].Line = newLine
-	//p.Update()
-}
+//    r.Call("setStart", elem.Get("firstChild"), "0")
+//    r.Call("collapse", true)
 
-//func (h *Hello) Render() app.UI {
-//    return app.Div().Body(
-//        app.H1().Body(
-//            app.Text("Hello "),
-//            app.Text(h.name), // The name field used in the title
-//        ),
-
-//        // The input HTML element that get the username.
-//        app.Input().
-//            Value(h.name).             // The name field used as current input value
-//            OnInput(h.OnInputChange), // The event handler that will store the username
-//    )
-//}
-
-//func (h *Hello) OnInputChange(ctx app.Context, e app.Event) {
-//    h.name = ctx.JSSrc.Get("value").String() // Name field is modified
-//    h.Update()                               // Update the component UI
+//    s.Call("removeAllRanges")
+//    s.Call("addRange", r)
 //}
