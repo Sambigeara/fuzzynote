@@ -259,7 +259,15 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 	var idx int
 	fmt.Sscanf(id, mainKey, &idx)
 
-	if e.Get("ctrlKey").Bool() {
+	// TODO windows/firefox compat https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/metaKey
+	// Handle undo/redo on meta-z, meta-shift-z
+	if e.Get("metaKey").Bool() && key == "z" {
+		if !e.Get("shiftKey").Bool() {
+			p.curIdxKey, _ = p.db.Undo()
+		} else {
+			p.curIdxKey, _ = p.db.Redo()
+		}
+	} else if e.Get("ctrlKey").Bool() {
 		switch key {
 		case "d":
 			e.PreventDefault()
