@@ -251,7 +251,6 @@ func (p *Page) handleListItemChange(ctx app.Context, e app.Event) {
 
 // TODO figure out more appropriate function name
 func (p *Page) handleNav(ctx app.Context, e app.Event) {
-	//e.PreventDefault()
 	key := e.Get("key").String()
 
 	// TODO helper method to dedup
@@ -263,17 +262,20 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 	if e.Get("ctrlKey").Bool() {
 		switch key {
 		case "d":
-			if p.curIdx == -1 && len(p.SearchGroups) > 1 {
-				// If there's more than one search group, delete it
-				p.SearchGroups = append(p.SearchGroups[:p.curSearchGroupIdx], p.SearchGroups[p.curSearchGroupIdx+1:]...)
-				if p.curSearchGroupIdx > 0 {
-					p.curSearchGroupIdx--
+			e.PreventDefault()
+			if p.curIdx == -1 {
+				if len(p.SearchGroups) > 1 {
+					// If there's more than one search group, delete it
+					p.SearchGroups = append(p.SearchGroups[:p.curSearchGroupIdx], p.SearchGroups[p.curSearchGroupIdx+1:]...)
+					if p.curSearchGroupIdx > 0 {
+						p.curSearchGroupIdx--
+					}
 				}
 			} else if p.curIdx == len(p.ListItems)-1 {
 				// If on lowest line, we want to move to the pre-delete child, which the `Delete`
 				// function returns to us in `curIdxKey`
 				p.curIdxKey, _ = p.db.Delete(idx)
-			} else {
+			} else if p.curIdx >= 0 {
 				p.db.Delete(idx)
 				p.curIdxKey = p.getKey(p.curIdx + 1)
 			}

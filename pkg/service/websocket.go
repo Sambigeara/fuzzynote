@@ -19,7 +19,7 @@ type WebsocketTarget struct {
 }
 
 func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
 	url, err := url.Parse(cfg.URLString)
@@ -42,7 +42,8 @@ func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
 
 func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) error {
 	var err error
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// Might take a while for an event to come in, so timeouts aren't super useful here
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, message, err := ws.conn.Read(ctx)
 	if err != nil {
@@ -57,7 +58,7 @@ func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) error {
 }
 
 func (ws *WebsocketTarget) push(el EventLog) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	b := buildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
