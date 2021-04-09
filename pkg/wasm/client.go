@@ -132,6 +132,14 @@ func (p *Page) loadDB() {
 	p.db.RegisterWebsocket(ws)
 }
 
+func (p *Page) getRuneSearchGroups() [][]rune {
+	runeSearchGroups := [][]rune{}
+	for _, s := range p.SearchGroups {
+		runeSearchGroups = append(runeSearchGroups, []rune(s))
+	}
+	return runeSearchGroups
+}
+
 func (p *Page) OnMount(ctx app.Context) {
 	p.loadDB()
 
@@ -157,10 +165,7 @@ func (p *Page) OnMount(ctx app.Context) {
 				log.Fatal(err)
 			}
 
-			runeSearchGroups := [][]rune{}
-			for _, s := range p.SearchGroups {
-				runeSearchGroups = append(runeSearchGroups, []rune(s))
-			}
+			runeSearchGroups := p.getRuneSearchGroups()
 			p.ListItems, p.curIdx, _ = p.db.Match(runeSearchGroups, false, p.curIdxKey)
 
 			key := ""
@@ -183,11 +188,6 @@ func (p *Page) OnMount(ctx app.Context) {
 			// for input text)
 			// At the moment, adding a line onto the bottom will not move the cursor down (another
 			// side affect of this issue, perhaps)
-			//for i, search := range p.SearchGroups {
-			//    if elem := app.Window().GetElementByID(fmt.Sprintf(searchGroupKey, i)); !elem.IsNull() {
-			//        elem.Set("value", search)
-			//    }
-			//}
 			for i, item := range p.ListItems {
 				if elem := app.Window().GetElementByID(fmt.Sprintf(mainKey, i)); !elem.IsNull() {
 					elem.Set("value", item.Line)
@@ -293,7 +293,9 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 	} else {
 		switch key {
 		case "Enter":
-			p.curIdxKey, _ = p.db.Add("", nil, idx+1)
+			newString := p.db.GetNewLinePrefix(p.getRuneSearchGroups())
+			// TODO not currently going to end of line
+			p.curIdxKey, _ = p.db.Add(newString, nil, idx+1)
 		case "Tab":
 			// We rely on default browser behaviour for now to move between search groups with
 			// Tab. We want to preventDefault on a Shift-Tab press so it avoids creating a new
