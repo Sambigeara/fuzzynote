@@ -1,0 +1,46 @@
+.container {
+  display: flex;
+  flex-flow: column nowrap;
+
+  padding: 5px;
+}
+
+input:focus {
+  background-color: rgb(232, 232, 232);
+  outline: none;
+
+  caret-color: grey;
+}
+
+.matchgroup {
+  display: flex;
+  justify-content: flex-start;
+  flex-flow: row wrap;
+
+  padding: 0px 0px 15px 0px;
+}
+
+.matchitem {
+  font-size: 20px;
+  padding: 6px 4px;
+  margin: 0px 8px 6px 0px;
+
+  border-style: solid;
+  border-width: 1px;
+  border-color: #bbb;
+  border-radius: 8px;
+}
+
+.listgroup {
+  display: flex;
+  flex-flow: column nowrap;
+}
+
+.listitem {
+  font-size: 16px;
+  padding: 3px 4px;
+
+  background-color: transparent;
+  border: none;
+  border-radius: 2px;
+}
