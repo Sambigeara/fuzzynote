@@ -38,8 +38,16 @@ func main() {
 	// required resources to make it work into a web browser. Here it is
 	// configured to handle requests with a path that starts with "/".
 	http.Handle("/", &app.Handler{
-		Name:        "Hello",
-		Description: "A Hello World! example",
+		Name:         "Fuzzynote",
+		Description:  "Fuzzynote",
+		LoadingLabel: "Loading Fuzzynote...",
+		// TODO actually specify a logo
+		Icon: app.Icon{
+			Default: "/web/logo.png",
+		},
+		Styles: []string{
+			"/web/fuzzynote.css",
+		},
 	})
 
 	if err := http.ListenAndServe(":8000", nil); err != nil {

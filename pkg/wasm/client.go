@@ -141,33 +141,43 @@ func (p *Page) OnDismount(ctx app.Context) {
 }
 
 func (p *Page) Render() app.UI {
-	return app.Div().Body(
-		app.Input().
-			ID(strconv.Itoa(-1)).
-			Value(p.match).
-			OnInput(p.handleMatchChange).
-			OnKeyDown(p.handleNav).
-			OnClick(p.focus),
-		app.Stack().
-			//Center().
-			Vertical().
-			Content(
-				app.Range(p.ListItems).Slice(func(i int) app.UI {
-					return app.Input().
-						ID(strconv.Itoa(i)).
-						Value((p.ListItems)[i].Line).
-						OnInput(p.handleListItemChange).
+	return app.Div().
+		Class("container").
+		//Style("margin", "5px").
+		//Style("display", "block").
+		Body(
+			app.Div().
+				Class("matchgroup").
+				Body(
+					app.Input().
+						ID(strconv.Itoa(-1)).
+						Value(p.match).
+						Class("matchitem").
+						Placeholder("Search here...").
+						OnInput(p.handleMatchChange).
 						OnKeyDown(p.handleNav).
-						OnClick(p.focus)
-					//return app.Span().
-					//    ContentEditable(true).
-					//    ID(strconv.Itoa(i)).
-					//    Text((p.ListItems)[i].Line).
-					//    OnInput(p.handleListItemChange).
-					//    OnKeyDown(p.handleNav).
-					//    OnClick(p.focus)
-				})),
-	)
+						OnClick(p.focus)),
+			app.Div().
+				Class("listgroup").
+				Body(
+					app.Range(p.ListItems).Slice(func(i int) app.UI {
+						return app.Input().
+							ID(strconv.Itoa(i)).
+							Value((p.ListItems)[i].Line).
+							Class("listitem").
+							Placeholder("Type something...").
+							OnInput(p.handleListItemChange).
+							OnKeyDown(p.handleNav).
+							OnClick(p.focus)
+						//return app.Span().
+						//    ContentEditable(true).
+						//    ID(strconv.Itoa(i)).
+						//    Text((p.ListItems)[i].Line).
+						//    OnInput(p.handleListItemChange).
+						//    OnKeyDown(p.handleNav).
+						//    OnClick(p.focus)
+					})),
+		)
 }
 
 func (p *Page) getKey(idx int) string {
