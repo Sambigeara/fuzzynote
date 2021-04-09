@@ -105,6 +105,12 @@ func (p *Page) Render() app.UI {
 							ID(fmt.Sprintf(mainKey, i)).
 							Value((p.ListItems)[i].Line).
 							Class("listitem").
+							Class(func(isHidden bool) string {
+								if isHidden {
+									return "hidden"
+								}
+								return ""
+							}(p.ListItems[i].IsHidden)).
 							Placeholder("Type something...").
 							OnInput(p.handleListItemChange).
 							OnKeyDown(p.handleNav).

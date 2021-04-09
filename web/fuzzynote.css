@@ -44,3 +44,7 @@ input:focus {
   border: none;
   border-radius: 2px;
 }
+
+.hidden {
+  color: grey;
+}
