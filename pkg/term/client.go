@@ -306,7 +306,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.search) > 0 && len(t.search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", t.getNewLinePrefix())
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", t.db.GetNewLinePrefix(t.search))
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
@@ -411,21 +411,6 @@ func (ev *RefreshKey) When() time.Time {
 	return ev.T
 }
 
-func (t *Terminal) getNewLinePrefix() string {
-	var searchStrings []string
-	for _, group := range t.search {
-		pattern, nChars := t.db.GetMatchPattern(group)
-		if pattern != service.InverseMatchPattern && len(group) > 0 {
-			searchStrings = append(searchStrings, string(group[nChars:]))
-		}
-	}
-	newString := ""
-	if len(searchStrings) > 0 {
-		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
-	}
-	return newString
-}
-
 func matchFirstURL(line string) string {
 	// Attempt to match any urls in the line.
 	// If present, copy the first to the system clipboard.
@@ -527,7 +512,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 						posDiff[0] -= len([]byte(strings.TrimSpace(string(t.search[0])))) + 1
 					}
 				}
-				newString := t.getNewLinePrefix()
+				newString := t.db.GetNewLinePrefix(t.search)
 				itemKey, err = t.db.Add(newString, nil, relativeY)
 				if err != nil {
 					log.Fatal(err)
