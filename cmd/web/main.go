@@ -43,7 +43,7 @@ func main() {
 		LoadingLabel: "Loading Fuzzynote...",
 		// TODO actually specify a logo
 		Icon: app.Icon{
-			Default: "/web/logo.png",
+			Default: "/web/face.png",
 		},
 		Styles: []string{
 			"/web/fuzzynote.css",
