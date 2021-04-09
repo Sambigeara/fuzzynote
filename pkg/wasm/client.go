@@ -83,20 +83,33 @@ func (p *Page) Render() app.UI {
 		Class("container").
 		Body(
 			app.Div().
-				Class("matchgroup").
-				ID(fmt.Sprintf(mainKey, -1)).
-				// OnKeyDown is here so we get the correct key on "Enter" within `handleNav`
-				OnKeyDown(p.handleNav).
+				Class("match").
 				Body(
-					app.Range(p.SearchGroups).Slice(func(i int) app.UI {
-						return app.Input().
-							ID(fmt.Sprintf(searchGroupKey, i)).
-							Value(p.SearchGroups[i]).
-							Class("matchitem").
-							Placeholder("Search here...").
-							OnInput(p.handleMatchChange).
-							OnClick(p.focus)
-					})),
+					app.Div().
+						Class("matchgroup").
+						ID(fmt.Sprintf(mainKey, -1)).
+						// OnKeyDown is here so we get the correct key on "Enter" within `handleNav`
+						OnKeyDown(p.handleNav).
+						Body(
+							app.Range(p.SearchGroups).Slice(func(i int) app.UI {
+								return app.Input().
+									ID(fmt.Sprintf(searchGroupKey, i)).
+									Value(p.SearchGroups[i]).
+									Class("matchitem-line").
+									Placeholder("Search here...").
+									OnInput(p.handleMatchChange).
+									OnClick(p.focus)
+							}),
+						),
+					app.Span().
+						Class("hidden").
+						Text(func() string {
+							if p.showHidden {
+								return "Showing completed"
+							}
+							return "Hiding completed"
+						}()),
+				),
 			app.Div().
 				Class("listgroup").
 				Body(
@@ -236,7 +249,6 @@ func (p *Page) focus(ctx app.Context, e app.Event) {
 
 func (p *Page) handleMatchChange(ctx app.Context, e app.Event) {
 	s := ctx.JSSrc.Get("value").String()
-
 	// Retrieve idx from key
 	id := ctx.JSSrc.Get("id").String()
 	var idx int
@@ -248,7 +260,6 @@ func (p *Page) handleMatchChange(ctx app.Context, e app.Event) {
 
 func (p *Page) handleListItemChange(ctx app.Context, e app.Event) {
 	s := ctx.JSSrc.Get("value").String()
-
 	// Retrieve idx from key
 	id := ctx.JSSrc.Get("id").String()
 	var idx int
