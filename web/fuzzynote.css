@@ -12,6 +12,11 @@ input:focus {
   caret-color: grey;
 }
 
+.match {
+  display:flex;
+  justify-content: space-between;
+}
+
 .matchgroup {
   display: flex;
   justify-content: flex-start;
@@ -20,7 +25,7 @@ input:focus {
   padding: 0px 0px 15px 0px;
 }
 
-.matchitem {
+.matchitem-line {
   font-size: 20px;
   padding: 6px 4px;
   margin: 0px 8px 6px 0px;
