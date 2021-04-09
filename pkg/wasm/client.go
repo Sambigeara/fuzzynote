@@ -72,6 +72,7 @@ type Page struct {
 	curIdx            int
 	curSearchGroupIdx int
 	curIdxKey         string
+	showHidden        bool
 	SearchGroups      []string
 	ListItems         []service.ListItem // Public attribute to allow for updates https://go-app.dev/components#exported-fields
 	walChan           chan *[]service.EventLog
@@ -166,7 +167,7 @@ func (p *Page) OnMount(ctx app.Context) {
 			}
 
 			runeSearchGroups := p.getRuneSearchGroups()
-			p.ListItems, p.curIdx, _ = p.db.Match(runeSearchGroups, false, p.curIdxKey)
+			p.ListItems, p.curIdx, _ = p.db.Match(runeSearchGroups, p.showHidden, p.curIdxKey)
 
 			key := ""
 			if p.curIdx == -1 {
@@ -286,6 +287,13 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 			} else if p.curIdx >= 0 {
 				p.db.Delete(idx)
 				p.curIdxKey = p.getKey(p.curIdx + 1)
+			}
+
+		case "v":
+			if p.curIdx == -1 {
+				p.showHidden = !p.showHidden
+			} else {
+				p.curIdxKey, _ = p.db.ToggleVisibility(p.curIdx)
 			}
 		default:
 			return
