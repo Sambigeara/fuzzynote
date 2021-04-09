@@ -2,15 +2,19 @@ package web
 
 import (
 	"bytes"
-	//"fmt"
+	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	//"unicode"
 
 	"github.com/maxence-charriere/go-app/v8/pkg/app"
 
 	"fuzzynote/pkg/service"
+)
+
+const (
+	searchGroupKey = "search:%d"
+	mainKey        = "main:%d"
 )
 
 var (
@@ -65,16 +69,54 @@ type Page struct {
 
 	db *service.DBListRepo
 
-	curIdx    int
-	curKey    string
-	match     string
-	ListItems []service.ListItem // Public attribute to allow for updates https://go-app.dev/components#exported-fields
-	walChan   chan *[]service.EventLog
+	curIdx            int
+	curSearchGroupIdx int
+	curIdxKey         string
+	SearchGroups      []string
+	ListItems         []service.ListItem // Public attribute to allow for updates https://go-app.dev/components#exported-fields
+	walChan           chan *[]service.EventLog
 }
 
-type changeEvent struct {
-	ctx app.Context
-	e   app.Event
+func (p *Page) Render() app.UI {
+	return app.Div().
+		Class("container").
+		Body(
+			app.Div().
+				Class("matchgroup").
+				ID(fmt.Sprintf(mainKey, -1)).
+				// OnKeyDown is here so we get the correct key on "Enter" within `handleNav`
+				OnKeyDown(p.handleNav).
+				Body(
+					app.Range(p.SearchGroups).Slice(func(i int) app.UI {
+						return app.Input().
+							ID(fmt.Sprintf(searchGroupKey, i)).
+							Value(p.SearchGroups[i]).
+							Class("matchitem").
+							Placeholder("Search here...").
+							OnInput(p.handleMatchChange).
+							OnClick(p.focus)
+					})),
+			app.Div().
+				Class("listgroup").
+				Body(
+					app.Range(p.ListItems).Slice(func(i int) app.UI {
+						return app.Input().
+							ID(fmt.Sprintf(mainKey, i)).
+							Value((p.ListItems)[i].Line).
+							Class("listitem").
+							Placeholder("Type something...").
+							OnInput(p.handleListItemChange).
+							OnKeyDown(p.handleNav).
+							OnClick(p.focus)
+						//return app.Span().
+						//    ContentEditable(true).
+						//    ID(strconv.Itoa(i)).
+						//    Text((p.ListItems)[i].Line).
+						//    OnInput(p.handleListItemChange).
+						//    OnKeyDown(p.handleNav).
+						//    OnClick(p.focus)
+					})),
+		)
 }
 
 func (p *Page) loadDB() {
@@ -95,6 +137,9 @@ func (p *Page) OnMount(ctx app.Context) {
 
 	p.curIdx = -1 // Default to search line
 
+	// Pre-instatiate a single empty search group
+	p.SearchGroups = append(p.SearchGroups, "")
+
 	// TODO remove this, just blocking pull/push on the browserWalFile for now
 	if tempBlock != nil {
 		tempBlock = make(chan struct{})
@@ -112,22 +157,42 @@ func (p *Page) OnMount(ctx app.Context) {
 				log.Fatal(err)
 			}
 
-			p.ListItems, p.curIdx, _ = p.db.Match([][]rune{[]rune(p.match)}, false, p.curKey)
+			runeSearchGroups := [][]rune{}
+			for _, s := range p.SearchGroups {
+				runeSearchGroups = append(runeSearchGroups, []rune(s))
+			}
+			p.ListItems, p.curIdx, _ = p.db.Match(runeSearchGroups, false, p.curIdxKey)
 
-			if elem := app.Window().GetElementByID(strconv.Itoa(p.curIdx)); !elem.IsNull() {
+			key := ""
+			if p.curIdx == -1 {
+				key = fmt.Sprintf(searchGroupKey, p.curSearchGroupIdx)
+			} else {
+				key = fmt.Sprintf(mainKey, p.curIdx)
+			}
+			if elem := app.Window().GetElementByID(key); !elem.IsNull() {
 				elem.Call("focus")
 			}
+
+			//if p.curIdx > -1 {
+			//    if elem := app.Window().GetElementByID(fmt.Sprintf(mainKey, p.curIdx)); !elem.IsNull() {
+			//        elem.Call("focus")
+			//    }
+			//}
 
 			// TODO Temp "hack" to bring html state back in line with JS (probably specifically
 			// for input text)
 			// At the moment, adding a line onto the bottom will not move the cursor down (another
 			// side affect of this issue, perhaps)
+			//for i, search := range p.SearchGroups {
+			//    if elem := app.Window().GetElementByID(fmt.Sprintf(searchGroupKey, i)); !elem.IsNull() {
+			//        elem.Set("value", search)
+			//    }
+			//}
 			for i, item := range p.ListItems {
-				if elem := app.Window().GetElementByID(strconv.Itoa(i)); !elem.IsNull() {
+				if elem := app.Window().GetElementByID(fmt.Sprintf(mainKey, i)); !elem.IsNull() {
 					elem.Set("value", item.Line)
 				}
 			}
-
 			p.Update()
 		}
 	})
@@ -140,46 +205,6 @@ func (p *Page) OnDismount(ctx app.Context) {
 	}
 }
 
-func (p *Page) Render() app.UI {
-	return app.Div().
-		Class("container").
-		//Style("margin", "5px").
-		//Style("display", "block").
-		Body(
-			app.Div().
-				Class("matchgroup").
-				Body(
-					app.Input().
-						ID(strconv.Itoa(-1)).
-						Value(p.match).
-						Class("matchitem").
-						Placeholder("Search here...").
-						OnInput(p.handleMatchChange).
-						OnKeyDown(p.handleNav).
-						OnClick(p.focus)),
-			app.Div().
-				Class("listgroup").
-				Body(
-					app.Range(p.ListItems).Slice(func(i int) app.UI {
-						return app.Input().
-							ID(strconv.Itoa(i)).
-							Value((p.ListItems)[i].Line).
-							Class("listitem").
-							Placeholder("Type something...").
-							OnInput(p.handleListItemChange).
-							OnKeyDown(p.handleNav).
-							OnClick(p.focus)
-						//return app.Span().
-						//    ContentEditable(true).
-						//    ID(strconv.Itoa(i)).
-						//    Text((p.ListItems)[i].Line).
-						//    OnInput(p.handleListItemChange).
-						//    OnKeyDown(p.handleNav).
-						//    OnClick(p.focus)
-					})),
-		)
-}
-
 func (p *Page) getKey(idx int) string {
 	key := ""
 	if idx >= 0 && idx < len(p.ListItems) {
@@ -189,36 +214,68 @@ func (p *Page) getKey(idx int) string {
 }
 
 func (p *Page) focus(ctx app.Context, e app.Event) {
-	idx, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-	p.curKey = p.getKey(idx)
+	id := ctx.JSSrc.Get("id").String()
+	var idx int
+	// TODO dedup
+	if p.curIdx == -1 {
+		fmt.Sscanf(id, searchGroupKey, &idx)
+		p.curSearchGroupIdx = idx
+	} else {
+		fmt.Sscanf(id, mainKey, &idx)
+	}
+
+	p.curIdxKey = p.getKey(idx)
 }
 
 func (p *Page) handleMatchChange(ctx app.Context, e app.Event) {
 	s := ctx.JSSrc.Get("value").String()
-	p.match = s // Name field is modified
+
+	// Retrieve idx from key
+	id := ctx.JSSrc.Get("id").String()
+	var idx int
+	fmt.Sscanf(id, searchGroupKey, &idx)
+	p.SearchGroups[idx] = s // Name field is modified
+
 	p.walChan <- &[]service.EventLog{}
 }
 
 func (p *Page) handleListItemChange(ctx app.Context, e app.Event) {
 	s := ctx.JSSrc.Get("value").String()
-	//s := ctx.JSSrc.Get("innerText").String()
-	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
-	p.db.Update(s, nil, id)
+
+	// Retrieve idx from key
+	id := ctx.JSSrc.Get("id").String()
+	var idx int
+	fmt.Sscanf(id, mainKey, &idx)
+	p.db.Update(s, nil, idx)
 }
 
 // TODO figure out more appropriate function name
 func (p *Page) handleNav(ctx app.Context, e app.Event) {
 	//e.PreventDefault()
 	key := e.Get("key").String()
-	id, _ := strconv.Atoi(ctx.JSSrc.Get("id").String())
+
+	// TODO helper method to dedup
+	// Retrieve idx from key
+	id := ctx.JSSrc.Get("id").String()
+	var idx int
+	fmt.Sscanf(id, mainKey, &idx)
+
 	if e.Get("ctrlKey").Bool() {
 		switch key {
 		case "d":
-			if p.curIdx == len(p.ListItems)-1 {
-				p.curKey, _ = p.db.Delete(id)
+			if p.curIdx == -1 && len(p.SearchGroups) > 1 {
+				// If there's more than one search group, delete it
+				p.SearchGroups = append(p.SearchGroups[:p.curSearchGroupIdx], p.SearchGroups[p.curSearchGroupIdx+1:]...)
+				if p.curSearchGroupIdx > 0 {
+					p.curSearchGroupIdx--
+				}
+			} else if p.curIdx == len(p.ListItems)-1 {
+				// If on lowest line, we want to move to the pre-delete child, which the `Delete`
+				// function returns to us in `curIdxKey`
+				p.curIdxKey, _ = p.db.Delete(idx)
 			} else {
-				p.db.Delete(id)
-				p.curKey = p.getKey(p.curIdx + 1)
+				p.db.Delete(idx)
+				p.curIdxKey = p.getKey(p.curIdx + 1)
 			}
 		default:
 			return
@@ -226,26 +283,47 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 	} else {
 		switch key {
 		case "Enter":
-			p.curKey, _ = p.db.Add("", nil, id+1)
+			p.curIdxKey, _ = p.db.Add("", nil, idx+1)
+		case "Tab":
+			// We rely on default browser behaviour for now to move between search groups with
+			// Tab. We want to preventDefault on a Shift-Tab press so it avoids creating a new
+			// search group before going back one group
+			e.PreventDefault()
+			if e.Get("shiftKey").Bool() && p.curSearchGroupIdx > 0 {
+				p.curSearchGroupIdx--
+			} else if !e.Get("shiftKey").Bool() && p.curIdx == -1 {
+				if p.curSearchGroupIdx == len(p.SearchGroups)-1 {
+					p.SearchGroups = append(p.SearchGroups, "")
+					//p.Update()
+				}
+				p.curSearchGroupIdx++
+			}
 		case "Backspace":
-			// If the current line is empty, backspace will delete it
-			if p.curIdx >= 0 && p.curIdx < len(p.ListItems) && len(p.ListItems[p.curIdx].Line) == 0 {
-				p.curKey, _ = p.db.Delete(id)
-				e.PreventDefault()
+			if p.curIdx == -1 {
+				if len(p.SearchGroups) > 1 && len(p.SearchGroups[p.curSearchGroupIdx]) == 0 && p.curSearchGroupIdx > 0 {
+					p.SearchGroups = append(p.SearchGroups[:p.curSearchGroupIdx], p.SearchGroups[p.curSearchGroupIdx+1:]...)
+					// We already check that it's above 0 above
+					p.curSearchGroupIdx--
+				}
+			} else if p.curIdx < len(p.ListItems) && len(p.ListItems[p.curIdx].Line) == 0 {
+				// If the current line is empty, backspace will delete it
+				p.curIdxKey, _ = p.db.Delete(idx)
 			}
 		case "ArrowUp":
 			if p.curIdx >= 0 {
-				p.curKey = p.getKey(p.curIdx - 1)
+				p.curIdxKey = p.getKey(p.curIdx - 1)
 			}
 		case "ArrowDown":
 			if p.curIdx < len(p.ListItems)-1 {
-				p.curKey = p.getKey(p.curIdx + 1)
+				p.curIdxKey = p.getKey(p.curIdx + 1)
 			}
 		default:
 			return
 		}
 	}
 	// We only want to add an event on keys handled in this function
+	// We also need to explicitly update state changes here as these are required prior to updates in the main loop
+	p.Update()
 	p.walChan <- &[]service.EventLog{}
 }
 
