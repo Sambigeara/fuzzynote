@@ -59,7 +59,7 @@ type walItemSchema1 struct {
 	ListItemCreationTime       int64
 	TargetListItemCreationTime int64
 	EventTime                  int64
-	EventType                  eventType
+	EventType                  EventType
 	LineLength                 uint64
 	NoteLength                 uint64
 }
@@ -70,7 +70,7 @@ type walItemSchema2 struct {
 	ListItemCreationTime       int64
 	TargetListItemCreationTime int64
 	EventTime                  int64
-	EventType                  eventType
+	EventType                  EventType
 	LineLength                 uint64
 	NoteExists                 bool
 	NoteLength                 uint64
@@ -79,30 +79,30 @@ type walItemSchema2 struct {
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
 // (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
-	nullEvent eventType = iota
-	addEvent
-	updateEvent
-	moveUpEvent
-	moveDownEvent
-	showEvent
-	hideEvent
-	deleteEvent
+	NullEvent EventType = iota
+	AddEvent
+	UpdateEvent
+	MoveUpEvent
+	MoveDownEvent
+	ShowEvent
+	HideEvent
+	DeleteEvent
 )
 
 type EventLog struct {
-	uuid                       uuid
-	targetUUID                 uuid
-	listItemCreationTime       int64
-	targetListItemCreationTime int64
-	unixNanoTime               int64
-	eventType                  eventType
-	line                       string
-	note                       *[]byte
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	UnixNanoTime               int64
+	EventType                  EventType
+	Line                       string
+	Note                       *[]byte
 }
 
 func (e *EventLog) getKeys() (string, string) {
-	key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
-	targetKey := fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)
+	key := fmt.Sprintf("%d:%d", e.UUID, e.ListItemCreationTime)
+	targetKey := fmt.Sprintf("%d:%d", e.TargetUUID, e.TargetListItemCreationTime)
 	return key, targetKey
 }
 
@@ -249,19 +249,19 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	targetItem := r.wal.listItemTracker[targetKey]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
-	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
+	// orphaned items. There MIGHT be a valid case to keep events around if the EventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
-	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
+	if item == nil && e.EventType != AddEvent && e.EventType != UpdateEvent {
 		return root, item, nil
 	}
 
 	var err error
-	switch e.eventType {
-	case addEvent:
-		root, item, err = r.wal.add(root, e.listItemCreationTime, e.line, e.note, targetItem, e.uuid)
+	switch e.EventType {
+	case AddEvent:
+		root, item, err = r.wal.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
 		r.wal.listItemTracker[key] = item
-	case updateEvent:
+	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
 		// - wal2 copies wal1
@@ -273,32 +273,32 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.wal.update(e.line, e.note, item)
+			item, err = r.wal.update(e.Line, e.Note, item)
 		} else {
 			addEl := e
-			addEl.eventType = addEvent
+			addEl.EventType = AddEvent
 			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
-	case deleteEvent:
+	case DeleteEvent:
 		root, err = r.wal.del(root, item)
 		delete(r.wal.listItemTracker, key)
-	case moveUpEvent:
+	case MoveUpEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[key] = item
-	case moveDownEvent:
+	case MoveDownEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[key] = item
-	case showEvent:
+	case ShowEvent:
 		err = r.wal.setVisibility(item, true)
-	case hideEvent:
+	case HideEvent:
 		err = r.wal.setVisibility(item, false)
 	}
 	return root, item, err
@@ -409,19 +409,19 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		if err != nil {
 			return nil, err
 		}
-		el.listItemCreationTime = item.ListItemCreationTime
-		el.targetListItemCreationTime = item.TargetListItemCreationTime
-		el.unixNanoTime = item.EventTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
+		el.ListItemCreationTime = item.ListItemCreationTime
+		el.TargetListItemCreationTime = item.TargetListItemCreationTime
+		el.UnixNanoTime = item.EventTime
+		el.UUID = item.UUID
+		el.TargetUUID = item.TargetUUID
+		el.EventType = item.EventType
 
 		line := make([]byte, item.LineLength)
 		err = binary.Read(b, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
-		el.line = string(line)
+		el.Line = string(line)
 
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -429,7 +429,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			if err != nil {
 				return nil, err
 			}
-			el.note = &note
+			el.Note = &note
 		}
 	} else {
 		item := walItemSchema2{}
@@ -437,22 +437,22 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		if err != nil {
 			return nil, err
 		}
-		el.listItemCreationTime = item.ListItemCreationTime
-		el.targetListItemCreationTime = item.TargetListItemCreationTime
-		el.unixNanoTime = item.EventTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
+		el.ListItemCreationTime = item.ListItemCreationTime
+		el.TargetListItemCreationTime = item.TargetListItemCreationTime
+		el.UnixNanoTime = item.EventTime
+		el.UUID = item.UUID
+		el.TargetUUID = item.TargetUUID
+		el.EventType = item.EventType
 
 		line := make([]byte, item.LineLength)
 		err = binary.Read(b, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
-		el.line = string(line)
+		el.Line = string(line)
 
 		if item.NoteExists {
-			el.note = &[]byte{}
+			el.Note = &[]byte{}
 		}
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -460,7 +460,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			if err != nil {
 				return nil, err
 			}
-			el.note = &note
+			el.Note = &note
 		}
 	}
 	return &el, nil
@@ -511,13 +511,13 @@ const (
 )
 
 func checkEquality(event1 EventLog, event2 EventLog) int {
-	if event1.unixNanoTime < event2.unixNanoTime ||
-		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
-		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
+	if event1.UnixNanoTime < event2.UnixNanoTime ||
+		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID < event2.UUID ||
+		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID == event2.UUID && event1.EventType < event2.EventType {
 		return leftEventOlder
-	} else if event2.unixNanoTime < event1.unixNanoTime ||
-		event2.unixNanoTime == event1.unixNanoTime && event2.uuid < event1.uuid ||
-		event2.unixNanoTime == event1.unixNanoTime && event2.uuid == event1.uuid && event2.eventType < event1.eventType {
+	} else if event2.UnixNanoTime < event1.UnixNanoTime ||
+		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID < event1.UUID ||
+		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID == event1.UUID && event2.EventType < event1.EventType {
 		return rightEventOlder
 	}
 	return eventsEqual
@@ -590,20 +590,20 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
-	// - Any events preceding a deleteEvent
-	// - Any updateEvent preceding the most recent updateEvent
+	// - Any events preceding a DeleteEvent
+	// - Any UpdateEvent preceding the most recent UpdateEvent
 	// WARNING: Omitting addEvents/moveEvents leads to weird behaviour during Replay at the mo. Be warned.
 	keysToPurge := make(map[string]bool)
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key, _ := e.getKeys()
-		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent) {
+		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.EventType == UpdateEvent) {
 			continue
 		}
-		if e.eventType == updateEvent {
+		if e.EventType == UpdateEvent {
 			keysToPurge[key] = false
-		} else if e.eventType == deleteEvent {
+		} else if e.EventType == DeleteEvent {
 			keysToPurge[key] = true
 		}
 		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
@@ -635,12 +635,12 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 
 	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
 	// for ListItems retrieved above.
-	// IMPORTANT: we also need to include ALL deleteEvent logs, as otherwise we may end up with orphaned items in the
+	// IMPORTANT: we also need to include ALL DeleteEvent logs, as otherwise we may end up with orphaned items in the
 	// target view.
 	partialWal := []EventLog{}
 	for _, e := range *w.log {
 		key, _ := e.getKeys()
-		if _, exists := logKeys[key]; exists || e.eventType == deleteEvent {
+		if _, exists := logKeys[key]; exists || e.EventType == DeleteEvent {
 			partialWal = append(partialWal, e)
 		}
 	}
@@ -688,30 +688,30 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	//el = compact(el)
 
 	for _, e := range *el {
-		lenLine := uint64(len([]byte(e.line)))
+		lenLine := uint64(len([]byte(e.Line)))
 		var lenNote uint64
 		noteExists := false
-		if e.note != nil {
+		if e.Note != nil {
 			noteExists = true
-			lenNote = uint64(len(*(e.note)))
+			lenNote = uint64(len(*(e.Note)))
 		}
 		i := walItemSchema2{
-			UUID:                       e.uuid,
-			TargetUUID:                 e.targetUUID,
-			ListItemCreationTime:       e.listItemCreationTime,
-			TargetListItemCreationTime: e.targetListItemCreationTime,
-			EventTime:                  e.unixNanoTime,
-			EventType:                  e.eventType,
+			UUID:                       e.UUID,
+			TargetUUID:                 e.TargetUUID,
+			ListItemCreationTime:       e.ListItemCreationTime,
+			TargetListItemCreationTime: e.TargetListItemCreationTime,
+			EventTime:                  e.UnixNanoTime,
+			EventType:                  e.EventType,
 			LineLength:                 lenLine,
 			NoteExists:                 noteExists,
 			NoteLength:                 lenNote,
 		}
 		data := []interface{}{
 			i,
-			[]byte(e.line),
+			[]byte(e.Line),
 		}
-		if e.note != nil {
-			data = append(data, e.note)
+		if e.Note != nil {
+			data = append(data, e.Note)
 		}
 		for _, v := range data {
 			err = binary.Write(&b, binary.LittleEndian, v)
@@ -733,7 +733,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
 		// For now (for safety) use full pattern matching
-		if isMatch(matchTerm, e.line, FullMatchPattern) {
+		if isMatch(matchTerm, e.Line, FullMatchPattern) {
 			k, _ := e.getKeys()
 			wf.setProcessedEvent(k)
 		}
