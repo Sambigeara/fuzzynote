@@ -72,15 +72,15 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 	}
 }
 
-func (wf *s3FileWal) GetRootDir() string {
+func (wf *s3FileWal) GetRoot() string {
 	return wf.prefix
 }
 
-func (wf *s3FileWal) GetFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(wf.bucket),
-		Prefix: aws.String(wf.GetRootDir()),
+		Prefix: aws.String(wf.GetRoot()),
 	})
 	if err != nil {
 		exitErrorf("Unable to list items in bucket %q, %v", wf.bucket, err)
@@ -93,7 +93,7 @@ func (wf *s3FileWal) GetFileNamesMatchingPattern(matchPattern string) ([]string,
 	return fileNames, nil
 }
 
-func (wf *s3FileWal) GenerateLogFromFile(fileName string) ([]EventLog, error) {
+func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 
@@ -128,7 +128,7 @@ func (wf *s3FileWal) GenerateLogFromFile(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *s3FileWal) RemoveFile(fileName string) error {
+func (wf *s3FileWal) RemoveWal(fileName string) error {
 	// Delete the item
 	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
 	if err != nil {

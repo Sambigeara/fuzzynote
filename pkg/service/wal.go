@@ -111,20 +111,26 @@ func (e *EventLog) getKeys() (string, string) {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	GetRootDir() string
-	GetFileNamesMatchingPattern(string) ([]string, error)
-	GenerateLogFromFile(string) ([]EventLog, error)
-	RemoveFile(string) error
+	// TODO do these actually need to be private attributes? A separate module implements the interface
+	// TODO surely these should just implement Push/Pull/Gather????
+	GetRoot() string
+	GetMatchingWals(string) ([]string, error)
+	GetWal(string) ([]EventLog, error)
+	RemoveWal(string) error
 	Flush(*bytes.Buffer, string) error
+
+	// TODO these probably don't need to be interface functions
 	SetProcessedPartialWals(string)
 	IsPartialWalProcessed(string) bool
+	SetProcessedEvent(string)
+	IsEventProcessed(string) bool
+
 	AwaitPull()
 	AwaitGather()
 	StopTickers()
+
 	GetMode() Mode
 	GetPushMatchTerm() []rune
-	SetProcessedEvent(string)
-	IsEventProcessed(string) bool
 }
 
 type localWalFile struct {
@@ -153,11 +159,11 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 	}
 }
 
-func (wf *localWalFile) GetRootDir() string {
+func (wf *localWalFile) GetRoot() string {
 	return wf.rootDir
 }
 
-func (wf *localWalFile) GetFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+func (wf *localWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -165,7 +171,7 @@ func (wf *localWalFile) GetFileNamesMatchingPattern(matchPattern string) ([]stri
 	return fileNames, nil
 }
 
-func (wf *localWalFile) GenerateLogFromFile(fileName string) ([]EventLog, error) {
+func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
@@ -183,7 +189,7 @@ func (wf *localWalFile) GenerateLogFromFile(fileName string) ([]EventLog, error)
 	return wal, nil
 }
 
-func (wf *localWalFile) RemoveFile(fileName string) error {
+func (wf *localWalFile) RemoveWal(fileName string) error {
 	return os.Remove(fileName)
 }
 
@@ -652,14 +658,14 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
 	b := buildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(w.localWalFile.GetRootDir(), viewFilePattern), time.Now().UnixNano())
+	viewName := fmt.Sprintf(path.Join(w.localWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
 	w.localWalFile.Flush(b, viewName)
 	return nil
 }
 
 func pull(wf WalFile) (*[]EventLog, error) {
-	filePathPattern := path.Join(wf.GetRootDir(), walFilePattern)
-	allFileNames, err := wf.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+	allFileNames, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -667,7 +673,7 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	newMergedWal := []EventLog{}
 	for _, fileName := range allFileNames {
 		if !wf.IsPartialWalProcessed(fileName) {
-			newWal, err := wf.GenerateLogFromFile(fileName)
+			newWal, err := wf.GetWal(fileName)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -761,7 +767,7 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	b := buildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
-	randomWal := fmt.Sprintf(path.Join(wf.GetRootDir(), walFilePattern), randomUUID)
+	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	if err := wf.Flush(b, randomWal); err != nil {
 		log.Fatal(err)
 	}
@@ -776,12 +782,12 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 func (w *Wal) gather(wf WalFile) error {
 	// Handle only origin wals
 	// TODO I think switching to this breaks other parts of the syncing process, use with caution
-	//filePathPattern := path.Join(wf.GetRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
-	//originFiles, err := wf.GetFileNamesMatchingPattern(filePathPattern)
+	//filePathPattern := path.Join(wf.GetRoot(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//originFiles, err := wf.GetMatchingWals(filePathPattern)
 
 	// Handle ALL wals
-	filePathPattern := path.Join(wf.GetRootDir(), walFilePattern)
-	originFiles, err := wf.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+	originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 
 	if err != nil {
 		log.Fatal(err)
@@ -795,7 +801,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Gather origin files
 	mergedWal := []EventLog{}
 	for _, fileName := range originFiles {
-		wal, err := wf.GenerateLogFromFile(fileName)
+		wal, err := wf.GetWal(fileName)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -810,7 +816,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Schedule a delete on the files
 	for _, fileName := range originFiles {
 		// TODO proper error handling here too
-		wf.RemoveFile(fileName)
+		wf.RemoveWal(fileName)
 	}
 
 	return nil
@@ -909,13 +915,13 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 func (w *Wal) finish() error {
 	// TODO duplication
 	// Retrieve all local wal names
-	filePathPattern := path.Join(w.localWalFile.GetRootDir(), walFilePattern)
-	localFileNames, _ := w.localWalFile.GetFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(w.localWalFile.GetRoot(), walFilePattern)
+	localFileNames, _ := w.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
 	// Delete allFileNames
 	for _, fileName := range localFileNames {
-		w.localWalFile.RemoveFile(fileName)
+		w.localWalFile.RemoveWal(fileName)
 	}
 
 	w.pushTicker.Stop()
