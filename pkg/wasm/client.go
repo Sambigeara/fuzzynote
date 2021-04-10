@@ -2,10 +2,13 @@ package web
 
 import (
 	"bytes"
+	b64 "encoding/base64"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"sync"
-	//"unicode"
+	"time"
 
 	"github.com/maxence-charriere/go-app/v8/pkg/app"
 
@@ -15,6 +18,7 @@ import (
 const (
 	searchGroupKey = "search:%d"
 	mainKey        = "main:%d"
+	fakeWalName    = "wal_0.db"
 )
 
 var (
@@ -22,46 +26,72 @@ var (
 )
 
 type browserWalFile struct {
-	//RefreshTicker            *time.Ticker
 	//GatherTicker             *time.Ticker
-	//processedPartialWals     map[string]struct{}
-	//processedPartialWalsLock *sync.Mutex
-	mode               service.Mode
-	pushMatchTerm      []rune
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]struct{}
+	mode                     service.Mode
+	pushMatchTerm            []rune
+	processedEventLock       *sync.Mutex
+	processedEventMap        map[string]struct{}
+	RefreshTicker            *time.Ticker
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock *sync.Mutex
 }
 
 func newBrowserWalFile() *browserWalFile {
 	// TODO Retrieve config from localStorage
 	// TODO if not present, retrieve from lambda
 	return &browserWalFile{
-		mode:               service.Sync,
-		pushMatchTerm:      []rune{},
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]struct{}),
+		mode:                     service.Sync,
+		pushMatchTerm:            []rune{},
+		processedEventLock:       &sync.Mutex{},
+		processedEventMap:        make(map[string]struct{}),
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(2000)),
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: &sync.Mutex{},
 	}
 }
 
 // TODO these are mostly just stub functions for now to satisfy the interface
 func (wf *browserWalFile) GetRoot() string { return "" }
 func (wf *browserWalFile) GetMatchingWals(pattern string) ([]string, error) {
-	return []string{}, nil
+	return []string{fakeWalName}, nil
 }
 func (wf *browserWalFile) GetWal(fileName string) ([]service.EventLog, error) {
-	return []service.EventLog{}, nil
+	resp, err := http.Get("https://ufjrberreh.execute-api.eu-west-1.amazonaws.com/prod/")
+	if err != nil {
+		log.Fatal("lambda: ", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	strWal, _ := b64.StdEncoding.DecodeString(string(body))
+	buf := bytes.NewBuffer([]byte(strWal))
+
+	var el []service.EventLog
+	if el, err = service.BuildFromFile(buf); err != nil {
+		log.Fatal("lambda: ", err)
+	}
+	return el, nil
 }
 func (wf *browserWalFile) RemoveWal(fileName string) error              { return nil }
 func (wf *browserWalFile) Flush(b *bytes.Buffer, fileName string) error { return nil }
-func (wf *browserWalFile) SetProcessedPartialWals(partialWal string)    {}
-func (wf *browserWalFile) IsPartialWalProcessed(partialWal string) bool { return false }
-func (wf *browserWalFile) AwaitPull()                                   { <-tempBlock }
-func (wf *browserWalFile) AwaitGather()                                 { <-tempBlock }
-func (wf *browserWalFile) StopTickers()                                 {}
-func (wf *browserWalFile) GetMode() service.Mode                        { return wf.mode }
-func (wf *browserWalFile) GetPushMatchTerm() []rune                     { return wf.pushMatchTerm }
-func (wf *browserWalFile) SetProcessedEvent(key string)                 {}
-func (wf *browserWalFile) IsEventProcessed(key string) bool             { return true }
+func (wf *browserWalFile) SetProcessedPartialWals(partialWal string) {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	wf.processedPartialWals[partialWal] = struct{}{}
+}
+func (wf *browserWalFile) IsPartialWalProcessed(partialWal string) bool {
+	wf.processedPartialWalsLock.Lock()
+	defer wf.processedPartialWalsLock.Unlock()
+	_, exists := wf.processedPartialWals[partialWal]
+	return exists
+}
+func (wf *browserWalFile) AwaitPull()                       { <-wf.RefreshTicker.C }
+func (wf *browserWalFile) AwaitGather()                     { <-tempBlock }
+func (wf *browserWalFile) StopTickers()                     { wf.RefreshTicker.Stop() }
+func (wf *browserWalFile) GetMode() service.Mode            { return wf.mode }
+func (wf *browserWalFile) GetPushMatchTerm() []rune         { return wf.pushMatchTerm }
+func (wf *browserWalFile) SetProcessedEvent(key string)     {}
+func (wf *browserWalFile) IsEventProcessed(key string) bool { return true }
 
 // Page is the main component encompassing the whole app
 type Page struct {

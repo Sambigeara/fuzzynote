@@ -15,28 +15,34 @@ type WebsocketTarget struct {
 	conn          *websocket.Conn
 	mode          Mode
 	pushMatchTerm []rune
-	//url           url.URL
+	//url *url.URL
 }
 
 func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	url, err := url.Parse(cfg.URLString)
+	wsURI, err := url.Parse(cfg.WebsocketURI)
 	if err != nil {
 		// TODO fail silently - do not use websocket
 		log.Fatal("broken url:", err)
 	}
-	conn, _, err := websocket.Dial(ctx, url.String(), nil)
+	conn, _, err := websocket.Dial(ctx, wsURI.String(), nil)
 	if err != nil {
-		// TODO fail silently - do not use websocket
 		log.Fatal("dial:", err)
 	}
+
+	//lambdaURL, err := url.Parse(cfg.URL)
+	//if err != nil {
+	//    // TODO fail silently - do not use websocket
+	//    log.Fatal("dial:", err)
+	//}
+
 	return &WebsocketTarget{
 		conn:          conn,
 		mode:          cfg.Mode,
 		pushMatchTerm: []rune(cfg.Match),
-		//url:           cfg.URL,
+		//url:           lambdaURL,
 	}
 }
 
@@ -51,7 +57,7 @@ func (ws *WebsocketTarget) consume(walChan chan *[]EventLog) error {
 	}
 	strWal, _ := b64.StdEncoding.DecodeString(string(message))
 	buf := bytes.NewBuffer([]byte(strWal))
-	if el, err := buildFromFile(buf); err == nil {
+	if el, err := BuildFromFile(buf); err == nil {
 		walChan <- &el
 	}
 	return err
