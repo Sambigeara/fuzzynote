@@ -648,7 +648,7 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
-	b := buildByteWal(&partialWal)
+	b := BuildByteWal(&partialWal)
 	viewName := fmt.Sprintf(path.Join(w.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
 	w.localWalFile.flush(b, viewName)
 	return nil
@@ -676,7 +676,7 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	return &newMergedWal, nil
 }
 
-func buildByteWal(el *[]EventLog) *bytes.Buffer {
+func BuildByteWal(el *[]EventLog) *bytes.Buffer {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -755,7 +755,7 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
-	b := buildByteWal(el)
+	b := BuildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
 	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)

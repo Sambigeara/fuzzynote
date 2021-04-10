@@ -58,7 +58,7 @@ func (ws *WebsocketTarget) push(el EventLog) {
 	//strWal := b64.StdEncoding.EncodeToString(b)
 	//b, _ = b64.StdEncoding.DecodeString(strWal)
 	//el = getMatchedWal(el, wf)
-	b := buildByteWal(&[]EventLog{el})
+	b := BuildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
 	err := ws.conn.WriteMessage(websocket.TextMessage, []byte(b64Wal))
 	if err != nil {
