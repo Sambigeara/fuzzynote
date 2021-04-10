@@ -6,23 +6,23 @@ import (
 //"os"
 )
 
-type eventType uint16
+type EventType uint16
 
-// OppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
-var oppositeEvent = map[eventType]eventType{
-	addEvent:      deleteEvent,
-	deleteEvent:   addEvent,
-	updateEvent:   updateEvent,
-	moveUpEvent:   moveDownEvent,
-	moveDownEvent: moveUpEvent,
-	showEvent:     hideEvent,
-	hideEvent:     showEvent,
+// oppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
+var oppositeEvent = map[EventType]EventType{
+	AddEvent:      DeleteEvent,
+	DeleteEvent:   AddEvent,
+	UpdateEvent:   UpdateEvent,
+	MoveUpEvent:   MoveDownEvent,
+	MoveDownEvent: MoveUpEvent,
+	ShowEvent:     HideEvent,
+	HideEvent:     ShowEvent,
 }
 
 type undoEventLog struct {
 	uuid                       uuid
 	targetUUID                 uuid
-	eventType                  eventType
+	eventType                  EventType
 	listItemCreationTime       int64
 	targetListItemCreationTime int64
 	undoLine                   string
@@ -40,7 +40,7 @@ type DbEventLogger struct {
 // NewDbEventLogger Returns a new instance of DbEventLogger
 func NewDbEventLogger() *DbEventLogger {
 	el := undoEventLog{
-		eventType: nullEvent,
+		eventType: NullEvent,
 		undoLine:  "",
 		undoNote:  nil,
 		redoLine:  "",
@@ -49,7 +49,7 @@ func NewDbEventLogger() *DbEventLogger {
 	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e eventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
+func (r *DBListRepo) addUndoLog(e EventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
 	ev := undoEventLog{
 		uuid:                       originUUID,
 		targetUUID:                 targetUUID,

@@ -49,7 +49,7 @@ func TestTransactionUndo(t *testing.T) {
 		matches := repo.matchListItems
 
 		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != addEvent {
+		if logItem.eventType != AddEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
 		if logItem.listItemCreationTime != matches[0].creationTime {
@@ -104,7 +104,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		newestLogItem := repo.eventLogger.log[2]
-		if newestLogItem.eventType != updateEvent {
+		if newestLogItem.eventType != UpdateEvent {
 			t.Errorf("Newest event log entry should be of type UpdateEvent")
 		}
 		if newestLogItem.undoLine != line {
@@ -112,7 +112,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		oldestLogItem := repo.eventLogger.log[1]
-		if oldestLogItem.eventType != addEvent {
+		if oldestLogItem.eventType != AddEvent {
 			t.Errorf("Oldest event log entry should be of type AddEvent")
 		}
 
@@ -182,7 +182,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != addEvent {
+		if logItem.eventType != AddEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
 		if logItem.undoLine != line {
@@ -215,7 +215,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem2 := repo.eventLogger.log[2]
-		if logItem2.eventType != addEvent {
+		if logItem2.eventType != AddEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
 		if logItem2.undoLine != line2 {
@@ -236,7 +236,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem3 := repo.eventLogger.log[3]
-		if logItem3.eventType != deleteEvent {
+		if logItem3.eventType != DeleteEvent {
 			t.Errorf("Event log entry should be of type DeleteEvent")
 		}
 		if logItem3.undoLine != line2 {
@@ -259,7 +259,7 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem4 := repo.eventLogger.log[4]
-		if logItem4.eventType != deleteEvent {
+		if logItem4.eventType != DeleteEvent {
 			t.Errorf("Event log entry should be of type DeleteEvent")
 		}
 		if logItem4.undoLine != line {
@@ -344,7 +344,7 @@ func TestTransactionUndo(t *testing.T) {
 		repo.Add("", nil, 0)
 
 		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != addEvent {
+		if logItem.eventType != AddEvent {
 			t.Errorf("Event log entry should be of type AddEvent")
 		}
 
@@ -361,7 +361,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to two")
 		}
 		logItem2 := repo.eventLogger.log[2]
-		if logItem2.eventType != updateEvent {
+		if logItem2.eventType != UpdateEvent {
 			t.Errorf("Event log entry should be of type UpdateEvent")
 		}
 
@@ -468,7 +468,7 @@ func TestTransactionUndo(t *testing.T) {
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have the nullEvent, addEvent and overriding updateEvent")
 		}
-		if repo.eventLogger.log[2].eventType != updateEvent {
+		if repo.eventLogger.log[2].eventType != UpdateEvent {
 			t.Errorf("Event logger item should be of type updateEvent")
 		}
 		if repo.eventLogger.curIdx != 2 {
