@@ -355,6 +355,8 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 			} else if p.curIdx < len(p.ListItems) && len(p.ListItems[p.curIdx].Line) == 0 {
 				// If the current line is empty, backspace will delete it
 				p.curIdxKey, _ = p.db.Delete(idx)
+				// preventDefault will avoid deleting characters from the newly focused input
+				e.PreventDefault()
 			}
 		case "ArrowUp":
 			if p.curIdx >= 0 {
