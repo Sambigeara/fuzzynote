@@ -578,9 +578,17 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if relativeY == reservedTopLines-1 {
 				t.showHidden = !t.showHidden
 			} else {
-				itemKey, err = t.db.ToggleVisibility(relativeY - 1)
+				// Default returned itemKey behaviour on ToggleVisibility is one of the following:
+				// - on "show", it will return itself
+				// - on "hide", it will look for matchParent first, matchChild second
+				// This is expected behaviour on the default "hide hidden" view, but when we're showing
+				// and operating on all items (including hidden), we don't need to change the itemKey
+				newItemKey, err := t.db.ToggleVisibility(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
+				}
+				if !t.showHidden {
+					itemKey = newItemKey
 				}
 			}
 		case tcell.KeyCtrlU:

@@ -310,7 +310,15 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 			if p.curIdx == -1 {
 				p.showHidden = !p.showHidden
 			} else {
-				p.curIdxKey, _ = p.db.ToggleVisibility(p.curIdx)
+				// Default returned itemKey behaviour on ToggleVisibility is one of the following:
+				// - on "show", it will return itself
+				// - on "hide", it will look for matchParent first, matchChild second
+				// This is expected behaviour on the default "hide hidden" view, but when we're showing
+				// and operating on all items (including hidden), we don't need to change the itemKey
+				newIdxKey, _ := p.db.ToggleVisibility(p.curIdx)
+				if !p.showHidden {
+					p.curIdxKey = newIdxKey
+				}
 			}
 		default:
 			return
@@ -341,6 +349,8 @@ func (p *Page) handleNav(ctx app.Context, e app.Event) {
 					p.SearchGroups = append(p.SearchGroups[:p.curSearchGroupIdx], p.SearchGroups[p.curSearchGroupIdx+1:]...)
 					// We already check that it's above 0 above
 					p.curSearchGroupIdx--
+					// Prevent default ONLY when deleting, (otherwise it blocks normal input delete behaviour)
+					e.PreventDefault()
 				}
 			} else if p.curIdx < len(p.ListItems) && len(p.ListItems[p.curIdx].Line) == 0 {
 				// If the current line is empty, backspace will delete it
