@@ -16,7 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"mvdan.cc/xurls/v2"
 
-	"fuzzy-note/pkg/service"
+	"github.com/sambigeara/fuzzynote/pkg/service"
 )
 
 const (
