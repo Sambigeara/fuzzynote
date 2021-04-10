@@ -182,7 +182,7 @@ func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	var b []byte
 	b, err = ioutil.ReadFile(fileName)
 	buf := bytes.NewBuffer(b)
-	wal, err = buildFromFile(buf)
+	wal, err = BuildFromFile(buf)
 	if err != nil {
 		return wal, err
 	}
@@ -475,7 +475,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 	return &el, nil
 }
 
-func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
+func BuildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)

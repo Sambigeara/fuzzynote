@@ -121,7 +121,7 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 
 	buf := bytes.NewBuffer(b.Bytes())
 
-	wal, err := buildFromFile(buf)
+	wal, err := BuildFromFile(buf)
 	if err != nil {
 		return wal, err
 	}
