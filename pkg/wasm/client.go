@@ -44,14 +44,14 @@ func newBrowserWalFile() *browserWalFile {
 }
 
 // TODO these are mostly just stub functions for now to satisfy the interface
-func (wf *browserWalFile) GetRootDir() string { return "" }
-func (wf *browserWalFile) GetFileNamesMatchingPattern(pattern string) ([]string, error) {
+func (wf *browserWalFile) GetRoot() string { return "" }
+func (wf *browserWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return []string{}, nil
 }
-func (wf *browserWalFile) GenerateLogFromFile(fileName string) ([]service.EventLog, error) {
+func (wf *browserWalFile) GetWal(fileName string) ([]service.EventLog, error) {
 	return []service.EventLog{}, nil
 }
-func (wf *browserWalFile) RemoveFile(fileName string) error             { return nil }
+func (wf *browserWalFile) RemoveWal(fileName string) error              { return nil }
 func (wf *browserWalFile) Flush(b *bytes.Buffer, fileName string) error { return nil }
 func (wf *browserWalFile) SetProcessedPartialWals(partialWal string)    {}
 func (wf *browserWalFile) IsPartialWalProcessed(partialWal string) bool { return false }
