@@ -18,11 +18,11 @@ type WebsocketTarget struct {
 	//url *url.URL
 }
 
-func NewWebsocketTarget(cfg websocketRemote) *WebsocketTarget {
+func NewWebsocketTarget(cfg webRemote) *WebsocketTarget {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	wsURI, err := url.Parse(cfg.WebsocketURI)
+	wsURI, err := url.Parse(cfg.WebsocketURL)
 	if err != nil {
 		// TODO fail silently - do not use websocket
 		log.Fatal("broken url:", err)

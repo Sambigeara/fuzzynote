@@ -78,8 +78,8 @@ func main() {
 
 	var ws *service.WebsocketTarget
 	//runtime.Breakpoint()
-	if remotes.Websocket.URLString != "" {
-		ws = service.NewWebsocketTarget(remotes.Websocket)
+	if remotes.Web.WebsocketURL != "" {
+		ws = service.NewWebsocketTarget(remotes.Web)
 		listRepo.RegisterWebsocket(ws)
 	}
 
