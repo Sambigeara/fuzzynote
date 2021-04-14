@@ -107,4 +107,5 @@ func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 func (r *DBListRepo) RegisterWeb(wf *WebWalFile) {
 	r.wal.walFiles = append(r.wal.walFiles, wf)
 	r.wal.web = wf
+	wf.establishConnection()
 }

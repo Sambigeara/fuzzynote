@@ -85,8 +85,10 @@ func main() {
 
 	// TODO
 	webTokens := service.GetWebTokens(cfg.Root)
-	if webTokens.Access != "" && webTokens.Refresh != "" {
-		wt := service.NewWebWalFile(remotes.Web, webTokens.Access)
+	//if webTokens.Access != "" && webTokens.Refresh != "" {
+	// TODO theoretically only need refresh token to have a go at authentication, but this should be done better
+	if webTokens.Refresh != "" {
+		wt := service.NewWebWalFile(remotes.Web, webTokens)
 		listRepo.RegisterWeb(wt)
 	}
 
