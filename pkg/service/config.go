@@ -77,8 +77,8 @@ func GetRemotesConfig(root string) Remotes {
 }
 
 type WebTokens struct {
-	Access  string
-	Refresh string
+	Access  string `yaml:"accessToken"`
+	Refresh string `yaml:"refreshToken"`
 }
 
 func GetWebTokens(root string) WebTokens {
