@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	b64 "encoding/base64"
+	"encoding/json"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -31,9 +32,9 @@ var (
 )
 
 type WebWalFile struct {
-	wsConn      *websocket.Conn
-	walURL      *url.URL
-	accessToken string
+	wsConn *websocket.Conn
+	walURL *url.URL
+	tokens *WebTokens
 
 	mode                     Mode
 	pushMatchTerm            []rune
@@ -44,23 +45,7 @@ type WebWalFile struct {
 	processedPartialWalsLock *sync.Mutex
 }
 
-func NewWebWalFile(cfg webRemote, accessToken string) *WebWalFile {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-
-	// TODO move this out of NewWebWalFile func
-	wsURI, err := url.Parse(websocketURL)
-	if err != nil {
-		// TODO fail silently - do not use websocket
-		log.Fatal("broken url:", err)
-	}
-	headers := make(http.Header)
-	headers.Add(websocketAuthorizationHeader, accessToken)
-	wsConn, _, err := websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: headers})
-	if err != nil {
-		log.Fatal("dial:", err)
-	}
-
+func NewWebWalFile(cfg webRemote, webTokens *WebTokens) *WebWalFile {
 	walURL, err := url.Parse(walSyncURL)
 	if err != nil {
 		// TODO fail silently - do not use websocket
@@ -68,9 +53,8 @@ func NewWebWalFile(cfg webRemote, accessToken string) *WebWalFile {
 	}
 
 	return &WebWalFile{
-		wsConn:      wsConn,
-		walURL:      walURL,
-		accessToken: accessToken,
+		walURL: walURL,
+		tokens: webTokens,
 
 		mode:                     Sync,
 		pushMatchTerm:            []rune{},
@@ -82,24 +66,64 @@ func NewWebWalFile(cfg webRemote, accessToken string) *WebWalFile {
 	}
 }
 
+func (ws *WebWalFile) establishConnection() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	// TODO move this out of NewWebWalFile func
+	wsURI, err := url.Parse(websocketURL)
+	if err != nil {
+		// TODO fail silently - do not use websocket
+		log.Fatal("broken url:", err)
+	}
+	header := make(http.Header)
+	header.Add(websocketAuthorizationHeader, ws.tokens.Access)
+	var resp *http.Response
+	ws.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		//log.Fatal("dial:", err)
+	}
+	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
+	// retries).
+	// TODO can definite dedup at least a little
+	//if resp.StatusCode == http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusOK {
+		body := map[string]string{
+			"refreshToken": ws.tokens.Refresh,
+		}
+		marshalBody, err := json.Marshal(body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = ws.tokens.Authenticate(marshalBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		header.Set(websocketAuthorizationHeader, ws.tokens.Access)
+		ws.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
 func (wf *WebWalFile) GetRoot() string { return "" }
 func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return []string{fakeWalName}, nil
 }
 func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
-	client := &http.Client{}
 	req, err := http.NewRequest("GET", wf.walURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Add(walSyncAuthorizationHeader, wf.accessToken)
-	resp, err := client.Do(req)
+	req.Header.Add(walSyncAuthorizationHeader, wf.tokens.Access)
+	resp, err := wf.tokens.CallWithReAuth(req, walSyncAuthorizationHeader)
 	if err != nil {
 		log.Fatal("wal sync: ", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		log.Fatal("wal sync: ", resp)
 	}
 

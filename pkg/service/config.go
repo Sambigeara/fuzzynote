@@ -1,7 +1,6 @@
 package service
 
 import (
-	"log"
 	"os"
 	"path"
 
@@ -74,28 +73,4 @@ func GetRemotesConfig(root string) Remotes {
 		defer f.Close()
 	}
 	return r
-}
-
-type WebTokens struct {
-	Access  string `yaml:"accessToken"`
-	Refresh string `yaml:"refreshToken"`
-}
-
-func GetWebTokens(root string) WebTokens {
-	// Attempt to read from file
-	tokenFile := path.Join(root, webTokensFileName)
-	f, err := os.Open(tokenFile)
-
-	wt := WebTokens{}
-	if err == nil {
-		decoder := yaml.NewDecoder(f)
-		err = decoder.Decode(&wt)
-		if err != nil {
-			log.Fatalf("main : Parsing Token File : %v", err)
-			// TODO handle with appropriate error message
-			return wt
-		}
-		defer f.Close()
-	}
-	return wt
 }
