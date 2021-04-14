@@ -76,11 +76,11 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	var ws *service.WebsocketTarget
-	//runtime.Breakpoint()
-	if remotes.Web.WebsocketURL != "" {
-		ws = service.NewWebsocketTarget(remotes.Web)
-		listRepo.RegisterWebsocket(ws)
+	// TODO
+	webTokens := service.GetWebTokens(cfg.Root)
+	if webTokens.Access != "" && webTokens.Refresh != "" {
+		wt := service.NewWebWalFile(remotes.Web, webTokens.Access)
+		listRepo.RegisterWeb(wt)
 	}
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate

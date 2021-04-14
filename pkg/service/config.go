@@ -1,10 +1,16 @@
 package service
 
 import (
-//"os"
-//"path"
+	"log"
+	"os"
+	"path"
 
-//"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
+)
+
+const (
+	configFileName    = "config.yml"
+	webTokensFileName = ".tokens.yml"
 )
 
 type Mode string
@@ -38,43 +44,58 @@ type s3Remote struct {
 	//remote
 }
 
-// TODO rename this to generic *lambda* something
 type webRemote struct {
 	// TODO use struct composition
-	WebsocketURL string
-	Mode         Mode
-	Match        string
-	MatchAll     bool
+	//WebsocketURL string
+	Mode     Mode
+	Match    string
+	MatchAll bool
 	//URL          string
 }
 
-type remotes struct {
+type Remotes struct {
 	S3  []s3Remote
 	Web webRemote `yaml:",omitempty"`
 }
 
-func GetRemotesConfig(root string) remotes {
-	//cfgFile := path.Join(root, ".config.yml")
-	//f, err := os.Open(cfgFile)
+func GetRemotesConfig(root string) Remotes {
+	cfgFile := path.Join(root, configFileName)
+	f, err := os.Open(cfgFile)
 
-	//r := remotes{}
-
-	//if err == nil {
-	//    decoder := yaml.NewDecoder(f)
-	//    err = decoder.Decode(&r)
-	//    if err != nil {
-	//        //log.Fatalf("main : Parsing File Config : %v", err)
-	//        // TODO handle with appropriate error message
-	//        return r
-	//    }
-	//    defer f.Close()
-	//}
-	return remotes{
-		Web: webRemote{
-			WebsocketURL: "wss://302rlwefgj.execute-api.eu-west-1.amazonaws.com/prod",
-			//URL:          "https://ufjrberreh.execute-api.eu-west-1.amazonaws.com/prod",
-			Mode:     "sync",
-			MatchAll: true,
-		},
+	r := Remotes{}
+	if err == nil {
+		decoder := yaml.NewDecoder(f)
+		err = decoder.Decode(&r)
+		if err != nil {
+			//log.Fatalf("main : Parsing File Config : %v", err)
+			// TODO handle with appropriate error message
+			return r
+		}
+		defer f.Close()
 	}
+	return r
+}
+
+type WebTokens struct {
+	Access  string
+	Refresh string
+}
+
+func GetWebTokens(root string) WebTokens {
+	// Attempt to read from file
+	tokenFile := path.Join(root, webTokensFileName)
+	f, err := os.Open(tokenFile)
+
+	wt := WebTokens{}
+	if err == nil {
+		decoder := yaml.NewDecoder(f)
+		err = decoder.Decode(&wt)
+		if err != nil {
+			log.Fatalf("main : Parsing Token File : %v", err)
+			// TODO handle with appropriate error message
+			return wt
+		}
+		defer f.Close()
+	}
+	return wt
 }
