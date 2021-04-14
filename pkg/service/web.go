@@ -23,6 +23,11 @@ const (
 
 var (
 	tempBlock = make(chan struct{})
+
+	// TODO
+	websocketURL      = "wss://4hlf98q6mh.execute-api.eu-west-1.amazonaws.com/prod"
+	walSyncURL        = "https://9hpxwerc9l.execute-api.eu-west-1.amazonaws.com/prod"
+	authenticationURL = "https://tt2lmb4xla.execute-api.eu-west-1.amazonaws.com/prod"
 )
 
 type WebWalFile struct {
@@ -42,9 +47,6 @@ type WebWalFile struct {
 func NewWebWalFile(cfg webRemote, accessToken string) *WebWalFile {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-
-	websocketURL := "wss://4hlf98q6mh.execute-api.eu-west-1.amazonaws.com/prod"
-	walSyncURL := "https://9hpxwerc9l.execute-api.eu-west-1.amazonaws.com/prod"
 
 	// TODO move this out of NewWebWalFile func
 	wsURI, err := url.Parse(websocketURL)

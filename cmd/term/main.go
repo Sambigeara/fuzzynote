@@ -16,6 +16,7 @@ import (
 
 const (
 	namespace = "FZN"
+	loginArg  = "login"
 )
 
 func main() {
@@ -44,6 +45,12 @@ func main() {
 			os.Exit(0)
 		}
 		log.Fatalf("main : Parsing Root Config : %v", err)
+	}
+
+	// Check for Login flow (run and exit - bypassing the main program)
+	// TODO atm only triggers on last arg, make smarter!
+	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
+		service.Login(cfg.Root)
 	}
 
 	//cfg.Colour = "light"
