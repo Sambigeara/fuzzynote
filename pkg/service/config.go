@@ -1,10 +1,10 @@
 package service
 
 import (
-	"os"
-	"path"
+//"os"
+//"path"
 
-	"gopkg.in/yaml.v2"
+//"gopkg.in/yaml.v2"
 )
 
 type Mode string
@@ -38,34 +38,43 @@ type s3Remote struct {
 	//remote
 }
 
-type websocketRemote struct {
+// TODO rename this to generic *lambda* something
+type webRemote struct {
 	// TODO use struct composition
-	URLString string
-	Mode      Mode
-	Match     string
-	MatchAll  bool
+	WebsocketURL string
+	Mode         Mode
+	Match        string
+	MatchAll     bool
+	//URL          string
 }
 
 type remotes struct {
-	S3        []s3Remote
-	Websocket websocketRemote `yaml:",omitempty"`
+	S3  []s3Remote
+	Web webRemote `yaml:",omitempty"`
 }
 
 func GetRemotesConfig(root string) remotes {
-	cfgFile := path.Join(root, ".config.yml")
-	f, err := os.Open(cfgFile)
+	//cfgFile := path.Join(root, ".config.yml")
+	//f, err := os.Open(cfgFile)
 
-	r := remotes{}
+	//r := remotes{}
 
-	if err == nil {
-		decoder := yaml.NewDecoder(f)
-		err = decoder.Decode(&r)
-		if err != nil {
-			//log.Fatalf("main : Parsing File Config : %v", err)
-			// TODO handle with appropriate error message
-			return r
-		}
-		defer f.Close()
+	//if err == nil {
+	//    decoder := yaml.NewDecoder(f)
+	//    err = decoder.Decode(&r)
+	//    if err != nil {
+	//        //log.Fatalf("main : Parsing File Config : %v", err)
+	//        // TODO handle with appropriate error message
+	//        return r
+	//    }
+	//    defer f.Close()
+	//}
+	return remotes{
+		Web: webRemote{
+			WebsocketURL: "wss://302rlwefgj.execute-api.eu-west-1.amazonaws.com/prod",
+			//URL:          "https://ufjrberreh.execute-api.eu-west-1.amazonaws.com/prod",
+			Mode:     "sync",
+			MatchAll: true,
+		},
 	}
-	return r
 }
