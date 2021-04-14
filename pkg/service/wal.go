@@ -38,7 +38,7 @@ type Wal struct {
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
-	websocket         *WebsocketTarget
+	web               *WebWalFile
 }
 
 func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
@@ -862,11 +862,11 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Consume from the websocket, if available
-	if w.websocket != nil {
+	if w.web != nil {
 		go func() {
-			// Check for stop signal
+			// TODO Check for stop signal
 			for {
-				err := w.websocket.consume(walChan)
+				err := w.web.consumeWebsocket(walChan)
 				if err != nil {
 					return
 				}
@@ -883,8 +883,8 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			select {
 			case e := <-w.eventsChan:
 				// Write in real time to the websocket, if present
-				if w.websocket != nil {
-					w.websocket.push(e)
+				if w.web != nil {
+					w.web.pushWebsocket(e)
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
@@ -929,8 +929,8 @@ func (w *Wal) finish() error {
 		wf.StopTickers()
 	}
 
-	if w.websocket != nil {
-		w.websocket.conn.Close(websocket.StatusNormalClosure, "")
+	if w.web != nil {
+		w.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil
 }

@@ -12,7 +12,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.12
 	github.com/maxence-charriere/go-app/v8 v8.0.1
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0
 	mvdan.cc/xurls/v2 v2.2.0
 	nhooyr.io/websocket v1.8.6
 )
