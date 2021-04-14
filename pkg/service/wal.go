@@ -39,7 +39,6 @@ type Wal struct {
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
 	websocket         *WebsocketTarget
-	websocketLive     bool
 }
 
 func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
@@ -930,6 +929,8 @@ func (w *Wal) finish() error {
 		wf.StopTickers()
 	}
 
-	w.websocket.conn.Close(websocket.StatusNormalClosure, "")
+	if w.websocket != nil {
+		w.websocket.conn.Close(websocket.StatusNormalClosure, "")
+	}
 	return nil
 }
