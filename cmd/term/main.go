@@ -10,8 +10,8 @@ import (
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
 
-	"fuzzynote/pkg/service"
-	"fuzzynote/pkg/term"
+	"github.com/sambigeara/fuzzynote/pkg/service"
+	"github.com/sambigeara/fuzzynote/pkg/term"
 )
 
 const (
