@@ -246,6 +246,21 @@ func (t *Terminal) resizeScreen() {
 	t.h = h - reservedBottomLines
 }
 
+func GetNewLinePrefix(search [][]rune) string {
+	var searchStrings []string
+	for _, group := range search {
+		pattern, nChars := service.GetMatchPattern(group)
+		if pattern != service.InverseMatchPattern && len(group) > 0 {
+			searchStrings = append(searchStrings, string(group[nChars:]))
+		}
+	}
+	newString := ""
+	if len(searchStrings) > 0 {
+		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+	}
+	return newString
+}
+
 func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.S)
@@ -306,7 +321,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.search) > 0 && len(t.search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", t.db.GetNewLinePrefix(t.search))
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", GetNewLinePrefix(t.search))
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
@@ -336,7 +351,7 @@ func (t *Terminal) getHiddenLinePrefix(keys [][]rune) string {
 
 	// Only operate on the first key
 	key := keys[0]
-	_, nChars := t.db.GetMatchPattern(key)
+	_, nChars := service.GetMatchPattern(key)
 	trimmedKey := string(key[nChars:])
 
 	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
@@ -512,7 +527,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 						posDiff[0] -= len([]byte(strings.TrimSpace(string(t.search[0])))) + 1
 					}
 				}
-				newString := t.db.GetNewLinePrefix(t.search)
+				newString := GetNewLinePrefix(t.search)
 				itemKey, err = t.db.Add(newString, nil, relativeY)
 				if err != nil {
 					log.Fatal(err)

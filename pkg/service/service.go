@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 	"time"
 )
 
@@ -42,9 +41,7 @@ type ListRepo interface {
 	Undo() (string, error)
 	Redo() (string, error)
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
-	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
-	GetNewLinePrefix(search [][]rune) string
 }
 
 // DBListRepo is an implementation of the ListRepo interface
@@ -323,7 +320,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
-				pattern, nChars := r.GetMatchPattern(group)
+				pattern, nChars := GetMatchPattern(group)
 				if !isMatch(group[nChars:], cur.Line, pattern) {
 					matched = false
 					break
@@ -357,19 +354,4 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
 	return r.wal.generatePartialView(matchedItems)
-}
-
-func (db *DBListRepo) GetNewLinePrefix(search [][]rune) string {
-	var searchStrings []string
-	for _, group := range search {
-		pattern, nChars := db.GetMatchPattern(group)
-		if pattern != InverseMatchPattern && len(group) > 0 {
-			searchStrings = append(searchStrings, string(group[nChars:]))
-		}
-	}
-	newString := ""
-	if len(searchStrings) > 0 {
-		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
-	}
-	return newString
 }

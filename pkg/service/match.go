@@ -52,7 +52,7 @@ var matchChars = map[matchPattern]int{
 
 // GetMatchPattern will return the matchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
-func (r *DBListRepo) GetMatchPattern(sub []rune) (matchPattern, int) {
+func GetMatchPattern(sub []rune) (matchPattern, int) {
 	if len(sub) == 0 {
 		return NoMatchPattern, 0
 	}
