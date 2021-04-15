@@ -16,3 +16,6 @@
 
 # Ctags
 tags
+
+# Bin directory
+bin/

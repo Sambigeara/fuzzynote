@@ -96,6 +96,11 @@ func main() {
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	walChan := make(chan *[]service.EventLog)
 
+	err = listRepo.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	err = listRepo.Start(walChan)
 	if err != nil {
 		log.Fatal(err)

@@ -54,7 +54,7 @@ type webRemote struct {
 
 type Remotes struct {
 	S3  []s3Remote
-	Web webRemote `yaml:",omitempty"`
+	Web webRemote
 }
 
 func GetRemotesConfig(root string) Remotes {

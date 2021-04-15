@@ -22,8 +22,8 @@ type listItemSchema1 struct {
 	NoteLength uint64
 }
 
-// Start instantiates the app and begins push/pull for all WalFiles
-func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
+// Load retrieves UUID, instantiates the app and flushes to disk if required
+func (r *DBListRepo) Load() error {
 	f, err := os.OpenFile(r.rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -52,13 +52,11 @@ func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 	if fileHeader.UUID != 0 {
 		r.wal.uuid = fileHeader.UUID
 	}
-
-	return r.wal.startSync(walChan)
+	return nil
 }
 
-func (r *DBListRepo) StartWeb(walChan chan *[]EventLog) error {
-	// TODO retrieve uuid from persistent state somewhere
-	r.wal.uuid = generateUUID()
+// Start begins push/pull for all WalFiles
+func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
 	return r.wal.startSync(walChan)
 }
 
