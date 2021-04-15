@@ -86,9 +86,7 @@ func (ws *WebWalFile) establishConnection() {
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries).
 	// TODO can definite dedup at least a little
-	// TODO update this once I've figured out how to return explicit error codes from API gateway
-	//if resp.StatusCode == http.StatusUnauthorized {
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusUnauthorized {
 		body := map[string]string{
 			"refreshToken": ws.tokens.Refresh,
 		}

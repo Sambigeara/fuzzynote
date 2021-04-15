@@ -68,9 +68,7 @@ func (wt *WebTokens) CallWithReAuth(req *http.Request, header string) (*http.Res
 	if err != nil {
 		return nil, err
 	}
-	// TODO update this once I've figured out how to return explicit error codes from API gateway
-	//if resp.StatusCode == http.StatusUnauthorized {
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusUnauthorized {
 		body := map[string]string{
 			"refreshToken": wt.Refresh,
 		}
