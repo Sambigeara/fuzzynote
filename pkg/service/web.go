@@ -177,7 +177,7 @@ func (ws *WebWalFile) consumeWebsocket(walChan chan *[]EventLog) error {
 func (ws *WebWalFile) pushWebsocket(el EventLog) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-	b := buildByteWal(&[]EventLog{el})
+	b := BuildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
 	err := ws.wsConn.Write(ctx, websocket.MessageText, []byte(b64Wal))
 	if err != nil {
