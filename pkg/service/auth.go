@@ -68,6 +68,7 @@ func (wt *WebTokens) CallWithReAuth(req *http.Request, header string) (*http.Res
 	if err != nil {
 		return nil, err
 	}
+	// TODO update this once I've figured out how to return explicit error codes from API gateway
 	//if resp.StatusCode == http.StatusUnauthorized {
 	if resp.StatusCode != http.StatusOK {
 		body := map[string]string{
@@ -114,13 +115,13 @@ func (wt *WebTokens) Authenticate(body []byte) error {
 	if resp.StatusCode != http.StatusOK {
 		//bodyString := string(bodyBytes)
 		//fmt.Printf("Login failed: %s\n", bodyString)
-		return err
+		return errors.New("Authentication unsuccessful")
 	}
 
 	var authResult cognito.AuthenticationResultType
 	err = json.Unmarshal(bodyBytes, &authResult)
 	if err != nil {
-		log.Fatal(err)
+		return nil
 	}
 	if authResult.AccessToken != nil {
 		wt.Access = *authResult.AccessToken
@@ -180,8 +181,8 @@ func Login(root string) {
 	wt := WebTokens{root: root}
 	err = wt.Authenticate(marshalBody)
 	if err != nil {
-		fmt.Print("Login unsuccessful")
-		os.Exit(1)
+		fmt.Print("Login unsuccessful :(\n")
+		os.Exit(0)
 	}
 	fmt.Print("Login successful!")
 }
