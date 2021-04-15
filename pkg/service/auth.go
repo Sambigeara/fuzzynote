@@ -17,6 +17,16 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var emailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+
+// isEmailValid checks if the email provided passes the required structure and length.
+func isEmailValid(e string) bool {
+	if len(e) < 3 && len(e) > 254 {
+		return false
+	}
+	return emailRegex.MatchString(e)
+}
+
 type WebTokens struct {
 	root    string
 	Access  string `yaml:"accessToken"`
@@ -85,16 +95,6 @@ func (wt *WebTokens) CallWithReAuth(req *http.Request, header string) (*http.Res
 		resp, err = f(req)
 	}
 	return resp, err
-}
-
-var emailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
-
-// isEmailValid checks if the email provided passes the required structure and length.
-func isEmailValid(e string) bool {
-	if len(e) < 3 && len(e) > 254 {
-		return false
-	}
-	return emailRegex.MatchString(e)
 }
 
 func (wt *WebTokens) Authenticate(body []byte) error {
