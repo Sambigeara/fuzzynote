@@ -66,11 +66,10 @@ func NewWebWalFile(cfg webRemote, webTokens WebTokenStore) *WebWalFile {
 	}
 }
 
-func (ws *WebWalFile) establishConnection() {
+func (ws *WebWalFile) establishWebSocketConnection() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	// TODO move this out of NewWebWalFile func
 	wsURI, err := url.Parse(websocketURL)
 	if err != nil {
 		// TODO fail silently - do not use websocket
