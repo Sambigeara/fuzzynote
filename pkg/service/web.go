@@ -34,7 +34,7 @@ var (
 type WebWalFile struct {
 	wsConn *websocket.Conn
 	walURL *url.URL
-	tokens *WebTokens
+	tokens WebTokenStore
 
 	mode                     Mode
 	pushMatchTerm            []rune
@@ -45,7 +45,7 @@ type WebWalFile struct {
 	processedPartialWalsLock *sync.Mutex
 }
 
-func NewWebWalFile(cfg webRemote, webTokens *WebTokens) *WebWalFile {
+func NewWebWalFile(cfg webRemote, webTokens WebTokenStore) *WebWalFile {
 	walURL, err := url.Parse(walSyncURL)
 	if err != nil {
 		// TODO fail silently - do not use websocket
@@ -77,7 +77,7 @@ func (ws *WebWalFile) establishConnection() {
 		log.Fatal("broken url:", err)
 	}
 	header := make(http.Header)
-	header.Add(websocketAuthorizationHeader, ws.tokens.Access)
+	header.Add(websocketAuthorizationHeader, ws.tokens.AccessToken())
 	var resp *http.Response
 	ws.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
 	if err != nil {
@@ -88,17 +88,17 @@ func (ws *WebWalFile) establishConnection() {
 	// TODO can definite dedup at least a little
 	if resp.StatusCode == http.StatusUnauthorized {
 		body := map[string]string{
-			"refreshToken": ws.tokens.Refresh,
+			"refreshToken": ws.tokens.RefreshToken(),
 		}
 		marshalBody, err := json.Marshal(body)
 		if err != nil {
 			log.Fatal(err)
 		}
-		err = ws.tokens.Authenticate(marshalBody)
+		err = Authenticate(ws.tokens, marshalBody)
 		if err != nil {
 			log.Fatal(err)
 		}
-		header.Set(websocketAuthorizationHeader, ws.tokens.Access)
+		header.Set(websocketAuthorizationHeader, ws.tokens.AccessToken())
 		ws.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
 		if err != nil {
 			log.Fatal(err)
@@ -115,8 +115,8 @@ func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Add(walSyncAuthorizationHeader, wf.tokens.Access)
-	resp, err := wf.tokens.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, wf.tokens.AccessToken())
+	resp, err := CallWithReAuth(wf.tokens, req, walSyncAuthorizationHeader)
 	if err != nil {
 		log.Fatal("wal sync: ", err)
 	}

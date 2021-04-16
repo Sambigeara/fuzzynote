@@ -27,18 +27,26 @@ func isEmailValid(e string) bool {
 	return emailRegex.MatchString(e)
 }
 
-type WebTokens struct {
+type WebTokenStore interface {
+	SetAccessToken(string)
+	SetRefreshToken(string)
+	AccessToken() string
+	RefreshToken() string
+	Flush()
+}
+
+type FileWebTokenStore struct {
 	root    string
 	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
 }
 
-func GetWebTokens(root string) *WebTokens {
+func NewFileWebTokenStore(root string) *FileWebTokenStore {
 	// Attempt to read from file
 	tokenFile := path.Join(root, webTokensFileName)
 	f, err := os.Open(tokenFile)
 
-	wt := &WebTokens{root: root}
+	wt := &FileWebTokenStore{root: root}
 	if err == nil {
 		decoder := yaml.NewDecoder(f)
 		err = decoder.Decode(wt)
@@ -52,7 +60,11 @@ func GetWebTokens(root string) *WebTokens {
 	return wt
 }
 
-func (wt *WebTokens) Flush() {
+func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
+func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
+func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
+func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
+func (wt *FileWebTokenStore) Flush() {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
 		log.Fatal(err)
@@ -69,7 +81,7 @@ func (wt *WebTokens) Flush() {
 
 // CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
 // expired AccessToken, will reauth, and then retry the original function.
-func (wt *WebTokens) CallWithReAuth(req *http.Request, header string) (*http.Response, error) {
+func CallWithReAuth(wt WebTokenStore, req *http.Request, header string) (*http.Response, error) {
 	f := func(req *http.Request) (*http.Response, error) {
 		client := &http.Client{}
 		return client.Do(req)
@@ -80,24 +92,23 @@ func (wt *WebTokens) CallWithReAuth(req *http.Request, header string) (*http.Res
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		body := map[string]string{
-			"refreshToken": wt.Refresh,
+			"refreshToken": wt.RefreshToken(),
 		}
 		marshalBody, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		err = wt.Authenticate(marshalBody)
+		err = Authenticate(wt, marshalBody)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set(header, wt.Access)
-		// TODO do we need to copy the request?
+		req.Header.Set(header, wt.AccessToken())
 		resp, err = f(req)
 	}
 	return resp, err
 }
 
-func (wt *WebTokens) Authenticate(body []byte) error {
+func Authenticate(wt WebTokenStore, body []byte) error {
 	resp, err := http.Post(authenticationURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Fatal(err)
@@ -122,10 +133,10 @@ func (wt *WebTokens) Authenticate(body []byte) error {
 		return nil
 	}
 	if authResult.AccessToken != nil {
-		wt.Access = *authResult.AccessToken
+		wt.SetAccessToken(*authResult.AccessToken)
 	}
 	if authResult.RefreshToken != nil {
-		wt.Refresh = *authResult.RefreshToken
+		wt.SetRefreshToken(*authResult.RefreshToken)
 	}
 	wt.Flush()
 	return nil
@@ -175,9 +186,8 @@ func Login(root string) {
 	}
 	marshalBody, err := json.Marshal(body)
 
-	// TODO refactor so WebTokens don't need to know about root
-	wt := WebTokens{root: root}
-	err = wt.Authenticate(marshalBody)
+	wt := FileWebTokenStore{root: root}
+	err = Authenticate(&wt, marshalBody)
 	if err != nil {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)

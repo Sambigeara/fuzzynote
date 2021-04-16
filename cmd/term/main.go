@@ -84,7 +84,7 @@ func main() {
 	}
 
 	// TODO
-	webTokens := service.GetWebTokens(cfg.Root)
+	webTokens := service.NewFileWebTokenStore(cfg.Root)
 	//if webTokens.Access != "" && webTokens.Refresh != "" {
 	// TODO theoretically only need refresh token to have a go at authentication, but this should be done better
 	if webTokens.Refresh != "" {
