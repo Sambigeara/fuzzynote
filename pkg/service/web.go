@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	webRefreshFrequencyMs        = 1000
+	webRefreshFrequencyMs        = 60000 // 1 minute
 	websocketAuthorizationHeader = "Auth"
 	walSyncAuthorizationHeader   = "Authorization"
 	fakeWalName                  = "wal_0.db"

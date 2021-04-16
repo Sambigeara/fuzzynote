@@ -838,24 +838,33 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	for _, wf := range w.walFiles {
-		// Schedule async pull from walfiles individually
-		go func(wf WalFile) error {
+		// Trigger initial instant single pull from all walfiles
+		go func(wf WalFile) {
+			var el *[]EventLog
+			if el, err = pull(wf); err != nil {
+				log.Fatal(err)
+			}
+			walChan <- el
+		}(wf)
+
+		// And then schedule repeating async pulls
+		go func(wf WalFile) {
 			for {
 				wf.AwaitPull()
 				var el *[]EventLog
 				if el, err = pull(wf); err != nil {
-					return err
+					log.Fatal(err)
 				}
 				walChan <- el
 			}
 		}(wf)
 
 		// Schedule gather tasks
-		go func(wf WalFile) error {
+		go func(wf WalFile) {
 			for {
 				wf.AwaitGather()
 				if err := w.gather(wf); err != nil {
-					return err
+					log.Fatal(err)
 				}
 			}
 		}(wf)
