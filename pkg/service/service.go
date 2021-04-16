@@ -41,7 +41,6 @@ type ListRepo interface {
 	Undo() (string, error)
 	Redo() (string, error)
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
-	GetMatchPattern(sub []rune) (matchPattern, int)
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
 
@@ -56,7 +55,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile *localWalFile, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *DBListRepo {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
@@ -88,16 +87,16 @@ func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) processEventLog(e eventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
+func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
-		eventType:                  e,
-		uuid:                       originUUID,
-		targetUUID:                 targetUUID,
-		unixNanoTime:               time.Now().UnixNano(),
-		listItemCreationTime:       creationTime,
-		targetListItemCreationTime: targetCreationTime,
-		line:                       newLine,
-		note:                       newNote,
+		EventType:                  e,
+		UUID:                       originUUID,
+		TargetUUID:                 targetUUID,
+		UnixNanoTime:               time.Now().UnixNano(),
+		ListItemCreationTime:       creationTime,
+		TargetListItemCreationTime: targetCreationTime,
+		Line:                       newLine,
+		Note:                       newNote,
 	}
 	r.wal.eventsChan <- el
 	*r.wal.log = append(*r.wal.log, el)
@@ -128,8 +127,8 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.processEventLog(addEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
-	r.addUndoLog(addEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
+	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
+	r.addUndoLog(AddEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
 	return newItem.Key(), nil
 }
 
@@ -148,8 +147,8 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 	}
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
-	r.addUndoLog(updateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
-	r.processEventLog(updateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
+	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
+	r.processEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
 	return nil
 }
 
@@ -167,8 +166,8 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		targetCreationTime = listItem.child.creationTime
 		targetUUID = listItem.child.originUUID
 	}
-	r.processEventLog(deleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
-	r.addUndoLog(deleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
+	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
 	key := ""
 	if listItem.child != nil {
 		key = listItem.child.Key()
@@ -199,10 +198,10 @@ func (r *DBListRepo) MoveUp(idx int) error {
 		targetUUID = listItem.child.originUUID
 	}
 
-	r.processEventLog(moveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.processEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
-		r.addUndoLog(moveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		r.addUndoLog(MoveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
 	}
 	return nil
 }
@@ -226,10 +225,10 @@ func (r *DBListRepo) MoveDown(idx int) error {
 		targetUUID = listItem.parent.originUUID
 	}
 
-	r.processEventLog(moveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.processEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
-		r.addUndoLog(moveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		r.addUndoLog(MoveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
 	}
 	return nil
 }
@@ -242,16 +241,16 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 
 	listItem := r.matchListItems[idx]
 
-	var evType eventType
+	var evType EventType
 	var itemKey string
 	if listItem.IsHidden {
-		evType = showEvent
-		r.addUndoLog(showEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		evType = ShowEvent
+		r.addUndoLog(ShowEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
 		// Cursor should remain on newly visible key
 		itemKey = listItem.Key()
 	} else {
-		evType = hideEvent
-		r.addUndoLog(hideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		evType = HideEvent
+		r.addUndoLog(HideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
 		// Set itemKey to parent if available, else child (e.g. bottom of list)
 		if listItem.matchParent != nil {
 			itemKey = listItem.matchParent.Key()
@@ -321,7 +320,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
-				pattern, nChars := r.GetMatchPattern(group)
+				pattern, nChars := GetMatchPattern(group)
 				if !isMatch(group[nChars:], cur.Line, pattern) {
 					matched = false
 					break

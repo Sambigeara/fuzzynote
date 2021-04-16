@@ -10,12 +10,13 @@ import (
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
 
-	"fuzzy-note/pkg/client"
-	"fuzzy-note/pkg/service"
+	"github.com/sambigeara/fuzzynote/pkg/service"
+	"github.com/sambigeara/fuzzynote/pkg/term"
 )
 
 const (
 	namespace = "FZN"
+	loginArg  = "login"
 )
 
 func main() {
@@ -44,6 +45,12 @@ func main() {
 			os.Exit(0)
 		}
 		log.Fatalf("main : Parsing Root Config : %v", err)
+	}
+
+	// Check for Login flow (run and exit - bypassing the main program)
+	// TODO atm only triggers on last arg, make smarter!
+	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
+		service.Login(cfg.Root)
 	}
 
 	//cfg.Colour = "light"
@@ -76,24 +83,31 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	var ws *service.WebsocketTarget
-	//runtime.Breakpoint()
-	if remotes.Websocket.URLString != "" {
-		ws = service.NewWebsocketTarget(remotes.Websocket)
-		listRepo.RegisterWebsocket(ws)
+	// TODO
+	webTokens := service.NewFileWebTokenStore(cfg.Root)
+	//if webTokens.Access != "" && webTokens.Refresh != "" {
+	// TODO theoretically only need refresh token to have a go at authentication, but this should be done better
+	if webTokens.Refresh != "" {
+		wt := service.NewWebWalFile(remotes.Web, webTokens)
+		listRepo.RegisterWeb(wt)
 	}
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	walChan := make(chan *[]service.EventLog)
 
+	err = listRepo.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	err = listRepo.Start(walChan)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Create terminal client
-	term := client.NewTerm(listRepo, cfg.Colour, cfg.Editor)
+	// Create term client
+	t := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
@@ -108,9 +122,9 @@ func main() {
 				if err := listRepo.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
-				term.S.PostEvent(&client.RefreshKey{})
+				t.S.PostEvent(&term.RefreshKey{})
 			case ev := <-keyPressEvts:
-				cont, err := term.HandleKeyEvent(ev)
+				cont, err := t.HandleKeyEvent(ev)
 				if err != nil {
 					log.Fatal(err)
 				} else if !cont {
@@ -127,6 +141,6 @@ func main() {
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
 	for {
-		keyPressEvts <- term.S.PollEvent()
+		keyPressEvts <- t.S.PollEvent()
 	}
 }

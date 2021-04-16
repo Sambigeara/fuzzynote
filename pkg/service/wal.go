@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	//b64 "encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -14,6 +13,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	//b64 "encoding/base64"
+
+	"nhooyr.io/websocket"
 )
 
 func init() {
@@ -32,20 +34,20 @@ type Wal struct {
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
-	localWalFile      *localWalFile
+	localWalFile      WalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
-	websocket         *WebsocketTarget
+	web               *WebWalFile
 }
 
-func NewWal(localWalFile *localWalFile, pushFrequency uint16) *Wal {
+func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
 	wal := Wal{
 		uuid:              generateUUID(),
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		localWalFile:      localWalFile,
+		localWalFile:      walFile, // TODO naming
 		eventsChan:        make(chan EventLog),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
@@ -59,7 +61,7 @@ type walItemSchema1 struct {
 	ListItemCreationTime       int64
 	TargetListItemCreationTime int64
 	EventTime                  int64
-	EventType                  eventType
+	EventType                  EventType
 	LineLength                 uint64
 	NoteLength                 uint64
 }
@@ -70,7 +72,7 @@ type walItemSchema2 struct {
 	ListItemCreationTime       int64
 	TargetListItemCreationTime int64
 	EventTime                  int64
-	EventType                  eventType
+	EventType                  EventType
 	LineLength                 uint64
 	NoteExists                 bool
 	NoteLength                 uint64
@@ -79,49 +81,55 @@ type walItemSchema2 struct {
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
 // (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
-	nullEvent eventType = iota
-	addEvent
-	updateEvent
-	moveUpEvent
-	moveDownEvent
-	showEvent
-	hideEvent
-	deleteEvent
+	NullEvent EventType = iota
+	AddEvent
+	UpdateEvent
+	MoveUpEvent
+	MoveDownEvent
+	ShowEvent
+	HideEvent
+	DeleteEvent
 )
 
 type EventLog struct {
-	uuid                       uuid
-	targetUUID                 uuid
-	listItemCreationTime       int64
-	targetListItemCreationTime int64
-	unixNanoTime               int64
-	eventType                  eventType
-	line                       string
-	note                       *[]byte
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	UnixNanoTime               int64
+	EventType                  EventType
+	Line                       string
+	Note                       *[]byte
 }
 
 func (e *EventLog) getKeys() (string, string) {
-	key := fmt.Sprintf("%d:%d", e.uuid, e.listItemCreationTime)
-	targetKey := fmt.Sprintf("%d:%d", e.targetUUID, e.targetListItemCreationTime)
+	key := fmt.Sprintf("%d:%d", e.UUID, e.ListItemCreationTime)
+	targetKey := fmt.Sprintf("%d:%d", e.TargetUUID, e.TargetListItemCreationTime)
 	return key, targetKey
 }
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	getRootDir() string
-	getFileNamesMatchingPattern(string) ([]string, error)
-	generateLogFromFile(string) ([]EventLog, error)
-	removeFile(string) error
-	flush(*bytes.Buffer, string) error
-	setProcessedPartialWals(string)
-	isPartialWalProcessed(string) bool
-	awaitPull()
-	awaitGather()
-	stopTickers()
-	getMode() Mode
-	getPushMatchTerm() []rune
-	setProcessedEvent(string)
-	isEventProcessed(string) bool
+	// TODO do these actually need to be private attributes? A separate module implements the interface
+	// TODO surely these should just implement Push/Pull/Gather????
+	GetRoot() string
+	GetMatchingWals(string) ([]string, error)
+	GetWal(string) ([]EventLog, error)
+	RemoveWal(string) error
+	Flush(*bytes.Buffer, string) error
+
+	// TODO these probably don't need to be interface functions
+	SetProcessedPartialWals(string)
+	IsPartialWalProcessed(string) bool
+	SetProcessedEvent(string)
+	IsEventProcessed(string) bool
+
+	AwaitPull()
+	AwaitGather()
+	StopTickers()
+
+	GetMode() Mode
+	GetPushMatchTerm() []rune
 }
 
 type localWalFile struct {
@@ -150,11 +158,11 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 	}
 }
 
-func (wf *localWalFile) getRootDir() string {
+func (wf *localWalFile) GetRoot() string {
 	return wf.rootDir
 }
 
-func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]string, error) {
+func (wf *localWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -162,7 +170,7 @@ func (wf *localWalFile) getFileNamesMatchingPattern(matchPattern string) ([]stri
 	return fileNames, nil
 }
 
-func (wf *localWalFile) generateLogFromFile(fileName string) ([]EventLog, error) {
+func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
@@ -173,18 +181,18 @@ func (wf *localWalFile) generateLogFromFile(fileName string) ([]EventLog, error)
 	var b []byte
 	b, err = ioutil.ReadFile(fileName)
 	buf := bytes.NewBuffer(b)
-	wal, err = buildFromFile(buf)
+	wal, err = BuildFromFile(buf)
 	if err != nil {
 		return wal, err
 	}
 	return wal, nil
 }
 
-func (wf *localWalFile) removeFile(fileName string) error {
+func (wf *localWalFile) RemoveWal(fileName string) error {
 	return os.Remove(fileName)
 }
 
-func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
+func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -194,41 +202,41 @@ func (wf *localWalFile) flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *localWalFile) setProcessedPartialWals(fileName string) {
+func (wf *localWalFile) SetProcessedPartialWals(fileName string) {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) isPartialWalProcessed(fileName string) bool {
+func (wf *localWalFile) IsPartialWalProcessed(fileName string) bool {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[fileName]
 	return exists
 }
 
-func (wf *localWalFile) awaitPull() {
+func (wf *localWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *localWalFile) awaitGather() {
+func (wf *localWalFile) AwaitGather() {
 	<-wf.GatherTicker.C
 }
 
-func (wf *localWalFile) stopTickers() {
+func (wf *localWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
 }
 
-func (wf *localWalFile) getMode() Mode {
+func (wf *localWalFile) GetMode() Mode {
 	return wf.mode
 }
 
-func (wf *localWalFile) getPushMatchTerm() []rune {
+func (wf *localWalFile) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *localWalFile) setProcessedEvent(fileName string) {
+func (wf *localWalFile) SetProcessedEvent(fileName string) {
 	// TODO these are currently duplicated across walfiles, think of a more graceful
 	// boundary for reuse
 	wf.processedEventLock.Lock()
@@ -236,7 +244,7 @@ func (wf *localWalFile) setProcessedEvent(fileName string) {
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) isEventProcessed(fileName string) bool {
+func (wf *localWalFile) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]
@@ -249,19 +257,19 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	targetItem := r.wal.listItemTracker[targetKey]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
-	// orphaned items. There MIGHT be a valid case to keep events around if the eventType
+	// orphaned items. There MIGHT be a valid case to keep events around if the EventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
-	if item == nil && e.eventType != addEvent && e.eventType != updateEvent {
+	if item == nil && e.EventType != AddEvent && e.EventType != UpdateEvent {
 		return root, item, nil
 	}
 
 	var err error
-	switch e.eventType {
-	case addEvent:
-		root, item, err = r.wal.add(root, e.listItemCreationTime, e.line, e.note, targetItem, e.uuid)
+	switch e.EventType {
+	case AddEvent:
+		root, item, err = r.wal.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
 		r.wal.listItemTracker[key] = item
-	case updateEvent:
+	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
 		// - wal2 copies wal1
@@ -273,32 +281,32 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.wal.update(e.line, e.note, item)
+			item, err = r.wal.update(e.Line, e.Note, item)
 		} else {
 			addEl := e
-			addEl.eventType = addEvent
+			addEl.EventType = AddEvent
 			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
-	case deleteEvent:
+	case DeleteEvent:
 		root, err = r.wal.del(root, item)
 		delete(r.wal.listItemTracker, key)
-	case moveUpEvent:
+	case MoveUpEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[key] = item
-	case moveDownEvent:
+	case MoveDownEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
 		root, item, err = r.wal.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.wal.listItemTracker[key] = item
-	case showEvent:
+	case ShowEvent:
 		err = r.wal.setVisibility(item, true)
-	case hideEvent:
+	case HideEvent:
 		err = r.wal.setVisibility(item, false)
 	}
 	return root, item, err
@@ -409,19 +417,19 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		if err != nil {
 			return nil, err
 		}
-		el.listItemCreationTime = item.ListItemCreationTime
-		el.targetListItemCreationTime = item.TargetListItemCreationTime
-		el.unixNanoTime = item.EventTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
+		el.ListItemCreationTime = item.ListItemCreationTime
+		el.TargetListItemCreationTime = item.TargetListItemCreationTime
+		el.UnixNanoTime = item.EventTime
+		el.UUID = item.UUID
+		el.TargetUUID = item.TargetUUID
+		el.EventType = item.EventType
 
 		line := make([]byte, item.LineLength)
 		err = binary.Read(b, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
-		el.line = string(line)
+		el.Line = string(line)
 
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -429,7 +437,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			if err != nil {
 				return nil, err
 			}
-			el.note = &note
+			el.Note = &note
 		}
 	} else {
 		item := walItemSchema2{}
@@ -437,22 +445,22 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		if err != nil {
 			return nil, err
 		}
-		el.listItemCreationTime = item.ListItemCreationTime
-		el.targetListItemCreationTime = item.TargetListItemCreationTime
-		el.unixNanoTime = item.EventTime
-		el.uuid = item.UUID
-		el.targetUUID = item.TargetUUID
-		el.eventType = item.EventType
+		el.ListItemCreationTime = item.ListItemCreationTime
+		el.TargetListItemCreationTime = item.TargetListItemCreationTime
+		el.UnixNanoTime = item.EventTime
+		el.UUID = item.UUID
+		el.TargetUUID = item.TargetUUID
+		el.EventType = item.EventType
 
 		line := make([]byte, item.LineLength)
 		err = binary.Read(b, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
-		el.line = string(line)
+		el.Line = string(line)
 
 		if item.NoteExists {
-			el.note = &[]byte{}
+			el.Note = &[]byte{}
 		}
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -460,13 +468,13 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			if err != nil {
 				return nil, err
 			}
-			el.note = &note
+			el.Note = &note
 		}
 	}
 	return &el, nil
 }
 
-func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
+func BuildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
@@ -511,13 +519,13 @@ const (
 )
 
 func checkEquality(event1 EventLog, event2 EventLog) int {
-	if event1.unixNanoTime < event2.unixNanoTime ||
-		event1.unixNanoTime == event2.unixNanoTime && event1.uuid < event2.uuid ||
-		event1.unixNanoTime == event2.unixNanoTime && event1.uuid == event2.uuid && event1.eventType < event2.eventType {
+	if event1.UnixNanoTime < event2.UnixNanoTime ||
+		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID < event2.UUID ||
+		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID == event2.UUID && event1.EventType < event2.EventType {
 		return leftEventOlder
-	} else if event2.unixNanoTime < event1.unixNanoTime ||
-		event2.unixNanoTime == event1.unixNanoTime && event2.uuid < event1.uuid ||
-		event2.unixNanoTime == event1.unixNanoTime && event2.uuid == event1.uuid && event2.eventType < event1.eventType {
+	} else if event2.UnixNanoTime < event1.UnixNanoTime ||
+		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID < event1.UUID ||
+		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID == event1.UUID && event2.EventType < event1.EventType {
 		return rightEventOlder
 	}
 	return eventsEqual
@@ -590,20 +598,20 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
-	// - Any events preceding a deleteEvent
-	// - Any updateEvent preceding the most recent updateEvent
+	// - Any events preceding a DeleteEvent
+	// - Any UpdateEvent preceding the most recent UpdateEvent
 	// WARNING: Omitting addEvents/moveEvents leads to weird behaviour during Replay at the mo. Be warned.
 	keysToPurge := make(map[string]bool)
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key, _ := e.getKeys()
-		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.eventType == updateEvent) {
+		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.EventType == UpdateEvent) {
 			continue
 		}
-		if e.eventType == updateEvent {
+		if e.EventType == UpdateEvent {
 			keysToPurge[key] = false
-		} else if e.eventType == deleteEvent {
+		} else if e.EventType == DeleteEvent {
 			keysToPurge[key] = true
 		}
 		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
@@ -635,12 +643,12 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 
 	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
 	// for ListItems retrieved above.
-	// IMPORTANT: we also need to include ALL deleteEvent logs, as otherwise we may end up with orphaned items in the
+	// IMPORTANT: we also need to include ALL DeleteEvent logs, as otherwise we may end up with orphaned items in the
 	// target view.
 	partialWal := []EventLog{}
 	for _, e := range *w.log {
 		key, _ := e.getKeys()
-		if _, exists := logKeys[key]; exists || e.eventType == deleteEvent {
+		if _, exists := logKeys[key]; exists || e.EventType == DeleteEvent {
 			partialWal = append(partialWal, e)
 		}
 	}
@@ -648,35 +656,35 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
-	b := buildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(w.localWalFile.getRootDir(), viewFilePattern), time.Now().UnixNano())
-	w.localWalFile.flush(b, viewName)
+	b := BuildByteWal(&partialWal)
+	viewName := fmt.Sprintf(path.Join(w.localWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
+	w.localWalFile.Flush(b, viewName)
 	return nil
 }
 
 func pull(wf WalFile) (*[]EventLog, error) {
-	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
-	allFileNames, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+	allFileNames, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	newMergedWal := []EventLog{}
 	for _, fileName := range allFileNames {
-		if !wf.isPartialWalProcessed(fileName) {
-			newWal, err := wf.generateLogFromFile(fileName)
+		if !wf.IsPartialWalProcessed(fileName) {
+			newWal, err := wf.GetWal(fileName)
 			if err != nil {
 				log.Fatal(err)
 			}
 			newMergedWal = *(merge(&newMergedWal, &newWal))
 			// Add to the processed cache
-			wf.setProcessedPartialWals(fileName)
+			wf.SetProcessedPartialWals(fileName)
 		}
 	}
 	return &newMergedWal, nil
 }
 
-func buildByteWal(el *[]EventLog) *bytes.Buffer {
+func BuildByteWal(el *[]EventLog) *bytes.Buffer {
 	var b bytes.Buffer
 	// Write the schema ID
 	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
@@ -688,30 +696,30 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	//el = compact(el)
 
 	for _, e := range *el {
-		lenLine := uint64(len([]byte(e.line)))
+		lenLine := uint64(len([]byte(e.Line)))
 		var lenNote uint64
 		noteExists := false
-		if e.note != nil {
+		if e.Note != nil {
 			noteExists = true
-			lenNote = uint64(len(*(e.note)))
+			lenNote = uint64(len(*(e.Note)))
 		}
 		i := walItemSchema2{
-			UUID:                       e.uuid,
-			TargetUUID:                 e.targetUUID,
-			ListItemCreationTime:       e.listItemCreationTime,
-			TargetListItemCreationTime: e.targetListItemCreationTime,
-			EventTime:                  e.unixNanoTime,
-			EventType:                  e.eventType,
+			UUID:                       e.UUID,
+			TargetUUID:                 e.TargetUUID,
+			ListItemCreationTime:       e.ListItemCreationTime,
+			TargetListItemCreationTime: e.TargetListItemCreationTime,
+			EventTime:                  e.UnixNanoTime,
+			EventType:                  e.EventType,
 			LineLength:                 lenLine,
 			NoteExists:                 noteExists,
 			NoteLength:                 lenNote,
 		}
 		data := []interface{}{
 			i,
-			[]byte(e.line),
+			[]byte(e.Line),
 		}
-		if e.note != nil {
-			data = append(data, e.note)
+		if e.Note != nil {
+			data = append(data, e.Note)
 		}
 		for _, v := range data {
 			err = binary.Write(&b, binary.LittleEndian, v)
@@ -725,7 +733,7 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 }
 
 func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
-	matchTerm := wf.getPushMatchTerm()
+	matchTerm := wf.GetPushMatchTerm()
 
 	if len(matchTerm) == 0 {
 		return el
@@ -733,9 +741,9 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
 		// For now (for safety) use full pattern matching
-		if isMatch(matchTerm, e.line, FullMatchPattern) {
+		if isMatch(matchTerm, e.Line, FullMatchPattern) {
 			k, _ := e.getKeys()
-			wf.setProcessedEvent(k)
+			wf.SetProcessedEvent(k)
 		}
 	}
 
@@ -744,7 +752,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	// fulfilled the match term at some point in it's history.
 	for _, e := range *el {
 		k, _ := e.getKeys()
-		if wf.isEventProcessed(k) {
+		if wf.IsEventProcessed(k) {
 			filteredWal = append(filteredWal, e)
 		}
 	}
@@ -755,15 +763,15 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
-	b := buildByteWal(el)
+	b := BuildByteWal(el)
 
 	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
-	randomWal := fmt.Sprintf(path.Join(wf.getRootDir(), walFilePattern), randomUUID)
-	if err := wf.flush(b, randomWal); err != nil {
+	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
+	if err := wf.Flush(b, randomWal); err != nil {
 		log.Fatal(err)
 	}
 	// Add it straight to the cache to avoid processing it in the future
-	wf.setProcessedPartialWals(randomWal)
+	wf.SetProcessedPartialWals(randomWal)
 
 	return nil
 }
@@ -773,12 +781,12 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 func (w *Wal) gather(wf WalFile) error {
 	// Handle only origin wals
 	// TODO I think switching to this breaks other parts of the syncing process, use with caution
-	//filePathPattern := path.Join(wf.getRootDir(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
-	//originFiles, err := wf.getFileNamesMatchingPattern(filePathPattern)
+	//filePathPattern := path.Join(wf.GetRoot(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//originFiles, err := wf.GetMatchingWals(filePathPattern)
 
 	// Handle ALL wals
-	filePathPattern := path.Join(wf.getRootDir(), walFilePattern)
-	originFiles, err := wf.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+	originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 
 	if err != nil {
 		log.Fatal(err)
@@ -792,7 +800,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Gather origin files
 	mergedWal := []EventLog{}
 	for _, fileName := range originFiles {
-		wal, err := wf.generateLogFromFile(fileName)
+		wal, err := wf.GetWal(fileName)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -807,7 +815,7 @@ func (w *Wal) gather(wf WalFile) error {
 	// Schedule a delete on the files
 	for _, fileName := range originFiles {
 		// TODO proper error handling here too
-		wf.removeFile(fileName)
+		wf.RemoveWal(fileName)
 	}
 
 	return nil
@@ -830,32 +838,49 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	for _, wf := range w.walFiles {
-		// Schedule async pull from walfiles individually
-		go func(wf WalFile) error {
+		// Trigger initial instant single pull from all walfiles
+		go func(wf WalFile) {
+			var el *[]EventLog
+			if el, err = pull(wf); err != nil {
+				log.Fatal(err)
+			}
+			walChan <- el
+		}(wf)
+
+		// And then schedule repeating async pulls
+		go func(wf WalFile) {
 			for {
-				wf.awaitPull()
+				wf.AwaitPull()
 				var el *[]EventLog
 				if el, err = pull(wf); err != nil {
-					return err
+					log.Fatal(err)
 				}
 				walChan <- el
 			}
 		}(wf)
 
 		// Schedule gather tasks
-		go func(wf WalFile) error {
+		go func(wf WalFile) {
 			for {
-				wf.awaitGather()
+				wf.AwaitGather()
 				if err := w.gather(wf); err != nil {
-					return err
+					log.Fatal(err)
 				}
 			}
 		}(wf)
 	}
 
 	// Consume from the websocket, if available
-	if w.websocket != nil {
-		w.websocket.consume(walChan)
+	if w.web != nil {
+		go func() {
+			// TODO Check for stop signal
+			for {
+				err := w.web.consumeWebsocket(walChan)
+				if err != nil {
+					return
+				}
+			}
+		}()
 	}
 
 	// Push to all WalFiles
@@ -867,13 +892,13 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			select {
 			case e := <-w.eventsChan:
 				// Write in real time to the websocket, if present
-				if w.websocket != nil {
-					w.websocket.push(e)
+				if w.web != nil {
+					w.web.pushWebsocket(e)
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
 			case <-w.pushTicker.C:
-				// On ticks, flush what we've aggregated to all walfiles, and then reset the
+				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				if len(el) > 0 {
 					// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -882,7 +907,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// copies by default, I think).
 					elCopy := el
 					for _, wf := range w.walFiles {
-						if wf.getMode() == Sync || wf.getMode() == Push {
+						if wf.GetMode() == Sync || wf.GetMode() == Push {
 							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
 						}
 					}
@@ -898,19 +923,23 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 func (w *Wal) finish() error {
 	// TODO duplication
 	// Retrieve all local wal names
-	filePathPattern := path.Join(w.localWalFile.getRootDir(), walFilePattern)
-	localFileNames, _ := w.localWalFile.getFileNamesMatchingPattern(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(w.localWalFile.GetRoot(), walFilePattern)
+	localFileNames, _ := w.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
 	// Delete allFileNames
 	for _, fileName := range localFileNames {
-		w.localWalFile.removeFile(fileName)
+		w.localWalFile.RemoveWal(fileName)
 	}
 
 	w.pushTicker.Stop()
 
 	for _, wf := range w.walFiles {
-		wf.stopTickers()
+		wf.StopTickers()
+	}
+
+	if w.web != nil {
+		w.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil
 }

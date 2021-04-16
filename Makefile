@@ -1,12 +1,12 @@
 build:
-	go build -o bin/fzn ./cmd/fuzzy-note
+	go build -o bin/fzn ./cmd/term
 
 test:
 	go test ./... -count=1
 
 debug:
-	dlv debug ./cmd/fuzzy-note/main.go
-	#dlv debug ./cmd/fuzzy-note/main.go -- --root=test
+	dlv debug ./cmd/term/main.go
+	#dlv debug ./cmd/term/main.go -- --root=test
 
 test-debug:
 	dlv test pkg/service/*

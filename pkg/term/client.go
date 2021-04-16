@@ -1,4 +1,4 @@
-package client
+package term
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"mvdan.cc/xurls/v2"
 
-	"fuzzy-note/pkg/service"
+	"github.com/sambigeara/fuzzynote/pkg/service"
 )
 
 const (
@@ -246,6 +246,21 @@ func (t *Terminal) resizeScreen() {
 	t.h = h - reservedBottomLines
 }
 
+func GetNewLinePrefix(search [][]rune) string {
+	var searchStrings []string
+	for _, group := range search {
+		pattern, nChars := service.GetMatchPattern(group)
+		if pattern != service.InverseMatchPattern && len(group) > 0 {
+			searchStrings = append(searchStrings, string(group[nChars:]))
+		}
+	}
+	newString := ""
+	if len(searchStrings) > 0 {
+		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+	}
+	return newString
+}
+
 func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// Build top search box
 	t.buildSearchBox(t.S)
@@ -306,7 +321,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.search) > 0 && len(t.search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", t.getNewLinePrefix())
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", GetNewLinePrefix(t.search))
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
@@ -336,7 +351,7 @@ func (t *Terminal) getHiddenLinePrefix(keys [][]rune) string {
 
 	// Only operate on the first key
 	key := keys[0]
-	_, nChars := t.db.GetMatchPattern(key)
+	_, nChars := service.GetMatchPattern(key)
 	trimmedKey := string(key[nChars:])
 
 	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
@@ -409,21 +424,6 @@ type RefreshKey struct {
 // Implementing When() to fulfil the tcell.Event interface
 func (ev *RefreshKey) When() time.Time {
 	return ev.T
-}
-
-func (t *Terminal) getNewLinePrefix() string {
-	var searchStrings []string
-	for _, group := range t.search {
-		pattern, nChars := t.db.GetMatchPattern(group)
-		if pattern != service.InverseMatchPattern && len(group) > 0 {
-			searchStrings = append(searchStrings, string(group[nChars:]))
-		}
-	}
-	newString := ""
-	if len(searchStrings) > 0 {
-		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
-	}
-	return newString
 }
 
 func matchFirstURL(line string) string {
@@ -527,7 +527,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 						posDiff[0] -= len([]byte(strings.TrimSpace(string(t.search[0])))) + 1
 					}
 				}
-				newString := t.getNewLinePrefix()
+				newString := GetNewLinePrefix(t.search)
 				itemKey, err = t.db.Add(newString, nil, relativeY)
 				if err != nil {
 					log.Fatal(err)
@@ -541,6 +541,7 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 				// Copy into buffer in case we're moving it elsewhere
 				t.copiedItem = t.curItem
 				if relativeY-1 != len(t.matches)-1 {
+					// TODO make `==` and reorder
 					// Default behaviour on delete is to return and set position to the child item.
 					// We don't want to do that here, so ignore the itemKey return from Delete, and
 					// increment the Y position.
@@ -592,9 +593,17 @@ func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
 			if relativeY == reservedTopLines-1 {
 				t.showHidden = !t.showHidden
 			} else {
-				itemKey, err = t.db.ToggleVisibility(relativeY - 1)
+				// Default returned itemKey behaviour on ToggleVisibility is one of the following:
+				// - on "show", it will return itself
+				// - on "hide", it will look for matchParent first, matchChild second
+				// This is expected behaviour on the default "hide hidden" view, but when we're showing
+				// and operating on all items (including hidden), we don't need to change the itemKey
+				newItemKey, err := t.db.ToggleVisibility(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
+				}
+				if !t.showHidden {
+					itemKey = newItemKey
 				}
 			}
 		case tcell.KeyCtrlU:

@@ -18,16 +18,16 @@ func TestEventEquality(t *testing.T) {
 		time1 := time.Now().UnixNano()
 		uuid := uuid(1)
 		event1 := EventLog{
-			unixNanoTime: time1,
-			uuid:         uuid,
-			eventType:    addEvent,
+			UnixNanoTime: time1,
+			UUID:         uuid,
+			EventType:    AddEvent,
 		}
 
 		time2 := time1 + 1
 		event2 := EventLog{
-			unixNanoTime: time2,
-			uuid:         uuid,
-			eventType:    addEvent,
+			UnixNanoTime: time2,
+			UUID:         uuid,
+			EventType:    AddEvent,
 		}
 
 		equality := checkEquality(event1, event2)
@@ -53,34 +53,34 @@ func TestWalCompact(t *testing.T) {
 		eventTime := time.Now().UnixNano()
 		el := []EventLog{
 			EventLog{
-				unixNanoTime: eventTime,
-				uuid:         uuid,
-				eventType:    addEvent,
+				UnixNanoTime: eventTime,
+				UUID:         uuid,
+				EventType:    AddEvent,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveUpEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveUpEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    deleteEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    DeleteEvent,
 		})
 
 		compactedWal := *(compact(&el))
@@ -88,7 +88,7 @@ func TestWalCompact(t *testing.T) {
 			t.Fatalf("Compacted wal should only have the delete event remaining")
 		}
 
-		if compactedWal[0].eventType != deleteEvent {
+		if compactedWal[0].EventType != DeleteEvent {
 			t.Fatalf("Compacted wal should only have the delete event remaining")
 		}
 	})
@@ -97,57 +97,57 @@ func TestWalCompact(t *testing.T) {
 		eventTime := time.Now().UnixNano()
 		el := []EventLog{
 			EventLog{
-				unixNanoTime: eventTime,
-				uuid:         uuid,
-				eventType:    addEvent,
+				UnixNanoTime: eventTime,
+				UUID:         uuid,
+				EventType:    AddEvent,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveUpEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveUpEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    updateEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveDownEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveDownEvent,
 		})
 
 		compactedWal := *(compact(&el))
 		if len(compactedWal) != 4 {
-			t.Fatalf("Compacted wal should only have the most recent updateEvent, the move events and the original addEvent")
+			t.Fatalf("Compacted wal should only have the most recent UpdateEvent, the move events and the original AddEvent")
 		}
 
-		if compactedWal[0].eventType != addEvent {
-			t.Fatalf("First event should be the original addEvent")
+		if compactedWal[0].EventType != AddEvent {
+			t.Fatalf("First event should be the original AddEvent")
 		}
-		if compactedWal[1].eventType != moveUpEvent {
+		if compactedWal[1].EventType != MoveUpEvent {
 			t.Fatalf("Second event should be a moveUpEvent")
 		}
-		if compactedWal[2].eventType != updateEvent {
-			t.Fatalf("Third event should be an updateEvent")
+		if compactedWal[2].EventType != UpdateEvent {
+			t.Fatalf("Third event should be an UpdateEvent")
 		}
-		if compactedWal[3].eventType != moveDownEvent {
+		if compactedWal[3].EventType != MoveDownEvent {
 			t.Fatalf("Third event should be a moveDownEvent")
 		}
 	})
@@ -156,39 +156,39 @@ func TestWalCompact(t *testing.T) {
 		eventTime := time.Now().UnixNano()
 		el := []EventLog{
 			EventLog{
-				unixNanoTime: eventTime,
-				uuid:         uuid,
-				eventType:    addEvent,
+				UnixNanoTime: eventTime,
+				UUID:         uuid,
+				EventType:    AddEvent,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveUpEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveUpEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveDownEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveDownEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    moveDownEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveDownEvent,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    hideEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    HideEvent,
 		})
 		el = append(el, EventLog{
-			unixNanoTime: eventTime,
-			uuid:         uuid,
-			eventType:    showEvent,
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    ShowEvent,
 		})
 
 		compactedWal := *(compact(&el))
@@ -238,7 +238,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 uint64(len(line0)),
 				NoteLength:                 0,
 			},
@@ -249,7 +249,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now + 1,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 uint64(len(line1)),
 				NoteLength:                 0,
 			},
@@ -281,18 +281,18 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
 		}
 
-		if (*repo.wal.log)[0].listItemCreationTime != matches[0].creationTime {
-			t.Fatal("First match listItemCreationTime should match first EventLog")
+		if (*repo.wal.log)[0].ListItemCreationTime != matches[0].creationTime {
+			t.Fatal("First match ListItemCreationTime should match first EventLog")
 		}
-		if (*repo.wal.log)[1].listItemCreationTime != matches[1].creationTime {
-			t.Fatal("Second match listItemCreationTime should match second EventLog")
+		if (*repo.wal.log)[1].ListItemCreationTime != matches[1].creationTime {
+			t.Fatal("Second match ListItemCreationTime should match second EventLog")
 		}
 
-		if (*repo.wal.log)[0].eventType != addEvent {
-			t.Fatal("First match item should be of type addEvent")
+		if (*repo.wal.log)[0].EventType != AddEvent {
+			t.Fatal("First match item should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].eventType != addEvent {
-			t.Fatal("Second match item should be of type addEvent")
+		if (*repo.wal.log)[1].EventType != AddEvent {
+			t.Fatal("Second match item should be of type AddEvent")
 		}
 	})
 	t.Run("Two WAL file merge", func(t *testing.T) {
@@ -323,7 +323,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -333,7 +333,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line0)),
 				NoteLength:                 0,
 			},
@@ -344,7 +344,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now4,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -354,7 +354,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now5,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line2)),
 				NoteLength:                 0,
 			},
@@ -385,7 +385,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now2,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -395,7 +395,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now3,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line1)),
 				NoteLength:                 0,
 			},
@@ -406,7 +406,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now6,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -416,7 +416,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now7,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line3)),
 				NoteLength:                 0,
 			},
@@ -448,16 +448,16 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 4 matches items but had %d", len(*repo.wal.log))
 		}
 
-		if (*repo.wal.log)[1].line != string(line0) {
+		if (*repo.wal.log)[1].Line != string(line0) {
 			t.Fatal("First match line should match first EventLog")
 		}
-		if (*repo.wal.log)[3].line != string(line1) {
+		if (*repo.wal.log)[3].Line != string(line1) {
 			t.Fatal("Second match line should match second EventLog")
 		}
-		if (*repo.wal.log)[5].line != string(line2) {
+		if (*repo.wal.log)[5].Line != string(line2) {
 			t.Fatal("Third match line should match third EventLog")
 		}
-		if (*repo.wal.log)[7].line != string(line3) {
+		if (*repo.wal.log)[7].Line != string(line3) {
 			t.Fatal("Fourth match line should match fourth EventLog")
 		}
 	})
@@ -482,7 +482,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 uint64(len(line0)),
 				NoteLength:                 0,
 			},
@@ -512,7 +512,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 uint64(len(line1)),
 				NoteLength:                 0,
 			},
@@ -651,7 +651,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -661,7 +661,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line0)),
 				NoteLength:                 0,
 			},
@@ -673,7 +673,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now2,
-				EventType:                  deleteEvent,
+				EventType:                  DeleteEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -699,7 +699,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
-				EventType:                  addEvent,
+				EventType:                  AddEvent,
 				LineLength:                 0,
 				NoteLength:                 0,
 			},
@@ -709,7 +709,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line0)),
 				NoteLength:                 0,
 			},
@@ -722,7 +722,7 @@ func TestWalMerge(t *testing.T) {
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now3,
-				EventType:                  updateEvent,
+				EventType:                  UpdateEvent,
 				LineLength:                 uint64(len(line1)),
 				NoteLength:                 0,
 			},
@@ -755,17 +755,17 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 1 matches items but had %d", len(*repo.wal.log))
 		}
 
-		if (*repo.wal.log)[0].eventType != addEvent {
-			t.Fatal("First event should be of type addEvent")
+		if (*repo.wal.log)[0].EventType != AddEvent {
+			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].eventType != updateEvent {
-			t.Fatal("First event should be of type addEvent")
+		if (*repo.wal.log)[1].EventType != UpdateEvent {
+			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[2].eventType != deleteEvent {
-			t.Fatal("First event should be of type addEvent")
+		if (*repo.wal.log)[2].EventType != DeleteEvent {
+			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[3].eventType != updateEvent {
-			t.Fatal("First event should be of type updateEvent")
+		if (*repo.wal.log)[3].EventType != UpdateEvent {
+			t.Fatal("First event should be of type UpdateEvent")
 		}
 	})
 }
@@ -778,19 +778,19 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 matchTerm,
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 matchTerm,
+			ListItemCreationTime: creationTime,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -807,27 +807,27 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 matchTerm,
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 matchTerm,
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "",
-			listItemCreationTime: creationTime + 1,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "",
+			ListItemCreationTime: creationTime + 1,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -844,27 +844,27 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 matchTerm,
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 matchTerm,
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "",
+			ListItemCreationTime: creationTime,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -882,27 +882,27 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foobar",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foobar",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "",
+			ListItemCreationTime: creationTime,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -919,19 +919,19 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 fmt.Sprintf("something something %s", matchTerm),
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 fmt.Sprintf("something something %s", matchTerm),
+			ListItemCreationTime: creationTime,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -947,59 +947,59 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "f",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "f",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "fo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "fo",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foo",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foob",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foob",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "fooba",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "fooba",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foobar",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foobar",
+			ListItemCreationTime: creationTime,
 		})
 
 		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
@@ -1016,11 +1016,11 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
-				line:                 matchTerm,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
+				Line:                 matchTerm,
 			},
 		}
 
@@ -1040,35 +1040,35 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "f",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "f",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "fo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "fo",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foo",
+			ListItemCreationTime: creationTime,
 		})
 
 		repo.wal.log = &[]EventLog{}
@@ -1085,11 +1085,11 @@ func TestWalFilter(t *testing.T) {
 		eventTime++
 		newEl := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            updateEvent,
-				line:                 "foo ",
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            UpdateEvent,
+				Line:                 "foo ",
+				ListItemCreationTime: creationTime,
 			},
 		}
 		repo.Replay(&newEl)
@@ -1126,35 +1126,35 @@ func TestWalFilter(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "f",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "f",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "fo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "fo",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foo",
+			ListItemCreationTime: creationTime,
 		})
 
 		// repo1 pushes filtered wal to shared walfile
@@ -1176,11 +1176,11 @@ func TestWalFilter(t *testing.T) {
 		eventTime++
 		el = []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            updateEvent,
-				line:                 "foo ",
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            UpdateEvent,
+				Line:                 "foo ",
+				ListItemCreationTime: creationTime,
 			},
 		}
 
@@ -1208,11 +1208,11 @@ func TestWalReplay(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
-				line:                 line,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
+				Line:                 line,
 			},
 		}
 
@@ -1235,11 +1235,11 @@ func TestWalReplay(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            updateEvent,
-				listItemCreationTime: creationTime,
-				line:                 line,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            UpdateEvent,
+				ListItemCreationTime: creationTime,
+				Line:                 line,
 			},
 		}
 
@@ -1262,35 +1262,35 @@ func TestWalReplay(t *testing.T) {
 		creationTime := eventTime
 		el := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            addEvent,
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            AddEvent,
+				ListItemCreationTime: creationTime,
 			},
 		}
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "f",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "f",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "fo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "fo",
+			ListItemCreationTime: creationTime,
 		})
 		eventTime++
 		el = append(el, EventLog{
-			unixNanoTime:         eventTime,
-			uuid:                 uuid,
-			eventType:            updateEvent,
-			line:                 "foo",
-			listItemCreationTime: creationTime,
+			UnixNanoTime:         eventTime,
+			UUID:                 uuid,
+			EventType:            UpdateEvent,
+			Line:                 "foo",
+			ListItemCreationTime: creationTime,
 		})
 
 		repo.wal.log = &[]EventLog{}
@@ -1307,11 +1307,11 @@ func TestWalReplay(t *testing.T) {
 
 		newEl := []EventLog{
 			EventLog{
-				unixNanoTime:         eventTime,
-				uuid:                 uuid,
-				eventType:            updateEvent,
-				line:                 "foo ",
-				listItemCreationTime: creationTime,
+				UnixNanoTime:         eventTime,
+				UUID:                 uuid,
+				EventType:            UpdateEvent,
+				Line:                 "foo ",
+				ListItemCreationTime: creationTime,
 			},
 		}
 		repo.Replay(&newEl)

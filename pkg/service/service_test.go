@@ -72,24 +72,24 @@ func TestServicePushPull(t *testing.T) {
 		now := time.Now().UnixNano()
 		wal := []EventLog{
 			EventLog{
-				uuid:                       repo.wal.uuid,
-				targetUUID:                 0,
-				listItemCreationTime:       now,
-				targetListItemCreationTime: 0,
-				unixNanoTime:               now,
-				eventType:                  addEvent,
-				line:                       "Old newly created line",
+				UUID:                       repo.wal.uuid,
+				TargetUUID:                 0,
+				ListItemCreationTime:       now,
+				TargetListItemCreationTime: 0,
+				UnixNanoTime:               now,
+				EventType:                  AddEvent,
+				Line:                       "Old newly created line",
 			},
 		}
 		now++
 		wal = append(wal, EventLog{
-			uuid:                       repo.wal.uuid,
-			targetUUID:                 0,
-			listItemCreationTime:       now,
-			targetListItemCreationTime: 0,
-			unixNanoTime:               now,
-			eventType:                  addEvent,
-			line:                       "New newly created line",
+			UUID:                       repo.wal.uuid,
+			TargetUUID:                 0,
+			ListItemCreationTime:       now,
+			TargetListItemCreationTime: 0,
+			UnixNanoTime:               now,
+			EventType:                  AddEvent,
+			Line:                       "New newly created line",
 		})
 
 		repo.wal.push(&wal, localWalFile)

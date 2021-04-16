@@ -7,6 +7,11 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const (
+	configFileName    = "config.yml"
+	webTokensFileName = ".tokens.yml"
+)
+
 type Mode string
 
 const (
@@ -38,25 +43,25 @@ type s3Remote struct {
 	//remote
 }
 
-type websocketRemote struct {
+type webRemote struct {
 	// TODO use struct composition
-	URLString string
-	Mode      Mode
-	Match     string
-	MatchAll  bool
+	//WebsocketURL string
+	Mode     Mode
+	Match    string
+	MatchAll bool
+	//URL          string
 }
 
-type remotes struct {
-	S3        []s3Remote
-	Websocket websocketRemote `yaml:",omitempty"`
+type Remotes struct {
+	S3  []s3Remote
+	Web webRemote
 }
 
-func GetRemotesConfig(root string) remotes {
-	cfgFile := path.Join(root, ".config.yml")
+func GetRemotesConfig(root string) Remotes {
+	cfgFile := path.Join(root, configFileName)
 	f, err := os.Open(cfgFile)
 
-	r := remotes{}
-
+	r := Remotes{}
 	if err == nil {
 		decoder := yaml.NewDecoder(f)
 		err = decoder.Decode(&r)
