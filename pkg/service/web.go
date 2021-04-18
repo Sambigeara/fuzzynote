@@ -5,6 +5,7 @@ import (
 	"context"
 	b64 "encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -66,45 +67,6 @@ func NewWebWalFile(cfg webRemote, webTokens WebTokenStore) *WebWalFile {
 	}
 }
 
-func (ws *WebWalFile) establishWebSocketConnection() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-
-	wsURI, err := url.Parse(websocketURL)
-	if err != nil {
-		// TODO fail silently - do not use websocket
-		log.Fatal("broken url:", err)
-	}
-	header := make(http.Header)
-	header.Add(websocketAuthorizationHeader, ws.tokens.AccessToken())
-	var resp *http.Response
-	ws.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
-	if err != nil {
-		//log.Fatal("dial:", err)
-	}
-	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
-	// retries).
-	// TODO can definite dedup at least a little
-	if resp.StatusCode == http.StatusUnauthorized {
-		body := map[string]string{
-			"refreshToken": ws.tokens.RefreshToken(),
-		}
-		marshalBody, err := json.Marshal(body)
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = Authenticate(ws.tokens, marshalBody)
-		if err != nil {
-			log.Fatal(err)
-		}
-		header.Set(websocketAuthorizationHeader, ws.tokens.AccessToken())
-		ws.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-}
-
 func (wf *WebWalFile) GetRoot() string { return "" }
 func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return []string{fakeWalName}, nil
@@ -156,6 +118,67 @@ func (wf *WebWalFile) GetPushMatchTerm() []rune         { return wf.pushMatchTer
 func (wf *WebWalFile) SetProcessedEvent(key string)     {}
 func (wf *WebWalFile) IsEventProcessed(key string) bool { return true }
 
+func (ws *WebWalFile) establishWebSocketConnection(uuid uuid) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	wsURI, err := url.Parse(websocketURL)
+	if err != nil {
+		// TODO fail silently - do not use websocket
+		log.Fatal("broken url:", err)
+	}
+	header := make(http.Header)
+	header.Add(websocketAuthorizationHeader, ws.tokens.AccessToken())
+	header.Add("Origin-Uuid", fmt.Sprintf("%d", uuid))
+	//var resp *http.Response
+	//ws.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+	ws.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
+	// retries).
+	// TODO can definite dedup at least a little
+	if err != nil {
+		//    log.Fatal("dial:", err)
+		//}
+		//if resp.StatusCode == http.StatusUnauthorized {
+		body := map[string]string{
+			"refreshToken": ws.tokens.RefreshToken(),
+		}
+		marshalBody, err := json.Marshal(body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = Authenticate(ws.tokens, marshalBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		header.Set(websocketAuthorizationHeader, ws.tokens.AccessToken())
+		ws.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func (ws *WebWalFile) pushWebsocket(el EventLog, uuid uuid) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	b := BuildByteWal(&[]EventLog{el})
+	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
+	data := map[string]string{
+		"uuid": fmt.Sprintf("%d", uuid),
+		"wal":  b64Wal,
+	}
+	marshalData, err := json.Marshal(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ws.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	if err != nil {
+		log.Println("write:", err)
+		return
+	}
+}
+
 func (ws *WebWalFile) consumeWebsocket(walChan chan *[]EventLog) error {
 	var err error
 	// Might take a while for an event to come in, so timeouts aren't super useful here
@@ -171,16 +194,4 @@ func (ws *WebWalFile) consumeWebsocket(walChan chan *[]EventLog) error {
 		walChan <- &el
 	}
 	return err
-}
-
-func (ws *WebWalFile) pushWebsocket(el EventLog) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-	b := BuildByteWal(&[]EventLog{el})
-	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
-	err := ws.wsConn.Write(ctx, websocket.MessageText, []byte(b64Wal))
-	if err != nil {
-		log.Println("write:", err)
-		return
-	}
 }

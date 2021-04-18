@@ -893,7 +893,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			case e := <-w.eventsChan:
 				// Write in real time to the websocket, if present
 				if w.web != nil {
-					w.web.pushWebsocket(e)
+					w.web.pushWebsocket(e, w.uuid)
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)

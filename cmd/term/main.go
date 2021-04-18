@@ -65,6 +65,12 @@ func main() {
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, localRefreshFrequency)
 
+	// Load early to establish the uuid (this is needed for various startup ops)
+	err = listRepo.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
 	// Wal independently (there are certain operations that require us to only target the local walfile rather
 	// that all).
@@ -95,11 +101,6 @@ func main() {
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	walChan := make(chan *[]service.EventLog)
-
-	err = listRepo.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	err = listRepo.Start(walChan)
 	if err != nil {
