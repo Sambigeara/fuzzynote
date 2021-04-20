@@ -38,7 +38,7 @@ type Wal struct {
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	pushTicker        *time.Ticker
-	web               *WebWalFile
+	web               *Web
 }
 
 func NewWal(walFile WalFile, pushFrequency uint16) *Wal {

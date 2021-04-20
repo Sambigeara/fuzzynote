@@ -102,8 +102,7 @@ func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	r.wal.walFiles = append(r.wal.walFiles, wf)
 }
 
-func (r *DBListRepo) RegisterWeb(wf *WebWalFile) {
-	r.wal.walFiles = append(r.wal.walFiles, wf)
-	r.wal.web = wf
-	wf.establishWebSocketConnection(r.wal.uuid)
+func (r *DBListRepo) RegisterWeb(w *Web) {
+	r.wal.web = w
+	w.establishWebSocketConnection(r.wal.uuid)
 }

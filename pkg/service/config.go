@@ -24,37 +24,36 @@ type remote struct {
 	//UUID  string
 	//Name  string
 	//Mode  Mode
-	Mode     string
+	Mode     Mode
 	Match    string
 	MatchAll bool
 }
 
 type s3Remote struct {
-	// TODO use struct composition
+	//remote
+	Mode          Mode
+	Match         string
+	MatchAll      bool
 	Key           string
 	Secret        string
 	Bucket        string
 	Prefix        string
 	RefreshFreqMs uint16
 	GatherFreqMs  uint16
-	Mode          Mode
-	Match         string
-	MatchAll      bool
-	//remote
 }
 
 type webRemote struct {
-	// TODO use struct composition
-	//WebsocketURL string
+	//remote
 	Mode     Mode
 	Match    string
 	MatchAll bool
-	//URL          string
 }
 
+// Remotes represent a single remote Wal target (rather than a type), and the config lists
+// all within a single configuration (listed by category)
 type Remotes struct {
 	S3  []s3Remote
-	Web webRemote
+	Web []webRemote
 }
 
 func GetRemotesConfig(root string) Remotes {

@@ -73,8 +73,8 @@ func main() {
 
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
 	// Wal independently (there are certain operations that require us to only target the local walfile rather
-	// that all).
-	// We still need to register it as we all all walfiles in the next line.
+	// than all).
+	// We still need to register it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
 	remotes := service.GetRemotesConfig(cfg.Root)
@@ -89,13 +89,16 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	// TODO
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
-	//if webTokens.Access != "" && webTokens.Refresh != "" {
-	// TODO theoretically only need refresh token to have a go at authentication, but this should be done better
+	// Tokens are gererated on `login`
+	// Theoretically only need refresh token to have a go at authentication
 	if webTokens.Refresh != "" {
-		wt := service.NewWebWalFile(remotes.Web, webTokens)
-		listRepo.RegisterWeb(wt)
+		web := service.NewWeb(webTokens)
+		listRepo.RegisterWeb(web)
+		for _, r := range remotes.Web {
+			webWalFile := service.NewWebWalFile(r, web)
+			listRepo.RegisterWalFile(webWalFile)
+		}
 	}
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate

@@ -79,35 +79,6 @@ func (wt *FileWebTokenStore) Flush() {
 	f.Write(b)
 }
 
-// CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
-// expired AccessToken, will reauth, and then retry the original function.
-func CallWithReAuth(wt WebTokenStore, req *http.Request, header string) (*http.Response, error) {
-	f := func(req *http.Request) (*http.Response, error) {
-		client := &http.Client{}
-		return client.Do(req)
-	}
-	resp, err := f(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		body := map[string]string{
-			"refreshToken": wt.RefreshToken(),
-		}
-		marshalBody, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		err = Authenticate(wt, marshalBody)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set(header, wt.AccessToken())
-		resp, err = f(req)
-	}
-	return resp, err
-}
-
 func Authenticate(wt WebTokenStore, body []byte) error {
 	resp, err := http.Post(authenticationURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
@@ -193,4 +164,33 @@ func Login(root string) {
 		os.Exit(0)
 	}
 	fmt.Print("Login successful!")
+}
+
+// CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
+// expired AccessToken, will reauth, and then retry the original function.
+func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, error) {
+	f := func(req *http.Request) (*http.Response, error) {
+		client := &http.Client{}
+		return client.Do(req)
+	}
+	resp, err := f(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		body := map[string]string{
+			"refreshToken": w.tokens.RefreshToken(),
+		}
+		marshalBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		err = Authenticate(w.tokens, marshalBody)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set(header, w.tokens.AccessToken())
+		resp, err = f(req)
+	}
+	return resp, err
 }
