@@ -115,7 +115,7 @@ type WalFile interface {
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
 	GetWal(string) ([]EventLog, error)
-	RemoveWal(string) error
+	RemoveWals([]string) error
 	Flush(*bytes.Buffer, string) error
 
 	// TODO these probably don't need to be interface functions
@@ -188,8 +188,11 @@ func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *localWalFile) RemoveWal(fileName string) error {
-	return os.Remove(fileName)
+func (wf *localWalFile) RemoveWals(fileNames []string) error {
+	for _, f := range fileNames {
+		os.Remove(f)
+	}
+	return nil
 }
 
 func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
@@ -813,10 +816,7 @@ func (w *Wal) gather(wf WalFile) error {
 	}
 
 	// Schedule a delete on the files
-	for _, fileName := range originFiles {
-		// TODO proper error handling here too
-		wf.RemoveWal(fileName)
-	}
+	wf.RemoveWals(originFiles)
 
 	return nil
 }
@@ -925,12 +925,12 @@ func (w *Wal) finish() error {
 	// Retrieve all local wal names
 	filePathPattern := path.Join(w.localWalFile.GetRoot(), walFilePattern)
 	localFileNames, _ := w.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
+
 	// Delete allFileNames
-	for _, fileName := range localFileNames {
-		w.localWalFile.RemoveWal(fileName)
-	}
+	w.localWalFile.RemoveWals(localFileNames)
 
 	w.pushTicker.Stop()
 

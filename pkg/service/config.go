@@ -44,6 +44,7 @@ type s3Remote struct {
 
 type webRemote struct {
 	//remote
+	UUID     string
 	Mode     Mode
 	Match    string
 	MatchAll bool

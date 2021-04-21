@@ -63,7 +63,8 @@ func main() {
 	localWalFile := service.NewLocalWalFile(localRefreshFrequency, localGatherFrequency, cfg.Root)
 
 	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, localRefreshFrequency)
+	pushFrequency := uint16(10000)
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequency)
 
 	// Load early to establish the uuid (this is needed for various startup ops)
 	err = listRepo.Load()

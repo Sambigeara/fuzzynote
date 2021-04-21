@@ -170,8 +170,7 @@ func Login(root string) {
 // expired AccessToken, will reauth, and then retry the original function.
 func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, error) {
 	f := func(req *http.Request) (*http.Response, error) {
-		client := &http.Client{}
-		return client.Do(req)
+		return http.DefaultClient.Do(req)
 	}
 	resp, err := f(req)
 	if err != nil {
