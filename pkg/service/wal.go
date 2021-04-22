@@ -112,6 +112,7 @@ func (e *EventLog) getKeys() (string, string) {
 type WalFile interface {
 	// TODO do these actually need to be private attributes? A separate module implements the interface
 	// TODO surely these should just implement Push/Pull/Gather????
+	GetUUID() string
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
 	GetWal(string) ([]EventLog, error)
@@ -156,6 +157,12 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
 	}
+}
+
+func (wf *localWalFile) GetUUID() string {
+	// TODO this is a stub function for now, refactor out
+	// knowledge of UUID is only relevant for WebWalFiles
+	return ""
 }
 
 func (wf *localWalFile) GetRoot() string {
@@ -893,7 +900,15 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			case e := <-w.eventsChan:
 				// Write in real time to the websocket, if present
 				if w.web != nil {
-					w.web.pushWebsocket(e, w.uuid)
+					// TODO this should only iterate over WebWalFiles
+					for _, wf := range w.walFiles {
+						// TODO make pretty
+						matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
+						if len(*matchedEventLog) > 0 {
+							e = (*matchedEventLog)[0]
+							w.web.pushWebsocket(e, wf.GetUUID())
+						}
+					}
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)

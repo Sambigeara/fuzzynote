@@ -87,8 +87,6 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	// Add required querystring params
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
-	//q.Add("origin-uuid", originUUID)
-	//q.Add("uuid", uuid)
 	u.RawQuery = q.Encode()
 
 	u.Path = path.Join(u.Path, "presigned", originUUID, uuid)
@@ -107,8 +105,9 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	if resp.StatusCode != http.StatusOK {
 		//errBody, _ := ioutil.ReadAll(resp.Body)
 		//log.Fatalf("url %s, resp body %s", u.String(), errBody)
-		log.Fatalf("Error retrieving presigned URL for origin %s and uuid %s with method %s", originUUID, uuid, method)
+		//log.Fatalf("Error retrieving presigned URL for origin %s and uuid %s with method %s", originUUID, uuid, method)
 		//return "", errors.New("Unable to generate presigned `put` url")
+		return "", nil
 	}
 
 	// The response body will contain the presigned URL we will use to actually retrieve the wal
@@ -119,6 +118,10 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	//log.Fatalf("%v", presignedURL)
 
 	return string(presignedURL), nil
+}
+
+func (wf *WebWalFile) GetUUID() string {
+	return wf.uuid
 }
 
 func (wf *WebWalFile) GetRoot() string { return "" }
@@ -173,9 +176,9 @@ func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 	//log.Fatalf("POW %s", fileName)
 	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
-	if err != nil {
+	if err != nil || presignedURL == "" {
 		//return nil, err
-		return nil, nil
+		return []EventLog{}, nil
 	}
 
 	s3Resp, err := http.Get(presignedURL)
@@ -243,9 +246,10 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
-	if err != nil {
-		log.Fatalf("Unable to retrieve presigned url for origin %s uuid %s method `put`", wf.uuid, partialWal)
+	if err != nil || presignedURL == "" {
+		//log.Fatalf("Unable to retrieve presigned url for origin %s uuid %s method `put`", wf.uuid, partialWal)
 		//return err
+		return nil
 	}
 
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
@@ -346,13 +350,19 @@ func (w *Web) establishWebSocketConnection(uuid uuid) {
 	}
 }
 
-func (w *Web) pushWebsocket(el EventLog, uuid uuid) {
+func (w *Web) pushWebsocket(el EventLog, uuid string) {
+	// TODO this is a hack to work around the GetUUID stubs I have in place atm:
+	if uuid == "" {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
+
 	b := BuildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
 	data := map[string]string{
-		"uuid": fmt.Sprintf("%d", uuid),
+		"uuid": uuid,
 		"wal":  b64Wal,
 	}
 	marshalData, err := json.Marshal(data)
