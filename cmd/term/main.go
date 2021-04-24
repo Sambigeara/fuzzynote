@@ -17,6 +17,14 @@ import (
 const (
 	namespace = "FZN"
 	loginArg  = "login"
+
+	localRefreshFrequencyMs = 1000
+	localGatherFrequencyMs  = 10000
+
+	webRefreshFrequencyMs = 10000 // 10 seconds
+	webGatherFrequencyMs  = 30000 // 1 minute
+
+	pushFrequencyMs = 10000
 )
 
 func main() {
@@ -47,18 +55,11 @@ func main() {
 		log.Fatalf("main : Parsing Root Config : %v", err)
 	}
 
-	//cfg.Colour = "light"
-	//cfg.S3.Prefix = "main"
-
-	localRefreshFrequency := uint16(1000)
-	localGatherFrequency := uint16(10000)
-
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalWalFile(localRefreshFrequency, localGatherFrequency, cfg.Root)
+	localWalFile := service.NewLocalWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
 
 	// Instantiate listRepo
-	pushFrequency := uint16(10000)
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequency)
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequencyMs)
 
 	// Load early to establish the uuid (this is needed for various startup ops)
 	// This also creates the root directory, which is required by the login below
@@ -81,6 +82,18 @@ func main() {
 
 	remotes := service.GetRemotesConfig(cfg.Root)
 
+	webTokens := service.NewFileWebTokenStore(cfg.Root)
+	// Tokens are gererated on `login`
+	// Theoretically only need refresh token to have a go at authentication
+	if webTokens.Refresh != "" {
+		web := service.NewWeb(webTokens)
+		listRepo.RegisterWeb(web)
+		for _, r := range remotes.Web {
+			webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
+			listRepo.RegisterWalFile(webWalFile)
+		}
+	}
+
 	for _, r := range remotes.S3 {
 		// centralise this logic across different remote types when relevant
 		if (r.Mode == service.Push || r.Mode == service.Sync) && r.Match == "" && !r.MatchAll {
@@ -89,18 +102,6 @@ func main() {
 		// TODO gracefully deal with missing config
 		s3FileWal := service.NewS3FileWal(r, cfg.Root)
 		listRepo.RegisterWalFile(s3FileWal)
-	}
-
-	webTokens := service.NewFileWebTokenStore(cfg.Root)
-	// Tokens are gererated on `login`
-	// Theoretically only need refresh token to have a go at authentication
-	if webTokens.Refresh != "" {
-		web := service.NewWeb(webTokens)
-		listRepo.RegisterWeb(web)
-		for _, r := range remotes.Web {
-			webWalFile := service.NewWebWalFile(r, web)
-			listRepo.RegisterWalFile(webWalFile)
-		}
 	}
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate

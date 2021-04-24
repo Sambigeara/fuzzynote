@@ -19,8 +19,6 @@ import (
 )
 
 const (
-	webRefreshFrequencyMs        = 10000 // 10 seconds
-	webGatherFrequencyMs         = 60000 // 1 minute
 	websocketAuthorizationHeader = "Auth"
 	walSyncAuthorizationHeader   = "Authorization"
 )
@@ -56,7 +54,7 @@ type WebWalFile struct {
 	GatherTicker             *time.Ticker
 }
 
-func NewWebWalFile(cfg webRemote, web *Web) *WebWalFile {
+func NewWebWalFile(cfg webRemote, refreshFrequency uint16, gatherFrequency uint16, web *Web) *WebWalFile {
 	return &WebWalFile{
 		uuid:                     cfg.UUID,
 		web:                      web,
@@ -66,8 +64,8 @@ func NewWebWalFile(cfg webRemote, web *Web) *WebWalFile {
 		processedPartialWalsLock: &sync.Mutex{},
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
-		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(webRefreshFrequencyMs)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(webGatherFrequencyMs)),
+		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 	}
 }
 

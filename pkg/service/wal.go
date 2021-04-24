@@ -901,11 +901,13 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 				if w.web != nil {
 					// TODO this should only iterate over WebWalFiles
 					for _, wf := range w.walFiles {
-						// TODO make pretty
-						matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
-						if len(*matchedEventLog) > 0 {
-							e = (*matchedEventLog)[0]
-							w.web.pushWebsocket(e, wf.GetUUID())
+						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
+						if wf.GetMode() == Sync || wf.GetMode() == Push {
+							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
+							if len(*matchedEventLog) > 0 {
+								e = (*matchedEventLog)[0]
+								w.web.pushWebsocket(e, wf.GetUUID())
+							}
 						}
 					}
 				}
