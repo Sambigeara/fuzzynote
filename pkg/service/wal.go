@@ -797,7 +797,6 @@ func (w *Wal) gather(wf WalFile) error {
 	// Handle ALL wals
 	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 	originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
-
 	if err != nil {
 		log.Fatal(err)
 	}

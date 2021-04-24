@@ -5,7 +5,6 @@ import (
 	"context"
 	b64 "encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -35,19 +34,11 @@ var (
 
 type Web struct {
 	wsConn *websocket.Conn
-	//walURL *url.URL
 	tokens WebTokenStore
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {
-	//walURL, err := url.Parse(walSyncURL)
-	//if err != nil {
-	//    // TODO fail silently - do not use websocket
-	//    log.Fatal("broken url:", err)
-	//}
-
 	return &Web{
-		//walURL: walURL,
 		tokens: webTokens,
 	}
 }
@@ -81,10 +72,7 @@ func NewWebWalFile(cfg webRemote, web *Web) *WebWalFile {
 }
 
 func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {
-	// Create copy of url
 	u, _ := url.Parse(walSyncURL)
-
-	// Add required querystring params
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
 	u.RawQuery = q.Encode()
@@ -102,21 +90,17 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 		return "", err
 	}
 	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		//errBody, _ := ioutil.ReadAll(resp.Body)
-		//log.Fatalf("url %s, resp body %s", u.String(), errBody)
-		//log.Fatalf("Error retrieving presigned URL for origin %s and uuid %s with method %s", originUUID, uuid, method)
-		return "", errors.New("Unable to generate presigned `put` url")
+		return "", fmt.Errorf("Unable to generate presigned `put` url: %s", body)
 	}
 
 	// The response body will contain the presigned URL we will use to actually retrieve the wal
-	presignedURL, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal("Error parsing presigned url from response: ", err)
+		return "", fmt.Errorf("Error parsing presigned url from response: %s", err)
 	}
-	//log.Fatalf("%v", presignedURL)
 
-	return string(presignedURL), nil
+	return string(body), nil
 }
 
 func (wf *WebWalFile) GetUUID() string {
@@ -126,37 +110,36 @@ func (wf *WebWalFile) GetUUID() string {
 func (wf *WebWalFile) GetRoot() string { return "" }
 
 func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
-	// TODO dedup
-	// Create copy of url
 	u, _ := url.Parse(walSyncURL)
-
 	u.Path = path.Join(u.Path, "wal", "list", wf.uuid)
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
-		return []string{}, err
+		log.Printf("Error retrieving presigned URL: %s", err)
+		return nil, nil
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
 	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
 	if err != nil {
-		return []string{}, nil // TODO
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return []string{}, nil // TODO
-		//log.Fatal("Error retrieving presigned URL: ", err)
+		log.Printf("Error retrieving presigned URL: %s", err)
+		return nil, nil
 	}
 
 	strUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal("Error parsing wals from S3 response body: ", err)
+		log.Printf("Error parsing wals from S3 response body: %s", err)
+		return nil, nil
 	}
 
 	var uuids []string
 	err = json.Unmarshal([]byte(strUUIDs), &uuids)
 	if err != nil {
-		return []string{}, err
+		return nil, err
 	}
 
 	return uuids, nil
@@ -164,30 +147,37 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 
 func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
-	if err != nil || presignedURL == "" {
-		//return nil, err
-		return []EventLog{}, nil
+	if err != nil {
+		log.Printf("Error retrieving wal %s: %s", fileName, err)
+		return nil, nil
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
-		log.Fatal("Error retrieving file using presigned S3 URL: ", err)
+		log.Printf("Error retrieving file using presigned S3 URL: %s", err)
+		return nil, nil
 	}
 	defer s3Resp.Body.Close()
 
 	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
 	if err != nil {
-		log.Fatal("Error parsing wal from S3 response body: ", err)
+		log.Printf("Error parsing wal from S3 response body: %s", err)
+		return nil, nil
 	}
 
 	// Wals are transmitted over the wire in binary format, so decode
-	wal, _ := b64.StdEncoding.DecodeString(string(b64Wal))
+	wal, err := b64.StdEncoding.DecodeString(string(b64Wal))
+	if err != nil {
+		log.Printf("Error decoding wal: %s", err)
+		return nil, nil
+	}
 
 	buf := bytes.NewBuffer(wal)
 
 	var el []EventLog
 	if el, err = BuildFromFile(buf); err != nil {
-		log.Fatal("Error building wal from S3: ", err)
+		log.Printf("Error building wal from S3: %s", err)
+		return nil, nil
 	}
 	return el, nil
 }
@@ -198,10 +188,7 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 		uuids = append(uuids, f)
 	}
 
-	// TODO dedup
-	// Create copy of url
 	u, _ := url.Parse(walSyncURL)
-
 	u.Path = path.Join(u.Path, "wal", "delete", wf.uuid)
 
 	marshalNames, err := json.Marshal(fileNames)
@@ -225,7 +212,7 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 }
 
 func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
-	// TODO lol
+	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
 	partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
@@ -242,7 +229,7 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil
 	}
 	resp.Body.Close()
 	return nil
@@ -345,11 +332,13 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	}
 	marshalData, err := json.Marshal(data)
 	if err != nil {
-		log.Fatal(err)
+		// Fail silently for now, rely on future syncs sorting out discrepencies
+		log.Println("push websocket:", err)
+		return
 	}
 	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	if err != nil {
-		log.Println("write:", err)
+		log.Println("push websocket:", err)
 		return
 	}
 }
