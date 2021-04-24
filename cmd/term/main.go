@@ -47,12 +47,6 @@ func main() {
 		log.Fatalf("main : Parsing Root Config : %v", err)
 	}
 
-	// Check for Login flow (run and exit - bypassing the main program)
-	// TODO atm only triggers on last arg, make smarter!
-	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
-		service.Login(cfg.Root)
-	}
-
 	//cfg.Colour = "light"
 	//cfg.S3.Prefix = "main"
 
@@ -67,9 +61,16 @@ func main() {
 	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequency)
 
 	// Load early to establish the uuid (this is needed for various startup ops)
+	// This also creates the root directory, which is required by the login below
 	err = listRepo.Load()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Check for Login flow (run and exit - bypassing the main program)
+	// TODO atm only triggers on last arg, make smarter!
+	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
+		service.Login(cfg.Root)
 	}
 
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the

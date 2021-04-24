@@ -5,7 +5,7 @@ import (
 	"context"
 	b64 "encoding/base64"
 	"encoding/json"
-	//"errors"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -106,8 +106,7 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 		//errBody, _ := ioutil.ReadAll(resp.Body)
 		//log.Fatalf("url %s, resp body %s", u.String(), errBody)
 		//log.Fatalf("Error retrieving presigned URL for origin %s and uuid %s with method %s", originUUID, uuid, method)
-		//return "", errors.New("Unable to generate presigned `put` url")
-		return "", nil
+		return "", errors.New("Unable to generate presigned `put` url")
 	}
 
 	// The response body will contain the presigned URL we will use to actually retrieve the wal
@@ -130,13 +129,6 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	// TODO dedup
 	// Create copy of url
 	u, _ := url.Parse(walSyncURL)
-
-	// Add required querystring params
-	//q, _ := url.ParseQuery(u.RawQuery)
-	//q.Add("method", method)
-	//q.Add("origin-uuid", originUUID)
-	//q.Add("uuid", uuid)
-	//u.RawQuery = q.Encode()
 
 	u.Path = path.Join(u.Path, "wal", "list", wf.uuid)
 
@@ -171,10 +163,6 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 }
 
 func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
-	// TODO lol
-	//log.Fatal(fileName)
-	//log.Fatalf("POW %s", fileName)
-	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil || presignedURL == "" {
 		//return nil, err
@@ -205,13 +193,10 @@ func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {
-	// TODO lol
 	var uuids []string
 	for _, f := range fileNames {
-		//partialWal := strings.Split(strings.Split(f, "_")[1], ".")[0]
 		uuids = append(uuids, f)
 	}
-	//log.Fatalf("wals %v", uuids)
 
 	// TODO dedup
 	// Create copy of url
@@ -234,8 +219,6 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		errBody, _ := ioutil.ReadAll(resp.Body)
 		log.Fatalf("resp body %s", errBody)
-		//log.Fatalf("POW %v", resp)
-		//log.Fatal("Error deleting wals")
 	}
 	resp.Body.Close()
 	return nil
@@ -247,8 +230,6 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
 
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
 	if err != nil || presignedURL == "" {
-		//log.Fatalf("Unable to retrieve presigned url for origin %s uuid %s method `put`", wf.uuid, partialWal)
-		//return err
 		return nil
 	}
 
@@ -321,16 +302,12 @@ func (w *Web) establishWebSocketConnection(uuid uuid) {
 	header := make(http.Header)
 	header.Add(websocketAuthorizationHeader, w.tokens.AccessToken())
 	header.Add("Origin-Uuid", fmt.Sprintf("%d", uuid))
-	//var resp *http.Response
-	//w.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
-	w.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+	var resp *http.Response
+	w.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries).
 	// TODO can definite dedup at least a little
-	if err != nil {
-		//    log.Fatal("dial:", err)
-		//}
-		//if resp.StatusCode == http.StatusUnauthorized {
+	if resp.StatusCode == http.StatusUnauthorized {
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
@@ -343,9 +320,10 @@ func (w *Web) establishWebSocketConnection(uuid uuid) {
 			log.Fatal(err)
 		}
 		header.Set(websocketAuthorizationHeader, w.tokens.AccessToken())
-		w.wsConn, _, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+		w.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
 		if err != nil {
-			log.Fatal(err)
+			b, _ := ioutil.ReadAll(resp.Body)
+			log.Fatalf("Error establishing websocket connection: %s", b)
 		}
 	}
 }
