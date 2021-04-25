@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	namespace = "FZN"
-	loginArg  = "login"
+	namespace  = "FZN"
+	loginArg   = "login"
+	remotesArg = "cfg"
 
 	localRefreshFrequencyMs = 1000
 	localGatherFrequencyMs  = 10000
@@ -68,10 +69,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Check for Login flow (run and exit - bypassing the main program)
+	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
 	// TODO atm only triggers on last arg, make smarter!
-	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
-		service.Login(cfg.Root)
+	if len(os.Args) > 1 {
+		switch os.Args[len(os.Args)-1] {
+		case loginArg:
+			service.Login(cfg.Root)
+		case remotesArg:
+			webTokens := service.NewFileWebTokenStore(cfg.Root)
+			web := service.NewWeb(webTokens)
+			web.LaunchRemotesCLI()
+		}
 	}
 
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
@@ -88,7 +96,12 @@ func main() {
 	if webTokens.Refresh != "" {
 		web := service.NewWeb(webTokens)
 		listRepo.RegisterWeb(web)
-		for _, r := range remotes.Web {
+		// Retrieve remotes from API
+		remotes, err := web.GetRemotes("")
+		if err != nil {
+			log.Fatal("Error when trying to retrieve remotes config from API")
+		}
+		for _, r := range remotes {
 			webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
 			listRepo.RegisterWalFile(webWalFile)
 		}

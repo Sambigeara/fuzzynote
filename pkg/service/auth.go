@@ -30,8 +30,10 @@ func isEmailValid(e string) bool {
 type WebTokenStore interface {
 	SetAccessToken(string)
 	SetRefreshToken(string)
+	SetIDToken(string)
 	AccessToken() string
 	RefreshToken() string
+	IDToken() string
 	Flush()
 }
 
@@ -39,6 +41,7 @@ type FileWebTokenStore struct {
 	root    string
 	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
+	ID      string `yaml:"idToken"`
 }
 
 func NewFileWebTokenStore(root string) *FileWebTokenStore {
@@ -62,8 +65,10 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 
 func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
+func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
 func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
+func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
 func (wt *FileWebTokenStore) Flush() {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
@@ -108,6 +113,9 @@ func Authenticate(wt WebTokenStore, body []byte) error {
 	}
 	if authResult.RefreshToken != nil {
 		wt.SetRefreshToken(*authResult.RefreshToken)
+	}
+	if authResult.IdToken != nil {
+		wt.SetIDToken(*authResult.IdToken)
 	}
 	wt.Flush()
 	return nil
@@ -173,7 +181,7 @@ func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, 
 		return http.DefaultClient.Do(req)
 	}
 	resp, err := f(req)
-	if err != nil {
+	if err != nil && resp.StatusCode != http.StatusUnauthorized {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {

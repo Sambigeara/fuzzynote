@@ -42,19 +42,21 @@ type s3Remote struct {
 	GatherFreqMs  uint16
 }
 
-type webRemote struct {
+type WebRemote struct {
 	//remote
-	UUID     string
-	Mode     Mode
-	Match    string
-	MatchAll bool
+	Name     string `json:"WalName"`
+	UUID     string `json:"WalUUID"`
+	Mode     Mode   `json:"Mode"`
+	Match    string `json:"Match"`
+	MatchAll bool   `json:"MatchAll"`
+	IsOwner  bool   `json:"IsOwner"`
 }
 
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
 // all within a single configuration (listed by category)
 type Remotes struct {
 	S3  []s3Remote
-	Web []webRemote
+	Web []WebRemote
 }
 
 func GetRemotesConfig(root string) Remotes {
@@ -72,5 +74,8 @@ func GetRemotesConfig(root string) Remotes {
 		}
 		defer f.Close()
 	}
+
+	// TODO refactor Web away from this file config as it's now handled entirely with API calls
+	r.Web = nil
 	return r
 }

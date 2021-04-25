@@ -5,22 +5,26 @@ import (
 	"context"
 	b64 "encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/manifoldco/promptui"
 	"nhooyr.io/websocket"
 )
 
 const (
 	websocketAuthorizationHeader = "Auth"
 	walSyncAuthorizationHeader   = "Authorization"
+	iDTokenHeader                = "Id-Token"
 )
 
 var (
@@ -28,6 +32,7 @@ var (
 	websocketURL      = "wss://4hlf98q6mh.execute-api.eu-west-1.amazonaws.com/prod"
 	walSyncURL        = "https://jf7i5gi0f4.execute-api.eu-west-1.amazonaws.com/prod"
 	authenticationURL = "https://tt2lmb4xla.execute-api.eu-west-1.amazonaws.com/prod"
+	remoteURL         = "https://czcon196gf.execute-api.eu-west-1.amazonaws.com/prod"
 )
 
 type Web struct {
@@ -54,7 +59,7 @@ type WebWalFile struct {
 	GatherTicker             *time.Ticker
 }
 
-func NewWebWalFile(cfg webRemote, refreshFrequency uint16, gatherFrequency uint16, web *Web) *WebWalFile {
+func NewWebWalFile(cfg WebRemote, refreshFrequency uint16, gatherFrequency uint16, web *Web) *WebWalFile {
 	return &WebWalFile{
 		uuid:                     cfg.UUID,
 		web:                      web,
@@ -83,6 +88,7 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
 	if err != nil {
 		return "", err
@@ -118,6 +124,7 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
 	if err != nil {
 		return nil, err
@@ -166,7 +173,7 @@ func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 	// Wals are transmitted over the wire in binary format, so decode
 	wal, err := b64.StdEncoding.DecodeString(string(b64Wal))
 	if err != nil {
-		log.Printf("Error decoding wal: %s", err)
+		//log.Printf("Error decoding wal: %s", err)
 		return nil, nil
 	}
 
@@ -200,6 +207,7 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		errBody, _ := ioutil.ReadAll(resp.Body)
@@ -289,6 +297,10 @@ func (w *Web) establishWebSocketConnection(uuid uuid) {
 	header.Add("Origin-Uuid", fmt.Sprintf("%d", uuid))
 	var resp *http.Response
 	w.wsConn, resp, err = websocket.Dial(ctx, wsURI.String(), &websocket.DialOptions{HTTPHeader: header})
+	if err != nil && resp.StatusCode != http.StatusUnauthorized {
+		b, _ := ioutil.ReadAll(resp.Body)
+		log.Fatalf("Error establishing websocket connection: %s", b)
+	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries).
 	// TODO can definite dedup at least a little
@@ -348,7 +360,8 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	defer cancel()
 	_, message, err := w.wsConn.Read(ctx)
 	if err != nil {
-		log.Println("read:", err)
+		// TODO this generally errors on close, so commenting out the log line for now
+		//log.Println("read:", err)
 	}
 	strWal, _ := b64.StdEncoding.DecodeString(string(message))
 	buf := bytes.NewBuffer([]byte(strWal))
@@ -356,4 +369,257 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 		walChan <- &el
 	}
 	return err
+}
+
+// TODO move this somewhere better - it's separate from normal business logic
+func (w *Web) GetRemotes(uuid string) ([]WebRemote, error) {
+	u, _ := url.Parse(remoteURL)
+
+	p := path.Join(u.Path, "remote")
+	if uuid != "" {
+		p = path.Join(p, uuid)
+	}
+	u.Path = p
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := ioutil.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Error retrieving remotes: %s", body)
+	}
+	remotes := []WebRemote{}
+	err = json.Unmarshal(body, &remotes)
+	if err != nil {
+		return nil, err
+	}
+	return remotes, nil
+}
+
+func (w *Web) addRemote(name string) error {
+	remote := WebRemote{
+		Name: name,
+		UUID: fmt.Sprintf("%d", generateUUID()),
+	}
+
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote")
+
+	body, err := json.Marshal(remote)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", u.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("Error creating new remote %v", remote)
+	}
+	return nil
+}
+
+func (w *Web) updateRemote(remote WebRemote) error {
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote", remote.UUID)
+
+	body, err := json.Marshal(remote)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", u.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Failed to update key for item %v", remote)
+	}
+	return nil
+}
+
+// TODO rename
+func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) error, map[string]func(string) error) {
+	nameKey := fmt.Sprintf("Set Name: %s", r.Name)
+	modeKey := fmt.Sprintf("Set Mode: %s", r.Mode)
+	matchKey := fmt.Sprintf("Set Match: %s", r.Match)
+	matchAllKey := fmt.Sprintf("Set MatchAll: %v", r.MatchAll)
+
+	fields := []string{
+		nameKey,
+		modeKey,
+		matchKey,
+		matchAllKey,
+	}
+
+	// TODO make key -> json key mapping more robust
+	updateFuncMap := map[string]func(string) error{
+		nameKey: func(v string) error {
+			r.Name = v
+			return w.updateRemote(r)
+		},
+		modeKey: func(v string) error {
+			r.Mode = Mode(v)
+			return w.updateRemote(r)
+		},
+		matchKey: func(v string) error {
+			r.Match = v
+			return w.updateRemote(r)
+		},
+		matchAllKey: func(v string) error {
+			r.MatchAll = false
+			if v == "true" {
+				r.MatchAll = true
+			}
+			return w.updateRemote(r)
+		},
+	}
+
+	defaultTrue := func(v string) error { return nil }
+	validationFuncMap := map[string]func(string) error{
+		nameKey:  defaultTrue,
+		modeKey:  defaultTrue,
+		matchKey: defaultTrue,
+		matchAllKey: func(v string) error {
+			if v != "true" && v != "false" {
+				return errors.New("")
+			}
+			return nil
+		},
+	}
+
+	return fields, updateFuncMap, validationFuncMap
+}
+
+// LaunchRemotesCLI launches the interactive Remote management CLI tool
+func (w *Web) LaunchRemotesCLI() {
+	defer os.Exit(0)
+
+	const (
+		newRemoteKey = "Add new remote..."
+		exitKey      = "Exit..."
+	)
+
+	// Generate a map of remotes
+	for {
+		remotes, err := w.GetRemotes("")
+		if err != nil {
+			log.Fatalf("Error retrieving remotes: %s", err)
+		}
+
+		remotesSelectOptions := []string{}
+		remoteMap := make(map[string]WebRemote)
+		for _, r := range remotes {
+			key := fmt.Sprintf("(%s)", r.UUID)
+			if r.Name != "" {
+				key = fmt.Sprintf("%s (%s)", r.Name, r.UUID)
+			}
+			key = fmt.Sprintf("Remote: %s", key)
+			remotesSelectOptions = append(remotesSelectOptions, key)
+			remoteMap[key] = r
+		}
+		remotesSelectOptions = append(remotesSelectOptions, newRemoteKey, exitKey)
+
+		sel := promptui.Select{
+			Label: "Select action",
+			Items: remotesSelectOptions,
+		}
+
+		_, result, err := sel.Run()
+		if err != nil {
+			return
+		}
+
+		if result == exitKey {
+			fmt.Print("Goodbye!")
+			os.Exit(0)
+		} else if result == newRemoteKey {
+			// Add a new named remote then cycle back round
+			prompt := promptui.Prompt{
+				Label: "Specify name for new remote",
+			}
+			newName, err := prompt.Run()
+			if err != nil {
+				fmt.Printf("Prompt failed %v\n", err)
+				os.Exit(1)
+			}
+			err = w.addRemote(newName)
+			if err != nil {
+				fmt.Printf("%v", err)
+				os.Exit(1)
+			}
+			continue
+		}
+
+		remote := remoteMap[result]
+		fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
+		fields = append(fields, exitKey)
+		for {
+			sel = promptui.Select{
+				Label: result,
+				Items: fields,
+			}
+
+			// This result will be the key to update
+			idx, result, err := sel.Run()
+			if err != nil {
+				return
+			}
+
+			if result == exitKey {
+				break
+			}
+
+			// Retrieve the update function from the updateFuncMap
+			f := updateFuncMap[result]
+
+			// Trigger a prompt to the user to enter a new value
+			// TODO validation on boolean fields
+			prompt := promptui.Prompt{
+				Label:    "Enter new value",
+				Validate: validationFuncMap[result],
+			}
+			newVal, err := prompt.Run()
+			if err != nil {
+				fmt.Printf("Prompt failed %v\n", err)
+				os.Exit(1)
+			}
+
+			// Update the field name in the UI
+			// TODO get rid of this shameful hack
+			parts := strings.Split(fields[idx], ": ")
+			fields[idx] = fmt.Sprintf("%s: %s", parts[0], newVal)
+
+			err = f(newVal)
+			if err != nil {
+				fmt.Printf("Update failed %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
 }
