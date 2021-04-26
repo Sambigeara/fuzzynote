@@ -372,14 +372,17 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 }
 
 // TODO move this somewhere better - it's separate from normal business logic
-func (w *Web) GetRemotes(uuid string) ([]WebRemote, error) {
-	u, _ := url.Parse(remoteURL)
+func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
+	// This just allows callers to override the URL
+	if u == nil {
+		u, _ = url.Parse(remoteURL)
 
-	p := path.Join(u.Path, "remote")
-	if uuid != "" {
-		p = path.Join(p, uuid)
+		p := path.Join(u.Path, "remote")
+		if uuid != "" {
+			p = path.Join(p, uuid)
+		}
+		u.Path = p
 	}
-	u.Path = p
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
@@ -402,15 +405,8 @@ func (w *Web) GetRemotes(uuid string) ([]WebRemote, error) {
 	return remotes, nil
 }
 
-func (w *Web) addRemote(name string) error {
-	remote := WebRemote{
-		Name: name,
-		UUID: fmt.Sprintf("%d", generateUUID()),
-	}
-
-	u, _ := url.Parse(remoteURL)
-	u.Path = path.Join(u.Path, "remote")
-
+// postRemote is responsible for both additions and deletions
+func (w *Web) postRemote(remote *WebRemote, u *url.URL) error {
 	body, err := json.Marshal(remote)
 	if err != nil {
 		return err
@@ -461,6 +457,41 @@ func (w *Web) updateRemote(remote WebRemote) error {
 		return fmt.Errorf("Failed to update key for item %v", remote)
 	}
 	return nil
+}
+
+func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote", uuid, "user", "list")
+
+	remotes, err := w.GetRemotes(uuid, u)
+	if err != nil {
+		return nil, err
+	}
+	emails := []string{}
+	for _, r := range remotes {
+		emails = append(emails, r.Email)
+	}
+	return emails, nil
+}
+
+func (w *Web) addUserToRemote(uuid string, email string) error {
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote", uuid, "user", "add")
+	remote := WebRemote{
+		Email: email,
+	}
+	return w.postRemote(&remote, u)
+}
+
+func (w *Web) deleteUserFromRemote(uuid string, email string) error {
+	// We never actually delete a remote completely, but this function is removing certain non-owner users
+	// from a given remote
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote", uuid, "user", "delete")
+	remote := WebRemote{
+		Email: email,
+	}
+	return w.postRemote(&remote, u)
 }
 
 // TODO rename
@@ -522,12 +553,13 @@ func (w *Web) LaunchRemotesCLI() {
 
 	const (
 		newRemoteKey = "Add new remote..."
+		collabKey    = "Manage collaborators..."
 		exitKey      = "Exit..."
 	)
 
 	// Generate a map of remotes
 	for {
-		remotes, err := w.GetRemotes("")
+		remotes, err := w.GetRemotes("", nil)
 		if err != nil {
 			log.Fatalf("Error retrieving remotes: %s", err)
 		}
@@ -568,7 +600,14 @@ func (w *Web) LaunchRemotesCLI() {
 				fmt.Printf("Prompt failed %v\n", err)
 				os.Exit(1)
 			}
-			err = w.addRemote(newName)
+
+			u, _ := url.Parse(remoteURL)
+			u.Path = path.Join(u.Path, "remote")
+			remote := WebRemote{
+				Name: newName,
+				UUID: fmt.Sprintf("%d", generateUUID()),
+			}
+			err = w.postRemote(&remote, u)
 			if err != nil {
 				fmt.Printf("%v", err)
 				os.Exit(1)
@@ -578,6 +617,7 @@ func (w *Web) LaunchRemotesCLI() {
 
 		remote := remoteMap[result]
 		fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
+		fields = append([]string{collabKey}, fields...)
 		fields = append(fields, exitKey)
 		for {
 			sel = promptui.Select{
@@ -591,8 +631,27 @@ func (w *Web) LaunchRemotesCLI() {
 				return
 			}
 
-			if result == exitKey {
+			switch result {
+			case exitKey:
 				break
+			case collabKey:
+				users, err := w.getUsersForRemote(remote.UUID)
+				if err != nil {
+					return
+				}
+
+				sel = promptui.Select{
+					Label: "Manage collaborators",
+					Items: users,
+				}
+
+				// This result will be the key to update
+				_, result, err = sel.Run()
+				if err != nil {
+					return
+				}
+				log.Printf("You selected: %s!", result)
+				os.Exit(0)
 			}
 
 			// Retrieve the update function from the updateFuncMap

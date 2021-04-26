@@ -97,7 +97,7 @@ func main() {
 		web := service.NewWeb(webTokens)
 		listRepo.RegisterWeb(web)
 		// Retrieve remotes from API
-		remotes, err := web.GetRemotes("")
+		remotes, err := web.GetRemotes("", nil)
 		if err != nil {
 			log.Fatal("Error when trying to retrieve remotes config from API")
 		}

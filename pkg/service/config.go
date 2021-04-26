@@ -44,6 +44,7 @@ type s3Remote struct {
 
 type WebRemote struct {
 	//remote
+	Email    string `json:"Email"`
 	Name     string `json:"WalName"`
 	UUID     string `json:"WalUUID"`
 	Mode     Mode   `json:"Mode"`
