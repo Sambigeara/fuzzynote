@@ -20,11 +20,11 @@ import (
 var emailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
 
 // isEmailValid checks if the email provided passes the required structure and length.
-func isEmailValid(e string) bool {
-	if len(e) < 3 && len(e) > 254 {
-		return false
+func isEmailValid(e string) error {
+	if len(e) < 3 && len(e) > 254 || !emailRegex.MatchString(e) {
+		return errors.New("Invalid email address")
 	}
-	return emailRegex.MatchString(e)
+	return nil
 }
 
 type WebTokenStore interface {
@@ -128,13 +128,8 @@ func Login(root string) {
 	defer os.Exit(0)
 
 	prompt := promptui.Prompt{
-		Label: "Enter email",
-		Validate: func(input string) error {
-			if !isEmailValid(input) {
-				return errors.New("Invalid email address")
-			}
-			return nil
-		},
+		Label:    "Enter email",
+		Validate: isEmailValid,
 	}
 	email, err := prompt.Run()
 	if err != nil {

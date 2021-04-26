@@ -425,7 +425,7 @@ func (w *Web) postRemote(remote *WebRemote, u *url.URL) error {
 	}
 	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Error creating new remote %v", remote)
 	}
 	return nil
@@ -552,16 +552,19 @@ func (w *Web) LaunchRemotesCLI() {
 	defer os.Exit(0)
 
 	const (
-		newRemoteKey = "Add new remote..."
-		collabKey    = "Manage collaborators..."
-		exitKey      = "Exit..."
+		yesKey          = "Yes"
+		noKey           = "No"
+		newRemoteKey    = "Add new remote..."
+		manageCollabKey = "Manage collaborators..."
+		addCollabKey    = "Add new collaborator..."
+		exitKey         = "Exit..."
 	)
 
 	// Generate a map of remotes
 	for {
 		remotes, err := w.GetRemotes("", nil)
 		if err != nil {
-			log.Fatalf("Error retrieving remotes: %s", err)
+			log.Fatalf("%s", err)
 		}
 
 		remotesSelectOptions := []string{}
@@ -617,7 +620,7 @@ func (w *Web) LaunchRemotesCLI() {
 
 		remote := remoteMap[result]
 		fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
-		fields = append([]string{collabKey}, fields...)
+		fields = append([]string{manageCollabKey}, fields...)
 		fields = append(fields, exitKey)
 		for {
 			sel = promptui.Select{
@@ -631,27 +634,61 @@ func (w *Web) LaunchRemotesCLI() {
 				return
 			}
 
-			switch result {
-			case exitKey:
+			if result == exitKey {
 				break
-			case collabKey:
-				users, err := w.getUsersForRemote(remote.UUID)
+			} else if result == manageCollabKey {
+				userFields, err := w.getUsersForRemote(remote.UUID)
 				if err != nil {
 					return
 				}
+
+				userFields = append(userFields, addCollabKey)
 
 				sel = promptui.Select{
 					Label: "Manage collaborators",
-					Items: users,
+					Items: userFields,
 				}
 
 				// This result will be the key to update
-				_, result, err = sel.Run()
+				_, emailResult, err := sel.Run()
 				if err != nil {
 					return
 				}
-				log.Printf("You selected: %s!", result)
-				os.Exit(0)
+
+				if emailResult == addCollabKey {
+					prompt := promptui.Prompt{
+						Label:    "Enter email address",
+						Validate: isEmailValid,
+					}
+					newEmail, err := prompt.Run()
+					if err != nil {
+						fmt.Printf("Prompt failed %v\n", err)
+						os.Exit(1)
+					}
+					if err = w.addUserToRemote(remote.UUID, newEmail); err != nil {
+						fmt.Printf("Failed to add new collaborator %s", err)
+						os.Exit(1)
+					}
+				} else {
+					// Bring up Delete yes/no option
+					sel = promptui.Select{
+						Label: "Delete?",
+						Items: []string{yesKey, noKey},
+					}
+
+					_, deleteResult, err := sel.Run()
+					if err != nil {
+						return
+					}
+
+					if deleteResult == yesKey {
+						if err = w.deleteUserFromRemote(remote.UUID, emailResult); err != nil {
+							fmt.Printf("Failed to add new collaborator %s", err)
+							os.Exit(1)
+						}
+					}
+				}
+				continue
 			}
 
 			// Retrieve the update function from the updateFuncMap
