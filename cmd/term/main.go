@@ -102,8 +102,10 @@ func main() {
 			log.Fatal("Error when trying to retrieve remotes config from API")
 		}
 		for _, r := range remotes {
-			webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
-			listRepo.RegisterWalFile(webWalFile)
+			if r.IsActive {
+				webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
+				listRepo.RegisterWalFile(webWalFile)
+			}
 		}
 	}
 

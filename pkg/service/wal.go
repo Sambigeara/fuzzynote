@@ -687,6 +687,15 @@ func pull(wf WalFile) (*[]EventLog, error) {
 				log.Fatal(err)
 			}
 			newMergedWal = *(merge(&newMergedWal, &newWal))
+
+			// TODO refactor this so it's inline rather than a whole new iteration??
+			// Ensure all events are cached in the processedEvent cache so any local changes
+			// on remote origin items will propagate back out
+			for _, e := range newMergedWal {
+				k, _ := e.getKeys()
+				wf.SetProcessedEvent(k)
+			}
+
 			// Add to the processed cache
 			wf.SetProcessedPartialWals(fileName)
 		}

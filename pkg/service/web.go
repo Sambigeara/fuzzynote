@@ -36,13 +36,15 @@ var (
 )
 
 type Web struct {
-	wsConn *websocket.Conn
-	tokens WebTokenStore
+	wsConn     *websocket.Conn
+	tokens     WebTokenStore
+	walFileMap map[string]*WalFile
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {
 	return &Web{
-		tokens: webTokens,
+		tokens:     webTokens,
+		walFileMap: make(map[string]*WalFile),
 	}
 }
 
@@ -325,6 +327,11 @@ func (w *Web) establishWebSocketConnection(uuid uuid) {
 	}
 }
 
+type message struct {
+	UUID string `json:"uuid"`
+	Wal  string `json:"wal"`
+}
+
 func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	// TODO this is a hack to work around the GetUUID stubs I have in place atm:
 	if uuid == "" {
@@ -336,11 +343,15 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 
 	b := BuildByteWal(&[]EventLog{el})
 	b64Wal := b64.StdEncoding.EncodeToString(b.Bytes())
-	data := map[string]string{
-		"uuid": uuid,
-		"wal":  b64Wal,
+	//data := map[string]string{
+	//    "uuid": uuid,
+	//    "wal":  b64Wal,
+	//}
+	m := message{
+		UUID: uuid,
+		Wal:  b64Wal,
 	}
-	marshalData, err := json.Marshal(data)
+	marshalData, err := json.Marshal(m)
 	if err != nil {
 		// Fail silently for now, rely on future syncs sorting out discrepencies
 		log.Println("push websocket:", err)
@@ -358,16 +369,30 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	// Might take a while for an event to come in, so timeouts aren't super useful here
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, message, err := w.wsConn.Read(ctx)
+	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
 		// TODO this generally errors on close, so commenting out the log line for now
 		//log.Println("read:", err)
 	}
-	strWal, _ := b64.StdEncoding.DecodeString(string(message))
-	buf := bytes.NewBuffer([]byte(strWal))
-	if el, err := BuildFromFile(buf); err == nil {
-		walChan <- &el
+	var m message
+	err = json.Unmarshal(body, &m)
+	if err != nil {
+		return nil
 	}
+	strWal, _ := b64.StdEncoding.DecodeString(string(m.Wal))
+
+	buf := bytes.NewBuffer([]byte(strWal))
+	el, err := BuildFromFile(buf)
+	if err == nil {
+		walChan <- &el
+
+		// Acknowledge the event in the WalFile event cache, so we know to emit further events even
+		// if the match term doesn't match
+		wf := *w.walFileMap[m.UUID]
+		key, _ := el[0].getKeys()
+		wf.SetProcessedEvent(key)
+	}
+
 	return err
 }
 
@@ -426,7 +451,8 @@ func (w *Web) postRemote(remote *WebRemote, u *url.URL) error {
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error creating new remote %v", remote)
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("Error creating new remote: %s", body)
 	}
 	return nil
 }
@@ -469,7 +495,10 @@ func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
 	}
 	emails := []string{}
 	for _, r := range remotes {
-		emails = append(emails, r.Email)
+		// Don't return owner, as owner can't delete self
+		if !r.IsOwner {
+			emails = append(emails, r.Email)
+		}
 	}
 	return emails, nil
 }
@@ -496,16 +525,18 @@ func (w *Web) deleteUserFromRemote(uuid string, email string) error {
 
 // TODO rename
 func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) error, map[string]func(string) error) {
-	nameKey := fmt.Sprintf("Set Name: %s", r.Name)
-	modeKey := fmt.Sprintf("Set Mode: %s", r.Mode)
-	matchKey := fmt.Sprintf("Set Match: %s", r.Match)
-	matchAllKey := fmt.Sprintf("Set MatchAll: %v", r.MatchAll)
+	nameKey := fmt.Sprintf("Name: %s", r.Name)
+	modeKey := fmt.Sprintf("Mode: %s", r.Mode)
+	matchKey := fmt.Sprintf("Match: %s", r.Match)
+	matchAllKey := fmt.Sprintf("MatchAll: %v", r.MatchAll)
+	isActiveKey := fmt.Sprintf("IsActive: %v", r.IsActive)
 
 	fields := []string{
 		nameKey,
 		modeKey,
 		matchKey,
 		matchAllKey,
+		isActiveKey,
 	}
 
 	// TODO make key -> json key mapping more robust
@@ -529,19 +560,28 @@ func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) er
 			}
 			return w.updateRemote(r)
 		},
+		isActiveKey: func(v string) error {
+			r.IsActive = false
+			if v == "true" {
+				r.IsActive = true
+			}
+			return w.updateRemote(r)
+		},
 	}
 
 	defaultTrue := func(v string) error { return nil }
+	boolValidationFn := func(v string) error {
+		if v != "true" && v != "false" {
+			return errors.New("")
+		}
+		return nil
+	}
 	validationFuncMap := map[string]func(string) error{
-		nameKey:  defaultTrue,
-		modeKey:  defaultTrue,
-		matchKey: defaultTrue,
-		matchAllKey: func(v string) error {
-			if v != "true" && v != "false" {
-				return errors.New("")
-			}
-			return nil
-		},
+		nameKey:     defaultTrue,
+		modeKey:     defaultTrue,
+		matchKey:    defaultTrue,
+		matchAllKey: boolValidationFn,
+		isActiveKey: boolValidationFn,
 	}
 
 	return fields, updateFuncMap, validationFuncMap
@@ -558,6 +598,7 @@ func (w *Web) LaunchRemotesCLI() {
 		manageCollabKey = "Manage collaborators..."
 		addCollabKey    = "Add new collaborator..."
 		exitKey         = "Exit..."
+		selectSize      = 20
 	)
 
 	// Generate a map of remotes
@@ -583,6 +624,7 @@ func (w *Web) LaunchRemotesCLI() {
 		sel := promptui.Select{
 			Label: "Select action",
 			Items: remotesSelectOptions,
+			Size:  selectSize,
 		}
 
 		_, result, err := sel.Run()
@@ -626,6 +668,7 @@ func (w *Web) LaunchRemotesCLI() {
 			sel = promptui.Select{
 				Label: result,
 				Items: fields,
+				Size:  selectSize,
 			}
 
 			// This result will be the key to update
@@ -642,11 +685,11 @@ func (w *Web) LaunchRemotesCLI() {
 					return
 				}
 
-				userFields = append(userFields, addCollabKey)
-
+				userFields = append(userFields, addCollabKey, exitKey)
 				sel = promptui.Select{
 					Label: "Manage collaborators",
 					Items: userFields,
+					Size:  selectSize,
 				}
 
 				// This result will be the key to update
@@ -655,7 +698,9 @@ func (w *Web) LaunchRemotesCLI() {
 					return
 				}
 
-				if emailResult == addCollabKey {
+				if emailResult == exitKey {
+					continue
+				} else if emailResult == addCollabKey {
 					prompt := promptui.Prompt{
 						Label:    "Enter email address",
 						Validate: isEmailValid,
@@ -666,7 +711,7 @@ func (w *Web) LaunchRemotesCLI() {
 						os.Exit(1)
 					}
 					if err = w.addUserToRemote(remote.UUID, newEmail); err != nil {
-						fmt.Printf("Failed to add new collaborator %s", err)
+						fmt.Printf("Failed to add new collaborator: %s", err)
 						os.Exit(1)
 					}
 				} else {
@@ -674,6 +719,7 @@ func (w *Web) LaunchRemotesCLI() {
 					sel = promptui.Select{
 						Label: "Delete?",
 						Items: []string{yesKey, noKey},
+						Size:  selectSize,
 					}
 
 					_, deleteResult, err := sel.Run()
@@ -683,7 +729,7 @@ func (w *Web) LaunchRemotesCLI() {
 
 					if deleteResult == yesKey {
 						if err = w.deleteUserFromRemote(remote.UUID, emailResult); err != nil {
-							fmt.Printf("Failed to add new collaborator %s", err)
+							fmt.Printf("Failed to delete collaborator: %s", err)
 							os.Exit(1)
 						}
 					}
@@ -691,20 +737,50 @@ func (w *Web) LaunchRemotesCLI() {
 				continue
 			}
 
+			// For `Mode` or boolean selection, use a nested Select prompt with the appropriate fields
+			field := strings.Split(result, ":")[0]
+			newVal := ""
+			if field == "Mode" {
+				sel = promptui.Select{
+					Label: "Select Mode",
+					Items: []string{string(Sync), string(Push), string(Pull), exitKey},
+					Size:  selectSize,
+				}
+				_, newVal, err = sel.Run()
+				if err != nil {
+					return
+				}
+				if result == exitKey {
+					break
+				}
+			} else if field == "IsActive" || field == "MatchAll" {
+				sel = promptui.Select{
+					Label: "Select",
+					Items: []string{"true", "false", exitKey},
+					Size:  selectSize,
+				}
+				_, newVal, err = sel.Run()
+				if err != nil {
+					return
+				}
+				if newVal == exitKey {
+					break
+				}
+			} else {
+				// Trigger a prompt to the user to enter a new value
+				prompt := promptui.Prompt{
+					Label:    "Enter new value",
+					Validate: validationFuncMap[result],
+				}
+				newVal, err = prompt.Run()
+				if err != nil {
+					fmt.Printf("Prompt failed %v\n", err)
+					os.Exit(1)
+				}
+			}
+
 			// Retrieve the update function from the updateFuncMap
 			f := updateFuncMap[result]
-
-			// Trigger a prompt to the user to enter a new value
-			// TODO validation on boolean fields
-			prompt := promptui.Prompt{
-				Label:    "Enter new value",
-				Validate: validationFuncMap[result],
-			}
-			newVal, err := prompt.Run()
-			if err != nil {
-				fmt.Printf("Prompt failed %v\n", err)
-				os.Exit(1)
-			}
 
 			// Update the field name in the UI
 			// TODO get rid of this shameful hack

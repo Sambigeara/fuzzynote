@@ -51,6 +51,7 @@ type WebRemote struct {
 	Match    string `json:"Match"`
 	MatchAll bool   `json:"MatchAll"`
 	IsOwner  bool   `json:"IsOwner"`
+	IsActive bool   `json:"IsActive"`
 }
 
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
