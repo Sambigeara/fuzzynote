@@ -11,12 +11,10 @@ const (
 	configFileName = "config.yml"
 )
 
-type Mode string
-
 const (
-	ModePush Mode = "push"
-	ModePull Mode = "pull"
-	ModeSync Mode = "sync"
+	ModePush = "push"
+	ModePull = "pull"
+	ModeSync = "sync"
 )
 
 //type remote struct {
@@ -30,7 +28,7 @@ const (
 
 type s3Remote struct {
 	//remote
-	Mode          Mode
+	Mode          string
 	Match         string
 	MatchAll      bool
 	Key           string
@@ -46,7 +44,7 @@ type WebRemote struct {
 	Email    string `json:"Email"`
 	Name     string `json:"WalName"`
 	UUID     string `json:"WalUUID"`
-	Mode     Mode   `json:"Mode"`
+	Mode     string `json:"Mode"`
 	Match    string `json:"Match"`
 	MatchAll bool   `json:"MatchAll"`
 	IsOwner  bool   `json:"IsOwner"`

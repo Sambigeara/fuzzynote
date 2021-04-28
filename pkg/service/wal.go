@@ -129,7 +129,7 @@ type WalFile interface {
 	AwaitGather()
 	StopTickers()
 
-	GetMode() Mode
+	GetMode() string
 	GetPushMatchTerm() []rune
 }
 
@@ -139,7 +139,7 @@ type localWalFile struct {
 	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
-	mode                     Mode
+	mode                     string
 	pushMatchTerm            []rune
 	processedEventLock       *sync.Mutex
 	processedEventMap        map[string]struct{}
@@ -238,7 +238,7 @@ func (wf *localWalFile) StopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (wf *localWalFile) GetMode() Mode {
+func (wf *localWalFile) GetMode() string {
 	return wf.mode
 }
 

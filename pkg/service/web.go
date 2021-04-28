@@ -51,7 +51,7 @@ func NewWeb(webTokens WebTokenStore) *Web {
 type WebWalFile struct {
 	uuid                     string
 	web                      *Web
-	mode                     Mode
+	mode                     string
 	pushMatchTerm            []rune
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -269,7 +269,7 @@ func (wf *WebWalFile) StopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (wf *WebWalFile) GetMode() Mode            { return wf.mode }
+func (wf *WebWalFile) GetMode() string          { return wf.mode }
 func (wf *WebWalFile) GetPushMatchTerm() []rune { return wf.pushMatchTerm }
 
 func (wf *WebWalFile) SetProcessedEvent(key string) {
@@ -546,7 +546,7 @@ func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) er
 			return w.updateRemote(r)
 		},
 		modeKey: func(v string) error {
-			r.Mode = Mode(v)
+			r.Mode = v
 			return w.updateRemote(r)
 		},
 		matchKey: func(v string) error {

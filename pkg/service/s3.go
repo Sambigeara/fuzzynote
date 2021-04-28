@@ -29,7 +29,7 @@ type s3FileWal struct {
 	secret                   string
 	bucket                   string
 	prefix                   string
-	mode                     Mode
+	mode                     string
 	pushMatchTerm            []rune
 	processedEventMap        map[string]struct{}
 	processedEventLock       *sync.Mutex
@@ -214,7 +214,7 @@ func (wf *s3FileWal) StopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (wf *s3FileWal) GetMode() Mode {
+func (wf *s3FileWal) GetMode() string {
 	return wf.mode
 }
 
