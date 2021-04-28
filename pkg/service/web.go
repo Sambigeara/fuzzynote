@@ -743,7 +743,7 @@ func (w *Web) LaunchRemotesCLI() {
 			if field == "Mode" {
 				sel = promptui.Select{
 					Label: "Select Mode",
-					Items: []string{string(Sync), string(Push), string(Pull), exitKey},
+					Items: []string{string(ModeSync), string(ModePush), string(ModePull), exitKey},
 					Size:  selectSize,
 				}
 				_, newVal, err = sel.Run()

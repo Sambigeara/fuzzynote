@@ -8,26 +8,25 @@ import (
 )
 
 const (
-	configFileName    = "config.yml"
-	webTokensFileName = ".tokens.yml"
+	configFileName = "config.yml"
 )
 
 type Mode string
 
 const (
-	Push Mode = "push"
-	Pull Mode = "pull"
-	Sync Mode = "sync"
+	ModePush Mode = "push"
+	ModePull Mode = "pull"
+	ModeSync Mode = "sync"
 )
 
-type remote struct {
-	//UUID  string
-	//Name  string
-	//Mode  Mode
-	Mode     Mode
-	Match    string
-	MatchAll bool
-}
+//type remote struct {
+//    //UUID  string
+//    //Name  string
+//    //Mode  Mode
+//    Mode     Mode
+//    Match    string
+//    MatchAll bool
+//}
 
 type s3Remote struct {
 	//remote
@@ -57,8 +56,7 @@ type WebRemote struct {
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
 // all within a single configuration (listed by category)
 type Remotes struct {
-	S3  []s3Remote
-	Web []WebRemote
+	S3 []s3Remote
 }
 
 func GetRemotesConfig(root string) Remotes {
@@ -76,8 +74,5 @@ func GetRemotesConfig(root string) Remotes {
 		}
 		defer f.Close()
 	}
-
-	// TODO refactor Web away from this file config as it's now handled entirely with API calls
-	r.Web = nil
 	return r
 }

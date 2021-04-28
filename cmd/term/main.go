@@ -88,8 +88,6 @@ func main() {
 	// We still need to register it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
-	remotes := service.GetRemotesConfig(cfg.Root)
-
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
 	// Tokens are gererated on `login`
 	// Theoretically only need refresh token to have a go at authentication
@@ -109,9 +107,10 @@ func main() {
 		}
 	}
 
+	remotes := service.GetRemotesConfig(cfg.Root)
 	for _, r := range remotes.S3 {
 		// centralise this logic across different remote types when relevant
-		if (r.Mode == service.Push || r.Mode == service.Sync) && r.Match == "" && !r.MatchAll {
+		if (r.Mode == service.ModePush || r.Mode == service.ModeSync) && r.Match == "" && !r.MatchAll {
 			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")
 		}
 		// TODO gracefully deal with missing config

@@ -152,7 +152,7 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
-		mode:                     Sync,
+		mode:                     ModeSync,
 		pushMatchTerm:            []rune{},
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
@@ -911,7 +911,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// TODO this should only iterate over WebWalFiles
 					for _, wf := range w.walFiles {
 						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
-						if wf.GetMode() == Sync || wf.GetMode() == Push {
+						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								e = (*matchedEventLog)[0]
@@ -932,7 +932,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 					// copies by default, I think).
 					elCopy := el
 					for _, wf := range w.walFiles {
-						if wf.GetMode() == Sync || wf.GetMode() == Push {
+						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
 						}
 					}
