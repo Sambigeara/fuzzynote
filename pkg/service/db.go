@@ -98,17 +98,17 @@ func (r *DBListRepo) Stop() error {
 	return nil
 }
 
+func (r *DBListRepo) RegisterWeb(w *Web) {
+	r.wal.web = w
+	w.establishWebSocketConnection(r.wal.uuid)
+}
+
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	r.wal.walFiles = append(r.wal.walFiles, wf)
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
 	// when consuming websocket events or on pull. This covers some edge cases where local updates
 	// on foreign items will not emit to remotes, as we can use the cache in the getMatchedWal call
-	if wf.GetUUID() != "" {
+	if r.wal.web != nil && wf.GetUUID() != "" {
 		r.wal.web.walFileMap[wf.GetUUID()] = &wf
 	}
-}
-
-func (r *DBListRepo) RegisterWeb(w *Web) {
-	r.wal.web = w
-	w.establishWebSocketConnection(r.wal.uuid)
 }
