@@ -32,6 +32,7 @@ const (
 	noKey           = "No"
 	newRemoteKey    = "Add new remote..."
 	manageCollabKey = "Manage collaborators..."
+	archiveKey      = "Archive? WARNING: cannot be undone"
 	addCollabKey    = "Add new collaborator..."
 	exitKey         = "Exit"
 	selectSize      = 20
@@ -74,14 +75,15 @@ type s3Remote struct {
 
 type WebRemote struct {
 	//remote
-	Email    string `json:"Email"`
-	Name     string `json:"WalName"`
-	UUID     string `json:"WalUUID"`
-	Mode     string `json:"Mode"`
-	Match    string `json:"Match"`
-	MatchAll bool   `json:"MatchAll"`
-	IsOwner  bool   `json:"IsOwner"`
-	IsActive bool   `json:"IsActive"`
+	Email      string `json:"Email"`
+	Name       string `json:"WalName"`
+	UUID       string `json:"WalUUID"`
+	Mode       string `json:"Mode"`
+	Match      string `json:"Match"`
+	MatchAll   bool   `json:"MatchAll"`
+	IsOwner    bool   `json:"IsOwner"`
+	IsActive   bool   `json:"IsActive"`
+	IsArchived bool
 }
 
 const (
@@ -207,6 +209,38 @@ func (w *Web) updateRemote(remote WebRemote) error {
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Failed to update key for item %v", remote)
+	}
+	return nil
+}
+
+func (w *Web) archiveRemote(uuid string) error {
+	u, _ := url.Parse(remoteURL)
+	u.Path = path.Join(u.Path, "remote", uuid, "user", "archive")
+	remote := WebRemote{
+		UUID: uuid,
+	}
+
+	body, err := json.Marshal(remote)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", u.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
+	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("Error creating new remote: %s", respBody)
 	}
 	return nil
 }
@@ -380,19 +414,12 @@ func (w *Web) LaunchRemotesCLI() {
 			continue
 		}
 
-		//remote := remoteMap[remoteResult]
-		//fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
-		//if remote.IsOwner {
-		//    fields = append([]string{manageCollabKey}, fields...)
-		//}
-		//fields = append(fields, exitKey)
-
-		//var idx int
 		for {
 			remote := remoteMap[remoteResult]
 			fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
 			if remote.IsOwner {
 				fields = append([]string{manageCollabKey}, fields...)
+				fields = append(fields, archiveKey)
 			}
 			fields = append(fields, exitKey)
 
@@ -468,6 +495,27 @@ func (w *Web) LaunchRemotesCLI() {
 					}
 				}
 				continue
+			} else if resultField == archiveKey {
+				// TODO dedup
+				// Bring up Archive yes/no option
+				sel = promptui.Select{
+					Label: "Are you sure?",
+					Items: []string{yesKey, noKey},
+					Size:  selectSize,
+				}
+
+				_, archiveResult, err := sel.Run()
+				if err != nil {
+					return
+				}
+
+				if archiveResult == yesKey {
+					if err = w.archiveRemote(remote.UUID); err != nil {
+						fmt.Printf("Failed to archive remote: %s", err)
+						os.Exit(1)
+					}
+				}
+				break
 			}
 
 			// For `Mode` or boolean selection, use a nested Select prompt with the appropriate fields
