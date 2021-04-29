@@ -27,6 +27,16 @@ const (
 	ModeSync = "sync"
 )
 
+const (
+	yesKey          = "Yes"
+	noKey           = "No"
+	newRemoteKey    = "Add new remote..."
+	manageCollabKey = "Manage collaborators..."
+	addCollabKey    = "Add new collaborator..."
+	exitKey         = "Exit"
+	selectSize      = 20
+)
+
 type Web struct {
 	wsConn     *websocket.Conn
 	tokens     WebTokenStore
@@ -285,7 +295,7 @@ func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) er
 		},
 	}
 
-	defaultTrue := func(v string) error { return nil }
+	alwaysValid := func(v string) error { return nil }
 	boolValidationFn := func(v string) error {
 		if v != "true" && v != "false" {
 			return errors.New("")
@@ -293,9 +303,9 @@ func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) er
 		return nil
 	}
 	validationFuncMap := map[string]func(string) error{
-		nameKey:     defaultTrue,
-		modeKey:     defaultTrue,
-		matchKey:    defaultTrue,
+		nameKey:     alwaysValid,
+		modeKey:     alwaysValid,
+		matchKey:    alwaysValid,
 		matchAllKey: boolValidationFn,
 		isActiveKey: boolValidationFn,
 	}
@@ -303,19 +313,18 @@ func (w *Web) getRemoteFields(r WebRemote) ([]string, map[string]func(string) er
 	return fields, updateFuncMap, validationFuncMap
 }
 
+func (r *WebRemote) key() string {
+	key := fmt.Sprintf("(%s)", r.UUID)
+	if r.Name != "" {
+		key = fmt.Sprintf("%s (%s)", r.Name, r.UUID)
+	}
+	key = fmt.Sprintf("Remote: %s", key)
+	return key
+}
+
 // LaunchRemotesCLI launches the interactive Remote management CLI tool
 func (w *Web) LaunchRemotesCLI() {
 	defer os.Exit(0)
-
-	const (
-		yesKey          = "Yes"
-		noKey           = "No"
-		newRemoteKey    = "Add new remote..."
-		manageCollabKey = "Manage collaborators..."
-		addCollabKey    = "Add new collaborator..."
-		exitKey         = "Exit..."
-		selectSize      = 20
-	)
 
 	// Generate a map of remotes
 	for {
@@ -327,13 +336,8 @@ func (w *Web) LaunchRemotesCLI() {
 		remotesSelectOptions := []string{}
 		remoteMap := make(map[string]WebRemote)
 		for _, r := range remotes {
-			key := fmt.Sprintf("(%s)", r.UUID)
-			if r.Name != "" {
-				key = fmt.Sprintf("%s (%s)", r.Name, r.UUID)
-			}
-			key = fmt.Sprintf("Remote: %s", key)
-			remotesSelectOptions = append(remotesSelectOptions, key)
-			remoteMap[key] = r
+			remotesSelectOptions = append(remotesSelectOptions, r.key())
+			remoteMap[r.key()] = r
 		}
 		remotesSelectOptions = append(remotesSelectOptions, newRemoteKey, exitKey)
 
@@ -343,15 +347,15 @@ func (w *Web) LaunchRemotesCLI() {
 			Size:  selectSize,
 		}
 
-		_, result, err := sel.Run()
+		_, remoteResult, err := sel.Run()
 		if err != nil {
 			return
 		}
 
-		if result == exitKey {
+		if remoteResult == exitKey {
 			fmt.Print("Goodbye!")
 			os.Exit(0)
-		} else if result == newRemoteKey {
+		} else if remoteResult == newRemoteKey {
 			// Add a new named remote then cycle back round
 			prompt := promptui.Prompt{
 				Label: "Specify name for new remote",
@@ -376,26 +380,39 @@ func (w *Web) LaunchRemotesCLI() {
 			continue
 		}
 
-		remote := remoteMap[result]
-		fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
-		fields = append([]string{manageCollabKey}, fields...)
-		fields = append(fields, exitKey)
+		//remote := remoteMap[remoteResult]
+		//fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
+		//if remote.IsOwner {
+		//    fields = append([]string{manageCollabKey}, fields...)
+		//}
+		//fields = append(fields, exitKey)
+
+		//var idx int
 		for {
+			remote := remoteMap[remoteResult]
+			fields, updateFuncMap, validationFuncMap := w.getRemoteFields(remote)
+			if remote.IsOwner {
+				fields = append([]string{manageCollabKey}, fields...)
+			}
+			fields = append(fields, exitKey)
+
 			sel = promptui.Select{
-				Label: result,
+				Label: remoteResult,
 				Items: fields,
 				Size:  selectSize,
 			}
 
 			// This result will be the key to update
-			idx, result, err := sel.Run()
+			var resultField string
+			//idx, resultField, err = sel.Run()
+			_, resultField, err = sel.Run()
 			if err != nil {
 				return
 			}
 
-			if result == exitKey {
+			if resultField == exitKey {
 				break
-			} else if result == manageCollabKey {
+			} else if resultField == manageCollabKey {
 				userFields, err := w.getUsersForRemote(remote.UUID)
 				if err != nil {
 					return
@@ -454,7 +471,7 @@ func (w *Web) LaunchRemotesCLI() {
 			}
 
 			// For `Mode` or boolean selection, use a nested Select prompt with the appropriate fields
-			field := strings.Split(result, ":")[0]
+			field := strings.Split(resultField, ":")[0]
 			newVal := ""
 			if field == "Mode" {
 				sel = promptui.Select{
@@ -466,7 +483,7 @@ func (w *Web) LaunchRemotesCLI() {
 				if err != nil {
 					return
 				}
-				if result == exitKey {
+				if newVal == exitKey {
 					break
 				}
 			} else if field == "IsActive" || field == "MatchAll" {
@@ -486,7 +503,7 @@ func (w *Web) LaunchRemotesCLI() {
 				// Trigger a prompt to the user to enter a new value
 				prompt := promptui.Prompt{
 					Label:    "Enter new value",
-					Validate: validationFuncMap[result],
+					Validate: validationFuncMap[resultField],
 				}
 				newVal, err = prompt.Run()
 				if err != nil {
@@ -496,18 +513,23 @@ func (w *Web) LaunchRemotesCLI() {
 			}
 
 			// Retrieve the update function from the updateFuncMap
-			f := updateFuncMap[result]
-
-			// Update the field name in the UI
-			// TODO get rid of this shameful hack
-			parts := strings.Split(fields[idx], ": ")
-			fields[idx] = fmt.Sprintf("%s: %s", parts[0], newVal)
+			f := updateFuncMap[resultField]
 
 			err = f(newVal)
 			if err != nil {
 				fmt.Printf("Update failed %v\n", err)
 				os.Exit(1)
 			}
+
+			// TODO this can be done without needing to call out to the API for updates but for now this will do.
+			// Refresh the remote in the map
+			newRemote, err := w.GetRemotes(remote.UUID, nil)
+			if err != nil {
+				fmt.Printf("Update failed %v\n", err)
+				os.Exit(1)
+			}
+			// Will only return single remote, call idx 0
+			remoteMap[remoteResult] = newRemote[0]
 		}
 	}
 }
