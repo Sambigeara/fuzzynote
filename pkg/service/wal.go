@@ -37,6 +37,7 @@ type Wal struct {
 	localWalFile      WalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
+	stop              chan struct{}
 	pushTicker        *time.Ticker
 	web               *Web
 }
@@ -49,6 +50,7 @@ func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
 		listItemTracker:   make(map[string]*ListItem),
 		localWalFile:      walFile, // TODO naming
 		eventsChan:        make(chan EventLog),
+		stop:              make(chan struct{}, 1),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
 	return &wal
@@ -836,6 +838,20 @@ func (w *Wal) gather(wf WalFile) error {
 	return nil
 }
 
+func (w *Wal) flushPartialWals(el []EventLog, sync bool) {
+	if len(el) > 0 {
+		for _, wf := range w.walFiles {
+			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
+				if sync {
+					w.push(&el, wf)
+				} else {
+					go func(wf WalFile) { w.push(&el, wf) }(wf)
+				}
+			}
+		}
+	}
+}
+
 func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	// Run an initial blocking load from the local walfile (and put onto channel for immediate
 	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
@@ -930,19 +946,16 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			case <-w.pushTicker.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				if len(el) > 0 {
-					// We pass by reference, so we'll need to create a copy prior to sending to `push`
-					// otherwise the underlying el may change before `push` has a chance to process it
-					// If we start passing by value later on, this won't be required (as go will pass
-					// copies by default, I think).
-					elCopy := el
-					for _, wf := range w.walFiles {
-						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
-							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
-						}
-					}
-					el = []EventLog{}
-				}
+				// We pass by reference, so we'll need to create a copy prior to sending to `push`
+				// otherwise the underlying el may change before `push` has a chance to process it
+				// If we start passing by value later on, this won't be required (as go will pass
+				// copies by default, I think).
+				elCopy := el
+				w.flushPartialWals(elCopy, false)
+				el = []EventLog{}
+			case <-w.stop:
+				w.flushPartialWals(el, true)
+				w.stop <- struct{}{}
 			}
 		}
 	}()
@@ -959,14 +972,19 @@ func (w *Wal) finish() error {
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
 
-	// Delete allFileNames
+	// Delete all redundant local files
 	w.localWalFile.RemoveWals(localFileNames)
 
+	// Stop tickers
 	w.pushTicker.Stop()
-
 	for _, wf := range w.walFiles {
 		wf.StopTickers()
 	}
+
+	// Flush all unpushed changes to non-local walfiles
+	// TODO handle this more gracefully
+	w.stop <- struct{}{}
+	<-w.stop
 
 	if w.web != nil {
 		w.web.wsConn.Close(websocket.StatusNormalClosure, "")
