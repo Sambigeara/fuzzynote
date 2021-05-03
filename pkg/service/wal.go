@@ -886,17 +886,22 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Consume from the websocket, if available
-	if w.web != nil {
-		go func() {
-			// TODO Check for stop signal
-			for {
+	//if w.web != nil {
+	go func() {
+		// TODO Check for stop signal
+		for {
+			if w.web != nil && w.web.wsConn != nil {
 				err := w.web.consumeWebsocket(walChan)
 				if err != nil {
 					return
 				}
+			} else {
+				// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
+				time.Sleep(5 * time.Second)
 			}
-		}()
-	}
+		}
+	}()
+	//}
 
 	// Push to all WalFiles
 	go func() {

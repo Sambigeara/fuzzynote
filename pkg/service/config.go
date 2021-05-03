@@ -42,6 +42,7 @@ type Web struct {
 	wsConn     *websocket.Conn
 	tokens     WebTokenStore
 	walFileMap map[string]*WalFile
+	uuid       uuid
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {
@@ -86,20 +87,6 @@ type WebRemote struct {
 	IsArchived bool
 }
 
-const (
-	websocketAuthorizationHeader = "Auth"
-	walSyncAuthorizationHeader   = "Authorization"
-	iDTokenHeader                = "Id-Token"
-)
-
-var (
-	// TODO
-	websocketURL      = "wss://4hlf98q6mh.execute-api.eu-west-1.amazonaws.com/prod"
-	walSyncURL        = "https://jf7i5gi0f4.execute-api.eu-west-1.amazonaws.com/prod"
-	authenticationURL = "https://tt2lmb4xla.execute-api.eu-west-1.amazonaws.com/prod"
-	remoteURL         = "https://czcon196gf.execute-api.eu-west-1.amazonaws.com/prod"
-)
-
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
 // all within a single configuration (listed by category)
 type Remotes struct {
@@ -128,7 +115,7 @@ func GetRemotesConfig(root string) Remotes {
 func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
 	// This just allows callers to override the URL
 	if u == nil {
-		u, _ = url.Parse(remoteURL)
+		u, _ = url.Parse(apiURL)
 
 		p := path.Join(u.Path, "remote")
 		if uuid != "" {
@@ -186,7 +173,7 @@ func (w *Web) postRemote(remote *WebRemote, u *url.URL) error {
 }
 
 func (w *Web) updateRemote(remote WebRemote) error {
-	u, _ := url.Parse(remoteURL)
+	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "remote", remote.UUID)
 
 	body, err := json.Marshal(remote)
@@ -214,7 +201,7 @@ func (w *Web) updateRemote(remote WebRemote) error {
 }
 
 func (w *Web) archiveRemote(uuid string) error {
-	u, _ := url.Parse(remoteURL)
+	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "remote", uuid, "user", "archive")
 	remote := WebRemote{
 		UUID: uuid,
@@ -246,7 +233,7 @@ func (w *Web) archiveRemote(uuid string) error {
 }
 
 func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
-	u, _ := url.Parse(remoteURL)
+	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "remote", uuid, "user", "list")
 
 	remotes, err := w.GetRemotes(uuid, u)
@@ -264,7 +251,7 @@ func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
 }
 
 func (w *Web) addUserToRemote(uuid string, email string) error {
-	u, _ := url.Parse(remoteURL)
+	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "remote", uuid, "user", "add")
 	remote := WebRemote{
 		Email: email,
@@ -275,7 +262,7 @@ func (w *Web) addUserToRemote(uuid string, email string) error {
 func (w *Web) deleteUserFromRemote(uuid string, email string) error {
 	// We never actually delete a remote completely, but this function is removing certain non-owner users
 	// from a given remote
-	u, _ := url.Parse(remoteURL)
+	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "remote", uuid, "user", "delete")
 	remote := WebRemote{
 		Email: email,
@@ -400,7 +387,7 @@ func (w *Web) LaunchRemotesCLI() {
 				os.Exit(1)
 			}
 
-			u, _ := url.Parse(remoteURL)
+			u, _ := url.Parse(apiURL)
 			u.Path = path.Join(u.Path, "remote")
 			remote := WebRemote{
 				Name: newName,

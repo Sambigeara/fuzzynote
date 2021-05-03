@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -89,7 +90,9 @@ func (wt *FileWebTokenStore) Flush() {
 }
 
 func Authenticate(wt WebTokenStore, body []byte) error {
-	resp, err := http.Post(authenticationURL, "application/json", bytes.NewBuffer(body))
+	u, _ := url.Parse(apiURL)
+	u.Path = path.Join(u.Path, "auth")
+	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Fatal(err)
 	}

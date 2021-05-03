@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
 
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"

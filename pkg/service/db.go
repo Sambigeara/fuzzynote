@@ -100,7 +100,8 @@ func (r *DBListRepo) Stop() error {
 
 func (r *DBListRepo) RegisterWeb(w *Web) {
 	r.wal.web = w
-	w.establishWebSocketConnection(r.wal.uuid)
+	r.wal.web.uuid = r.wal.uuid
+	w.establishWebSocketConnection()
 }
 
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
