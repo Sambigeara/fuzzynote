@@ -202,7 +202,7 @@ func (w *Web) updateRemote(remote WebRemote) error {
 
 func (w *Web) archiveRemote(uuid string) error {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "remote", uuid, "user", "archive")
+	u.Path = path.Join(u.Path, "remote", uuid, "archive")
 	remote := WebRemote{
 		UUID: uuid,
 	}
@@ -234,7 +234,7 @@ func (w *Web) archiveRemote(uuid string) error {
 
 func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "remote", uuid, "user", "list")
+	u.Path = path.Join(u.Path, "remote", uuid, "users")
 
 	remotes, err := w.GetRemotes(uuid, u)
 	if err != nil {
@@ -252,7 +252,7 @@ func (w *Web) getUsersForRemote(uuid string) ([]string, error) {
 
 func (w *Web) addUserToRemote(uuid string, email string) error {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "remote", uuid, "user", "add")
+	u.Path = path.Join(u.Path, "remote", uuid, "users")
 	remote := WebRemote{
 		Email: email,
 	}
@@ -263,7 +263,7 @@ func (w *Web) deleteUserFromRemote(uuid string, email string) error {
 	// We never actually delete a remote completely, but this function is removing certain non-owner users
 	// from a given remote
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "remote", uuid, "user", "delete")
+	u.Path = path.Join(u.Path, "remote", uuid, "users", "delete")
 	remote := WebRemote{
 		Email: email,
 	}
