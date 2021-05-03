@@ -206,9 +206,11 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	u, _ := url.Parse(apiURL)
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
+	q.Add("origin-uuid", originUUID)
+	q.Add("uuid", uuid)
 	u.RawQuery = q.Encode()
 
-	u.Path = path.Join(u.Path, "presigned", originUUID, uuid)
+	u.Path = path.Join(u.Path, "wal", "presigned")
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
@@ -247,8 +249,7 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
-		log.Printf("Error retrieving presigned URL: %s", err)
-		return nil, nil
+		log.Fatalf("Error creating wal list request: %v", err)
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
@@ -259,7 +260,7 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error retrieving presigned URL: %s", err)
+		log.Printf("Error retrieving wal list: %v", err)
 		return nil, nil
 	}
 
