@@ -18,11 +18,10 @@ const (
 	loginArg   = "login"
 	remotesArg = "cfg"
 
-	localRefreshFrequencyMs = 1000
-	localGatherFrequencyMs  = 10000
-
-	webRefreshFrequencyMs = 10000 // 10 seconds
-	webGatherFrequencyMs  = 30000 // 1 minute
+	localRefreshFrequencyMs = 10000 // 10 seconds
+	localGatherFrequencyMs  = 30000 // 30 seconds
+	webRefreshFrequencyMs   = 10000 // 10 seconds
+	webGatherFrequencyMs    = 60000 // 1 minute
 
 	pushFrequencyMs = 10000
 )
