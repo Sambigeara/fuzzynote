@@ -37,8 +37,9 @@ type Wal struct {
 	localWalFile      WalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
+	stop              chan struct{}
 	pushTicker        *time.Ticker
-	web               *WebWalFile
+	web               *Web
 }
 
 func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
@@ -49,6 +50,7 @@ func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
 		listItemTracker:   make(map[string]*ListItem),
 		localWalFile:      walFile, // TODO naming
 		eventsChan:        make(chan EventLog),
+		stop:              make(chan struct{}, 1),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
 	return &wal
@@ -112,10 +114,11 @@ func (e *EventLog) getKeys() (string, string) {
 type WalFile interface {
 	// TODO do these actually need to be private attributes? A separate module implements the interface
 	// TODO surely these should just implement Push/Pull/Gather????
+	GetUUID() string
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
 	GetWal(string) ([]EventLog, error)
-	RemoveWal(string) error
+	RemoveWals([]string) error
 	Flush(*bytes.Buffer, string) error
 
 	// TODO these probably don't need to be interface functions
@@ -128,7 +131,7 @@ type WalFile interface {
 	AwaitGather()
 	StopTickers()
 
-	GetMode() Mode
+	GetMode() string
 	GetPushMatchTerm() []rune
 }
 
@@ -138,7 +141,7 @@ type localWalFile struct {
 	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
-	mode                     Mode
+	mode                     string
 	pushMatchTerm            []rune
 	processedEventLock       *sync.Mutex
 	processedEventMap        map[string]struct{}
@@ -151,11 +154,17 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
-		mode:                     Sync,
+		mode:                     ModeSync,
 		pushMatchTerm:            []rune{},
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
 	}
+}
+
+func (wf *localWalFile) GetUUID() string {
+	// TODO this is a stub function for now, refactor out
+	// knowledge of UUID is only relevant for WebWalFiles
+	return ""
 }
 
 func (wf *localWalFile) GetRoot() string {
@@ -188,8 +197,11 @@ func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *localWalFile) RemoveWal(fileName string) error {
-	return os.Remove(fileName)
+func (wf *localWalFile) RemoveWals(fileNames []string) error {
+	for _, f := range fileNames {
+		os.Remove(f)
+	}
+	return nil
 }
 
 func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
@@ -228,7 +240,7 @@ func (wf *localWalFile) StopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (wf *localWalFile) GetMode() Mode {
+func (wf *localWalFile) GetMode() string {
 	return wf.mode
 }
 
@@ -677,6 +689,15 @@ func pull(wf WalFile) (*[]EventLog, error) {
 				log.Fatal(err)
 			}
 			newMergedWal = *(merge(&newMergedWal, &newWal))
+
+			// TODO refactor this so it's inline rather than a whole new iteration??
+			// Ensure all events are cached in the processedEvent cache so any local changes
+			// on remote origin items will propagate back out
+			for _, e := range newMergedWal {
+				k, _ := e.getKeys()
+				wf.SetProcessedEvent(k)
+			}
+
 			// Add to the processed cache
 			wf.SetProcessedPartialWals(fileName)
 		}
@@ -787,7 +808,6 @@ func (w *Wal) gather(wf WalFile) error {
 	// Handle ALL wals
 	filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 	originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
-
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -813,12 +833,23 @@ func (w *Wal) gather(wf WalFile) error {
 	}
 
 	// Schedule a delete on the files
-	for _, fileName := range originFiles {
-		// TODO proper error handling here too
-		wf.RemoveWal(fileName)
-	}
+	wf.RemoveWals(originFiles)
 
 	return nil
+}
+
+func (w *Wal) flushPartialWals(el []EventLog, sync bool) {
+	if len(el) > 0 {
+		for _, wf := range w.walFiles {
+			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
+				if sync {
+					w.push(&el, wf)
+				} else {
+					go func(wf WalFile) { w.push(&el, wf) }(wf)
+				}
+			}
+		}
+	}
 }
 
 func (w *Wal) startSync(walChan chan *[]EventLog) error {
@@ -871,17 +902,22 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Consume from the websocket, if available
-	if w.web != nil {
-		go func() {
-			// TODO Check for stop signal
-			for {
+	//if w.web != nil {
+	go func() {
+		// TODO Check for stop signal
+		for {
+			if w.web != nil && w.web.wsConn != nil {
 				err := w.web.consumeWebsocket(walChan)
 				if err != nil {
 					return
 				}
+			} else {
+				// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
+				time.Sleep(5 * time.Second)
 			}
-		}()
-	}
+		}
+	}()
+	//}
 
 	// Push to all WalFiles
 	go func() {
@@ -893,26 +929,33 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			case e := <-w.eventsChan:
 				// Write in real time to the websocket, if present
 				if w.web != nil {
-					w.web.pushWebsocket(e)
+					// TODO this should only iterate over WebWalFiles
+					for _, wf := range w.walFiles {
+						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
+						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
+							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
+							if len(*matchedEventLog) > 0 {
+								e = (*matchedEventLog)[0]
+								w.web.pushWebsocket(e, wf.GetUUID())
+							}
+						}
+					}
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
 			case <-w.pushTicker.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				if len(el) > 0 {
-					// We pass by reference, so we'll need to create a copy prior to sending to `push`
-					// otherwise the underlying el may change before `push` has a chance to process it
-					// If we start passing by value later on, this won't be required (as go will pass
-					// copies by default, I think).
-					elCopy := el
-					for _, wf := range w.walFiles {
-						if wf.GetMode() == Sync || wf.GetMode() == Push {
-							go func(wf WalFile) { w.push(&elCopy, wf) }(wf)
-						}
-					}
-					el = []EventLog{}
-				}
+				// We pass by reference, so we'll need to create a copy prior to sending to `push`
+				// otherwise the underlying el may change before `push` has a chance to process it
+				// If we start passing by value later on, this won't be required (as go will pass
+				// copies by default, I think).
+				elCopy := el
+				w.flushPartialWals(elCopy, false)
+				el = []EventLog{}
+			case <-w.stop:
+				w.flushPartialWals(el, true)
+				w.stop <- struct{}{}
 			}
 		}
 	}()
@@ -925,18 +968,23 @@ func (w *Wal) finish() error {
 	// Retrieve all local wal names
 	filePathPattern := path.Join(w.localWalFile.GetRoot(), walFilePattern)
 	localFileNames, _ := w.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+
 	// Flush full log to local walfile
 	w.push(w.log, w.localWalFile)
-	// Delete allFileNames
-	for _, fileName := range localFileNames {
-		w.localWalFile.RemoveWal(fileName)
-	}
 
+	// Delete all redundant local files
+	w.localWalFile.RemoveWals(localFileNames)
+
+	// Stop tickers
 	w.pushTicker.Stop()
-
 	for _, wf := range w.walFiles {
 		wf.StopTickers()
 	}
+
+	// Flush all unpushed changes to non-local walfiles
+	// TODO handle this more gracefully
+	w.stop <- struct{}{}
+	<-w.stop
 
 	if w.web != nil {
 		w.web.wsConn.Close(websocket.StatusNormalClosure, "")

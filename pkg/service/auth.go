@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -17,21 +18,27 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const (
+	webTokensFileName = ".tokens.yml"
+)
+
 var emailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
 
 // isEmailValid checks if the email provided passes the required structure and length.
-func isEmailValid(e string) bool {
-	if len(e) < 3 && len(e) > 254 {
-		return false
+func isEmailValid(e string) error {
+	if len(e) < 3 && len(e) > 254 || !emailRegex.MatchString(e) {
+		return errors.New("Invalid email address")
 	}
-	return emailRegex.MatchString(e)
+	return nil
 }
 
 type WebTokenStore interface {
 	SetAccessToken(string)
 	SetRefreshToken(string)
+	SetIDToken(string)
 	AccessToken() string
 	RefreshToken() string
+	IDToken() string
 	Flush()
 }
 
@@ -39,6 +46,7 @@ type FileWebTokenStore struct {
 	root    string
 	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
+	ID      string `yaml:"idToken"`
 }
 
 func NewFileWebTokenStore(root string) *FileWebTokenStore {
@@ -62,8 +70,10 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 
 func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
+func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
 func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
+func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
 func (wt *FileWebTokenStore) Flush() {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
@@ -79,37 +89,10 @@ func (wt *FileWebTokenStore) Flush() {
 	f.Write(b)
 }
 
-// CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
-// expired AccessToken, will reauth, and then retry the original function.
-func CallWithReAuth(wt WebTokenStore, req *http.Request, header string) (*http.Response, error) {
-	f := func(req *http.Request) (*http.Response, error) {
-		client := &http.Client{}
-		return client.Do(req)
-	}
-	resp, err := f(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		body := map[string]string{
-			"refreshToken": wt.RefreshToken(),
-		}
-		marshalBody, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		err = Authenticate(wt, marshalBody)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set(header, wt.AccessToken())
-		resp, err = f(req)
-	}
-	return resp, err
-}
-
 func Authenticate(wt WebTokenStore, body []byte) error {
-	resp, err := http.Post(authenticationURL, "application/json", bytes.NewBuffer(body))
+	u, _ := url.Parse(apiURL)
+	u.Path = path.Join(u.Path, "auth")
+	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -117,14 +100,11 @@ func Authenticate(wt WebTokenStore, body []byte) error {
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		//log.Fatal(err)
 		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		//bodyString := string(bodyBytes)
-		//fmt.Printf("Login failed: %s\n", bodyString)
-		return errors.New("Authentication unsuccessful")
+		return errors.New("Authentication unsuccessful, please try logging in")
 	}
 
 	var authResult cognito.AuthenticationResultType
@@ -138,6 +118,9 @@ func Authenticate(wt WebTokenStore, body []byte) error {
 	if authResult.RefreshToken != nil {
 		wt.SetRefreshToken(*authResult.RefreshToken)
 	}
+	if authResult.IdToken != nil {
+		wt.SetIDToken(*authResult.IdToken)
+	}
 	wt.Flush()
 	return nil
 }
@@ -149,13 +132,8 @@ func Login(root string) {
 	defer os.Exit(0)
 
 	prompt := promptui.Prompt{
-		Label: "Enter email",
-		Validate: func(input string) error {
-			if !isEmailValid(input) {
-				return errors.New("Invalid email address")
-			}
-			return nil
-		},
+		Label:    "Enter email",
+		Validate: isEmailValid,
 	}
 	email, err := prompt.Run()
 	if err != nil {
@@ -193,4 +171,32 @@ func Login(root string) {
 		os.Exit(0)
 	}
 	fmt.Print("Login successful!")
+}
+
+// CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
+// expired AccessToken, will reauth, and then retry the original function.
+func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, error) {
+	f := func(req *http.Request) (*http.Response, error) {
+		return http.DefaultClient.Do(req)
+	}
+	resp, err := f(req)
+	if err != nil && resp.StatusCode != http.StatusUnauthorized {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		body := map[string]string{
+			"refreshToken": w.tokens.RefreshToken(),
+		}
+		marshalBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		err = Authenticate(w.tokens, marshalBody)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set(header, w.tokens.AccessToken())
+		resp, err = f(req)
+	}
+	return resp, err
 }

@@ -29,7 +29,7 @@ type s3FileWal struct {
 	secret                   string
 	bucket                   string
 	prefix                   string
-	mode                     Mode
+	mode                     string
 	pushMatchTerm            []rune
 	processedEventMap        map[string]struct{}
 	processedEventLock       *sync.Mutex
@@ -70,6 +70,12 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 		processedEventMap:        make(map[string]struct{}),
 		processedEventLock:       &sync.Mutex{},
 	}
+}
+
+func (wf *s3FileWal) GetUUID() string {
+	// TODO this is a stub function for now, refactor out
+	// knowledge of UUID is only relevant for WebWalFiles
+	return ""
 }
 
 func (wf *s3FileWal) GetRoot() string {
@@ -128,9 +134,21 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *s3FileWal) RemoveWal(fileName string) error {
+func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	// Delete the item
-	_, err := wf.svc.DeleteObject(&s3.DeleteObjectInput{Bucket: aws.String(wf.bucket), Key: aws.String(fileName)})
+	objects := []*s3.ObjectIdentifier{}
+	for _, f := range fileNames {
+		objects = append(objects, &s3.ObjectIdentifier{
+			Key: aws.String(f),
+		})
+	}
+	//del := []s3.Delete{}
+	_, err := wf.svc.DeleteObjects(&s3.DeleteObjectsInput{
+		Bucket: aws.String(wf.bucket),
+		Delete: &s3.Delete{
+			Objects: objects,
+		},
+	})
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
@@ -139,21 +157,23 @@ func (wf *s3FileWal) RemoveWal(fileName string) error {
 			case s3.ErrCodeNoSuchKey:
 				return nil
 			default:
-				exitErrorf("Unable to delete object %q from bucket %q, %v", fileName, wf.bucket, err)
+				exitErrorf("Unable to delete objects %q from bucket %q, %v", fileNames, wf.bucket, err)
 			}
 		}
 
 	}
 
-	err = wf.svc.WaitUntilObjectNotExists(&s3.HeadObjectInput{
-		Bucket: aws.String(wf.bucket),
-		Key:    aws.String(fileName),
-	})
-	if err != nil {
-		exitErrorf("Error occurred while waiting for object %q to be deleted, %v", fileName, err)
-	}
+	//err = wf.svc.WaitUntilObjectNotExists(&s3.HeadObjectInput{
+	//    Bucket: aws.String(wf.bucket),
+	//    Key:    aws.String(fileName),
+	//})
+	//if err != nil {
+	//    exitErrorf("Error occurred while waiting for object %q to be deleted, %v", fileName, err)
+	//}
 
-	return os.Remove(fileName)
+	// TODO why was I also removing local??
+	//return os.Remove(fileName)
+	return nil
 }
 
 func (wf *s3FileWal) Flush(b *bytes.Buffer, fileName string) error {
@@ -194,7 +214,7 @@ func (wf *s3FileWal) StopTickers() {
 	wf.GatherTicker.Stop()
 }
 
-func (wf *s3FileWal) GetMode() Mode {
+func (wf *s3FileWal) GetMode() string {
 	return wf.mode
 }
 

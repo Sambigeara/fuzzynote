@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path"
-	//"runtime"
 
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
@@ -15,8 +14,17 @@ import (
 )
 
 const (
-	namespace = "FZN"
-	loginArg  = "login"
+	namespace  = "FZN"
+	loginArg   = "login"
+	remotesArg = "cfg"
+
+	localRefreshFrequencyMs = 1000
+	localGatherFrequencyMs  = 10000
+
+	webRefreshFrequencyMs = 10000 // 10 seconds
+	webGatherFrequencyMs  = 30000 // 1 minute
+
+	pushFrequencyMs = 10000
 )
 
 func main() {
@@ -47,35 +55,61 @@ func main() {
 		log.Fatalf("main : Parsing Root Config : %v", err)
 	}
 
-	// Check for Login flow (run and exit - bypassing the main program)
-	// TODO atm only triggers on last arg, make smarter!
-	if len(os.Args) > 1 && os.Args[len(os.Args)-1] == loginArg {
-		service.Login(cfg.Root)
-	}
-
-	//cfg.Colour = "light"
-	//cfg.S3.Prefix = "main"
-
-	localRefreshFrequency := uint16(1000)
-	localGatherFrequency := uint16(10000)
-
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalWalFile(localRefreshFrequency, localGatherFrequency, cfg.Root)
+	localWalFile := service.NewLocalWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
 
 	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, localRefreshFrequency)
+	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequencyMs)
+
+	// Load early to establish the uuid (this is needed for various startup ops)
+	// This also creates the root directory, which is required by the login below
+	err = listRepo.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
+	// TODO atm only triggers on last arg, make smarter!
+	if len(os.Args) > 1 {
+		switch os.Args[len(os.Args)-1] {
+		case loginArg:
+			service.Login(cfg.Root)
+		case remotesArg:
+			webTokens := service.NewFileWebTokenStore(cfg.Root)
+			web := service.NewWeb(webTokens)
+			web.LaunchRemotesCLI()
+		}
+	}
 
 	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
 	// Wal independently (there are certain operations that require us to only target the local walfile rather
-	// that all).
-	// We still need to register it as we all all walfiles in the next line.
+	// than all).
+	// We still need to register it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
-	remotes := service.GetRemotesConfig(cfg.Root)
+	webTokens := service.NewFileWebTokenStore(cfg.Root)
+	// Tokens are gererated on `login`
+	// Theoretically only need refresh token to have a go at authentication
+	if webTokens.Refresh != "" {
+		web := service.NewWeb(webTokens)
+		listRepo.RegisterWeb(web)
+		// Retrieve remotes from API
+		remotes, err := web.GetRemotes("", nil)
+		if err != nil {
+			log.Fatal("Error when trying to retrieve remotes config from API")
+		}
+		for _, r := range remotes {
+			if r.IsActive {
+				webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
+				listRepo.RegisterWalFile(webWalFile)
+			}
+		}
+	}
 
+	remotes := service.GetRemotesConfig(cfg.Root)
 	for _, r := range remotes.S3 {
 		// centralise this logic across different remote types when relevant
-		if (r.Mode == service.Push || r.Mode == service.Sync) && r.Match == "" && !r.MatchAll {
+		if (r.Mode == service.ModePush || r.Mode == service.ModeSync) && r.Match == "" && !r.MatchAll {
 			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")
 		}
 		// TODO gracefully deal with missing config
@@ -83,23 +117,9 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	// TODO
-	webTokens := service.NewFileWebTokenStore(cfg.Root)
-	//if webTokens.Access != "" && webTokens.Refresh != "" {
-	// TODO theoretically only need refresh token to have a go at authentication, but this should be done better
-	if webTokens.Refresh != "" {
-		wt := service.NewWebWalFile(remotes.Web, webTokens)
-		listRepo.RegisterWeb(wt)
-	}
-
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	walChan := make(chan *[]service.EventLog)
-
-	err = listRepo.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	err = listRepo.Start(walChan)
 	if err != nil {
