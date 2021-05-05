@@ -338,9 +338,8 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
 	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		errBody, _ := ioutil.ReadAll(resp.Body)
-		log.Fatalf("resp body %s", errBody)
+	if err != nil {
+		return err
 	}
 	resp.Body.Close()
 	return nil
