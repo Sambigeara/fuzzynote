@@ -83,16 +83,17 @@ func (wf *s3FileWal) GetRoot() string {
 }
 
 func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
+	fileNames := []string{}
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(wf.bucket),
 		Prefix: aws.String(wf.GetRoot()),
 	})
 	if err != nil {
-		exitErrorf("Unable to list items in bucket %q, %v", wf.bucket, err)
+		//exitErrorf("Unable to list items in bucket %q, %v", wf.bucket, err)
+		return fileNames, err
 	}
 
-	fileNames := []string{}
 	for _, item := range resp.Contents {
 		fileNames = append(fileNames, *item.Key)
 	}
@@ -120,7 +121,9 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 			case s3.ErrCodeNoSuchKey:
 				return []EventLog{}, nil
 			default:
-				exitErrorf("Unable to download item %q, %v", fileName, err)
+				//exitErrorf("Unable to download item %q, %v", fileName, err)
+				// For now, continue silently rather than exiting
+				return []EventLog{}, err
 			}
 		}
 	}
@@ -157,7 +160,9 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 			case s3.ErrCodeNoSuchKey:
 				return nil
 			default:
-				exitErrorf("Unable to delete objects %q from bucket %q, %v", fileNames, wf.bucket, err)
+				//exitErrorf("Unable to delete objects %q from bucket %q, %v", fileNames, wf.bucket, err)
+				// For now, continue silently rather than exiting
+				return err
 			}
 		}
 
@@ -183,7 +188,9 @@ func (wf *s3FileWal) Flush(b *bytes.Buffer, fileName string) error {
 		Body:   b,
 	})
 	if err != nil {
-		exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
+		//exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
+		// For now, continue silently rather than exiting
+		return err
 	}
 	return nil
 }
