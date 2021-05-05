@@ -511,7 +511,9 @@ func (w *Web) LaunchRemotesCLI() {
 			if field == "Mode" {
 				sel = promptui.Select{
 					Label: "Select Mode",
-					Items: []string{string(ModeSync), string(ModePush), string(ModePull), exitKey},
+					// ModePush temporarily disabled until infra changes are done
+					//Items: []string{string(ModeSync), string(ModePush), string(ModePull), exitKey},
+					Items: []string{string(ModeSync), string(ModePull), exitKey},
 					Size:  selectSize,
 				}
 				_, newVal, err = sel.Run()
