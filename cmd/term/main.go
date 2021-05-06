@@ -9,6 +9,7 @@ import (
 	"github.com/ardanlabs/conf"
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/sambigeara/fuzzynote/pkg/prompt"
 	"github.com/sambigeara/fuzzynote/pkg/service"
 	"github.com/sambigeara/fuzzynote/pkg/term"
 )
@@ -72,11 +73,11 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[len(os.Args)-1] {
 		case loginArg:
-			service.Login(cfg.Root)
+			prompt.Login(cfg.Root)
 		case remotesArg:
 			webTokens := service.NewFileWebTokenStore(cfg.Root)
 			web := service.NewWeb(webTokens)
-			web.LaunchRemotesCLI()
+			prompt.LaunchRemotesCLI(web)
 		}
 	}
 
