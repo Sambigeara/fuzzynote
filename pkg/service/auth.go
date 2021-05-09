@@ -26,7 +26,7 @@ type WebTokenStore interface {
 	AccessToken() string
 	RefreshToken() string
 	IDToken() string
-	Flush()
+	Flush(ctx interface{})
 }
 
 type FileWebTokenStore struct {
@@ -61,7 +61,7 @@ func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
 func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
 func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
-func (wt *FileWebTokenStore) Flush() {
+func (wt *FileWebTokenStore) Flush(ctx interface{}) {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
 		log.Fatal(err)
@@ -108,7 +108,8 @@ func Authenticate(wt WebTokenStore, body []byte) error {
 	if authResult.IdToken != nil {
 		wt.SetIDToken(*authResult.IdToken)
 	}
-	wt.Flush()
+	ctxStub := ""
+	wt.Flush(ctxStub)
 	return nil
 }
 
