@@ -75,7 +75,8 @@ type DBListRepo struct {
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
-	baseUUID, err := localWalFile.Load()
+	fakeCtx := ""
+	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
 		log.Fatal(err)
 	}
