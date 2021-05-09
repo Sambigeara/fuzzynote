@@ -61,7 +61,8 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 
 // Stop is called on app shutdown. It flushes all state changes in memory to disk
 func (r *DBListRepo) Stop() error {
-	err := r.LocalWalFile.Stop(uint32(r.uuid))
+	fakeCtx := ""
+	err := r.LocalWalFile.Stop(uint32(r.uuid), fakeCtx)
 	if err != nil {
 		return err
 	}

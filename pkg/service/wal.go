@@ -107,8 +107,8 @@ type WalFile interface {
 }
 
 type LocalWalFile interface {
-	Load(ctx interface{}) (uint32, error)
-	Stop(uint32) error
+	Load(interface{}) (uint32, error)
+	Stop(uint32, interface{}) error
 
 	WalFile
 }
@@ -192,7 +192,7 @@ func (wf *LocalFileWalFile) Load(ctx interface{}) (uint32, error) {
 	return uint32(uuid), nil
 }
 
-func (wf *LocalFileWalFile) Stop(uid uint32) error {
+func (wf *LocalFileWalFile) Stop(uid uint32, ctx interface{}) error {
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.Create(rootPath)
 	if err != nil {
