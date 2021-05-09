@@ -8,11 +8,12 @@ import (
 
 func TestTransactionUndo(t *testing.T) {
 	testWalChan := generateProcessingWalChan()
+	inputEvtChan := make(chan interface{})
 	t.Run("Undo on empty db", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
@@ -36,7 +37,7 @@ func TestTransactionUndo(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
@@ -87,7 +88,7 @@ func TestTransactionUndo(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
@@ -171,7 +172,7 @@ func TestTransactionUndo(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
@@ -342,7 +343,7 @@ func TestTransactionUndo(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 
@@ -419,7 +420,7 @@ func TestTransactionUndo(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(testWalChan)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
 

@@ -36,6 +36,12 @@ func clear(b, flag bits) bits  { return b &^ flag }
 func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
+type Client interface {
+	HandleEvent(interface{}) (bool, error)
+	AwaitEvent() interface{}
+	Refresh()
+}
+
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
 	Add(line string, note *[]byte, idx int) (string, error)

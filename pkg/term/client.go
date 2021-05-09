@@ -472,7 +472,17 @@ func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	return l
 }
 
-func (t *Terminal) HandleKeyEvent(ev tcell.Event) (bool, error) {
+func (t *Terminal) Refresh() {
+	t.S.PostEvent(&RefreshKey{})
+}
+
+//func (t *Terminal) AwaitEvent() tcell.Event {
+func (t *Terminal) AwaitEvent() interface{} {
+	return t.S.PollEvent()
+}
+
+//func (t *Terminal) HandleEvent(ev tcell.Event) (bool, error) {
+func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
 	// itemKey represents the unique identifying key for the ListItem. We set it explicitly only

@@ -7,7 +7,7 @@ import (
 	"path"
 
 	"github.com/ardanlabs/conf"
-	"github.com/gdamore/tcell/v2"
+	//"github.com/gdamore/tcell/v2"
 
 	"github.com/sambigeara/fuzzynote/pkg/prompt"
 	"github.com/sambigeara/fuzzynote/pkg/service"
@@ -21,8 +21,6 @@ const (
 
 	localRefreshFrequencyMs = 10000 // 10 seconds
 	localGatherFrequencyMs  = 30000 // 30 seconds
-	webRefreshFrequencyMs   = 10000 // 10 seconds
-	webGatherFrequencyMs    = 60000 // 1 minute
 
 	pushFrequencyMs = 10000
 )
@@ -96,50 +94,22 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
-	// loop, and only add to channel for processing if there's any changes that need syncing
 	walChan := make(chan *[]service.EventLog)
+	// TODO stricter control around event type
+	//inputEvtsChan := make(chan tcell.Event)
+	inputEvtsChan := make(chan interface{})
 
-	err = listRepo.Start(walChan)
+	// Create term client
+	client := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
+
+	err = listRepo.Start(client, walChan, inputEvtsChan)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Create term client
-	t := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
-
-	// We need atomicity between wal pull/replays and handling of keypress events, as we need
-	// events to operate on a predictable state (rather than a keypress being applied to state
-	// that differs from when the user intended due to async updates).
-	// Therefore, we consume tcell events into a channel, and consume from it in the same loop
-	// as the pull/replay loop.
-	keyPressEvts := make(chan tcell.Event)
-	go func() {
-		for {
-			select {
-			case partialWal := <-walChan:
-				if err := listRepo.Replay(partialWal); err != nil {
-					log.Fatal(err)
-				}
-				t.S.PostEvent(&term.RefreshKey{})
-			case ev := <-keyPressEvts:
-				cont, err := t.HandleKeyEvent(ev)
-				if err != nil {
-					log.Fatal(err)
-				} else if !cont {
-					err := listRepo.Stop()
-					if err != nil {
-						log.Fatal(err)
-					}
-					os.Exit(0)
-				}
-			}
-		}
-	}()
-
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
 	for {
-		keyPressEvts <- t.S.PollEvent()
+		inputEvtsChan <- client.AwaitEvent()
 	}
 }

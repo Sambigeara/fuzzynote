@@ -543,7 +543,7 @@ func TestWalMerge(t *testing.T) {
 		defer clearUp()
 
 		// This is the only test that requires this as we're calling ListRepo CRUD actions on it
-		repo.Start(generateProcessingWalChan())
+		repo.Start(newTestClient(), generateProcessingWalChan(), make(chan interface{}))
 
 		localWalFile = NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		localWalFile.processedPartialWals = make(map[string]struct{})
