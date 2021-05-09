@@ -76,7 +76,7 @@ func (wt *FileWebTokenStore) Flush(ctx interface{}) {
 	f.Write(b)
 }
 
-func Authenticate(wt WebTokenStore, body []byte) error {
+func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "auth")
 	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
@@ -108,8 +108,7 @@ func Authenticate(wt WebTokenStore, body []byte) error {
 	if authResult.IdToken != nil {
 		wt.SetIDToken(*authResult.IdToken)
 	}
-	ctxStub := ""
-	wt.Flush(ctxStub)
+	wt.Flush(ctx)
 	return nil
 }
 
@@ -131,7 +130,7 @@ func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, 
 		if err != nil {
 			return nil, err
 		}
-		err = Authenticate(w.tokens, marshalBody)
+		err = Authenticate(w.tokens, marshalBody, nil)
 		if err != nil {
 			return nil, err
 		}

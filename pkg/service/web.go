@@ -107,7 +107,7 @@ func (w *Web) establishWebSocketConnection() {
 		if err != nil {
 			return
 		}
-		err = Authenticate(w.tokens, marshalBody)
+		err = Authenticate(w.tokens, marshalBody, nil)
 		if err != nil {
 			return
 		}
