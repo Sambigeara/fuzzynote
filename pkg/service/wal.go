@@ -107,7 +107,7 @@ type WalFile interface {
 	GetPushMatchTerm() []rune
 }
 
-type localWalFile struct {
+type LocalWalFile struct {
 	rootDir                  string
 	RefreshTicker            *time.Ticker
 	GatherTicker             *time.Ticker
@@ -119,8 +119,8 @@ type localWalFile struct {
 	processedEventMap        map[string]struct{}
 }
 
-func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *localWalFile {
-	return &localWalFile{
+func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *LocalWalFile {
+	return &LocalWalFile{
 		rootDir:                  rootDir,
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
@@ -133,17 +133,17 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 	}
 }
 
-func (wf *localWalFile) GetUUID() string {
+func (wf *LocalWalFile) GetUUID() string {
 	// TODO this is a stub function for now, refactor out
 	// knowledge of UUID is only relevant for WebWalFiles
 	return ""
 }
 
-func (wf *localWalFile) GetRoot() string {
+func (wf *LocalWalFile) GetRoot() string {
 	return wf.rootDir
 }
 
-func (wf *localWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
+func (wf *LocalWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -151,7 +151,7 @@ func (wf *localWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
+func (wf *LocalWalFile) GetWal(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
@@ -169,14 +169,14 @@ func (wf *localWalFile) GetWal(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *localWalFile) RemoveWals(fileNames []string) error {
+func (wf *LocalWalFile) RemoveWals(fileNames []string) error {
 	for _, f := range fileNames {
 		os.Remove(f)
 	}
 	return nil
 }
 
-func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *LocalWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -186,41 +186,41 @@ func (wf *localWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *localWalFile) SetProcessedPartialWals(fileName string) {
+func (wf *LocalWalFile) SetProcessedPartialWals(fileName string) {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) IsPartialWalProcessed(fileName string) bool {
+func (wf *LocalWalFile) IsPartialWalProcessed(fileName string) bool {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[fileName]
 	return exists
 }
 
-func (wf *localWalFile) AwaitPull() {
+func (wf *LocalWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *localWalFile) AwaitGather() {
+func (wf *LocalWalFile) AwaitGather() {
 	<-wf.GatherTicker.C
 }
 
-func (wf *localWalFile) StopTickers() {
+func (wf *LocalWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
 }
 
-func (wf *localWalFile) GetMode() string {
+func (wf *LocalWalFile) GetMode() string {
 	return wf.mode
 }
 
-func (wf *localWalFile) GetPushMatchTerm() []rune {
+func (wf *LocalWalFile) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *localWalFile) SetProcessedEvent(fileName string) {
+func (wf *LocalWalFile) SetProcessedEvent(fileName string) {
 	// TODO these are currently duplicated across walfiles, think of a more graceful
 	// boundary for reuse
 	wf.processedEventLock.Lock()
@@ -228,7 +228,7 @@ func (wf *localWalFile) SetProcessedEvent(fileName string) {
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *localWalFile) IsEventProcessed(fileName string) bool {
+func (wf *LocalWalFile) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]
@@ -641,8 +641,8 @@ func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
 	b := BuildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(r.localWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
-	r.localWalFile.Flush(b, viewName)
+	viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
+	r.LocalWalFile.Flush(b, viewName)
 	return nil
 }
 
@@ -830,12 +830,12 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// due to cache, so small amount of duplicated code required).
 	var localEl *[]EventLog
 	var err error
-	if localEl, err = pull(r.localWalFile); err != nil {
+	if localEl, err = pull(r.LocalWalFile); err != nil {
 		return err
 	}
 	go func() { walChan <- localEl }()
 	for _, wf := range r.walFiles {
-		if wf != r.localWalFile {
+		if wf != r.LocalWalFile {
 			go func(wf WalFile) { r.push(localEl, wf) }(wf)
 		}
 	}
@@ -938,14 +938,14 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 func (r *DBListRepo) finish() error {
 	// TODO duplication
 	// Retrieve all local wal names
-	filePathPattern := path.Join(r.localWalFile.GetRoot(), walFilePattern)
-	localFileNames, _ := r.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(r.LocalWalFile.GetRoot(), walFilePattern)
+	localFileNames, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 
 	// Flush full log to local walfile
-	r.push(r.log, r.localWalFile)
+	r.push(r.log, r.LocalWalFile)
 
 	// Delete all redundant local files
-	r.localWalFile.RemoveWals(localFileNames)
+	r.LocalWalFile.RemoveWals(localFileNames)
 
 	// Stop tickers
 	r.pushTicker.Stop()

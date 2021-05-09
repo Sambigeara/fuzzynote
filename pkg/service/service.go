@@ -57,7 +57,7 @@ type DBListRepo struct {
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
-	localWalFile      WalFile
+	LocalWalFile      WalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	stop              chan struct{}
@@ -81,7 +81,7 @@ func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		localWalFile:      localWalFile, // TODO naming
+		LocalWalFile:      localWalFile, // TODO naming
 		eventsChan:        make(chan EventLog),
 		stop:              make(chan struct{}, 1),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
