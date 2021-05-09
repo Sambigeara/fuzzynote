@@ -58,7 +58,7 @@ func NewWeb(webTokens WebTokenStore) *Web {
 //    MatchAll bool
 //}
 
-type s3Remote struct {
+type S3Remote struct {
 	//remote
 	Mode          string
 	Match         string
@@ -87,10 +87,10 @@ type WebRemote struct {
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
 // all within a single configuration (listed by category)
 type Remotes struct {
-	S3 []s3Remote
+	S3 []S3Remote
 }
 
-func GetRemotesConfig(root string) Remotes {
+func GetS3Config(root string) []S3Remote {
 	cfgFile := path.Join(root, configFileName)
 	f, err := os.Open(cfgFile)
 
@@ -101,11 +101,11 @@ func GetRemotesConfig(root string) Remotes {
 		if err != nil {
 			//log.Fatalf("main : Parsing File Config : %v", err)
 			// TODO handle with appropriate error message
-			return r
+			return r.S3
 		}
 		defer f.Close()
 	}
-	return r
+	return r.S3
 }
 
 // TODO move this somewhere better - it's separate from normal business logic

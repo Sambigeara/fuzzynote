@@ -20,6 +20,9 @@ const (
 	viewFilePattern = "view_%v.db"
 
 	latestFileSchemaID = fileSchemaID(3)
+
+	webRefreshFrequencyMs = 10000 // 10 seconds
+	webGatherFrequencyMs  = 60000 // 1 minute
 )
 
 type bits uint32
@@ -68,7 +71,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile LocalWalFile, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(rootDir string, localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
@@ -97,6 +100,24 @@ func NewDBListRepo(rootDir string, localWalFile LocalWalFile, pushFrequency uint
 	// that require us to only target the local walfile rather than all). We still need to register
 	// it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
+
+	// Tokens are gererated on `login`
+	// Theoretically only need refresh token to have a go at authentication
+	if webTokenStore.RefreshToken() != "" {
+		web := NewWeb(webTokenStore)
+		listRepo.RegisterWeb(web)
+		// Retrieve remotes from API
+		remotes, err := web.GetRemotes("", nil)
+		if err != nil {
+			log.Fatal("Error when trying to retrieve remotes config from API")
+		}
+		for _, r := range remotes {
+			if r.IsActive {
+				webWalFile := NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
+				listRepo.RegisterWalFile(webWalFile)
+			}
+		}
+	}
 
 	return listRepo
 }

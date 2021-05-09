@@ -148,8 +148,8 @@ func Login(root string) {
 	}
 	marshalBody, err := json.Marshal(body)
 
-	wt := service.FileWebTokenStore{Root: root}
-	err = service.Authenticate(&wt, marshalBody)
+	wt := service.NewFileWebTokenStore(root)
+	err = service.Authenticate(wt, marshalBody)
 	if err != nil {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)

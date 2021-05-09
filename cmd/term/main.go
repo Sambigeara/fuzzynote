@@ -55,11 +55,10 @@ func main() {
 		log.Fatalf("main : Parsing Root Config : %v", err)
 	}
 
-	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
-
-	// Instantiate listRepo
-	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequencyMs)
+	// Make sure the root directory exists
+	// This also occurs in NewDBListRepo, but is required in the Login/WebToken flows below, so ensure
+	// existence here.
+	os.Mkdir(cfg.Root, os.ModePerm)
 
 	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
 	// TODO atm only triggers on last arg, make smarter!
@@ -74,27 +73,20 @@ func main() {
 		}
 	}
 
+	// Create and register local app WalFile (based in root directory)
+	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
+	// Generate FileWebTokenStore
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
-	// Tokens are gererated on `login`
-	// Theoretically only need refresh token to have a go at authentication
-	if webTokens.Refresh != "" {
-		web := service.NewWeb(webTokens)
-		listRepo.RegisterWeb(web)
-		// Retrieve remotes from API
-		remotes, err := web.GetRemotes("", nil)
-		if err != nil {
-			log.Fatal("Error when trying to retrieve remotes config from API")
-		}
-		for _, r := range remotes {
-			if r.IsActive {
-				webWalFile := service.NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
-				listRepo.RegisterWalFile(webWalFile)
-			}
-		}
-	}
+	// Instantiate listRepo
+	listRepo := service.NewDBListRepo(
+		cfg.Root,
+		localWalFile,
+		webTokens,
+		pushFrequencyMs,
+	)
 
-	remotes := service.GetRemotesConfig(cfg.Root)
-	for _, r := range remotes.S3 {
+	s3Remotes := service.GetS3Config(cfg.Root)
+	for _, r := range s3Remotes {
 		// centralise this logic across different remote types when relevant
 		if (r.Mode == service.ModePush || r.Mode == service.ModeSync) && r.Match == "" && !r.MatchAll {
 			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")

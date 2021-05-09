@@ -30,7 +30,7 @@ type WebTokenStore interface {
 }
 
 type FileWebTokenStore struct {
-	Root    string
+	root    string
 	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
 	ID      string `yaml:"idToken"`
@@ -41,7 +41,7 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 	tokenFile := path.Join(root, webTokensFileName)
 	f, err := os.Open(tokenFile)
 
-	wt := &FileWebTokenStore{Root: root}
+	wt := &FileWebTokenStore{root: root}
 	if err == nil {
 		decoder := yaml.NewDecoder(f)
 		err = decoder.Decode(wt)
@@ -67,7 +67,7 @@ func (wt *FileWebTokenStore) Flush() {
 		log.Fatal(err)
 	}
 
-	tokenFile := path.Join(wt.Root, webTokensFileName)
+	tokenFile := path.Join(wt.root, webTokensFileName)
 	f, err := os.Create(tokenFile)
 	if err != nil {
 		log.Fatal(err)

@@ -64,7 +64,8 @@ func generateProcessingWalChan() chan *[]EventLog {
 func TestServicePushPull(t *testing.T) {
 	t.Run("Pushes to file and pulls back", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
@@ -114,7 +115,8 @@ func TestServicePushPull(t *testing.T) {
 
 func TestServiceAdd(t *testing.T) {
 	localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	webTokenStore := NewFileWebTokenStore(rootDir)
+	repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 	testWalChan := generateProcessingWalChan()
 	repo.Start(testWalChan)
 	repo.Add("Old existing created line", nil, 0)
@@ -245,7 +247,8 @@ func TestServiceAdd(t *testing.T) {
 
 	t.Run("Add new item to empty list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 
 		newLine := "First item in list"
@@ -282,7 +285,8 @@ func TestServiceDelete(t *testing.T) {
 	testWalChan := generateProcessingWalChan()
 	t.Run("Delete item from head of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -327,7 +331,8 @@ func TestServiceDelete(t *testing.T) {
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -368,7 +373,8 @@ func TestServiceDelete(t *testing.T) {
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -417,7 +423,8 @@ func TestServiceMove(t *testing.T) {
 	testWalChan := generateProcessingWalChan()
 	t.Run("Move item up from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -475,7 +482,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item up from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -532,7 +540,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item up from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -572,7 +581,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item down from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -629,7 +639,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item down from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -686,7 +697,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item down from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -727,7 +739,8 @@ func TestServiceMove(t *testing.T) {
 
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -795,7 +808,8 @@ func TestServiceMove(t *testing.T) {
 
 func TestServiceUpdate(t *testing.T) {
 	localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-	repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+	webTokenStore := NewFileWebTokenStore(rootDir)
+	repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 	repo.Start(generateProcessingWalChan())
 	repo.Add("Third", nil, 0)
 	repo.Add("Second", nil, 0)
@@ -830,7 +844,8 @@ func TestServiceMatch(t *testing.T) {
 	testWalChan := generateProcessingWalChan()
 	t.Run("Full match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -908,7 +923,8 @@ func TestServiceMatch(t *testing.T) {
 
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -986,7 +1002,8 @@ func TestServiceMatch(t *testing.T) {
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -1025,7 +1042,8 @@ func TestServiceMatch(t *testing.T) {
 
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -1107,7 +1125,8 @@ func TestServiceMatch(t *testing.T) {
 
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -1191,7 +1210,8 @@ func TestServiceMatch(t *testing.T) {
 
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(testWalChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)

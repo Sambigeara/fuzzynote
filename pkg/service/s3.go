@@ -35,7 +35,7 @@ type s3FileWal struct {
 	processedEventLock       *sync.Mutex
 }
 
-func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
+func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 	// Handle defaults if not set
 	if cfg.RefreshFreqMs == 0 {
 		cfg.RefreshFreqMs = 2000
