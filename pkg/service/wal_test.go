@@ -210,8 +210,8 @@ func TestWalMerge(t *testing.T) {
 
 		repo.Start(testWalChan)
 
-		if len(*repo.wal.log) != 0 {
-			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 0 {
+			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.log))
 		}
 		if repo.Root != nil {
 			t.Fatalf("repo.Root should not exist")
@@ -233,8 +233,8 @@ func TestWalMerge(t *testing.T) {
 		data := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now,
@@ -244,8 +244,8 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now + 1,
@@ -256,7 +256,7 @@ func TestWalMerge(t *testing.T) {
 			line1,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -271,27 +271,27 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 2 {
-			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 2 {
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[0].ListItemCreationTime != matches[0].creationTime {
+		if (*repo.log)[0].ListItemCreationTime != matches[0].creationTime {
 			t.Fatal("First match ListItemCreationTime should match first EventLog")
 		}
-		if (*repo.wal.log)[1].ListItemCreationTime != matches[1].creationTime {
+		if (*repo.log)[1].ListItemCreationTime != matches[1].creationTime {
 			t.Fatal("Second match ListItemCreationTime should match second EventLog")
 		}
 
-		if (*repo.wal.log)[0].EventType != AddEvent {
+		if (*repo.log)[0].EventType != AddEvent {
 			t.Fatal("First match item should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].EventType != AddEvent {
+		if (*repo.log)[1].EventType != AddEvent {
 			t.Fatal("Second match item should be of type AddEvent")
 		}
 	})
@@ -318,8 +318,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -328,8 +328,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -339,8 +339,8 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now4,
@@ -349,8 +349,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now5,
@@ -361,7 +361,7 @@ func TestWalMerge(t *testing.T) {
 			line2,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -438,26 +438,26 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 8 {
-			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 8 {
+			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 4 {
-			t.Fatalf("Expected 4 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 4 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[1].Line != string(line0) {
+		if (*repo.log)[1].Line != string(line0) {
 			t.Fatal("First match line should match first EventLog")
 		}
-		if (*repo.wal.log)[3].Line != string(line1) {
+		if (*repo.log)[3].Line != string(line1) {
 			t.Fatal("Second match line should match second EventLog")
 		}
-		if (*repo.wal.log)[5].Line != string(line2) {
+		if (*repo.log)[5].Line != string(line2) {
 			t.Fatal("Third match line should match third EventLog")
 		}
-		if (*repo.wal.log)[7].Line != string(line3) {
+		if (*repo.log)[7].Line != string(line3) {
 			t.Fatal("Fourth match line should match fourth EventLog")
 		}
 	})
@@ -477,8 +477,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -489,7 +489,7 @@ func TestWalMerge(t *testing.T) {
 			line0,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -537,7 +537,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
 		}
 
 		if repo.Root.child != nil {
@@ -550,7 +550,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatal("Root shoud equal Root.parent.child")
 		}
 
-		preSaveLog := *repo.wal.log
+		preSaveLog := *repo.log
 		localWalFile = NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
 		repo = NewDBListRepo(rootDir, localWalFile, testPushFrequency)
 		defer clearUp()
@@ -566,13 +566,13 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 matches items but had %d", len(matches))
 		}
 
-		if len(*repo.wal.log) != 2 {
-			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 2 {
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		for i := range [2]int{} {
 			oldLogItem := preSaveLog[i]
-			newLogItem := (*repo.wal.log)[i]
+			newLogItem := (*repo.log)[i]
 			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
 				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
 			}
@@ -591,7 +591,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Delete(1)
 		eventLog, _ = pull(localWalFile)
 		repo.Replay(eventLog)
-		preSaveLog = *repo.wal.log
+		preSaveLog = *repo.log
 
 		// Re-write the same remote WAL
 		f, _ = os.Create(walPath)
@@ -608,7 +608,7 @@ func TestWalMerge(t *testing.T) {
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
-			newLogItem := (*repo.wal.log)[i]
+			newLogItem := (*repo.log)[i]
 			// `cmp.Equal` doesn't like function comparisons but they're not relevant for this test, so nullify
 			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
 				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
@@ -616,8 +616,8 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		// Event log should still be len == 3 as the second log was pre-existing
-		if len(*repo.wal.log) != 3 {
-			t.Fatalf("Expected 3 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 3 {
+			t.Fatalf("Expected 3 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		if repo.Root.child != nil {
@@ -646,8 +646,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -656,8 +656,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -668,8 +668,8 @@ func TestWalMerge(t *testing.T) {
 			line0,
 			// Deviates here
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now2,
@@ -679,7 +679,7 @@ func TestWalMerge(t *testing.T) {
 			},
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -694,8 +694,8 @@ func TestWalMerge(t *testing.T) {
 		remoteData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -704,8 +704,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -717,8 +717,8 @@ func TestWalMerge(t *testing.T) {
 			// Deviates here
 			walItemSchema2{
 				// UUID will be same as item.originUUID
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now3,
@@ -745,26 +745,26 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 4 {
-			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 4 {
+			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 1 {
-			t.Fatalf("Expected 1 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 1 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[0].EventType != AddEvent {
+		if (*repo.log)[0].EventType != AddEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].EventType != UpdateEvent {
+		if (*repo.log)[1].EventType != UpdateEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[2].EventType != DeleteEvent {
+		if (*repo.log)[2].EventType != DeleteEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[3].EventType != UpdateEvent {
+		if (*repo.log)[3].EventType != UpdateEvent {
 			t.Fatal("First event should be of type UpdateEvent")
 		}
 	})
@@ -1071,7 +1071,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1103,7 +1103,7 @@ func TestWalFilter(t *testing.T) {
 		}
 
 		localWalFile.pushMatchTerm = []rune("foo")
-		matchedWal := getMatchedWal(repo.wal.log, localWalFile)
+		matchedWal := getMatchedWal(repo.log, localWalFile)
 		if len(*matchedWal) != 5 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
@@ -1158,7 +1158,7 @@ func TestWalFilter(t *testing.T) {
 		})
 
 		// repo1 pushes filtered wal to shared walfile
-		repo1.wal.push(&el, filteredWalFile)
+		repo1.push(&el, filteredWalFile)
 		// repo2 pulls from shared walfile
 		filteredEl, _ := pull(walFile2)
 		// After replay, the remote repo should see a single matched item
@@ -1184,7 +1184,7 @@ func TestWalFilter(t *testing.T) {
 			},
 		}
 
-		repo1.wal.push(&el, filteredWalFile)
+		repo1.push(&el, filteredWalFile)
 		filteredEl, _ = pull(walFile2)
 		repo2.Replay(filteredEl)
 		repo2.Match([][]rune{}, true, "")
@@ -1216,7 +1216,7 @@ func TestWalReplay(t *testing.T) {
 			},
 		}
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1243,7 +1243,7 @@ func TestWalReplay(t *testing.T) {
 			},
 		}
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1293,7 +1293,7 @@ func TestWalReplay(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems

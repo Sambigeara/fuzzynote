@@ -49,9 +49,20 @@ type DBListRepo struct {
 	Root               *ListItem
 	rootPath           string
 	eventLogger        *DbEventLogger
-	wal                *Wal
 	matchListItems     []*ListItem
 	latestFileSchemaID fileSchemaID
+
+	// Wal stuff
+	uuid              uuid
+	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
+	latestWalSchemaID uint16
+	listItemTracker   map[string]*ListItem
+	localWalFile      WalFile
+	walFiles          []WalFile
+	eventsChan        chan EventLog
+	stop              chan struct{}
+	pushTicker        *time.Ticker
+	web               *Web
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -63,8 +74,17 @@ func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *
 	return &DBListRepo{
 		rootPath:           rootPath,
 		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(localWalFile, pushFrequency),
 		latestFileSchemaID: fileSchemaID(3),
+
+		// Wal stuff
+		uuid:              generateUUID(),
+		log:               &[]EventLog{},
+		latestWalSchemaID: latestWalSchemaID,
+		listItemTracker:   make(map[string]*ListItem),
+		localWalFile:      localWalFile, // TODO naming
+		eventsChan:        make(chan EventLog),
+		stop:              make(chan struct{}, 1),
+		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
 }
 
@@ -98,8 +118,8 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 		Line:                       newLine,
 		Note:                       newNote,
 	}
-	r.wal.eventsChan <- el
-	*r.wal.log = append(*r.wal.log, el)
+	r.eventsChan <- el
+	*r.log = append(*r.log, el)
 	var err error
 	var item *ListItem
 	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
@@ -127,8 +147,8 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
-	r.addUndoLog(AddEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
+	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
+	r.addUndoLog(AddEvent, now, childCreationTime, r.uuid, childUUID, line, note, line, note)
 	return newItem.Key(), nil
 }
 
@@ -353,5 +373,5 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
-	return r.wal.generatePartialView(matchedItems)
+	return r.generatePartialView(matchedItems)
 }

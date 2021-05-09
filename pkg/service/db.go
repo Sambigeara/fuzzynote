@@ -50,14 +50,14 @@ func (r *DBListRepo) Load() error {
 	// TODO UUID should always be set now, so this `if UUID != 0` check can go, but currently breaks
 	// tests if I do remove.
 	if fileHeader.UUID != 0 {
-		r.wal.uuid = fileHeader.UUID
+		r.uuid = fileHeader.UUID
 	}
 	return nil
 }
 
 // Start begins push/pull for all WalFiles
 func (r *DBListRepo) Start(walChan chan *[]EventLog) error {
-	return r.wal.startSync(walChan)
+	return r.startSync(walChan)
 }
 
 func (r *DBListRepo) flushPrimary(f *os.File) error {
@@ -68,7 +68,7 @@ func (r *DBListRepo) flushPrimary(f *os.File) error {
 	// Write the file header to the start of the file
 	fileHeader := fileHeader{
 		SchemaID: r.latestFileSchemaID,
-		UUID:     r.wal.uuid,
+		UUID:     r.uuid,
 	}
 	err := binary.Write(f, binary.LittleEndian, &fileHeader)
 	if err != nil {
@@ -93,23 +93,23 @@ func (r *DBListRepo) Stop() error {
 		return err
 	}
 
-	r.wal.finish()
+	r.finish()
 
 	return nil
 }
 
 func (r *DBListRepo) RegisterWeb(w *Web) {
-	r.wal.web = w
-	r.wal.web.uuid = r.wal.uuid
+	r.web = w
+	r.web.uuid = r.uuid
 	w.establishWebSocketConnection()
 }
 
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
-	r.wal.walFiles = append(r.wal.walFiles, wf)
+	r.walFiles = append(r.walFiles, wf)
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
 	// when consuming websocket events or on pull. This covers some edge cases where local updates
 	// on foreign items will not emit to remotes, as we can use the cache in the getMatchedWal call
-	if r.wal.web != nil && wf.GetUUID() != "" {
-		r.wal.web.walFileMap[wf.GetUUID()] = &wf
+	if r.web != nil && wf.GetUUID() != "" {
+		r.web.walFileMap[wf.GetUUID()] = &wf
 	}
 }

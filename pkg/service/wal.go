@@ -28,34 +28,6 @@ func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-// Wal manages the state of the WAL, via all update functions and replay functionality
-type Wal struct {
-	uuid              uuid
-	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
-	latestWalSchemaID uint16
-	listItemTracker   map[string]*ListItem
-	localWalFile      WalFile
-	walFiles          []WalFile
-	eventsChan        chan EventLog
-	stop              chan struct{}
-	pushTicker        *time.Ticker
-	web               *Web
-}
-
-func NewWal(walFile WalFile, pushFrequency uint16) *Wal {
-	wal := Wal{
-		uuid:              generateUUID(),
-		log:               &[]EventLog{},
-		latestWalSchemaID: latestWalSchemaID,
-		listItemTracker:   make(map[string]*ListItem),
-		localWalFile:      walFile, // TODO naming
-		eventsChan:        make(chan EventLog),
-		stop:              make(chan struct{}, 1),
-		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
-	}
-	return &wal
-}
-
 // TODO remove
 type walItemSchema1 struct {
 	UUID                       uuid
@@ -265,8 +237,8 @@ func (wf *localWalFile) IsEventProcessed(fileName string) bool {
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
-	item := r.wal.listItemTracker[key]
-	targetItem := r.wal.listItemTracker[targetKey]
+	item := r.listItemTracker[key]
+	targetItem := r.listItemTracker[targetKey]
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the EventType
@@ -279,8 +251,8 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	var err error
 	switch e.EventType {
 	case AddEvent:
-		root, item, err = r.wal.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
-		r.wal.listItemTracker[key] = item
+		root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
+		r.listItemTracker[key] = item
 	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
@@ -293,38 +265,38 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.wal.update(e.Line, e.Note, item)
+			item, err = r.update(e.Line, e.Note, item)
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
 			root, item, err = r.CallFunctionForEventLog(root, addEl)
 		}
 	case DeleteEvent:
-		root, err = r.wal.del(root, item)
-		delete(r.wal.listItemTracker, key)
+		root, err = r.del(root, item)
+		delete(r.listItemTracker, key)
 	case MoveUpEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
-		root, item, err = r.wal.move(root, item, targetItem.child)
+		root, item, err = r.move(root, item, targetItem.child)
 		// Need to override the listItemTracker to ensure pointers are correct
-		r.wal.listItemTracker[key] = item
+		r.listItemTracker[key] = item
 	case MoveDownEvent:
 		if targetItem == nil {
 			return root, item, err
 		}
-		root, item, err = r.wal.move(root, item, targetItem)
+		root, item, err = r.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
-		r.wal.listItemTracker[key] = item
+		r.listItemTracker[key] = item
 	case ShowEvent:
-		err = r.wal.setVisibility(item, true)
+		err = r.setVisibility(item, true)
 	case HideEvent:
-		err = r.wal.setVisibility(item, false)
+		err = r.setVisibility(item, false)
 	}
 	return root, item, err
 }
 
-func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -354,7 +326,7 @@ func (w *Wal) add(root *ListItem, creationTime int64, line string, note *[]byte,
 }
 
 // Update will update the line or note of an existing ListItem
-func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	// We currently separate Line and Note updates even though they use the same interface
 	// This is to reduce wal size and also solves some race conditions for long held open
 	// notes, etc
@@ -366,7 +338,7 @@ func (w *Wal) update(line string, note *[]byte, listItem *ListItem) (*ListItem, 
 	return listItem, nil
 }
 
-func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
+func (r *DBListRepo) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	if item.child != nil {
 		item.child.parent = item.parent
 	} else {
@@ -381,14 +353,14 @@ func (w *Wal) del(root *ListItem, item *ListItem) (*ListItem, error) {
 	return root, nil
 }
 
-func (w *Wal) move(root *ListItem, item *ListItem, childItem *ListItem) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) move(root *ListItem, item *ListItem, childItem *ListItem) (*ListItem, *ListItem, error) {
 	var err error
-	root, err = w.del(root, item)
-	root, item, err = w.add(root, item.creationTime, item.Line, item.Note, childItem, item.originUUID)
+	root, err = r.del(root, item)
+	root, item, err = r.add(root, item.creationTime, item.Line, item.Note, childItem, item.originUUID)
 	return root, item, err
 }
 
-func (w *Wal) setVisibility(item *ListItem, isVisible bool) error {
+func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
 	item.IsHidden = !isVisible
 	return nil
 }
@@ -400,16 +372,16 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	}
 
 	// Merge with any new local events which may have occurred during sync
-	r.wal.log = merge(r.wal.log, partialWal)
+	r.log = merge(r.log, partialWal)
 
 	// Clear the listItemTracker for all full Replays
 	// This map is also used by the main service interface CRUD endpoints, but we can
 	// clear it here because both the CRUD ops and these Replays run in the same loop,
 	// so we won't get any contention.
-	r.wal.listItemTracker = make(map[string]*ListItem)
+	r.listItemTracker = make(map[string]*ListItem)
 
 	var root *ListItem
-	for _, e := range *r.wal.log {
+	for _, e := range *r.log {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
 		root, _, _ = r.CallFunctionForEventLog(root, e)
@@ -637,7 +609,7 @@ func compact(wal *[]EventLog) *[]EventLog {
 	return &compactedWal
 }
 
-func (w *Wal) generatePartialView(matchItems []ListItem) error {
+func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	// Now we have our list of matchItems, we need to iterate over them to retrieve all originUUID:creationTime keys
 	// which map to the wal entries
 	logKeys := make(map[string]struct{})
@@ -658,7 +630,7 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// IMPORTANT: we also need to include ALL DeleteEvent logs, as otherwise we may end up with orphaned items in the
 	// target view.
 	partialWal := []EventLog{}
-	for _, e := range *w.log {
+	for _, e := range *r.log {
 		key, _ := e.getKeys()
 		if _, exists := logKeys[key]; exists || e.EventType == DeleteEvent {
 			partialWal = append(partialWal, e)
@@ -669,8 +641,8 @@ func (w *Wal) generatePartialView(matchItems []ListItem) error {
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
 	b := BuildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(w.localWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
-	w.localWalFile.Flush(b, viewName)
+	viewName := fmt.Sprintf(path.Join(r.localWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
+	r.localWalFile.Flush(b, viewName)
 	return nil
 }
 
@@ -780,13 +752,13 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	return &filteredWal
 }
 
-func (w *Wal) push(el *[]EventLog, wf WalFile) error {
+func (r *DBListRepo) push(el *[]EventLog, wf WalFile) error {
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
 	b := BuildByteWal(el)
 
-	randomUUID := fmt.Sprintf("%v%v", w.uuid, generateUUID())
+	randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	if err := wf.Flush(b, randomWal); err != nil {
 		log.Fatal(err)
@@ -799,10 +771,10 @@ func (w *Wal) push(el *[]EventLog, wf WalFile) error {
 
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
-func (w *Wal) gather(wf WalFile) error {
+func (r *DBListRepo) gather(wf WalFile) error {
 	// Handle only origin wals
 	// TODO I think switching to this breaks other parts of the syncing process, use with caution
-	//filePathPattern := path.Join(wf.GetRoot(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", w.uuid)))
+	//filePathPattern := path.Join(wf.GetRoot(), fmt.Sprintf(walFilePattern, fmt.Sprintf("%v*", r.uuid)))
 	//originFiles, err := wf.GetMatchingWals(filePathPattern)
 
 	// Handle ALL wals
@@ -828,7 +800,7 @@ func (w *Wal) gather(wf WalFile) error {
 	}
 
 	// Flush the gathered Wal
-	if err := w.push(&mergedWal, wf); err != nil {
+	if err := r.push(&mergedWal, wf); err != nil {
 		return err
 	}
 
@@ -838,37 +810,37 @@ func (w *Wal) gather(wf WalFile) error {
 	return nil
 }
 
-func (w *Wal) flushPartialWals(el []EventLog, sync bool) {
+func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	if len(el) > 0 {
-		for _, wf := range w.walFiles {
+		for _, wf := range r.walFiles {
 			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 				if sync {
-					w.push(&el, wf)
+					r.push(&el, wf)
 				} else {
-					go func(wf WalFile) { w.push(&el, wf) }(wf)
+					go func(wf WalFile) { r.push(&el, wf) }(wf)
 				}
 			}
 		}
 	}
 }
 
-func (w *Wal) startSync(walChan chan *[]EventLog) error {
+func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Run an initial blocking load from the local walfile (and put onto channel for immediate
 	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
 	// due to cache, so small amount of duplicated code required).
 	var localEl *[]EventLog
 	var err error
-	if localEl, err = pull(w.localWalFile); err != nil {
+	if localEl, err = pull(r.localWalFile); err != nil {
 		return err
 	}
 	go func() { walChan <- localEl }()
-	for _, wf := range w.walFiles {
-		if wf != w.localWalFile {
-			go func(wf WalFile) { w.push(localEl, wf) }(wf)
+	for _, wf := range r.walFiles {
+		if wf != r.localWalFile {
+			go func(wf WalFile) { r.push(localEl, wf) }(wf)
 		}
 	}
 
-	for _, wf := range w.walFiles {
+	for _, wf := range r.walFiles {
 		// Trigger initial instant single pull from all walfiles
 		go func(wf WalFile) {
 			var el *[]EventLog
@@ -894,7 +866,7 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 		go func(wf WalFile) {
 			for {
 				wf.AwaitGather()
-				if err := w.gather(wf); err != nil {
+				if err := r.gather(wf); err != nil {
 					log.Fatal(err)
 				}
 			}
@@ -902,12 +874,12 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Consume from the websocket, if available
-	//if w.web != nil {
+	//if r.web != nil {
 	go func() {
 		// TODO Check for stop signal
 		for {
-			if w.web != nil && w.web.wsConn != nil {
-				err := w.web.consumeWebsocket(walChan)
+			if r.web != nil && r.web.wsConn != nil {
+				err := r.web.consumeWebsocket(walChan)
 				if err != nil {
 					return
 				}
@@ -926,24 +898,24 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 			// The events chan contains single events. We want to aggregate them between intervals
 			// and then emit them in batches, for great efficiency gains.
 			select {
-			case e := <-w.eventsChan:
+			case e := <-r.eventsChan:
 				// Write in real time to the websocket, if present
-				if w.web != nil {
+				if r.web != nil {
 					// TODO this should only iterate over WebWalFiles
-					for _, wf := range w.walFiles {
+					for _, wf := range r.walFiles {
 						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
 						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								e = (*matchedEventLog)[0]
-								w.web.pushWebsocket(e, wf.GetUUID())
+								r.web.pushWebsocket(e, wf.GetUUID())
 							}
 						}
 					}
 				}
 				// Consume off of the channel and add to an ephemeral log
 				el = append(el, e)
-			case <-w.pushTicker.C:
+			case <-r.pushTicker.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -951,11 +923,11 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 				// If we start passing by value later on, this won't be required (as go will pass
 				// copies by default, I think).
 				elCopy := el
-				w.flushPartialWals(elCopy, false)
+				r.flushPartialWals(elCopy, false)
 				el = []EventLog{}
-			case <-w.stop:
-				w.flushPartialWals(el, true)
-				w.stop <- struct{}{}
+			case <-r.stop:
+				r.flushPartialWals(el, true)
+				r.stop <- struct{}{}
 			}
 		}
 	}()
@@ -963,31 +935,31 @@ func (w *Wal) startSync(walChan chan *[]EventLog) error {
 	return nil
 }
 
-func (w *Wal) finish() error {
+func (r *DBListRepo) finish() error {
 	// TODO duplication
 	// Retrieve all local wal names
-	filePathPattern := path.Join(w.localWalFile.GetRoot(), walFilePattern)
-	localFileNames, _ := w.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+	filePathPattern := path.Join(r.localWalFile.GetRoot(), walFilePattern)
+	localFileNames, _ := r.localWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 
 	// Flush full log to local walfile
-	w.push(w.log, w.localWalFile)
+	r.push(r.log, r.localWalFile)
 
 	// Delete all redundant local files
-	w.localWalFile.RemoveWals(localFileNames)
+	r.localWalFile.RemoveWals(localFileNames)
 
 	// Stop tickers
-	w.pushTicker.Stop()
-	for _, wf := range w.walFiles {
+	r.pushTicker.Stop()
+	for _, wf := range r.walFiles {
 		wf.StopTickers()
 	}
 
 	// Flush all unpushed changes to non-local walfiles
 	// TODO handle this more gracefully
-	w.stop <- struct{}{}
-	<-w.stop
+	r.stop <- struct{}{}
+	<-r.stop
 
-	if w.web != nil {
-		w.web.wsConn.Close(websocket.StatusNormalClosure, "")
+	if r.web != nil {
+		r.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil
 }

@@ -72,7 +72,7 @@ func TestServicePushPull(t *testing.T) {
 		now := time.Now().UnixNano()
 		wal := []EventLog{
 			EventLog{
-				UUID:                       repo.wal.uuid,
+				UUID:                       repo.uuid,
 				TargetUUID:                 0,
 				ListItemCreationTime:       now,
 				TargetListItemCreationTime: 0,
@@ -83,7 +83,7 @@ func TestServicePushPull(t *testing.T) {
 		}
 		now++
 		wal = append(wal, EventLog{
-			UUID:                       repo.wal.uuid,
+			UUID:                       repo.uuid,
 			TargetUUID:                 0,
 			ListItemCreationTime:       now,
 			TargetListItemCreationTime: 0,
@@ -92,7 +92,7 @@ func TestServicePushPull(t *testing.T) {
 			Line:                       "New newly created line",
 		})
 
-		repo.wal.push(&wal, localWalFile)
+		repo.push(&wal, localWalFile)
 		// Clear the cache to make sure we can pick the file up again
 		localWalFile.processedPartialWals = make(map[string]struct{})
 		newWal, _ := pull(localWalFile)
