@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path"
 	"time"
 )
 
@@ -59,7 +57,6 @@ type ListRepo interface {
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root           *ListItem
-	rootPath       string
 	eventLogger    *DbEventLogger
 	matchListItems []*ListItem
 
@@ -77,18 +74,13 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
-	// Make sure the root directory exists
-	os.Mkdir(rootDir, os.ModePerm)
-
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
 	baseUUID, err := localWalFile.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	rootPath := path.Join(rootDir, rootFileName)
 	listRepo := &DBListRepo{
-		rootPath:    rootPath,
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff

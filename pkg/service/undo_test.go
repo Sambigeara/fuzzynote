@@ -7,15 +7,16 @@ import (
 )
 
 func TestTransactionUndo(t *testing.T) {
+	os.Mkdir(rootDir, os.ModePerm)
 	testWalChan := generateProcessingWalChan()
 	inputEvtChan := make(chan interface{})
 	t.Run("Undo on empty db", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		_, err := repo.Undo()
 		if err != nil {
@@ -36,10 +37,10 @@ func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo single item Add", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -87,10 +88,10 @@ func TestTransactionUndo(t *testing.T) {
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -171,10 +172,10 @@ func TestTransactionUndo(t *testing.T) {
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		line := "New item"
 		repo.Add(line, nil, 0)
@@ -342,10 +343,10 @@ func TestTransactionUndo(t *testing.T) {
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		repo.Add("", nil, 0)
 
@@ -419,10 +420,10 @@ func TestTransactionUndo(t *testing.T) {
 	t.Run("Add line, Delete line, Undo, delete character, Undo", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		originalLine := "Original line"
 		repo.Add(originalLine, nil, 0)

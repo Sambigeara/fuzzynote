@@ -85,10 +85,9 @@ func TestServicePushPull(t *testing.T) {
 	t.Run("Pushes to file and pulls back", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
-
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now := time.Now().UnixNano()
 		wal := []EventLog{
@@ -136,7 +135,9 @@ func TestServicePushPull(t *testing.T) {
 func TestServiceAdd(t *testing.T) {
 	localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 	webTokenStore := NewFileWebTokenStore(rootDir)
-	repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+	os.Mkdir(rootDir, os.ModePerm)
+	defer clearUp()
+	repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 	testWalChan := generateProcessingWalChan()
 	inputEvtChan := make(chan interface{})
 	repo.Start(newTestClient(), testWalChan, inputEvtChan)
@@ -145,9 +146,6 @@ func TestServiceAdd(t *testing.T) {
 
 	item1 := repo.Root
 	item2 := repo.Root.parent
-
-	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp()
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
@@ -269,7 +267,9 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add new item to empty list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
 		newLine := "First item in list"
@@ -308,16 +308,15 @@ func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from head of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -354,16 +353,15 @@ func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from end of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
 		repo.Add("First", nil, 0)
 
 		item2 := repo.Root.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -396,7 +394,9 @@ func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from middle of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -404,9 +404,6 @@ func TestServiceDelete(t *testing.T) {
 
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, true, "")
 
@@ -447,7 +444,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -456,9 +455,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -506,7 +502,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -515,9 +513,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -564,7 +559,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -573,9 +570,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -605,7 +599,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item down from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -614,9 +610,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -663,7 +656,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item down from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -672,9 +667,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -721,7 +713,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item down from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -730,9 +724,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -763,7 +754,9 @@ func TestServiceMove(t *testing.T) {
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -772,9 +765,6 @@ func TestServiceMove(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "")
@@ -832,7 +822,9 @@ func TestServiceMove(t *testing.T) {
 func TestServiceUpdate(t *testing.T) {
 	localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 	webTokenStore := NewFileWebTokenStore(rootDir)
-	repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+	os.Mkdir(rootDir, os.ModePerm)
+	defer clearUp()
+	repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 	testWalChan := generateProcessingWalChan()
 	inputEvtChan := make(chan interface{})
@@ -841,9 +833,6 @@ func TestServiceUpdate(t *testing.T) {
 	repo.Add("Third", nil, 0)
 	repo.Add("Second", nil, 0)
 	repo.Add("First", nil, 0)
-
-	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp()
 
 	// Call matches to trigger matchListItems creation
 	repo.Match([][]rune{}, true, "")
@@ -873,7 +862,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Full match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -884,9 +875,6 @@ func TestServiceMatch(t *testing.T) {
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
 		item5 := repo.Root.parent.parent.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -952,7 +940,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -963,9 +953,6 @@ func TestServiceMatch(t *testing.T) {
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
 		item5 := repo.Root.parent.parent.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
@@ -1031,7 +1018,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Inverse match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Also not second", nil, 0)
 		repo.Add("Not second", nil, 0)
@@ -1041,9 +1030,6 @@ func TestServiceMatch(t *testing.T) {
 
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		search := [][]rune{
 			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
@@ -1071,7 +1057,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -1080,9 +1068,6 @@ func TestServiceMatch(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 
@@ -1154,7 +1139,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -1163,9 +1150,6 @@ func TestServiceMatch(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 
@@ -1239,7 +1223,9 @@ func TestServiceMatch(t *testing.T) {
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Add("Third", nil, 0)
 		repo.Add("Second", nil, 0)
@@ -1248,9 +1234,6 @@ func TestServiceMatch(t *testing.T) {
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
-
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
 
 		repo.Match([][]rune{}, false, "")
 

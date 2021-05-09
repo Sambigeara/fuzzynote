@@ -77,7 +77,6 @@ func main() {
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(
-		cfg.Root,
 		localWalFile,
 		webTokens,
 		pushFrequencyMs,

@@ -199,11 +199,13 @@ func TestWalCompact(t *testing.T) {
 }
 
 func TestWalMerge(t *testing.T) {
+	os.Mkdir(rootDir, os.ModePerm)
 	t.Run("Start empty db", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		if len(*repo.log) != 0 {
 			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.log))
@@ -215,8 +217,9 @@ func TestWalMerge(t *testing.T) {
 	t.Run("Single local WAL merge", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now := time.Now().UnixNano()
 
@@ -290,8 +293,9 @@ func TestWalMerge(t *testing.T) {
 	t.Run("Two WAL file merge", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -453,8 +457,9 @@ func TestWalMerge(t *testing.T) {
 	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano() - 10 // `-10` Otherwise delete "happens" before these times
 		now1 := now0 + 1
@@ -539,8 +544,9 @@ func TestWalMerge(t *testing.T) {
 		preSaveLog := *repo.log
 		localWalFile = NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore = NewFileWebTokenStore(rootDir)
-		repo = NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo = NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		// This is the only test that requires this as we're calling ListRepo CRUD actions on it
 		repo.Start(newTestClient(), generateProcessingWalChan(), make(chan interface{}))
@@ -620,8 +626,9 @@ func TestWalMerge(t *testing.T) {
 	t.Run("Two WAL file duplicate merge, Delete item in one, Update same in other", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -1021,8 +1028,9 @@ func TestWalFilter(t *testing.T) {
 	t.Run("Check includes matching item after post replay updates", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, webTokenStore, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
 		creationTime := eventTime
@@ -1101,15 +1109,17 @@ func TestWalFilter(t *testing.T) {
 		webTokenStore1 := NewFileWebTokenStore(rootDir)
 		// Both repos will talk to the same walfile, but we'll have to instantiate separately, as repo1
 		// needs to set explicit match params
-		repo1 := NewDBListRepo(rootDir, walFile1, webTokenStore1, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo1 := NewDBListRepo(walFile1, webTokenStore1, testPushFrequency)
+		os.Mkdir(otherRootDir, os.ModePerm)
 		walFile2 := NewLocalFileWalFile(testPushFrequency, testPushFrequency, otherRootDir)
 		webTokenStore2 := NewFileWebTokenStore(rootDir)
 		// Create copy
 		filteredWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, otherRootDir)
 		filteredWalFile.pushMatchTerm = []rune("foo")
 		repo1.RegisterWalFile(filteredWalFile)
-		repo2 := NewDBListRepo(otherRootDir, walFile2, webTokenStore2, testPushFrequency)
+		repo2 := NewDBListRepo(walFile2, webTokenStore2, testPushFrequency)
 
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
@@ -1189,13 +1199,14 @@ func TestWalFilter(t *testing.T) {
 }
 
 func TestWalReplay(t *testing.T) {
+	os.Mkdir(rootDir, os.ModePerm)
+	os.Mkdir(rootDir, os.ModePerm)
+	defer clearUp()
 	repo := NewDBListRepo(
-		rootDir,
 		NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir),
 		NewFileWebTokenStore(rootDir),
 		testPushFrequency,
 	)
-	defer clearUp()
 	t.Run("Check add creates item", func(t *testing.T) {
 		line := "foobar"
 		uuid := uuid(1)
