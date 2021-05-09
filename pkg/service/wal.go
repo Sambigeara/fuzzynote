@@ -84,7 +84,6 @@ func (e *EventLog) getKeys() (string, string) {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	// TODO do these actually need to be private attributes? A separate module implements the interface
 	// TODO surely these should just implement Push/Pull/Gather????
 	GetUUID() string
 	GetRoot() string
@@ -107,7 +106,14 @@ type WalFile interface {
 	GetPushMatchTerm() []rune
 }
 
-type LocalWalFile struct {
+type LocalWalFile interface {
+	Load() (uuid, error)
+	Stop(uuid) error
+
+	WalFile
+}
+
+type LocalFileWalFile struct {
 	rootDir                  string
 	RefreshTicker            *time.Ticker
 	GatherTicker             *time.Ticker
@@ -119,8 +125,8 @@ type LocalWalFile struct {
 	processedEventMap        map[string]struct{}
 }
 
-func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *LocalWalFile {
-	return &LocalWalFile{
+func NewLocalFileWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *LocalFileWalFile {
+	return &LocalFileWalFile{
 		rootDir:                  rootDir,
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
@@ -133,17 +139,87 @@ func NewLocalWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir st
 	}
 }
 
-func (wf *LocalWalFile) GetUUID() string {
+func (wf *LocalFileWalFile) flushPrimary(f *os.File, uuid uuid) error {
+	// Truncate and move to start of file just in case
+	f.Truncate(0)
+	f.Seek(0, io.SeekStart)
+
+	// Write the file header to the start of the file
+	fileHeader := fileHeader{
+		SchemaID: latestFileSchemaID,
+		UUID:     uuid,
+	}
+	err := binary.Write(f, binary.LittleEndian, &fileHeader)
+	if err != nil {
+		fmt.Println("binary.Write failed when writing fileHeader:", err)
+		log.Fatal(err)
+		return err
+	}
+	return nil
+}
+
+// Load retrieves UUID, instantiates the app and flushes to disk if required
+func (wf *LocalFileWalFile) Load() (uuid, error) {
+	rootPath := path.Join(wf.rootDir, rootFileName)
+	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatal(err)
+		return 0, err
+	}
+	defer f.Close()
+
+	fileHeader := fileHeader{}
+	err = binary.Read(f, binary.LittleEndian, &fileHeader)
+	uuid := generateUUID()
+	if err != nil {
+		// For initial load cases (first time an app is run) to beat an edge case race condition
+		// (loading two apps in a fresh root without saves) we need to flush state to the primary.db
+		// file. This prevents initial apps getting confused and generating different WAL UUIDs (thus
+		// ultimately leading to data loss)
+		if err == io.EOF {
+			wf.flushPrimary(f, uuid)
+		} else {
+			log.Fatal(err)
+			return 0, err
+		}
+	}
+
+	// We can now override uuid as it's been read from the file
+	if fileHeader.UUID != 0 {
+		uuid = fileHeader.UUID
+	}
+
+	return uuid, nil
+}
+
+func (wf *LocalFileWalFile) Stop(uuid uuid) error {
+	rootPath := path.Join(wf.rootDir, rootFileName)
+	f, err := os.Create(rootPath)
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
+	defer f.Close()
+
+	err = wf.flushPrimary(f, uuid)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (wf *LocalFileWalFile) GetUUID() string {
 	// TODO this is a stub function for now, refactor out
 	// knowledge of UUID is only relevant for WebWalFiles
 	return ""
 }
 
-func (wf *LocalWalFile) GetRoot() string {
+func (wf *LocalFileWalFile) GetRoot() string {
 	return wf.rootDir
 }
 
-func (wf *LocalWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
+func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	fileNames, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -151,7 +227,7 @@ func (wf *LocalWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *LocalWalFile) GetWal(fileName string) ([]EventLog, error) {
+func (wf *LocalFileWalFile) GetWal(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
 	f, err := os.Open(fileName)
 	defer f.Close()
@@ -169,14 +245,14 @@ func (wf *LocalWalFile) GetWal(fileName string) ([]EventLog, error) {
 	return wal, nil
 }
 
-func (wf *LocalWalFile) RemoveWals(fileNames []string) error {
+func (wf *LocalFileWalFile) RemoveWals(fileNames []string) error {
 	for _, f := range fileNames {
 		os.Remove(f)
 	}
 	return nil
 }
 
-func (wf *LocalWalFile) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -186,41 +262,41 @@ func (wf *LocalWalFile) Flush(b *bytes.Buffer, fileName string) error {
 	return nil
 }
 
-func (wf *LocalWalFile) SetProcessedPartialWals(fileName string) {
+func (wf *LocalFileWalFile) SetProcessedPartialWals(fileName string) {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	wf.processedPartialWals[fileName] = struct{}{}
 }
 
-func (wf *LocalWalFile) IsPartialWalProcessed(fileName string) bool {
+func (wf *LocalFileWalFile) IsPartialWalProcessed(fileName string) bool {
 	wf.processedPartialWalsLock.Lock()
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[fileName]
 	return exists
 }
 
-func (wf *LocalWalFile) AwaitPull() {
+func (wf *LocalFileWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *LocalWalFile) AwaitGather() {
+func (wf *LocalFileWalFile) AwaitGather() {
 	<-wf.GatherTicker.C
 }
 
-func (wf *LocalWalFile) StopTickers() {
+func (wf *LocalFileWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
 	wf.GatherTicker.Stop()
 }
 
-func (wf *LocalWalFile) GetMode() string {
+func (wf *LocalFileWalFile) GetMode() string {
 	return wf.mode
 }
 
-func (wf *LocalWalFile) GetPushMatchTerm() []rune {
+func (wf *LocalFileWalFile) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *LocalWalFile) SetProcessedEvent(fileName string) {
+func (wf *LocalFileWalFile) SetProcessedEvent(fileName string) {
 	// TODO these are currently duplicated across walfiles, think of a more graceful
 	// boundary for reuse
 	wf.processedEventLock.Lock()
@@ -228,7 +304,7 @@ func (wf *LocalWalFile) SetProcessedEvent(fileName string) {
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *LocalWalFile) IsEventProcessed(fileName string) bool {
+func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]

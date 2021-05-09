@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"time"
@@ -17,6 +18,8 @@ const (
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
 	viewFilePattern = "view_%v.db"
+
+	latestFileSchemaID = fileSchemaID(3)
 )
 
 type bits uint32
@@ -46,18 +49,17 @@ type ListRepo interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root               *ListItem
-	rootPath           string
-	eventLogger        *DbEventLogger
-	matchListItems     []*ListItem
-	latestFileSchemaID fileSchemaID
+	Root           *ListItem
+	rootPath       string
+	eventLogger    *DbEventLogger
+	matchListItems []*ListItem
 
 	// Wal stuff
 	uuid              uuid
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
-	LocalWalFile      WalFile
+	LocalWalFile      LocalWalFile
 	walFiles          []WalFile
 	eventsChan        chan EventLog
 	stop              chan struct{}
@@ -66,18 +68,22 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(rootDir string, localWalFile LocalWalFile, pushFrequency uint16) *DBListRepo {
 	// Make sure the root directory exists
 	os.Mkdir(rootDir, os.ModePerm)
 
+	baseUUID, err := localWalFile.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	rootPath := path.Join(rootDir, rootFileName)
-	return &DBListRepo{
-		rootPath:           rootPath,
-		eventLogger:        NewDbEventLogger(),
-		latestFileSchemaID: fileSchemaID(3),
+	listRepo := &DBListRepo{
+		rootPath:    rootPath,
+		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
-		uuid:              generateUUID(),
+		uuid:              baseUUID,
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
@@ -86,6 +92,13 @@ func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *
 		stop:              make(chan struct{}, 1),
 		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
 	}
+
+	// The localWalFile gets attached to the Wal independently (there are certain operations
+	// that require us to only target the local walfile rather than all). We still need to register
+	// it as we call all walfiles in the next line.
+	listRepo.RegisterWalFile(localWalFile)
+
+	return listRepo
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input

@@ -56,17 +56,10 @@ func main() {
 	}
 
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
+	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
 
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(cfg.Root, localWalFile, pushFrequencyMs)
-
-	// Load early to establish the uuid (this is needed for various startup ops)
-	// This also creates the root directory, which is required by the login below
-	err = listRepo.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
 	// TODO atm only triggers on last arg, make smarter!
@@ -80,12 +73,6 @@ func main() {
 			prompt.LaunchRemotesCLI(web)
 		}
 	}
-
-	// We explicitly pass the localWalFile to the listRepo above because it ultimately gets attached to the
-	// Wal independently (there are certain operations that require us to only target the local walfile rather
-	// than all).
-	// We still need to register it as we call all walfiles in the next line.
-	listRepo.RegisterWalFile(localWalFile)
 
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
 	// Tokens are gererated on `login`
