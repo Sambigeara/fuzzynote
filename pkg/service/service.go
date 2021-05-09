@@ -84,7 +84,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
-		uuid:              baseUUID,
+		uuid:              uuid(baseUUID),
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),

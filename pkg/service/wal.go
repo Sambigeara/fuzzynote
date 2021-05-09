@@ -107,8 +107,8 @@ type WalFile interface {
 }
 
 type LocalWalFile interface {
-	Load() (uuid, error)
-	Stop(uuid) error
+	Load() (uint32, error)
+	Stop(uint32) error
 
 	WalFile
 }
@@ -159,7 +159,7 @@ func (wf *LocalFileWalFile) flushPrimary(f *os.File, uuid uuid) error {
 }
 
 // Load retrieves UUID, instantiates the app and flushes to disk if required
-func (wf *LocalFileWalFile) Load() (uuid, error) {
+func (wf *LocalFileWalFile) Load() (uint32, error) {
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -189,10 +189,10 @@ func (wf *LocalFileWalFile) Load() (uuid, error) {
 		uuid = fileHeader.UUID
 	}
 
-	return uuid, nil
+	return uint32(uuid), nil
 }
 
-func (wf *LocalFileWalFile) Stop(uuid uuid) error {
+func (wf *LocalFileWalFile) Stop(uid uint32) error {
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.Create(rootPath)
 	if err != nil {
@@ -201,7 +201,7 @@ func (wf *LocalFileWalFile) Stop(uuid uuid) error {
 	}
 	defer f.Close()
 
-	err = wf.flushPrimary(f, uuid)
+	err = wf.flushPrimary(f, uuid(uid))
 	if err != nil {
 		return err
 	}
