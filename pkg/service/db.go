@@ -37,10 +37,12 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 		for {
 			select {
 			case partialWal := <-walChan:
-				if err := r.Replay(partialWal); err != nil {
-					log.Fatal(err)
+				if len(*partialWal) != 0 {
+					if err := r.Replay(partialWal); err != nil {
+						log.Fatal(err)
+					}
+					client.Refresh()
 				}
-				client.Refresh()
 			case ev := <-inputEvtsChan:
 				cont, err := client.HandleEvent(ev)
 				if err != nil {
