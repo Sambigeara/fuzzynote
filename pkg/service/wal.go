@@ -442,6 +442,11 @@ func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
 }
 
 func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
+	// No point merging with an empty partialWal
+	if len(*partialWal) == 0 {
+		return nil
+	}
+
 	// Merge with any new local events which may have occurred during sync
 	r.log = merge(r.log, partialWal)
 
