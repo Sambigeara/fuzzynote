@@ -18,9 +18,6 @@ const (
 	viewFilePattern = "view_%v.db"
 
 	latestFileSchemaID = fileSchemaID(3)
-
-	webRefreshFrequencyMs = 10000 // 10 seconds
-	webGatherFrequencyMs  = 60000 // 1 minute
 )
 
 type bits uint32
@@ -112,7 +109,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 		}
 		for _, r := range remotes {
 			if r.IsActive {
-				webWalFile := NewWebWalFile(r, webRefreshFrequencyMs, webGatherFrequencyMs, web)
+				webWalFile := NewWebWalFile(r, web)
 				listRepo.RegisterWalFile(webWalFile)
 			}
 		}

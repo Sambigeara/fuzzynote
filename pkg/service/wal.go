@@ -993,7 +993,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				// Add to an ephemeral log
 				el = append(el, e)
 			case <-r.pushTicker.C:
-				log.Print("SAM BOOM PUSHTICKER")
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				// We pass by reference, so we'll need to create a copy prior to sending to `push`

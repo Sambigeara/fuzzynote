@@ -25,6 +25,9 @@ const (
 
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
+
+	refreshFrequency = 30000 // 30 seconds
+	gatherFrequency  = 60000 // 1 minute
 )
 
 type WebWalFile struct {
@@ -40,7 +43,7 @@ type WebWalFile struct {
 	GatherTicker             *time.Ticker
 }
 
-func NewWebWalFile(cfg WebRemote, refreshFrequency uint16, gatherFrequency uint16, web *Web) *WebWalFile {
+func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	return &WebWalFile{
 		uuid:                     cfg.UUID,
 		web:                      web,
