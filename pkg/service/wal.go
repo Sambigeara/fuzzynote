@@ -891,6 +891,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 		for _, wf := range r.walFiles {
 			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 				if sync {
+					// TODO Use waitgroups
 					r.push(&el, wf)
 				} else {
 					go func(wf WalFile) { r.push(&el, wf) }(wf)
@@ -910,11 +911,13 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		return err
 	}
 	go func() { walChan <- localEl }()
-	for _, wf := range r.walFiles {
-		if wf != r.LocalWalFile {
-			go func(wf WalFile) { r.push(localEl, wf) }(wf)
-		}
-	}
+
+	// TODO testing disabled push to all walfiles on start
+	//for _, wf := range r.walFiles {
+	//    if wf != r.LocalWalFile {
+	//        go func(wf WalFile) { r.push(localEl, wf) }(wf)
+	//    }
+	//}
 
 	for _, wf := range r.walFiles {
 		// Trigger initial instant single pull from all walfiles
@@ -950,7 +953,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Consume from the websocket, if available
-	//if r.web != nil {
 	go func() {
 		// TODO Check for stop signal
 		for {
@@ -965,7 +967,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			}
 		}
 	}()
-	//}
 
 	// Push to all WalFiles
 	go func() {
@@ -989,9 +990,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						}
 					}
 				}
-				// Consume off of the channel and add to an ephemeral log
+				// Add to an ephemeral log
 				el = append(el, e)
 			case <-r.pushTicker.C:
+				log.Print("SAM BOOM PUSHTICKER")
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				// We pass by reference, so we'll need to create a copy prior to sending to `push`
