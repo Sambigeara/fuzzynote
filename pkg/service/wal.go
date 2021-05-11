@@ -100,7 +100,6 @@ type WalFile interface {
 	IsEventProcessed(string) bool
 
 	AwaitPull()
-	AwaitGather()
 	StopTickers()
 
 	GetMode() string
@@ -117,7 +116,6 @@ type LocalWalFile interface {
 type LocalFileWalFile struct {
 	rootDir                  string
 	RefreshTicker            *time.Ticker
-	GatherTicker             *time.Ticker
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
 	mode                     string
@@ -126,11 +124,10 @@ type LocalFileWalFile struct {
 	processedEventMap        map[string]struct{}
 }
 
-func NewLocalFileWalFile(refreshFrequency uint16, gatherFrequency uint16, rootDir string) *LocalFileWalFile {
+func NewLocalFileWalFile(refreshFrequency uint16, rootDir string) *LocalFileWalFile {
 	return &LocalFileWalFile{
 		rootDir:                  rootDir,
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 		mode:                     ModeSync,
@@ -282,13 +279,8 @@ func (wf *LocalFileWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *LocalFileWalFile) AwaitGather() {
-	<-wf.GatherTicker.C
-}
-
 func (wf *LocalFileWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
-	wf.GatherTicker.Stop()
 }
 
 func (wf *LocalFileWalFile) GetMode() string {
@@ -935,24 +927,23 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			walChan <- el
 		}(wf)
 
-		// And then schedule repeating async pulls
+		// And then schedule repeating async pulls and gathers
+		// Gather will be done every Nth time
 		go func(wf WalFile) {
+			cnt := 0
 			for {
 				wf.AwaitPull()
-				var el *[]EventLog
-				if el, err = pull(wf); err != nil {
-					log.Fatal(err)
-				}
-				walChan <- el
-			}
-		}(wf)
-
-		// Schedule gather tasks
-		go func(wf WalFile) {
-			for {
-				wf.AwaitGather()
-				if err := r.gather(wf); err != nil {
-					log.Fatal(err)
+				if cnt == 2 {
+					var el *[]EventLog
+					if el, err = pull(wf); err != nil {
+						log.Fatal(err)
+					}
+					walChan <- el
+					cnt = 0
+				} else {
+					if err := r.gather(wf); err != nil {
+						log.Fatal(err)
+					}
 				}
 			}
 		}(wf)

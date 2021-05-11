@@ -68,7 +68,6 @@ type S3Remote struct {
 	Bucket        string
 	Prefix        string
 	RefreshFreqMs uint16
-	GatherFreqMs  uint16
 }
 
 type WebRemote struct {

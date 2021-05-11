@@ -20,7 +20,6 @@ const (
 	remotesArg = "cfg"
 
 	localRefreshFrequencyMs = 10000 // 10 seconds
-	localGatherFrequencyMs  = 30000 // 30 seconds
 
 	pushFrequencyMs = 10000
 )
@@ -72,7 +71,7 @@ func main() {
 	}
 
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, localGatherFrequencyMs, cfg.Root)
+	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, cfg.Root)
 	// Generate FileWebTokenStore
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
 	// Instantiate listRepo

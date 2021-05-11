@@ -27,7 +27,6 @@ const (
 	iDTokenHeader              = "Id-Token"
 
 	refreshFrequency = 30000 // 30 seconds
-	gatherFrequency  = 60000 // 1 minute
 )
 
 type WebWalFile struct {
@@ -40,7 +39,6 @@ type WebWalFile struct {
 	processedEventLock       *sync.Mutex
 	processedEventMap        map[string]struct{}
 	RefreshTicker            *time.Ticker
-	GatherTicker             *time.Ticker
 }
 
 func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
@@ -54,7 +52,6 @@ func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 	}
 }
 
@@ -394,13 +391,8 @@ func (wf *WebWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *WebWalFile) AwaitGather() {
-	<-wf.GatherTicker.C
-}
-
 func (wf *WebWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
-	wf.GatherTicker.Stop()
 }
 
 func (wf *WebWalFile) GetMode() string          { return wf.mode }

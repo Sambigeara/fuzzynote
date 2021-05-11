@@ -20,7 +20,6 @@ import (
 
 type s3FileWal struct {
 	RefreshTicker            *time.Ticker
-	GatherTicker             *time.Ticker
 	svc                      *s3.S3
 	downloader               *s3manager.Downloader
 	uploader                 *s3manager.Uploader
@@ -42,9 +41,6 @@ func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 	if cfg.RefreshFreqMs == 0 {
 		cfg.RefreshFreqMs = 2000
 	}
-	if cfg.GatherFreqMs == 0 {
-		cfg.GatherFreqMs = 10000
-	}
 
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
@@ -56,7 +52,6 @@ func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 
 	return &s3FileWal{
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(cfg.RefreshFreqMs)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cfg.GatherFreqMs)),
 		svc:                      s3.New(sess),
 		downloader:               s3manager.NewDownloader(sess),
 		uploader:                 s3manager.NewUploader(sess),
@@ -215,13 +210,8 @@ func (wf *s3FileWal) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *s3FileWal) AwaitGather() {
-	<-wf.GatherTicker.C
-}
-
 func (wf *s3FileWal) StopTickers() {
 	wf.RefreshTicker.Stop()
-	wf.GatherTicker.Stop()
 }
 
 func (wf *s3FileWal) GetMode() string {
