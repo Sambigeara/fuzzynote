@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	//b64 "encoding/base64"
@@ -224,19 +225,20 @@ func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, erro
 	if err != nil {
 		return []string{}, err
 	}
-	return fileNames, nil
+	uuids := []string{}
+	for _, fileName := range fileNames {
+		uuid := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
+		uuids = append(uuids, uuid)
+	}
+	return uuids, nil
 }
 
 func (wf *LocalFileWalFile) GetWal(fileName string) ([]EventLog, error) {
 	wal := []EventLog{}
-	f, err := os.Open(fileName)
-	defer f.Close()
-	if err != nil {
-		return wal, err
-	}
 
 	var b []byte
-	b, err = ioutil.ReadFile(fileName)
+	fileName = fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)
+	b, err := ioutil.ReadFile(fileName)
 	buf := bytes.NewBuffer(b)
 	wal, err = BuildFromFile(buf)
 	if err != nil {
@@ -247,12 +249,13 @@ func (wf *LocalFileWalFile) GetWal(fileName string) ([]EventLog, error) {
 
 func (wf *LocalFileWalFile) RemoveWals(fileNames []string) error {
 	for _, f := range fileNames {
-		os.Remove(f)
+		os.Remove(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), f))
 	}
 	return nil
 }
 
-func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, randomUUID string) error {
+	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -717,8 +720,8 @@ func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	// retrieve and handle the wal (for now)
 	// Use the current time to generate the name
 	b := BuildByteWal(&partialWal)
-	viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
-	r.LocalWalFile.Flush(b, viewName)
+	//viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
+	r.LocalWalFile.Flush(b, fmt.Sprintf("%d", time.Now().UnixNano()))
 	return nil
 }
 
@@ -837,11 +840,10 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	if randomUUID == "" {
 		randomUUID = fmt.Sprintf("%v%v", r.uuid, generateUUID())
 	}
-	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	wf.SetProcessedPartialWals(randomUUID)
-	if err := wf.Flush(b, randomWal); err != nil {
+	if err := wf.Flush(b, randomUUID); err != nil {
 		log.Fatal(err)
 	}
 

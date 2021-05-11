@@ -353,9 +353,9 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
-	partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
+	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
 	if err != nil || presignedURL == "" {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,7 +97,7 @@ func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
 	}
 
 	for _, item := range resp.Contents {
-		fileNames = append(fileNames, *item.Key)
+		fileNames = append(fileNames, strings.Split(strings.Split(*item.Key, "_")[1], ".")[0])
 	}
 	return fileNames, nil
 }
@@ -108,7 +110,7 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 	_, err := wf.downloader.Download(b,
 		&s3.GetObjectInput{
 			Bucket: aws.String(wf.bucket),
-			Key:    aws.String(fileName),
+			Key:    aws.String(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)),
 		})
 	if err != nil {
 		// If the file has been removed, skip, as it means another process has already merged
@@ -142,7 +144,7 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	objects := []*s3.ObjectIdentifier{}
 	for _, f := range fileNames {
 		objects = append(objects, &s3.ObjectIdentifier{
-			Key: aws.String(f),
+			Key: aws.String(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), f)),
 		})
 	}
 	//del := []s3.Delete{}
@@ -181,7 +183,8 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *s3FileWal) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *s3FileWal) Flush(b *bytes.Buffer, randomUUID string) error {
+	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
