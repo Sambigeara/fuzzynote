@@ -943,14 +943,14 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		}(wf)
 
 		// Schedule gather tasks
-		go func(wf WalFile) {
-			for {
-				wf.AwaitGather()
-				if err := r.gather(wf); err != nil {
-					log.Fatal(err)
-				}
-			}
-		}(wf)
+		//go func(wf WalFile) {
+		//    for {
+		//        wf.AwaitGather()
+		//        if err := r.gather(wf); err != nil {
+		//            log.Fatal(err)
+		//        }
+		//    }
+		//}(wf)
 	}
 
 	// Consume from the websocket, if available
