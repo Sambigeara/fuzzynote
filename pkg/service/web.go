@@ -197,9 +197,14 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 
 		// Acknowledge the event in the WalFile event cache, so we know to emit further events even
 		// if the match term doesn't match
-		wf := w.walFileMap[m.UUID]
-		key, _ := el[0].getKeys()
-		(*wf).SetProcessedEvent(key)
+		wf, exists := w.walFileMap[m.UUID]
+
+		// TODO Add the walfile if it doesn't exist in the map already.
+		// This can occur when running two independent instances for the same user.
+		if exists {
+			key, _ := el[0].getKeys()
+			(*wf).SetProcessedEvent(key)
+		}
 	}
 
 	return err
