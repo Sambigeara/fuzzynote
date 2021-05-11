@@ -840,7 +840,7 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
-	wf.SetProcessedPartialWals(randomWal)
+	wf.SetProcessedPartialWals(randomUUID)
 	if err := wf.Flush(b, randomWal); err != nil {
 		log.Fatal(err)
 	}
