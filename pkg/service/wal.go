@@ -828,13 +828,15 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	return &filteredWal
 }
 
-func (r *DBListRepo) push(el *[]EventLog, wf WalFile) error {
+func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
 	b := BuildByteWal(el)
 
-	randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
+	if randomUUID == "" {
+		randomUUID = fmt.Sprintf("%v%v", r.uuid, generateUUID())
+	}
 	randomWal := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
@@ -877,7 +879,7 @@ func (r *DBListRepo) gather(wf WalFile) error {
 	}
 
 	// Flush the gathered Wal
-	if err := r.push(&mergedWal, wf); err != nil {
+	if err := r.push(&mergedWal, wf, ""); err != nil {
 		return err
 	}
 
@@ -889,13 +891,14 @@ func (r *DBListRepo) gather(wf WalFile) error {
 
 func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	if len(el) > 0 {
+		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		for _, wf := range r.walFiles {
 			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 				if sync {
 					// TODO Use waitgroups
-					r.push(&el, wf)
+					r.push(&el, wf, randomUUID)
 				} else {
-					go func(wf WalFile) { r.push(&el, wf) }(wf)
+					go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
 				}
 			}
 		}
@@ -1020,7 +1023,7 @@ func (r *DBListRepo) finish() error {
 	localFileNames, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 
 	// Flush full log to local walfile
-	r.push(r.log, r.LocalWalFile)
+	r.push(r.log, r.LocalWalFile, "")
 
 	// Delete all redundant local files
 	r.LocalWalFile.RemoveWals(localFileNames)
