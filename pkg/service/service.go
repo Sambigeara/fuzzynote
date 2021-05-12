@@ -101,16 +101,20 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.RefreshToken() != "" {
 		web := NewWeb(webTokenStore)
-		listRepo.RegisterWeb(web)
-		// Retrieve remotes from API
-		remotes, err := web.GetRemotes("", nil)
-		if err != nil {
-			log.Fatal("Error when trying to retrieve remotes config from API")
-		}
-		for _, r := range remotes {
-			if r.IsActive {
-				webWalFile := NewWebWalFile(r, web)
-				listRepo.RegisterWalFile(webWalFile)
+		web.uuid = listRepo.uuid // TODO
+		err := listRepo.RegisterWeb(web)
+		if err == nil {
+			listRepo.web = web
+			// Retrieve remotes from API
+			remotes, err := web.GetRemotes("", nil)
+			if err != nil {
+				log.Fatal("Error when trying to retrieve remotes config from API")
+			}
+			for _, r := range remotes {
+				if r.IsActive {
+					webWalFile := NewWebWalFile(r, web)
+					listRepo.RegisterWalFile(webWalFile)
+				}
 			}
 		}
 	}
@@ -135,6 +139,14 @@ type ListItem struct {
 
 func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
+}
+
+// IsWebConnected returns whether or not the DBListRepo successfully connected to the web remote
+func (r *DBListRepo) IsWebConnected() bool {
+	if r.web != nil {
+		return true
+	}
+	return false
 }
 
 func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {

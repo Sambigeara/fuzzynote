@@ -55,17 +55,10 @@ func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	}
 }
 
-func (w *Web) establishWebSocketConnection() {
-	//if w.wsConn != nil {
-	//    ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	//    defer cancel()
-	//    // Return on successful response
-	//    if err := w.wsConn.Ping(ctx); err == nil {
-	//        return
-	//    }
-	//}
+func (w *Web) establishWebSocketConnection() error {
+	// TODO close off previous connection gracefully if present??
 
-	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response) {
+	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
@@ -75,44 +68,30 @@ func (w *Web) establishWebSocketConnection() {
 		q.Add("uuid", fmt.Sprintf("%d", w.uuid))
 		u.RawQuery = q.Encode()
 
-		wsConn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
-		if err != nil {
-			// If StatusUnauthorized, let it return as normal so we can attempt reauth
-			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
-				return nil, resp
-			}
-			log.Fatalf("Error establishing websocket connection: %s", err)
-		}
-		//if resp.StatusCode == http.StatusUnauthorized {
-		//    errStr := ""
-		//    if resp.Body != nil {
-		//        b, _ := ioutil.ReadAll(resp.Body)
-		//        errStr = string(b)
-		//    }
-		//    log.Fatalf("Error establishing websocket connection: %s", errStr)
-		//}
-		return wsConn, resp
+		return websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
 	}
 
 	var resp *http.Response
-	w.wsConn, resp = dialFunc(w.tokens.AccessToken())
+	var err error
+	w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
-	if resp.StatusCode == http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusSwitchingProtocols {
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
 		marshalBody, err := json.Marshal(body)
 		if err != nil {
-			return
+			return err
 		}
 		err = Authenticate(w.tokens, marshalBody, nil)
 		if err != nil {
-			return
+			return err
 		}
-		w.wsConn, resp = dialFunc(w.tokens.AccessToken())
+		w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
 	}
+	return err
 }
 
 type message struct {

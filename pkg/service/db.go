@@ -75,10 +75,8 @@ func (r *DBListRepo) Stop() error {
 	return nil
 }
 
-func (r *DBListRepo) RegisterWeb(w *Web) {
-	r.web = w
-	r.web.uuid = r.uuid
-	w.establishWebSocketConnection()
+func (r *DBListRepo) RegisterWeb(w *Web) error {
+	return w.establishWebSocketConnection()
 }
 
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
