@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -105,6 +106,34 @@ func GetS3Config(root string) []S3Remote {
 		defer f.Close()
 	}
 	return r.S3
+}
+
+// OverrideBaseUUID will attempt to retrieve an existing UUID to set and store within the primary.db file
+// If we don't do this, we randomly generate a UUID and add a remote each time we log in.
+// Only use an existing UUID if there is a remote with MatchAll set to True, otherwise
+// maintain the randomly generated UUID.
+func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile, ctx interface{}) error {
+	remotes, err := w.GetRemotes("", nil)
+	if err != nil {
+		return err
+	}
+	if len(remotes) > 0 {
+		var baseUUID64 uint64
+		for _, r := range remotes {
+			if r.MatchAll {
+				var err error
+				baseUUID64, err = strconv.ParseUint(r.UUID, 10, 32)
+				if err != nil {
+					return err
+				}
+				break
+			}
+		}
+		if baseUUID64 != 0 {
+			localWalFile.SetBaseUUID(uint32(baseUUID64), ctx)
+		}
+	}
+	return nil
 }
 
 // TODO move this somewhere better - it's separate from normal business logic

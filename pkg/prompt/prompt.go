@@ -154,6 +154,18 @@ func Login(root string) {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)
 	}
+
+	// We need to retrieve an existing UUID to set and store within the primary.db file
+	// Otherwise, we randomly generate a UUID and add a remote each time we log in.
+	// Only use an existing UUID if there is a remote with MatchAll set to True, otherwise
+	// maintain the randomly generated UUID.
+	w := service.NewWeb(wt)
+
+	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(10, root), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Print("Login successful!")
 }
 

@@ -109,6 +109,7 @@ type WalFile interface {
 type LocalWalFile interface {
 	Load(interface{}) (uint32, error)
 	Stop(uint32, interface{}) error
+	SetBaseUUID(uint32, interface{}) error
 
 	WalFile
 }
@@ -205,6 +206,18 @@ func (wf *LocalFileWalFile) Stop(uid uint32, ctx interface{}) error {
 	}
 
 	return nil
+}
+
+func (wf *LocalFileWalFile) SetBaseUUID(uid uint32, ctx interface{}) error {
+	// TODO dedup
+	rootPath := path.Join(wf.rootDir, rootFileName)
+	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return wf.flushPrimary(f, uuid(uid))
 }
 
 func (wf *LocalFileWalFile) GetUUID() string {
