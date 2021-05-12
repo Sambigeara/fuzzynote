@@ -442,17 +442,34 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 		return nil
 	}
 
+	fullMerge := true
+	// Establish whether or not the oldest event of the partialWal is newer than the most
+	// recent of the existing (and therefore already processed) wal.
+	// If all events in the partialWal are newer, we can avoid the full merge, and r.Root
+	// reset, which is a significant optimisation.
+	// This needs to be done pre-merge.
+	if len(*r.log) > 0 && checkEquality((*r.log)[len(*r.log)-1], (*partialWal)[0]) == leftEventOlder {
+		fullMerge = false
+	}
+
 	// Merge with any new local events which may have occurred during sync
 	r.log = merge(r.log, partialWal)
 
-	// Clear the listItemTracker for all full Replays
-	// This map is also used by the main service interface CRUD endpoints, but we can
-	// clear it here because both the CRUD ops and these Replays run in the same loop,
-	// so we won't get any contention.
-	r.listItemTracker = make(map[string]*ListItem)
-
+	var replayLog *[]EventLog
 	var root *ListItem
-	for _, e := range *r.log {
+	if fullMerge {
+		// Clear the listItemTracker for all full Replays
+		// This map is also used by the main service interface CRUD endpoints, but we can
+		// clear it here because both the CRUD ops and these Replays run in the same loop,
+		// so we won't get any contention.
+		r.listItemTracker = make(map[string]*ListItem)
+		replayLog = r.log
+	} else {
+		replayLog = partialWal
+		root = r.Root
+	}
+
+	for _, e := range *replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
 		root, _, _ = r.CallFunctionForEventLog(root, e)
