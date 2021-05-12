@@ -927,12 +927,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 	go func() { walChan <- localEl }()
 
-	// TODO testing disabled push to all walfiles on start
-	//for _, wf := range r.walFiles {
-	//    if wf != r.LocalWalFile {
-	//        go func(wf WalFile) { r.push(localEl, wf) }(wf)
-	//    }
-	//}
+	for _, wf := range r.walFiles {
+		if wf != r.LocalWalFile {
+			go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+		}
+	}
 
 	for _, wf := range r.walFiles {
 		// Trigger initial instant single pull from all walfiles
