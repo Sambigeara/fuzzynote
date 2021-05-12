@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -74,6 +75,12 @@ func (w *Web) establishWebSocketConnection() error {
 	var resp *http.Response
 	var err error
 	w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+	if resp == nil {
+		if err != nil {
+			return err
+		}
+		return errors.New("Failed to establish websocket connection")
+	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
 	if resp.StatusCode != http.StatusSwitchingProtocols {
