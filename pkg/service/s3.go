@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +20,6 @@ import (
 
 type s3FileWal struct {
 	RefreshTicker            *time.Ticker
-	GatherTicker             *time.Ticker
 	svc                      *s3.S3
 	downloader               *s3manager.Downloader
 	uploader                 *s3manager.Uploader
@@ -35,13 +36,10 @@ type s3FileWal struct {
 	processedEventLock       *sync.Mutex
 }
 
-func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
+func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 	// Handle defaults if not set
 	if cfg.RefreshFreqMs == 0 {
 		cfg.RefreshFreqMs = 2000
-	}
-	if cfg.GatherFreqMs == 0 {
-		cfg.GatherFreqMs = 10000
 	}
 
 	sess, err := session.NewSession(&aws.Config{
@@ -54,7 +52,6 @@ func NewS3FileWal(cfg s3Remote, root string) *s3FileWal {
 
 	return &s3FileWal{
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(cfg.RefreshFreqMs)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(cfg.GatherFreqMs)),
 		svc:                      s3.New(sess),
 		downloader:               s3manager.NewDownloader(sess),
 		uploader:                 s3manager.NewUploader(sess),
@@ -95,7 +92,7 @@ func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
 	}
 
 	for _, item := range resp.Contents {
-		fileNames = append(fileNames, *item.Key)
+		fileNames = append(fileNames, strings.Split(strings.Split(*item.Key, "_")[1], ".")[0])
 	}
 	return fileNames, nil
 }
@@ -108,7 +105,7 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 	_, err := wf.downloader.Download(b,
 		&s3.GetObjectInput{
 			Bucket: aws.String(wf.bucket),
-			Key:    aws.String(fileName),
+			Key:    aws.String(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)),
 		})
 	if err != nil {
 		// If the file has been removed, skip, as it means another process has already merged
@@ -142,7 +139,7 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	objects := []*s3.ObjectIdentifier{}
 	for _, f := range fileNames {
 		objects = append(objects, &s3.ObjectIdentifier{
-			Key: aws.String(f),
+			Key: aws.String(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), f)),
 		})
 	}
 	//del := []s3.Delete{}
@@ -181,7 +178,8 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *s3FileWal) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *s3FileWal) Flush(b *bytes.Buffer, randomUUID string) error {
+	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
@@ -212,13 +210,8 @@ func (wf *s3FileWal) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *s3FileWal) AwaitGather() {
-	<-wf.GatherTicker.C
-}
-
 func (wf *s3FileWal) StopTickers() {
 	wf.RefreshTicker.Stop()
-	wf.GatherTicker.Stop()
 }
 
 func (wf *s3FileWal) GetMode() string {

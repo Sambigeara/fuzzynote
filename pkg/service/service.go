@@ -3,8 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path"
+	"log"
 	"time"
 )
 
@@ -17,6 +16,8 @@ const (
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
 	viewFilePattern = "view_%v.db"
+
+	latestFileSchemaID = fileSchemaID(3)
 )
 
 type bits uint32
@@ -29,6 +30,12 @@ func set(b, flag bits) bits    { return b | flag }
 func clear(b, flag bits) bits  { return b &^ flag }
 func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
+
+type Client interface {
+	HandleEvent(interface{}) (bool, error)
+	AwaitEvent() interface{}
+	Refresh()
+}
 
 // ListRepo represents the main interface to the in-mem ListItem store
 type ListRepo interface {
@@ -46,26 +53,73 @@ type ListRepo interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root               *ListItem
-	rootPath           string
-	eventLogger        *DbEventLogger
-	wal                *Wal
-	matchListItems     []*ListItem
-	latestFileSchemaID fileSchemaID
+	Root           *ListItem
+	eventLogger    *DbEventLogger
+	matchListItems []*ListItem
+
+	// Wal stuff
+	uuid              uuid
+	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
+	latestWalSchemaID uint16
+	listItemTracker   map[string]*ListItem
+	LocalWalFile      LocalWalFile
+	walFiles          []WalFile
+	eventsChan        chan EventLog
+	stop              chan struct{}
+	pushTicker        *time.Ticker
+	web               *Web
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(rootDir string, localWalFile WalFile, pushFrequency uint16) *DBListRepo {
-	// Make sure the root directory exists
-	os.Mkdir(rootDir, os.ModePerm)
-
-	rootPath := path.Join(rootDir, rootFileName)
-	return &DBListRepo{
-		rootPath:           rootPath,
-		eventLogger:        NewDbEventLogger(),
-		wal:                NewWal(localWalFile, pushFrequency),
-		latestFileSchemaID: fileSchemaID(3),
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
+	fakeCtx := ""
+	baseUUID, err := localWalFile.Load(fakeCtx)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	listRepo := &DBListRepo{
+		eventLogger: NewDbEventLogger(),
+
+		// Wal stuff
+		uuid:              uuid(baseUUID),
+		log:               &[]EventLog{},
+		latestWalSchemaID: latestWalSchemaID,
+		listItemTracker:   make(map[string]*ListItem),
+		LocalWalFile:      localWalFile, // TODO naming
+		eventsChan:        make(chan EventLog),
+		stop:              make(chan struct{}, 1),
+		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
+	}
+
+	// The localWalFile gets attached to the Wal independently (there are certain operations
+	// that require us to only target the local walfile rather than all). We still need to register
+	// it as we call all walfiles in the next line.
+	listRepo.RegisterWalFile(localWalFile)
+
+	// Tokens are gererated on `login`
+	// Theoretically only need refresh token to have a go at authentication
+	if webTokenStore.RefreshToken() != "" {
+		web := NewWeb(webTokenStore)
+		web.uuid = listRepo.uuid // TODO
+		err := listRepo.RegisterWeb(web)
+		if err == nil {
+			listRepo.web = web
+			// Retrieve remotes from API
+			remotes, err := web.GetRemotes("", nil)
+			if err != nil {
+				log.Fatal("Error when trying to retrieve remotes config from API")
+			}
+			for _, r := range remotes {
+				if r.IsActive {
+					webWalFile := NewWebWalFile(r, web)
+					listRepo.RegisterWalFile(webWalFile)
+				}
+			}
+		}
+	}
+
+	return listRepo
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input
@@ -87,6 +141,14 @@ func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
+// IsWebConnected returns whether or not the DBListRepo successfully connected to the web remote
+func (r *DBListRepo) IsWebConnected() bool {
+	if r.web != nil {
+		return true
+	}
+	return false
+}
+
 func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
 		EventType:                  e,
@@ -98,8 +160,8 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 		Line:                       newLine,
 		Note:                       newNote,
 	}
-	r.wal.eventsChan <- el
-	*r.wal.log = append(*r.wal.log, el)
+	r.eventsChan <- el
+	*r.log = append(*r.log, el)
 	var err error
 	var item *ListItem
 	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
@@ -127,8 +189,8 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.wal.uuid, childUUID)
-	r.addUndoLog(AddEvent, now, childCreationTime, r.wal.uuid, childUUID, line, note, line, note)
+	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
+	r.addUndoLog(AddEvent, now, childCreationTime, r.uuid, childUUID, line, note, line, note)
 	return newItem.Key(), nil
 }
 
@@ -353,5 +415,5 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
-	return r.wal.generatePartialView(matchedItems)
+	return r.generatePartialView(matchedItems)
 }

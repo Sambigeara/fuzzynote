@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -48,6 +49,21 @@ var matchChars = map[matchPattern]int{
 	InverseMatchPattern: 2,
 	FuzzyMatchPattern:   0,
 	NoMatchPattern:      0,
+}
+
+func GetNewLinePrefix(search [][]rune) string {
+	var searchStrings []string
+	for _, group := range search {
+		pattern, nChars := GetMatchPattern(group)
+		if pattern != InverseMatchPattern && len(group) > 0 {
+			searchStrings = append(searchStrings, string(group[nChars:]))
+		}
+	}
+	newString := ""
+	if len(searchStrings) > 0 {
+		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+	}
+	return newString
 }
 
 // GetMatchPattern will return the matchPattern of a given string, if any, plus the number

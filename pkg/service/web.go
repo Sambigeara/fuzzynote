@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -25,6 +26,8 @@ const (
 
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
+
+	refreshFrequency = 30000 // 30 seconds
 )
 
 type WebWalFile struct {
@@ -37,10 +40,9 @@ type WebWalFile struct {
 	processedEventLock       *sync.Mutex
 	processedEventMap        map[string]struct{}
 	RefreshTicker            *time.Ticker
-	GatherTicker             *time.Ticker
 }
 
-func NewWebWalFile(cfg WebRemote, refreshFrequency uint16, gatherFrequency uint16, web *Web) *WebWalFile {
+func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	return &WebWalFile{
 		uuid:                     cfg.UUID,
 		web:                      web,
@@ -51,21 +53,13 @@ func NewWebWalFile(cfg WebRemote, refreshFrequency uint16, gatherFrequency uint1
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
 		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
-		GatherTicker:             time.NewTicker(time.Millisecond * time.Duration(gatherFrequency)),
 	}
 }
 
-func (w *Web) establishWebSocketConnection() {
-	//if w.wsConn != nil {
-	//    ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	//    defer cancel()
-	//    // Return on successful response
-	//    if err := w.wsConn.Ping(ctx); err == nil {
-	//        return
-	//    }
-	//}
+func (w *Web) establishWebSocketConnection() error {
+	// TODO close off previous connection gracefully if present??
 
-	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response) {
+	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
@@ -75,44 +69,36 @@ func (w *Web) establishWebSocketConnection() {
 		q.Add("uuid", fmt.Sprintf("%d", w.uuid))
 		u.RawQuery = q.Encode()
 
-		wsConn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
-		if err != nil {
-			// If StatusUnauthorized, let it return as normal so we can attempt reauth
-			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
-				return nil, resp
-			}
-			log.Fatalf("Error establishing websocket connection: %s", err)
-		}
-		//if resp.StatusCode == http.StatusUnauthorized {
-		//    errStr := ""
-		//    if resp.Body != nil {
-		//        b, _ := ioutil.ReadAll(resp.Body)
-		//        errStr = string(b)
-		//    }
-		//    log.Fatalf("Error establishing websocket connection: %s", errStr)
-		//}
-		return wsConn, resp
+		return websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
 	}
 
 	var resp *http.Response
-	w.wsConn, resp = dialFunc(w.tokens.AccessToken())
+	var err error
+	w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+	if resp == nil {
+		if err != nil {
+			return err
+		}
+		return errors.New("Failed to establish websocket connection")
+	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
-	if resp.StatusCode == http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusSwitchingProtocols {
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
 		marshalBody, err := json.Marshal(body)
 		if err != nil {
-			return
+			return err
 		}
-		err = Authenticate(w.tokens, marshalBody)
+		err = Authenticate(w.tokens, marshalBody, nil)
 		if err != nil {
-			return
+			return err
 		}
-		w.wsConn, resp = dialFunc(w.tokens.AccessToken())
+		w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
 	}
+	return err
 }
 
 type message struct {
@@ -194,9 +180,14 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 
 		// Acknowledge the event in the WalFile event cache, so we know to emit further events even
 		// if the match term doesn't match
-		wf := w.walFileMap[m.UUID]
-		key, _ := el[0].getKeys()
-		(*wf).SetProcessedEvent(key)
+		wf, exists := w.walFileMap[m.UUID]
+
+		// TODO Add the walfile if it doesn't exist in the map already.
+		// This can occur when running two independent instances for the same user.
+		if exists {
+			key, _ := el[0].getKeys()
+			(*wf).SetProcessedEvent(key)
+		}
 	}
 
 	return err
@@ -345,9 +336,9 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *WebWalFile) Flush(b *bytes.Buffer, fileName string) error {
+func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
-	partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
+	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
 	if err != nil || presignedURL == "" {
@@ -386,13 +377,8 @@ func (wf *WebWalFile) AwaitPull() {
 	<-wf.RefreshTicker.C
 }
 
-func (wf *WebWalFile) AwaitGather() {
-	<-wf.GatherTicker.C
-}
-
 func (wf *WebWalFile) StopTickers() {
 	wf.RefreshTicker.Stop()
-	wf.GatherTicker.Stop()
 }
 
 func (wf *WebWalFile) GetMode() string          { return wf.mode }

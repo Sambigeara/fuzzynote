@@ -199,32 +199,27 @@ func TestWalCompact(t *testing.T) {
 }
 
 func TestWalMerge(t *testing.T) {
-	testWalChan := generateProcessingWalChan()
+	os.Mkdir(rootDir, os.ModePerm)
 	t.Run("Start empty db", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
-		f, _ := os.Create(rootPath)
-		defer f.Close()
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
-		repo.Start(testWalChan)
-
-		if len(*repo.wal.log) != 0 {
-			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 0 {
+			t.Fatalf("Expected no events in WAL EventLog but had %d", len(*repo.log))
 		}
 		if repo.Root != nil {
 			t.Fatalf("repo.Root should not exist")
 		}
 	})
 	t.Run("Single local WAL merge", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
-		os.Create(rootPath)
 		defer clearUp()
-
-		repo.Start(testWalChan)
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now := time.Now().UnixNano()
 
@@ -233,8 +228,8 @@ func TestWalMerge(t *testing.T) {
 		data := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now,
@@ -244,8 +239,8 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now + 1,
@@ -256,7 +251,7 @@ func TestWalMerge(t *testing.T) {
 			line1,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -271,38 +266,36 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 2 {
-			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 2 {
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[0].ListItemCreationTime != matches[0].creationTime {
+		if (*repo.log)[0].ListItemCreationTime != matches[0].creationTime {
 			t.Fatal("First match ListItemCreationTime should match first EventLog")
 		}
-		if (*repo.wal.log)[1].ListItemCreationTime != matches[1].creationTime {
+		if (*repo.log)[1].ListItemCreationTime != matches[1].creationTime {
 			t.Fatal("Second match ListItemCreationTime should match second EventLog")
 		}
 
-		if (*repo.wal.log)[0].EventType != AddEvent {
+		if (*repo.log)[0].EventType != AddEvent {
 			t.Fatal("First match item should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].EventType != AddEvent {
+		if (*repo.log)[1].EventType != AddEvent {
 			t.Fatal("Second match item should be of type AddEvent")
 		}
 	})
 	t.Run("Two WAL file merge", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
-		os.Create(rootPath)
 		defer clearUp()
-
-		repo.Start(testWalChan)
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -318,8 +311,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -328,8 +321,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -339,8 +332,8 @@ func TestWalMerge(t *testing.T) {
 			},
 			line0,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now4,
@@ -349,8 +342,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       2,
 				TargetListItemCreationTime: 1,
 				EventTime:                  now5,
@@ -361,7 +354,7 @@ func TestWalMerge(t *testing.T) {
 			line2,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -438,37 +431,35 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 8 {
-			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 8 {
+			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 4 {
-			t.Fatalf("Expected 4 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 4 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[1].Line != string(line0) {
+		if (*repo.log)[1].Line != string(line0) {
 			t.Fatal("First match line should match first EventLog")
 		}
-		if (*repo.wal.log)[3].Line != string(line1) {
+		if (*repo.log)[3].Line != string(line1) {
 			t.Fatal("Second match line should match second EventLog")
 		}
-		if (*repo.wal.log)[5].Line != string(line2) {
+		if (*repo.log)[5].Line != string(line2) {
 			t.Fatal("Third match line should match third EventLog")
 		}
-		if (*repo.wal.log)[7].Line != string(line3) {
+		if (*repo.log)[7].Line != string(line3) {
 			t.Fatal("Fourth match line should match fourth EventLog")
 		}
 	})
 	t.Run("Merge, save, reload, delete remote merged item, re-merge, item still deleted", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
-		os.Create(rootPath)
 		defer clearUp()
-
-		repo.Start(testWalChan)
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano() - 10 // `-10` Otherwise delete "happens" before these times
 		now1 := now0 + 1
@@ -477,8 +468,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -489,7 +480,7 @@ func TestWalMerge(t *testing.T) {
 			line0,
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -537,7 +528,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 2 {
-			t.Fatalf("Expected 2 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
 		}
 
 		if repo.Root.child != nil {
@@ -550,12 +541,17 @@ func TestWalMerge(t *testing.T) {
 			t.Fatal("Root shoud equal Root.parent.child")
 		}
 
-		preSaveLog := *repo.wal.log
-		localWalFile = NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo = NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		preSaveLog := *repo.log
+		localWalFile = NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore = NewFileWebTokenStore(rootDir)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo.Start(testWalChan)
-		localWalFile = NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		repo = NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
+
+		// This is the only test that requires this as we're calling ListRepo CRUD actions on it
+		repo.Start(newTestClient(), generateProcessingWalChan(), make(chan interface{}))
+
+		localWalFile = NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		localWalFile.processedPartialWals = make(map[string]struct{})
 		eventLog, _ = pull(localWalFile)
 		repo.Replay(eventLog)
@@ -566,13 +562,13 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 matches items but had %d", len(matches))
 		}
 
-		if len(*repo.wal.log) != 2 {
-			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 2 {
+			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		for i := range [2]int{} {
 			oldLogItem := preSaveLog[i]
-			newLogItem := (*repo.wal.log)[i]
+			newLogItem := (*repo.log)[i]
 			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
 				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
 			}
@@ -591,7 +587,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Delete(1)
 		eventLog, _ = pull(localWalFile)
 		repo.Replay(eventLog)
-		preSaveLog = *repo.wal.log
+		preSaveLog = *repo.log
 
 		// Re-write the same remote WAL
 		f, _ = os.Create(walPath)
@@ -608,7 +604,7 @@ func TestWalMerge(t *testing.T) {
 
 		for i := range [3]int{} {
 			oldLogItem := preSaveLog[i]
-			newLogItem := (*repo.wal.log)[i]
+			newLogItem := (*repo.log)[i]
 			// `cmp.Equal` doesn't like function comparisons but they're not relevant for this test, so nullify
 			if !(cmp.Equal(oldLogItem, newLogItem, cmp.AllowUnexported(oldLogItem, newLogItem))) {
 				t.Fatalf("Old log item %v does not equal new log item %v at index %d", oldLogItem, newLogItem, i)
@@ -616,8 +612,8 @@ func TestWalMerge(t *testing.T) {
 		}
 
 		// Event log should still be len == 3 as the second log was pre-existing
-		if len(*repo.wal.log) != 3 {
-			t.Fatalf("Expected 3 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 3 {
+			t.Fatalf("Expected 3 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		if repo.Root.child != nil {
@@ -628,13 +624,11 @@ func TestWalMerge(t *testing.T) {
 		}
 	})
 	t.Run("Two WAL file duplicate merge, Delete item in one, Update same in other", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
-		os.Create(rootPath)
 		defer clearUp()
-
-		repo.Start(testWalChan)
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 
 		now0 := time.Now().UnixNano()
 		now1 := now0 + 1
@@ -646,8 +640,8 @@ func TestWalMerge(t *testing.T) {
 		localData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -656,8 +650,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -668,8 +662,8 @@ func TestWalMerge(t *testing.T) {
 			line0,
 			// Deviates here
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now2,
@@ -679,7 +673,7 @@ func TestWalMerge(t *testing.T) {
 			},
 		}
 
-		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.wal.uuid))
+		walPath := path.Join(rootDir, fmt.Sprintf(walDirPattern, repo.uuid))
 		f, _ := os.Create(walPath)
 		defer os.Remove(walPath)
 
@@ -694,8 +688,8 @@ func TestWalMerge(t *testing.T) {
 		remoteData := []interface{}{
 			latestWalSchemaID,
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now0,
@@ -704,8 +698,8 @@ func TestWalMerge(t *testing.T) {
 				NoteLength:                 0,
 			},
 			walItemSchema2{
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now1,
@@ -717,8 +711,8 @@ func TestWalMerge(t *testing.T) {
 			// Deviates here
 			walItemSchema2{
 				// UUID will be same as item.originUUID
-				UUID:                       repo.wal.uuid,
-				TargetUUID:                 repo.wal.uuid,
+				UUID:                       repo.uuid,
+				TargetUUID:                 repo.uuid,
 				ListItemCreationTime:       1,
 				TargetListItemCreationTime: 0,
 				EventTime:                  now3,
@@ -745,26 +739,26 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := pull(localWalFile)
 		repo.Replay(eventLog)
 
-		if len(*repo.wal.log) != 4 {
-			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.wal.log))
+		if len(*repo.log) != 4 {
+			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
 		if len(matches) != 1 {
-			t.Fatalf("Expected 1 matches items but had %d", len(*repo.wal.log))
+			t.Fatalf("Expected 1 matches items but had %d", len(*repo.log))
 		}
 
-		if (*repo.wal.log)[0].EventType != AddEvent {
+		if (*repo.log)[0].EventType != AddEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[1].EventType != UpdateEvent {
+		if (*repo.log)[1].EventType != UpdateEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[2].EventType != DeleteEvent {
+		if (*repo.log)[2].EventType != DeleteEvent {
 			t.Fatal("First event should be of type AddEvent")
 		}
-		if (*repo.wal.log)[3].EventType != UpdateEvent {
+		if (*repo.log)[3].EventType != UpdateEvent {
 			t.Fatal("First event should be of type UpdateEvent")
 		}
 	})
@@ -793,7 +787,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
@@ -830,7 +824,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime + 1,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
@@ -867,7 +861,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 3 {
@@ -905,7 +899,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 0 {
@@ -934,7 +928,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 2 {
@@ -1002,7 +996,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune("foobar")
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 7 {
@@ -1024,7 +1018,7 @@ func TestWalFilter(t *testing.T) {
 			},
 		}
 
-		wf := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		wf := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
 		wf.pushMatchTerm = []rune(matchTerm)
 		matchedWal := getMatchedWal(&el, wf)
 		if len(*matchedWal) != 1 {
@@ -1032,9 +1026,11 @@ func TestWalFilter(t *testing.T) {
 		}
 	})
 	t.Run("Check includes matching item after post replay updates", func(t *testing.T) {
-		localWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
-		repo := NewDBListRepo(rootDir, localWalFile, testPushFrequency)
+		localWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency)
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
 		creationTime := eventTime
@@ -1071,7 +1067,7 @@ func TestWalFilter(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1103,23 +1099,27 @@ func TestWalFilter(t *testing.T) {
 		}
 
 		localWalFile.pushMatchTerm = []rune("foo")
-		matchedWal := getMatchedWal(repo.wal.log, localWalFile)
+		matchedWal := getMatchedWal(repo.log, localWalFile)
 		if len(*matchedWal) != 5 {
 			t.Fatalf("Matched wal should have the same number of events")
 		}
 	})
 	t.Run("Check includes matching item after remote flushes further matching updates", func(t *testing.T) {
-		walFile1 := NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir)
+		walFile1 := NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir)
+		webTokenStore1 := NewFileWebTokenStore(rootDir)
 		// Both repos will talk to the same walfile, but we'll have to instantiate separately, as repo1
 		// needs to set explicit match params
-		repo1 := NewDBListRepo(rootDir, walFile1, testPushFrequency)
+		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		walFile2 := NewLocalWalFile(testPushFrequency, testPushFrequency, otherRootDir)
+		repo1 := NewDBListRepo(walFile1, webTokenStore1, testPushFrequency)
+		os.Mkdir(otherRootDir, os.ModePerm)
+		walFile2 := NewLocalFileWalFile(testPushFrequency, testPushFrequency, otherRootDir)
+		webTokenStore2 := NewFileWebTokenStore(rootDir)
 		// Create copy
-		filteredWalFile := NewLocalWalFile(testPushFrequency, testPushFrequency, otherRootDir)
+		filteredWalFile := NewLocalFileWalFile(testPushFrequency, testPushFrequency, otherRootDir)
 		filteredWalFile.pushMatchTerm = []rune("foo")
 		repo1.RegisterWalFile(filteredWalFile)
-		repo2 := NewDBListRepo(otherRootDir, walFile2, testPushFrequency)
+		repo2 := NewDBListRepo(walFile2, webTokenStore2, testPushFrequency)
 
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
@@ -1158,7 +1158,7 @@ func TestWalFilter(t *testing.T) {
 		})
 
 		// repo1 pushes filtered wal to shared walfile
-		repo1.wal.push(&el, filteredWalFile)
+		repo1.push(&el, filteredWalFile)
 		// repo2 pulls from shared walfile
 		filteredEl, _ := pull(walFile2)
 		// After replay, the remote repo should see a single matched item
@@ -1184,7 +1184,7 @@ func TestWalFilter(t *testing.T) {
 			},
 		}
 
-		repo1.wal.push(&el, filteredWalFile)
+		repo1.push(&el, filteredWalFile)
 		filteredEl, _ = pull(walFile2)
 		repo2.Replay(filteredEl)
 		repo2.Match([][]rune{}, true, "")
@@ -1199,8 +1199,14 @@ func TestWalFilter(t *testing.T) {
 }
 
 func TestWalReplay(t *testing.T) {
-	repo := NewDBListRepo(rootDir, NewLocalWalFile(testPushFrequency, testPushFrequency, rootDir), testPushFrequency)
+	os.Mkdir(rootDir, os.ModePerm)
+	os.Mkdir(rootDir, os.ModePerm)
 	defer clearUp()
+	repo := NewDBListRepo(
+		NewLocalFileWalFile(testPushFrequency, testPushFrequency, rootDir),
+		NewFileWebTokenStore(rootDir),
+		testPushFrequency,
+	)
 	t.Run("Check add creates item", func(t *testing.T) {
 		line := "foobar"
 		uuid := uuid(1)
@@ -1216,7 +1222,7 @@ func TestWalReplay(t *testing.T) {
 			},
 		}
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1243,7 +1249,7 @@ func TestWalReplay(t *testing.T) {
 			},
 		}
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
@@ -1293,7 +1299,7 @@ func TestWalReplay(t *testing.T) {
 			ListItemCreationTime: creationTime,
 		})
 
-		repo.wal.log = &[]EventLog{}
+		repo.log = &[]EventLog{}
 		repo.Replay(&el)
 		repo.Match([][]rune{}, true, "")
 		matches := repo.matchListItems
