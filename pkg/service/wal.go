@@ -738,7 +738,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 		wg.Add(1)
 		var fileNames []string
 		var err error
-		go func() {
+		go func(wg *sync.WaitGroup) {
 			defer wg.Done()
 			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 			fileNames, err = wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
@@ -748,7 +748,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 			m.Lock()
 			fileNameMap[wf] = fileNames
 			m.Unlock()
-		}()
+		}(&wg)
 	}
 	wg.Wait()
 
@@ -759,14 +759,14 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
 				wg.Add(1)
-				go func() {
+				go func(wg *sync.WaitGroup) {
 					defer wg.Done()
 					newWalBytes, err := wf.GetWalBytes(fileName)
 					if err != nil {
 						log.Fatal(err)
 					}
 					byteWals = append(byteWals, newWalBytes)
-				}()
+				}(&wg)
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
 				r.setProcessedPartialWals(fileName)
@@ -887,18 +887,18 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 // to delete the old ones
 func (r *DBListRepo) gather(walFiles []WalFile) error {
 	// TODO separate IO/CPU bound ops to optimise
-
 	for _, wf := range walFiles {
 		// Handle ALL wals
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 		if err != nil {
-			return err
+			log.Fatal(err)
 		}
 
-		// If there's only 1 file, there's no point gathering them, so return
+		// If there's only 1 file, there's no point gathering them, so skip
 		if len(originFiles) <= 1 {
-			return nil
+			// We still want to process other walFiles, so continue
+			continue
 		}
 
 		// Gather origin files
@@ -906,7 +906,9 @@ func (r *DBListRepo) gather(walFiles []WalFile) error {
 		for _, fileName := range originFiles {
 			newWalBytes, err := wf.GetWalBytes(fileName)
 			if err != nil {
-				log.Fatal(err)
+				// GetWalBytes can fail if a file is no longer available, so fail silently and
+				// continue with other walFiles
+				continue
 			}
 
 			buf := bytes.NewBuffer(newWalBytes)
@@ -919,7 +921,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) error {
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
-			return err
+			log.Fatal(err)
 		}
 
 		// Schedule a delete on the files
