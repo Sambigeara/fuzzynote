@@ -174,7 +174,7 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	strWal, _ := base64.StdEncoding.DecodeString(string(m.Wal))
 
 	buf := bytes.NewBuffer([]byte(strWal))
-	el, err := BuildFromFile(buf)
+	el, err := buildFromFile(buf)
 	if err == nil && len(el) > 0 {
 		walChan <- &el
 
@@ -270,7 +270,7 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
+func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
 		log.Printf("Error retrieving wal %s: %s", fileName, err)
@@ -291,20 +291,12 @@ func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
 	}
 
 	// Wals are transmitted over the wire in binary format, so decode
-	wal, err := base64.StdEncoding.DecodeString(string(b64Wal))
+	walBytes, err := base64.StdEncoding.DecodeString(string(b64Wal))
 	if err != nil {
 		//log.Printf("Error decoding wal: %s", err)
 		return nil, nil
 	}
-
-	buf := bytes.NewBuffer(wal)
-
-	var el []EventLog
-	if el, err = BuildFromFile(buf); err != nil {
-		log.Printf("Error building wal from S3: %s", err)
-		return nil, nil
-	}
-	return el, nil
+	return walBytes, err
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {

@@ -89,7 +89,7 @@ type WalFile interface {
 	GetUUID() string
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
-	GetWal(string) ([]EventLog, error)
+	GetWalBytes(string) ([]byte, error)
 	RemoveWals([]string) error
 	Flush(*bytes.Buffer, string) error
 
@@ -243,18 +243,14 @@ func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, erro
 	return uuids, nil
 }
 
-func (wf *LocalFileWalFile) GetWal(fileName string) ([]EventLog, error) {
-	wal := []EventLog{}
-
+func (wf *LocalFileWalFile) GetWalBytes(fileName string) ([]byte, error) {
 	var b []byte
 	fileName = fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)
 	b, err := ioutil.ReadFile(fileName)
-	buf := bytes.NewBuffer(b)
-	wal, err = BuildFromFile(buf)
 	if err != nil {
-		return wal, err
+		return b, err
 	}
-	return wal, nil
+	return b, nil
 }
 
 func (wf *LocalFileWalFile) RemoveWals(fileNames []string) error {
@@ -559,7 +555,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 	return &el, nil
 }
 
-func BuildFromFile(b *bytes.Buffer) ([]EventLog, error) {
+func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 	// The first two bytes of each file represents the file schema ID. For now this means nothing
 	// so we can seek forwards 2 bytes
 	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
@@ -757,10 +753,17 @@ func pull(wf WalFile) (*[]EventLog, error) {
 	newMergedWal := []EventLog{}
 	for _, fileName := range allFileNames {
 		if !wf.IsPartialWalProcessed(fileName) {
-			newWal, err := wf.GetWal(fileName)
+			newWalBytes, err := wf.GetWalBytes(fileName)
 			if err != nil {
 				log.Fatal(err)
 			}
+
+			buf := bytes.NewBuffer(newWalBytes)
+			newWal, err := buildFromFile(buf)
+			if err != nil {
+				log.Fatal(err)
+			}
+
 			newMergedWal = *(merge(&newMergedWal, &newWal))
 
 			// TODO refactor this so it's inline rather than a whole new iteration??
@@ -895,7 +898,13 @@ func (r *DBListRepo) gather(wf WalFile) error {
 	// Gather origin files
 	mergedWal := []EventLog{}
 	for _, fileName := range originFiles {
-		wal, err := wf.GetWal(fileName)
+		newWalBytes, err := wf.GetWalBytes(fileName)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		buf := bytes.NewBuffer(newWalBytes)
+		wal, err := buildFromFile(buf)
 		if err != nil {
 			log.Fatal(err)
 		}

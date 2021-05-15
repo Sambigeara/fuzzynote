@@ -97,7 +97,7 @@ func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
+func (wf *s3FileWal) GetWalBytes(fileName string) ([]byte, error) {
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 
@@ -116,22 +116,15 @@ func (wf *s3FileWal) GetWal(fileName string) ([]EventLog, error) {
 			//case "NoSuchKey": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
 			//    return []EventLog{}, nil
 			case s3.ErrCodeNoSuchKey:
-				return []EventLog{}, nil
+				return []byte{}, nil
 			default:
 				//exitErrorf("Unable to download item %q, %v", fileName, err)
 				// For now, continue silently rather than exiting
-				return []EventLog{}, err
+				return []byte{}, err
 			}
 		}
 	}
-
-	buf := bytes.NewBuffer(b.Bytes())
-
-	wal, err := BuildFromFile(buf)
-	if err != nil {
-		return wal, err
-	}
-	return wal, nil
+	return b.Bytes(), nil
 }
 
 func (wf *s3FileWal) RemoveWals(fileNames []string) error {
