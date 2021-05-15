@@ -31,26 +31,22 @@ const (
 )
 
 type WebWalFile struct {
-	uuid                     string
-	web                      *Web
-	mode                     string
-	pushMatchTerm            []rune
-	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock *sync.Mutex
-	processedEventLock       *sync.Mutex
-	processedEventMap        map[string]struct{}
+	uuid               string
+	web                *Web
+	mode               string
+	pushMatchTerm      []rune
+	processedEventLock *sync.Mutex
+	processedEventMap  map[string]struct{}
 }
 
 func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	return &WebWalFile{
-		uuid:                     cfg.UUID,
-		web:                      web,
-		mode:                     cfg.Mode,
-		pushMatchTerm:            []rune(cfg.Match),
-		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: &sync.Mutex{},
-		processedEventLock:       &sync.Mutex{},
-		processedEventMap:        make(map[string]struct{}),
+		uuid:               cfg.UUID,
+		web:                web,
+		mode:               cfg.Mode,
+		pushMatchTerm:      []rune(cfg.Match),
+		processedEventLock: &sync.Mutex{},
+		processedEventMap:  make(map[string]struct{}),
 	}
 }
 
@@ -348,19 +344,6 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
 	}
 	resp.Body.Close()
 	return nil
-}
-
-func (wf *WebWalFile) SetProcessedPartialWals(partialWal string) {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	wf.processedPartialWals[partialWal] = struct{}{}
-}
-
-func (wf *WebWalFile) IsPartialWalProcessed(partialWal string) bool {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	_, exists := wf.processedPartialWals[partialWal]
-	return exists
 }
 
 func (wf *WebWalFile) GetMode() string          { return wf.mode }
