@@ -81,6 +81,13 @@ func (r *DBListRepo) RegisterWeb(w *Web) error {
 
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	r.walFiles = append(r.walFiles, wf)
+	// TODO improve
+	switch v := wf.(type) {
+	case *s3WalFile:
+		r.s3WalFiles = append(r.s3WalFiles, v)
+	case *WebWalFile:
+		r.webWalFiles = append(r.webWalFiles, v)
+	}
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
 	// when consuming websocket events or on pull. This covers some edge cases where local updates
 	// on foreign items will not emit to remotes, as we can use the cache in the getMatchedWal call

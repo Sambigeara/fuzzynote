@@ -27,7 +27,7 @@ const (
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
 
-	refreshFrequency = 30000 // 30 seconds
+	webSyncFrequency = 30000 // 30 seconds
 )
 
 type WebWalFile struct {
@@ -39,7 +39,6 @@ type WebWalFile struct {
 	processedPartialWalsLock *sync.Mutex
 	processedEventLock       *sync.Mutex
 	processedEventMap        map[string]struct{}
-	RefreshTicker            *time.Ticker
 }
 
 func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
@@ -52,7 +51,6 @@ func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 		processedPartialWalsLock: &sync.Mutex{},
 		processedEventLock:       &sync.Mutex{},
 		processedEventMap:        make(map[string]struct{}),
-		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
 	}
 }
 
@@ -116,7 +114,7 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	b := BuildByteWal(&[]EventLog{el})
+	b := buildByteWal(&[]EventLog{el})
 	b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 	m := message{
 		UUID:   uuid,
@@ -363,14 +361,6 @@ func (wf *WebWalFile) IsPartialWalProcessed(partialWal string) bool {
 	defer wf.processedPartialWalsLock.Unlock()
 	_, exists := wf.processedPartialWals[partialWal]
 	return exists
-}
-
-func (wf *WebWalFile) AwaitPull() {
-	<-wf.RefreshTicker.C
-}
-
-func (wf *WebWalFile) StopTickers() {
-	wf.RefreshTicker.Stop()
 }
 
 func (wf *WebWalFile) GetMode() string          { return wf.mode }

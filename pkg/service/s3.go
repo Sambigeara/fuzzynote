@@ -8,7 +8,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -18,8 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-type s3FileWal struct {
-	RefreshTicker            *time.Ticker
+type s3WalFile struct {
 	svc                      *s3.S3
 	downloader               *s3manager.Downloader
 	uploader                 *s3manager.Uploader
@@ -36,7 +34,7 @@ type s3FileWal struct {
 	processedEventLock       *sync.Mutex
 }
 
-func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
+func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
 	// Handle defaults if not set
 	if cfg.RefreshFreqMs == 0 {
 		cfg.RefreshFreqMs = 2000
@@ -50,8 +48,7 @@ func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 		log.Fatal(err)
 	}
 
-	return &s3FileWal{
-		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(cfg.RefreshFreqMs)),
+	return &s3WalFile{
 		svc:                      s3.New(sess),
 		downloader:               s3manager.NewDownloader(sess),
 		uploader:                 s3manager.NewUploader(sess),
@@ -69,17 +66,17 @@ func NewS3FileWal(cfg S3Remote, root string) *s3FileWal {
 	}
 }
 
-func (wf *s3FileWal) GetUUID() string {
+func (wf *s3WalFile) GetUUID() string {
 	// TODO this is a stub function for now, refactor out
 	// knowledge of UUID is only relevant for WebWalFiles
 	return ""
 }
 
-func (wf *s3FileWal) GetRoot() string {
+func (wf *s3WalFile) GetRoot() string {
 	return wf.prefix
 }
 
-func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
+func (wf *s3WalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	fileNames := []string{}
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
@@ -97,7 +94,7 @@ func (wf *s3FileWal) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *s3FileWal) GetWalBytes(fileName string) ([]byte, error) {
+func (wf *s3WalFile) GetWalBytes(fileName string) ([]byte, error) {
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 
@@ -127,7 +124,7 @@ func (wf *s3FileWal) GetWalBytes(fileName string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (wf *s3FileWal) RemoveWals(fileNames []string) error {
+func (wf *s3WalFile) RemoveWals(fileNames []string) error {
 	// Delete the item
 	objects := []*s3.ObjectIdentifier{}
 	for _, f := range fileNames {
@@ -171,7 +168,7 @@ func (wf *s3FileWal) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *s3FileWal) Flush(b *bytes.Buffer, randomUUID string) error {
+func (wf *s3WalFile) Flush(b *bytes.Buffer, randomUUID string) error {
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
@@ -186,42 +183,21 @@ func (wf *s3FileWal) Flush(b *bytes.Buffer, randomUUID string) error {
 	return nil
 }
 
-func (wf *s3FileWal) SetProcessedPartialWals(fileName string) {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	wf.processedPartialWals[fileName] = struct{}{}
-}
-
-func (wf *s3FileWal) IsPartialWalProcessed(fileName string) bool {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	_, exists := wf.processedPartialWals[fileName]
-	return exists
-}
-
-func (wf *s3FileWal) AwaitPull() {
-	<-wf.RefreshTicker.C
-}
-
-func (wf *s3FileWal) StopTickers() {
-	wf.RefreshTicker.Stop()
-}
-
-func (wf *s3FileWal) GetMode() string {
+func (wf *s3WalFile) GetMode() string {
 	return wf.mode
 }
 
-func (wf *s3FileWal) GetPushMatchTerm() []rune {
+func (wf *s3WalFile) GetPushMatchTerm() []rune {
 	return wf.pushMatchTerm
 }
 
-func (wf *s3FileWal) SetProcessedEvent(fileName string) {
+func (wf *s3WalFile) SetProcessedEvent(fileName string) {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	wf.processedEventMap[fileName] = struct{}{}
 }
 
-func (wf *s3FileWal) IsEventProcessed(fileName string) bool {
+func (wf *s3WalFile) IsEventProcessed(fileName string) bool {
 	wf.processedEventLock.Lock()
 	defer wf.processedEventLock.Unlock()
 	_, exists := wf.processedEventMap[fileName]

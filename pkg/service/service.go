@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -64,14 +65,23 @@ type DBListRepo struct {
 	listItemTracker   map[string]*ListItem
 	LocalWalFile      LocalWalFile
 	walFiles          []WalFile
+	webWalFiles       []WalFile
+	s3WalFiles        []WalFile
 	eventsChan        chan EventLog
 	stop              chan struct{}
-	pushTicker        *time.Ticker
 	web               *Web
+
+	webSyncTicker  *time.Ticker
+	fileSyncTicker *time.Ticker
+	pushTicker     *time.Ticker
+	gatherTicker   *time.Ticker
+
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock *sync.Mutex
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
@@ -89,7 +99,16 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 		LocalWalFile:      localWalFile, // TODO naming
 		eventsChan:        make(chan EventLog),
 		stop:              make(chan struct{}, 1),
-		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
+
+		//webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(webSyncFrequency)),
+		//fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency)),
+		webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(1000)),
+		fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(1000)),
+		pushTicker:     time.NewTicker(time.Millisecond * time.Duration(1000)),
+		gatherTicker:   time.NewTicker(time.Millisecond * time.Duration(10000)),
+
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: &sync.Mutex{},
 	}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
