@@ -956,6 +956,14 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 	go func() { walChan <- localEl }()
 
+	// Schedule push to all non-local walFiles
+	// This is required for flushing new files that have been manually dropped into local root
+	for _, wf := range r.walFiles {
+		if wf != r.LocalWalFile {
+			go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+		}
+	}
+
 	webSyncTriggerChan := make(chan time.Time)
 	fileSyncTriggerChan := make(chan time.Time)
 	go func() {

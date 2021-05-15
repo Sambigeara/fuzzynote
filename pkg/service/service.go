@@ -102,10 +102,10 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 
 		//webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(webSyncFrequency)),
 		//fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency)),
-		webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(1000)),
-		fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(1000)),
-		pushTicker:     time.NewTicker(time.Millisecond * time.Duration(1000)),
-		gatherTicker:   time.NewTicker(time.Millisecond * time.Duration(10000)),
+		webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(10000)),
+		fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(10000)),
+		pushTicker:     time.NewTicker(time.Millisecond * time.Duration(10000)),
+		gatherTicker:   time.NewTicker(time.Millisecond * time.Duration(30000)),
 
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
