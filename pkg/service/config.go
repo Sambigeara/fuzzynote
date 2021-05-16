@@ -61,14 +61,13 @@ func NewWeb(webTokens WebTokenStore) *Web {
 
 type S3Remote struct {
 	//remote
-	Mode          string
-	Match         string
-	MatchAll      bool
-	Key           string
-	Secret        string
-	Bucket        string
-	Prefix        string
-	RefreshFreqMs uint16
+	Mode     string
+	Match    string
+	MatchAll bool
+	Key      string
+	Secret   string
+	Bucket   string
+	Prefix   string
 }
 
 type WebRemote struct {

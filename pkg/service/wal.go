@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	//b64 "encoding/base64"
 
 	"nhooyr.io/websocket"
 )
@@ -85,7 +84,6 @@ func (e *EventLog) getKeys() (string, string) {
 
 // WalFile offers a generic interface into local or remote filesystems
 type WalFile interface {
-	// TODO surely these should just implement Push/Pull/Gather????
 	GetUUID() string
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
@@ -110,24 +108,20 @@ type LocalWalFile interface {
 }
 
 type LocalFileWalFile struct {
-	rootDir                  string
-	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock *sync.Mutex
-	mode                     string
-	pushMatchTerm            []rune
-	processedEventLock       *sync.Mutex
-	processedEventMap        map[string]struct{}
+	rootDir            string
+	mode               string
+	pushMatchTerm      []rune
+	processedEventLock *sync.Mutex
+	processedEventMap  map[string]struct{}
 }
 
-func NewLocalFileWalFile(refreshFrequency uint16, rootDir string) *LocalFileWalFile {
+func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
 	return &LocalFileWalFile{
-		rootDir:                  rootDir,
-		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: &sync.Mutex{},
-		mode:                     ModeSync,
-		pushMatchTerm:            []rune{},
-		processedEventLock:       &sync.Mutex{},
-		processedEventMap:        make(map[string]struct{}),
+		rootDir:            rootDir,
+		mode:               ModeSync,
+		pushMatchTerm:      []rune{},
+		processedEventLock: &sync.Mutex{},
+		processedEventMap:  make(map[string]struct{}),
 	}
 }
 
@@ -377,7 +371,6 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, note *
 	return root, newItem, nil
 }
 
-// Update will update the line or note of an existing ListItem
 func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	// We currently separate Line and Note updates even though they use the same interface
 	// This is to reduce wal size and also solves some race conditions for long held open
@@ -538,10 +531,9 @@ func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 	if err != nil {
 		if err == io.EOF {
 			return el, nil
-		} else {
-			log.Fatal(err)
-			return el, err
 		}
+		log.Fatal(err)
+		return el, err
 	}
 
 	for {
@@ -880,6 +872,8 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	}
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
+	// (as pull is done in a separate thread of control, and therefore we might try
+	// and pull our own pushed wal)
 	r.setProcessedPartialWals(randomUUID)
 	if err := wf.Flush(b, randomUUID); err != nil {
 		log.Fatal(err)
@@ -1040,8 +1034,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			case e := <-r.eventsChan:
 				// Write in real time to the websocket, if present
 				if r.web != nil {
-					// TODO this should only iterate over WebWalFiles
-					for _, wf := range r.walFiles {
+					for _, wf := range r.webWalFiles {
 						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
 						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
@@ -1083,7 +1076,7 @@ func (r *DBListRepo) finish() error {
 	// Flush full log to local walfile
 	r.push(r.log, r.LocalWalFile, "")
 
-	// Delete all redundant local files
+	// Delete all old local files (replaced by flush above)
 	r.LocalWalFile.RemoveWals(localFileNames)
 
 	// Stop tickers

@@ -19,6 +19,9 @@ const (
 	viewFilePattern = "view_%v.db"
 
 	latestFileSchemaID = fileSchemaID(3)
+
+	DefaultSyncFrequency   = uint16(10000) // 10 seconds
+	DefaultGatherFrequency = uint16(30000) // 30 seconds
 )
 
 type bits uint32
@@ -81,7 +84,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16, gatherFrequency uint16) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
@@ -96,16 +99,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		LocalWalFile:      localWalFile, // TODO naming
+		LocalWalFile:      localWalFile,
 		eventsChan:        make(chan EventLog),
 		stop:              make(chan struct{}, 1),
-
-		//webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(webSyncFrequency)),
-		//fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency)),
-		webSyncTicker:  time.NewTicker(time.Millisecond * time.Duration(10000)),
-		fileSyncTicker: time.NewTicker(time.Millisecond * time.Duration(10000)),
-		pushTicker:     time.NewTicker(time.Millisecond * time.Duration(10000)),
-		gatherTicker:   time.NewTicker(time.Millisecond * time.Duration(30000)),
 
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
@@ -123,6 +119,10 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		web.uuid = listRepo.uuid // TODO
 		err := listRepo.RegisterWeb(web)
 		if err == nil {
+			// Default the other ticker intervals
+			fileSyncFrequency = DefaultSyncFrequency
+			gatherFrequency = DefaultGatherFrequency
+
 			listRepo.web = web
 			// Retrieve remotes from API
 			remotes, err := web.GetRemotes("", nil)
@@ -137,6 +137,16 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 			}
 		}
 	}
+
+	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
+	// disabled at the mo so leave in (it's inexpensive)
+	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(webSyncFrequency))
+	// If the `web` integration isn't enabled (websockets et al), we allow the user to pass intervals
+	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
+	// real time via websockets, and therefore short intervals aren't required.
+	listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 
 	return listRepo
 }

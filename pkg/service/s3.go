@@ -35,11 +35,6 @@ type s3WalFile struct {
 }
 
 func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
-	// Handle defaults if not set
-	if cfg.RefreshFreqMs == 0 {
-		cfg.RefreshFreqMs = 2000
-	}
-
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-1"),
 		Credentials: credentials.NewStaticCredentials(cfg.Key, cfg.Secret, ""),

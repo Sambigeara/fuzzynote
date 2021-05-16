@@ -156,7 +156,7 @@ func Login(root string) {
 	}
 
 	w := service.NewWeb(wt)
-	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(10, root), nil)
+	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(root), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
