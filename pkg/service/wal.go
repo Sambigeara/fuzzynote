@@ -884,8 +884,9 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
-func (r *DBListRepo) gather(walFiles []WalFile) error {
+func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 	// TODO separate IO/CPU bound ops to optimise
+	fullMergedWal := []EventLog{}
 	for _, wf := range walFiles {
 		// Handle ALL wals
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
@@ -923,11 +924,14 @@ func (r *DBListRepo) gather(walFiles []WalFile) error {
 			log.Fatal(err)
 		}
 
+		// Merge into the full wal (which will be returned at the end of the function)
+		fullMergedWal = *(merge(&fullMergedWal, &mergedWal))
+
 		// Schedule a delete on the files
 		wf.RemoveWals(originFiles)
 	}
 
-	return nil
+	return &fullMergedWal, nil
 }
 
 func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
@@ -987,24 +991,22 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Main sync event loop
 	go func() {
 		for {
+			var el *[]EventLog
 			select {
 			case <-webSyncTriggerChan:
-				var el *[]EventLog
 				if el, err = r.pull(r.webWalFiles); err != nil {
 					log.Fatal(err)
 				}
-				walChan <- el
 			case <-fileSyncTriggerChan:
-				var el *[]EventLog
 				if el, err = r.pull(r.s3WalFiles); err != nil {
 					log.Fatal(err)
 				}
-				walChan <- el
 			case <-r.gatherTicker.C:
-				if err = r.gather(r.walFiles); err != nil {
+				if el, err = r.gather(r.walFiles); err != nil {
 					log.Fatal(err)
 				}
 			}
+			walChan <- el
 		}
 	}()
 
