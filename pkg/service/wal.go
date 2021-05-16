@@ -868,6 +868,11 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
+	// Return for empty wals
+	if len(*el) == 0 {
+		return nil
+	}
+
 	b := buildByteWal(el)
 
 	if randomUUID == "" {
