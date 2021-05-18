@@ -643,24 +643,60 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
-	// - Any events preceding a DeleteEvent
-	// - Any UpdateEvent preceding the most recent UpdateEvent
-	// WARNING: Omitting addEvents/moveEvents leads to weird behaviour during Replay at the mo. Be warned.
-	keysToPurge := make(map[string]bool)
+	// - Delete events, and any events preceding a DeleteEvent
+	// - Update events in the following circumstances
+	//   - Any UpdateEvent with a Note preceding the most recent UpdateEvent with a Note
+	//   - Same without a Note
+	//
+	// Opting to store all Move* events to maintain the most consistent ordering of the output linked list.
+	// e.g. it'll attempt to apply oldest -> newest Move*s until the target pointers don't exist.
+	//
+	// We need to maintain the first of two types of Update events (as per above, separate Line and Note),
+	// so generate a separate set for each to tell us if each has occurred
+	updateWithNote := make(map[string]struct{})
+	updateWithLine := make(map[string]struct{})
+
+	keysToPurge := make(map[string]struct{})
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key, _ := e.getKeys()
-		if isDelete, purged := keysToPurge[key]; purged && (isDelete || e.EventType == UpdateEvent) {
+
+		if _, purged := keysToPurge[key]; purged {
 			continue
 		}
-		if e.EventType == UpdateEvent {
-			keysToPurge[key] = false
-		} else if e.EventType == DeleteEvent {
-			keysToPurge[key] = true
+
+		// Add DeleteEvents straight to the purge set, if there's not any newer update events
+		// NOTE it's important that we only continue if ONE OF BOTH UPDATE TYPES IS ALREADY PROCESSED
+		if e.EventType == DeleteEvent {
+			if _, noteExists := updateWithNote[key]; !noteExists {
+				if _, lineExists := updateWithLine[key]; !lineExists {
+					keysToPurge[key] = struct{}{}
+					continue
+				}
+			}
+		} else if e.EventType == UpdateEvent {
+			//Check to see if the UpdateEvent alternative event has occurred
+			// Nil `Note` signifies `Line` update
+			if e.Note != nil {
+				if _, exists := updateWithNote[key]; exists {
+					continue
+				}
+				updateWithNote[key] = struct{}{}
+				if _, exists := updateWithLine[key]; exists {
+					keysToPurge[key] = struct{}{}
+				}
+			} else {
+				if _, exists := updateWithLine[key]; exists {
+					continue
+				}
+				updateWithLine[key] = struct{}{}
+				if _, exists := updateWithNote[key]; exists {
+					keysToPurge[key] = struct{}{}
+				}
+			}
 		}
-		// We need to reverse the list, but prepending is horribly inefficient, so append and reverse before
-		// returning
+
 		compactedWal = append(compactedWal, e)
 	}
 	// Reverse
@@ -778,6 +814,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 		}
 		newMergedWal = *(merge(&newMergedWal, &newWal))
 	}
+
 	return &newMergedWal, nil
 }
 
@@ -788,9 +825,6 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Compact the Wal
-	//el = compact(el)
 
 	for _, e := range *el {
 		lenLine := uint64(len([]byte(e.Line)))
@@ -918,6 +952,9 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 			}
 			mergedWal = *(merge(&mergedWal, &wal))
 		}
+
+		// Compact the Wal
+		mergedWal = *(compact(&mergedWal))
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
@@ -1071,16 +1108,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
-	// TODO duplication
-	// Retrieve all local wal names
-	filePathPattern := path.Join(r.LocalWalFile.GetRoot(), walFilePattern)
-	localFileNames, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
-
 	// Flush full log to local walfile
-	r.push(r.log, r.LocalWalFile, "")
-
-	// Delete all old local files (replaced by flush above)
-	r.LocalWalFile.RemoveWals(localFileNames)
+	// TODO this should just be any unflushed changes (aka anything in the partial wal above)
+	// TODO CANNOT compact when only flushing partial wal
+	localLog := compact(r.log)
+	r.push(localLog, r.LocalWalFile, "")
 
 	// Stop tickers
 	r.webSyncTicker.Stop()
