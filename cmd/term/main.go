@@ -21,11 +21,11 @@ const (
 
 func main() {
 	var cfg struct {
-		Root            string
-		Colour          string `conf:"default:light"`
-		Editor          string `conf:"default:vim"`
-		SyncFrequency   uint16 `conf:"default:10000"`
-		GatherFrequency uint16 `conf:"default:30000"`
+		Root              string
+		Colour            string `conf:"default:light"`
+		Editor            string `conf:"default:vim"`
+		SyncFrequencyMs   uint16 `conf:"default:10000"`
+		GatherFrequencyMs uint16 `conf:"default:30000"`
 	}
 
 	// Pre-instantiate default root direct (can't pass value dynamically to default above)
@@ -77,8 +77,8 @@ func main() {
 	listRepo := service.NewDBListRepo(
 		localWalFile,
 		webTokens,
-		cfg.SyncFrequency,
-		cfg.GatherFrequency,
+		cfg.SyncFrequencyMs,
+		cfg.GatherFrequencyMs,
 	)
 
 	s3Remotes := service.GetS3Config(cfg.Root)

@@ -989,6 +989,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}()
 
 	// Main sync event loop
+	fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
 	go func() {
 		for {
 			var el *[]EventLog
@@ -998,7 +999,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					log.Fatal(err)
 				}
 			case <-fileSyncTriggerChan:
-				if el, err = r.pull(r.s3WalFiles); err != nil {
+				if el, err = r.pull(fileWalFiles); err != nil {
 					log.Fatal(err)
 				}
 			case <-r.gatherTicker.C:
