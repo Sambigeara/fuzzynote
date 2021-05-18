@@ -761,24 +761,24 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	// walFile metadata in the GetWalBytes calls)
 	fileNameMap := make(map[WalFile][]string)
 	m := sync.Mutex{}
-	var wg sync.WaitGroup
+	//var wg sync.WaitGroup
 	for _, wf := range walFiles {
-		wg.Add(1)
+		//wg.Add(1)
 		var fileNames []string
 		var err error
-		go func(wg *sync.WaitGroup) {
-			defer wg.Done()
-			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
-			fileNames, err = wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
-			if err != nil {
-				log.Fatal(err)
-			}
-			m.Lock()
-			fileNameMap[wf] = fileNames
-			m.Unlock()
-		}(&wg)
+		//go func() {
+		//    defer wg.Done()
+		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+		fileNames, err = wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		m.Lock()
+		fileNameMap[wf] = fileNames
+		m.Unlock()
+		//}()
 	}
-	wg.Wait()
+	//wg.Wait()
 
 	// IO bound: For each walFile, retrieve the WalFile byte representations for all previously unseen
 	// filenames
@@ -786,22 +786,22 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	for wf, fileNames := range fileNameMap {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
-				wg.Add(1)
-				go func(wg *sync.WaitGroup) {
-					defer wg.Done()
-					newWalBytes, err := wf.GetWalBytes(fileName)
-					if err != nil {
-						log.Fatal(err)
-					}
-					byteWals = append(byteWals, newWalBytes)
-				}(&wg)
+				//wg.Add(1)
+				//go func() {
+				//defer wg.Done()
+				newWalBytes, err := wf.GetWalBytes(fileName)
+				if err != nil {
+					log.Fatal(err)
+				}
+				byteWals = append(byteWals, newWalBytes)
+				//}()
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
 				r.setProcessedPartialWals(fileName)
 			}
 		}
 	}
-	wg.Wait()
+	//wg.Wait()
 
 	// CPU bound: Now we have all the byteWals, generate the wals and merge then in a single thread
 	// (to prevent tying up the CPU completely)
