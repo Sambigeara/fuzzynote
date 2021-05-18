@@ -953,8 +953,8 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 			mergedWal = *(merge(&mergedWal, &wal))
 		}
 
-		// Compact the Wal
-		mergedWal = *(compact(&mergedWal))
+		// Merge with entire local log
+		mergedWal = *(merge(&mergedWal, r.log))
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
