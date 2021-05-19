@@ -684,17 +684,11 @@ func compact(wal *[]EventLog) *[]EventLog {
 					continue
 				}
 				updateWithNote[key] = struct{}{}
-				if _, exists := updateWithLine[key]; exists {
-					keysToPurge[key] = struct{}{}
-				}
 			} else {
 				if _, exists := updateWithLine[key]; exists {
 					continue
 				}
 				updateWithLine[key] = struct{}{}
-				if _, exists := updateWithNote[key]; exists {
-					keysToPurge[key] = struct{}{}
-				}
 			}
 		}
 

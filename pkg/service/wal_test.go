@@ -88,9 +88,11 @@ func TestWalCompact(t *testing.T) {
 			t.Fatalf("Compacted wal should be empty")
 		}
 	})
-	t.Run("Check removes all updates before most recent update", func(t *testing.T) {
+	t.Run("Check removes all updates before most recent matching update pair", func(t *testing.T) {
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
+		oldNote := []byte("old note")
+		newNote := []byte("new note")
 		el := []EventLog{
 			EventLog{
 				UnixNanoTime: eventTime,
@@ -114,13 +116,29 @@ func TestWalCompact(t *testing.T) {
 		el = append(el, EventLog{
 			UnixNanoTime: eventTime,
 			UUID:         uuid,
-			EventType:    MoveUpEvent,
+			EventType:    UpdateEvent,
+			Note:         &oldNote,
 		})
 		eventTime++
 		el = append(el, EventLog{
 			UnixNanoTime: eventTime,
 			UUID:         uuid,
+			EventType:    MoveUpEvent,
+		})
+		eventTime++
+		// This should remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
 			EventType:    UpdateEvent,
+		})
+		eventTime++
+		// This should also remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+			Note:         &newNote,
 		})
 		eventTime++
 		el = append(el, EventLog{
@@ -129,9 +147,10 @@ func TestWalCompact(t *testing.T) {
 			EventType:    MoveDownEvent,
 		})
 
+		//runtime.Breakpoint()
 		compactedWal := *(compact(&el))
-		if len(compactedWal) != 4 {
-			t.Fatalf("Compacted wal should only have the most recent UpdateEvent, the move events and the original AddEvent")
+		if len(compactedWal) != 5 {
+			t.Fatalf("Expected %d events in compacted wal but had %d", 4, len(compactedWal))
 		}
 
 		if compactedWal[0].EventType != AddEvent {
@@ -143,8 +162,17 @@ func TestWalCompact(t *testing.T) {
 		if compactedWal[2].EventType != UpdateEvent {
 			t.Fatalf("Third event should be an UpdateEvent")
 		}
-		if compactedWal[3].EventType != MoveDownEvent {
-			t.Fatalf("Third event should be a moveDownEvent")
+		if compactedWal[2].Note != nil {
+			t.Fatalf("Third event Update should have a nil Note")
+		}
+		if compactedWal[3].EventType != UpdateEvent {
+			t.Fatalf("Fourth event should be an UpdateEvent")
+		}
+		if compactedWal[3].Note != &newNote {
+			t.Fatalf("Fourth event should be have a note attached")
+		}
+		if compactedWal[4].EventType != MoveDownEvent {
+			t.Fatalf("Fifth event should be a moveDownEvent")
 		}
 	})
 	t.Run("Check add and move wals remain untouched", func(t *testing.T) {
