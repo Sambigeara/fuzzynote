@@ -703,7 +703,8 @@ func compact(wal *[]EventLog) *[]EventLog {
 
 func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	wal := []EventLog{}
-	now := time.Now().AddDate(-1, 0, 0).UnixNano()
+	//now := time.Now().AddDate(-1, 0, 0).UnixNano()
+	now := int64(1) // TODO remove this - it's to ensure consistency to enable file diffs
 
 	// Iterate from oldest to youngest
 	for i := len(matchItems) - 1; i >= 0; i-- {
@@ -733,7 +734,7 @@ func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	//viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
 	viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
 	r.LocalWalFile.Flush(b, viewName)
-	log.Fatalf("N events: %d", len(wal))
+	log.Fatalf("N list generated events: %d", len(wal))
 	return nil
 }
 
