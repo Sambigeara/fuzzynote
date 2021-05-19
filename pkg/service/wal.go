@@ -702,39 +702,38 @@ func compact(wal *[]EventLog) *[]EventLog {
 }
 
 func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
-	// Now we have our list of matchItems, we need to iterate over them to retrieve all originUUID:creationTime keys
-	// which map to the wal entries
-	logKeys := make(map[string]struct{})
-	for _, item := range matchItems {
-		logKeys[item.Key()] = struct{}{}
-	}
+	wal := []EventLog{}
+	now := time.Now().AddDate(-1, 0, 0).UnixNano()
 
-	// TODO figure out how to deal with this!!!
-	// This is a bit of a strange one, but there is an edge case that occurs from addEvents referencing items which
-	// do not exist in the partialWal - because the item will not exist, the item will shoot to the top of the list.
-	// This is actually expected behaviour (and is idempotent and mergeable), however, for user-friendliness, to ensure
-	// expected ordering in the output partial view, we will manually add move* events to the matched items to force them
-	// into the expected locations but with all child pointers attached direct. This _does_ have the side-effect of ultimately
-	// grouping the items in the origin (if/when the remote wal is merged back in), but this is probably preferred.
+	// Iterate from oldest to youngest
+	for i := len(matchItems) - 1; i >= 0; i-- {
+		item := matchItems[i]
+		el := EventLog{
+			UUID:                       item.originUUID,
+			TargetUUID:                 0,
+			ListItemCreationTime:       item.creationTime,
+			TargetListItemCreationTime: 0,
+			UnixNanoTime:               now,
+			EventType:                  AddEvent,
+			Line:                       item.Line,
+			Note:                       item.Note,
+		}
+		wal = append(wal, el)
+		now++
 
-	// Now we have our keys, we can iterate over the entire wal, and generate a partial wal containing only eventLogs
-	// for ListItems retrieved above.
-	// IMPORTANT: we also need to include ALL DeleteEvent logs, as otherwise we may end up with orphaned items in the
-	// target view.
-	partialWal := []EventLog{}
-	for _, e := range *r.log {
-		key, _ := e.getKeys()
-		if _, exists := logKeys[key]; exists || e.EventType == DeleteEvent {
-			partialWal = append(partialWal, e)
+		if item.IsHidden {
+			el.EventType = HideEvent
+			el.UnixNanoTime = now
+			wal = append(wal, el)
+			now++
 		}
 	}
 
-	// We now need to generate a temp name (NOT matching the standard wal pattern) and push to it. We can then manually
-	// retrieve and handle the wal (for now)
-	// Use the current time to generate the name
-	b := buildByteWal(&partialWal)
+	b := buildByteWal(&wal)
 	//viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
-	r.LocalWalFile.Flush(b, fmt.Sprintf("%d", time.Now().UnixNano()))
+	viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
+	r.LocalWalFile.Flush(b, viewName)
+	log.Fatalf("N events: %d", len(wal))
 	return nil
 }
 
@@ -951,6 +950,9 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		// Merge with entire local log
 		mergedWal = *(merge(&mergedWal, r.log))
 
+		// Compact
+		//mergedWal = *(compact(&mergedWal))
+
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
 			log.Fatal(err)
@@ -1106,8 +1108,9 @@ func (r *DBListRepo) finish() error {
 	// Flush full log to local walfile
 	// TODO this should just be any unflushed changes (aka anything in the partial wal above)
 	// TODO CANNOT compact when only flushing partial wal
-	localLog := compact(r.log)
-	r.push(localLog, r.LocalWalFile, "")
+	//localLog := compact(r.log)
+	//r.push(localLog, r.LocalWalFile, "")
+	r.push(r.log, r.LocalWalFile, "")
 
 	// Stop tickers
 	r.webSyncTicker.Stop()

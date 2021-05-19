@@ -16,7 +16,7 @@ type (
 const (
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
-	viewFilePattern = "view_%v.db"
+	viewFilePattern = "view_%v"
 
 	latestFileSchemaID = fileSchemaID(3)
 

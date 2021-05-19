@@ -149,31 +149,36 @@ func TestWalCompact(t *testing.T) {
 
 		//runtime.Breakpoint()
 		compactedWal := *(compact(&el))
-		if len(compactedWal) != 5 {
-			t.Fatalf("Expected %d events in compacted wal but had %d", 4, len(compactedWal))
-		}
+		checkResult := func() {
+			if len(compactedWal) != 5 {
+				t.Fatalf("Expected %d events in compacted wal but had %d", 4, len(compactedWal))
+			}
 
-		if compactedWal[0].EventType != AddEvent {
-			t.Fatalf("First event should be the original AddEvent")
+			if compactedWal[0].EventType != AddEvent {
+				t.Fatalf("First event should be the original AddEvent")
+			}
+			if compactedWal[1].EventType != MoveUpEvent {
+				t.Fatalf("Second event should be a moveUpEvent")
+			}
+			if compactedWal[2].EventType != UpdateEvent {
+				t.Fatalf("Third event should be an UpdateEvent")
+			}
+			if compactedWal[2].Note != nil {
+				t.Fatalf("Third event Update should have a nil Note")
+			}
+			if compactedWal[3].EventType != UpdateEvent {
+				t.Fatalf("Fourth event should be an UpdateEvent")
+			}
+			if compactedWal[3].Note != &newNote {
+				t.Fatalf("Fourth event should be have a note attached")
+			}
+			if compactedWal[4].EventType != MoveDownEvent {
+				t.Fatalf("Fifth event should be a moveDownEvent")
+			}
 		}
-		if compactedWal[1].EventType != MoveUpEvent {
-			t.Fatalf("Second event should be a moveUpEvent")
-		}
-		if compactedWal[2].EventType != UpdateEvent {
-			t.Fatalf("Third event should be an UpdateEvent")
-		}
-		if compactedWal[2].Note != nil {
-			t.Fatalf("Third event Update should have a nil Note")
-		}
-		if compactedWal[3].EventType != UpdateEvent {
-			t.Fatalf("Fourth event should be an UpdateEvent")
-		}
-		if compactedWal[3].Note != &newNote {
-			t.Fatalf("Fourth event should be have a note attached")
-		}
-		if compactedWal[4].EventType != MoveDownEvent {
-			t.Fatalf("Fifth event should be a moveDownEvent")
-		}
+		checkResult()
+		// Run again to ensure idempotency
+		checkResult()
 	})
 	t.Run("Check add and move wals remain untouched", func(t *testing.T) {
 		uuid := uuid(1)
