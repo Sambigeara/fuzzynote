@@ -218,12 +218,13 @@ func (wf *LocalFileWalFile) GetRoot() string {
 }
 
 func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
-	fileNames, err := filepath.Glob(matchPattern)
+	pullPaths, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
 	}
 	uuids := []string{}
-	for _, fileName := range fileNames {
+	for _, p := range pullPaths {
+		_, fileName := path.Split(p)
 		uuid := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 		uuids = append(uuids, uuid)
 	}

@@ -262,27 +262,27 @@ func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
 		log.Printf("Error retrieving wal %s: %s", fileName, err)
-		return nil, nil
+		return nil, err
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
 		log.Printf("Error retrieving file using presigned S3 URL: %s", err)
-		return nil, nil
+		return nil, err
 	}
 	defer s3Resp.Body.Close()
 
 	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
 	if err != nil {
 		log.Printf("Error parsing wal from S3 response body: %s", err)
-		return nil, nil
+		return nil, err
 	}
 
 	// Wals are transmitted over the wire in binary format, so decode
 	walBytes, err := base64.StdEncoding.DecodeString(string(b64Wal))
 	if err != nil {
 		//log.Printf("Error decoding wal: %s", err)
-		return nil, nil
+		return nil, err
 	}
 	return walBytes, err
 }
