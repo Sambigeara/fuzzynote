@@ -642,8 +642,86 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
+func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
+	// checkPointers prevents recursion
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Line != b.Line ||
+		a.Note != b.Note ||
+		a.IsHidden != b.IsHidden ||
+		a.originUUID != b.originUUID ||
+		a.creationTime != b.creationTime {
+		return false
+	}
+	if checkPointers {
+		if !areListItemsEqual(a.child, b.child, false) ||
+			!areListItemsEqual(a.parent, b.parent, false) ||
+			!areListItemsEqual(a.matchChild, b.matchChild, false) ||
+			!areListItemsEqual(a.matchParent, b.matchParent, false) {
+			return false
+		}
+	}
+	return true
+}
+
+// walsAreEquivalent builds the resultant ListItem linked lists from the input wals, and traverses both to
+// check for equality. It returns `true` if they generate identical lists, or `false` otherwise.
+// This is primarily used as a temporary measure to check the correctness of the compaction algo
+func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
+	repoA := DBListRepo{
+		log:             &[]EventLog{},
+		listItemTracker: make(map[string]*ListItem),
+	}
+	repoB := DBListRepo{
+		log:             &[]EventLog{},
+		listItemTracker: make(map[string]*ListItem),
+	}
+
+	// Use the Replay function to generate the linked lists
+	if err := repoA.Replay(walA); err != nil {
+		log.Fatal(err)
+	}
+	if err := repoB.Replay(walB); err != nil {
+		log.Fatal(err)
+	}
+
+	ptrA, ptrB := repoA.Root, repoB.Root
+
+	// Return false if only one is nil
+	if (ptrA != nil && ptrB == nil) || (ptrA == nil && ptrB != nil) {
+		return false
+	}
+
+	// Check root equality
+	if !areListItemsEqual(ptrA, ptrB, true) {
+		return false
+	}
+
+	// Return true if both are nil (areListItemsEqual returns true if both nil so only check one)
+	if ptrA == nil {
+		return true
+	}
+
+	// Iterate over both ll's together and check equality of each item. Return `false` as soon as a pair
+	// don't match, or one list is a different length to another
+	for ptrA.parent != nil && ptrB.parent != nil {
+		ptrA = ptrA.parent
+		ptrB = ptrB.parent
+		if !areListItemsEqual(ptrA, ptrB, true) {
+			return false
+		}
+	}
+
+	return areListItemsEqual(ptrA, ptrB, true)
+}
+
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
+	// NOTE delete event purging is currently disabled
 	// - Delete events, and any events preceding a DeleteEvent
 	// - Update events in the following circumstances
 	//   - Any UpdateEvent with a Note preceding the most recent UpdateEvent with a Note
@@ -667,16 +745,21 @@ func compact(wal *[]EventLog) *[]EventLog {
 			continue
 		}
 
+		// TODO figure out how to reintegrate full purge of deleted events, whilst guaranteeing consistent
+		// state of ListItems. OR purge everything older than X days, so ordering doesn't matter cos users
+		// won't see it??
 		// Add DeleteEvents straight to the purge set, if there's not any newer update events
 		// NOTE it's important that we only continue if ONE OF BOTH UPDATE TYPES IS ALREADY PROCESSED
-		if e.EventType == DeleteEvent {
-			if _, noteExists := updateWithNote[key]; !noteExists {
-				if _, lineExists := updateWithLine[key]; !lineExists {
-					keysToPurge[key] = struct{}{}
-					continue
-				}
-			}
-		} else if e.EventType == UpdateEvent {
+		//if e.EventType == DeleteEvent {
+		//    if _, noteExists := updateWithNote[key]; !noteExists {
+		//        if _, lineExists := updateWithLine[key]; !lineExists {
+		//            keysToPurge[key] = struct{}{}
+		//            continue
+		//        }
+		//    }
+		//}
+
+		if e.EventType == UpdateEvent {
 			//Check to see if the UpdateEvent alternative event has occurred
 			// Nil `Note` signifies `Line` update
 			if e.Note != nil {
@@ -697,6 +780,11 @@ func compact(wal *[]EventLog) *[]EventLog {
 	// Reverse
 	for i, j := 0, len(compactedWal)-1; i < j; i, j = i+1, j-1 {
 		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
+	}
+	// TODO remove this once confidence with compact is there!
+	// This is a circuit breaker which will blow up if compact generates inconsistent results
+	if !walsAreEquivalent(wal, &compactedWal) {
+		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
 	return &compactedWal
 }
@@ -952,7 +1040,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		mergedWal = *(merge(&mergedWal, r.log))
 
 		// Compact
-		//mergedWal = *(compact(&mergedWal))
+		mergedWal = *(compact(&mergedWal))
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
@@ -1109,9 +1197,8 @@ func (r *DBListRepo) finish() error {
 	// Flush full log to local walfile
 	// TODO this should just be any unflushed changes (aka anything in the partial wal above)
 	// TODO CANNOT compact when only flushing partial wal
-	//localLog := compact(r.log)
-	//r.push(localLog, r.LocalWalFile, "")
-	r.push(r.log, r.LocalWalFile, "")
+	localLog := compact(r.log)
+	r.push(localLog, r.LocalWalFile, "")
 
 	// Stop tickers
 	r.webSyncTicker.Stop()

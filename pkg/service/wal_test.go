@@ -49,6 +49,7 @@ func TestEventEquality(t *testing.T) {
 
 func TestWalCompact(t *testing.T) {
 	t.Run("Check removes all including delete", func(t *testing.T) {
+		t.Skip("Deletion in compaction is currently disabled")
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
 		el := []EventLog{
@@ -147,7 +148,6 @@ func TestWalCompact(t *testing.T) {
 			EventType:    MoveDownEvent,
 		})
 
-		//runtime.Breakpoint()
 		compactedWal := *(compact(&el))
 		checkResult := func() {
 			if len(compactedWal) != 5 {
@@ -223,6 +223,143 @@ func TestWalCompact(t *testing.T) {
 		compactedWal := *(compact(&el))
 		if len(compactedWal) != 6 {
 			t.Fatalf("Compacted wal should be untouched")
+		}
+	})
+	t.Run("Check wal equality check", func(t *testing.T) {
+		uuid := uuid(1)
+		eventTime := time.Now().UnixNano()
+		oldNote := []byte("old note")
+		newNote := []byte("new note")
+		el := []EventLog{
+			EventLog{
+				UnixNanoTime: eventTime,
+				UUID:         uuid,
+				EventType:    AddEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+			Note:         &oldNote,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveUpEvent,
+		})
+		eventTime++
+		// This should remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		// This should also remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    UpdateEvent,
+			Note:         &newNote,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid,
+			EventType:    MoveDownEvent,
+		})
+
+		compactedWal := *(compact(&el))
+
+		if !walsAreEquivalent(&el, &compactedWal) {
+			t.Fatal("Wals should be equivalent")
+		}
+	})
+	t.Run("Check wal equality check remote origin add", func(t *testing.T) {
+		uuid1 := uuid(1)
+		eventTime := time.Now().UnixNano()
+		oldNote := []byte("old note")
+		newNote := []byte("new note")
+		el := []EventLog{
+			EventLog{
+				UnixNanoTime: eventTime,
+				UUID:         uuid1,
+				EventType:    AddEvent,
+			},
+		}
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    UpdateEvent,
+			Note:         &oldNote,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    MoveUpEvent,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid(2),
+			EventType:    AddEvent,
+			Line:         "diff origin line",
+		})
+		eventTime++
+		// This should remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    UpdateEvent,
+		})
+		eventTime++
+		// This should also remain
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    UpdateEvent,
+			Note:         &newNote,
+		})
+		eventTime++
+		el = append(el, EventLog{
+			UnixNanoTime: eventTime,
+			UUID:         uuid1,
+			EventType:    MoveDownEvent,
+		})
+
+		compactedWal := *(compact(&el))
+
+		if !walsAreEquivalent(&el, &compactedWal) {
+			t.Fatal("Wals should be equivalent")
 		}
 	})
 }
