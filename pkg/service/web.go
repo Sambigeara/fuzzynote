@@ -120,7 +120,6 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	}
 	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	if err != nil {
-		log.Fatal("Hello")
 		// Re-establish websocket connection on error
 		// TODO currently attempting to re-establish connection on ANY error - do better at
 		// identifying websocket connect issues
@@ -143,18 +142,7 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 
 	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
-		// Re-establish websocket connection on error
-		// TODO currently attempting to re-establish connection on ANY error - do better at
-		// identifying websocket connect issues
-		w.establishWebSocketConnection()
-
-		// if re-establish successful (e.g. wsConn != nil) reattempt write
-		if w.wsConn != nil {
-			_, body, err = w.wsConn.Read(ctx)
-			if err != nil {
-				return nil
-			}
-		}
+		// Do nothing for now
 	}
 
 	var m message
