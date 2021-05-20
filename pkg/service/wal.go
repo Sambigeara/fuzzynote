@@ -952,10 +952,18 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	if len(matchTerm) == 0 {
 		return el
 	}
+
+	// For now (for safety) use full pattern matching, or inverse matching if it starts with `!`
+	// TODO properly reuse match logic
+	matchPattern := FullMatchPattern
+	if matchTerm[0] == '!' {
+		matchPattern = InverseMatchPattern
+		matchTerm = matchTerm[1:]
+	}
+
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
-		// For now (for safety) use full pattern matching
-		if isMatch(matchTerm, e.Line, FullMatchPattern) {
+		if isMatch(matchTerm, e.Line, matchPattern) {
 			k, _ := e.getKeys()
 			wf.SetProcessedEvent(k)
 		}
