@@ -230,13 +230,13 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error retrieving wal list: %v", err)
+		//log.Printf("Error retrieving wal list: %v", err)
 		return nil, nil
 	}
 
 	strUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error parsing wals from S3 response body: %s", err)
+		//log.Printf("Error parsing wals from S3 response body: %s", err)
 		return nil, nil
 	}
 
@@ -252,20 +252,20 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
-		log.Printf("Error retrieving wal %s: %s", fileName, err)
+		//log.Printf("Error retrieving wal %s: %s", fileName, err)
 		return nil, err
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
-		log.Printf("Error retrieving file using presigned S3 URL: %s", err)
+		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
 		return nil, err
 	}
 	defer s3Resp.Body.Close()
 
 	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
 	if err != nil {
-		log.Printf("Error parsing wal from S3 response body: %s", err)
+		//log.Printf("Error parsing wal from S3 response body: %s", err)
 		return nil, err
 	}
 
