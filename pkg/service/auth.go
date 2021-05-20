@@ -85,13 +85,13 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("Authentication unsuccessful, please try logging in")
+	}
+
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("Authentication unsuccessful, please try logging in")
 	}
 
 	var authResult cognito.AuthenticationResultType

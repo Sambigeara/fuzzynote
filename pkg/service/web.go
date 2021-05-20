@@ -85,6 +85,9 @@ func (w *Web) establishWebSocketConnection() error {
 			return err
 		}
 		w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+		// need to return within this nested block otherwise the outside err still holds
+		// data from previous calls
+		return err
 	}
 	return err
 }

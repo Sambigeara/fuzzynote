@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -92,6 +93,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 	}
 
 	listRepo := &DBListRepo{
+		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
@@ -112,28 +114,30 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 	// it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
-	// Tokens are gererated on `login`
+	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.RefreshToken() != "" {
 		web := NewWeb(webTokenStore)
 		web.uuid = listRepo.uuid // TODO
 		err := listRepo.RegisterWeb(web)
-		if err == nil {
-			// Default the other ticker intervals
-			fileSyncFrequency = DefaultSyncFrequency
-			gatherFrequency = DefaultGatherFrequency
+		if err != nil {
+			log.Print(err)
+			os.Exit(0)
+		}
+		// Default the other ticker intervals
+		fileSyncFrequency = DefaultSyncFrequency
+		gatherFrequency = DefaultGatherFrequency
 
-			listRepo.web = web
-			// Retrieve remotes from API
-			remotes, err := web.GetRemotes("", nil)
-			if err != nil {
-				log.Fatal("Error when trying to retrieve remotes config from API")
-			}
-			for _, r := range remotes {
-				if r.IsActive {
-					webWalFile := NewWebWalFile(r, web)
-					listRepo.RegisterWalFile(webWalFile)
-				}
+		listRepo.web = web
+		// Retrieve remotes from API
+		remotes, err := web.GetRemotes("", nil)
+		if err != nil {
+			log.Fatal("Error when trying to retrieve remotes config from API")
+		}
+		for _, r := range remotes {
+			if r.IsActive {
+				webWalFile := NewWebWalFile(r, web)
+				listRepo.RegisterWalFile(webWalFile)
 			}
 		}
 	}
