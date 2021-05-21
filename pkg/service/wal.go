@@ -1060,7 +1060,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
-		for _, wf := range r.walFiles {
+		for _, wf := range r.allWalFiles() {
 			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
 				if sync {
 					// TODO Use waitgroups
@@ -1086,7 +1086,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 
 	// Schedule push to all non-local walFiles
 	// This is required for flushing new files that have been manually dropped into local root
-	for _, wf := range r.walFiles {
+	for _, wf := range r.allWalFiles() {
 		if wf != r.LocalWalFile {
 			go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
 		}
@@ -1126,7 +1126,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					log.Fatal(err)
 				}
 			case <-r.gatherTicker.C:
-				if el, err = r.gather(r.walFiles); err != nil {
+				if el, err = r.gather(r.allWalFiles()); err != nil {
 					log.Fatal(err)
 				}
 			}
@@ -1134,21 +1134,37 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		}
 	}()
 
-	// Consume from the websocket, if available
-	go func() {
-		// TODO Check for stop signal
-		for {
-			if r.web != nil && r.web.wsConn != nil {
-				err := r.web.consumeWebsocket(walChan)
-				if err != nil {
-					return
+	// Create mutex to protect against dropped websocket events when refreshing web connections
+	webRefreshMut := sync.Mutex{}
+
+	if r.web != nil {
+		// If web is available, attempts to consume from the websocket.
+		go func() {
+			for {
+				if r.web.wsConn != nil {
+					err := r.web.consumeWebsocket(walChan)
+					if err != nil {
+						return
+					}
+					//} else {
+					//    // No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
+					//    time.Sleep(5 * time.Second)
 				}
-			} else {
-				// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
-				time.Sleep(5 * time.Second)
 			}
-		}
-	}()
+		}()
+		// Also create a loop responsible for periodic refreshing of web connections and web walfiles.
+		go func() {
+			for {
+				time.Sleep(webRefreshInterval)
+				webRefreshMut.Lock()
+				// Close off old websocket connection
+				r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				// Start new one
+				r.registerWeb()
+				webRefreshMut.Unlock()
+			}
+		}()
+	}
 
 	// Push to all WalFiles
 	go func() {
@@ -1166,7 +1182,9 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								e = (*matchedEventLog)[0]
+								webRefreshMut.Lock()
 								r.web.pushWebsocket(e, wf.GetUUID())
+								webRefreshMut.Unlock()
 							}
 						}
 					}

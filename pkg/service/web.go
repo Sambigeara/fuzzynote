@@ -25,6 +25,7 @@ const (
 
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
+	webRefreshInterval         = time.Minute * 10
 )
 
 type WebWalFile struct {
