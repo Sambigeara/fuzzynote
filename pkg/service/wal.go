@@ -1146,22 +1146,32 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					if err != nil {
 						return
 					}
-					//} else {
-					//    // No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
-					//    time.Sleep(5 * time.Second)
+				} else {
+					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
+					// This is important before we fire up the web connections async after startup, so there will be a
+					// period where the loop above would cycle in an infinite and all-consuming loop
+					time.Sleep(5 * time.Second)
 				}
 			}
 		}()
 		// Also create a loop responsible for periodic refreshing of web connections and web walfiles.
 		go func() {
 			for {
-				time.Sleep(webRefreshInterval)
 				webRefreshMut.Lock()
 				// Close off old websocket connection
-				r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+				if r.web.wsConn != nil {
+					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				}
 				// Start new one
-				r.registerWeb()
+				err := r.registerWeb()
+				if err != nil {
+					log.Print(err)
+					os.Exit(0)
+				}
 				webRefreshMut.Unlock()
+				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
+				time.Sleep(webRefreshInterval)
 			}
 		}()
 	}
@@ -1229,7 +1239,7 @@ func (r *DBListRepo) finish() error {
 	r.stop <- struct{}{}
 	<-r.stop
 
-	if r.web != nil {
+	if r.web != nil && r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil

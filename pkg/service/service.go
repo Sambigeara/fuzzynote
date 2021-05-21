@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 )
@@ -128,11 +127,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
 		// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
 		listRepo.web = web
-		err := listRepo.registerWeb()
-		if err != nil {
-			log.Print(err)
-			os.Exit(0)
-		}
 	}
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
