@@ -7,7 +7,6 @@ import (
 	"path"
 
 	"github.com/ardanlabs/conf"
-	//"github.com/gdamore/tcell/v2"
 
 	"github.com/sambigeara/fuzzynote/pkg/prompt"
 	"github.com/sambigeara/fuzzynote/pkg/service"
@@ -18,17 +17,15 @@ const (
 	namespace  = "FZN"
 	loginArg   = "login"
 	remotesArg = "cfg"
-
-	localRefreshFrequencyMs = 10000 // 10 seconds
-
-	pushFrequencyMs = 10000
 )
 
 func main() {
 	var cfg struct {
-		Root   string
-		Colour string `conf:"default:light"`
-		Editor string `conf:"default:vim"`
+		Root              string
+		Colour            string `conf:"default:light"`
+		Editor            string `conf:"default:vim"`
+		SyncFrequencyMs   uint16 `conf:"default:10000"`
+		GatherFrequencyMs uint16 `conf:"default:30000"`
 	}
 
 	// Pre-instantiate default root direct (can't pass value dynamically to default above)
@@ -71,24 +68,27 @@ func main() {
 	}
 
 	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalFileWalFile(localRefreshFrequencyMs, cfg.Root)
+	localWalFile := service.NewLocalFileWalFile(cfg.Root)
+
 	// Generate FileWebTokenStore
 	webTokens := service.NewFileWebTokenStore(cfg.Root)
+
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(
 		localWalFile,
 		webTokens,
-		pushFrequencyMs,
+		cfg.SyncFrequencyMs,
+		cfg.GatherFrequencyMs,
 	)
 
 	s3Remotes := service.GetS3Config(cfg.Root)
 	for _, r := range s3Remotes {
 		// centralise this logic across different remote types when relevant
-		if (r.Mode == service.ModePush || r.Mode == service.ModeSync) && r.Match == "" && !r.MatchAll {
+		if r.Mode == service.ModeSync && r.Match == "" && !r.MatchAll {
 			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")
 		}
 		// TODO gracefully deal with missing config
-		s3FileWal := service.NewS3FileWal(r, cfg.Root)
+		s3FileWal := service.NewS3WalFile(r, cfg.Root)
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 

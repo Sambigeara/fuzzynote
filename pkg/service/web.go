@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -26,33 +25,26 @@ const (
 
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
-
-	refreshFrequency = 30000 // 30 seconds
+	webRefreshInterval         = time.Minute * 10
 )
 
 type WebWalFile struct {
-	uuid                     string
-	web                      *Web
-	mode                     string
-	pushMatchTerm            []rune
-	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock *sync.Mutex
-	processedEventLock       *sync.Mutex
-	processedEventMap        map[string]struct{}
-	RefreshTicker            *time.Ticker
+	uuid               string
+	web                *Web
+	mode               string
+	pushMatchTerm      []rune
+	processedEventLock *sync.Mutex
+	processedEventMap  map[string]struct{}
 }
 
 func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	return &WebWalFile{
-		uuid:                     cfg.UUID,
-		web:                      web,
-		mode:                     cfg.Mode,
-		pushMatchTerm:            []rune(cfg.Match),
-		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: &sync.Mutex{},
-		processedEventLock:       &sync.Mutex{},
-		processedEventMap:        make(map[string]struct{}),
-		RefreshTicker:            time.NewTicker(time.Millisecond * time.Duration(refreshFrequency)),
+		uuid:               cfg.UUID,
+		web:                web,
+		mode:               cfg.Mode,
+		pushMatchTerm:      []rune(cfg.Match),
+		processedEventLock: &sync.Mutex{},
+		processedEventMap:  make(map[string]struct{}),
 	}
 }
 
@@ -75,15 +67,12 @@ func (w *Web) establishWebSocketConnection() error {
 	var resp *http.Response
 	var err error
 	w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
-	if resp == nil {
-		if err != nil {
-			return err
-		}
-		return errors.New("Failed to establish websocket connection")
+	if err != nil && resp == nil {
+		return fmt.Errorf("Failed to establish websocket connection: %s", err)
 	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
-	if resp.StatusCode != http.StatusSwitchingProtocols {
+	if resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
@@ -97,6 +86,9 @@ func (w *Web) establishWebSocketConnection() error {
 			return err
 		}
 		w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+		// need to return within this nested block otherwise the outside err still holds
+		// data from previous calls
+		return err
 	}
 	return err
 }
@@ -116,7 +108,7 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	b := BuildByteWal(&[]EventLog{el})
+	b := buildByteWal(&[]EventLog{el})
 	b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 	m := message{
 		UUID:   uuid,
@@ -125,11 +117,12 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	}
 	marshalData, err := json.Marshal(m)
 	if err != nil {
-		log.Fatal("Json marshal: malformed WAL data on websocket push")
+		//log.Fatal("Json marshal: malformed WAL data on websocket push")
+		// TODO proper handling
+		return
 	}
 	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	if err != nil {
-		log.Fatal("Hello")
 		// Re-establish websocket connection on error
 		// TODO currently attempting to re-establish connection on ANY error - do better at
 		// identifying websocket connect issues
@@ -152,18 +145,7 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 
 	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
-		// Re-establish websocket connection on error
-		// TODO currently attempting to re-establish connection on ANY error - do better at
-		// identifying websocket connect issues
-		w.establishWebSocketConnection()
-
-		// if re-establish successful (e.g. wsConn != nil) reattempt write
-		if w.wsConn != nil {
-			_, body, err = w.wsConn.Read(ctx)
-			if err != nil {
-				return nil
-			}
-		}
+		// Do nothing for now
 	}
 
 	var m message
@@ -171,10 +153,14 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	if err != nil {
 		return nil
 	}
-	strWal, _ := base64.StdEncoding.DecodeString(string(m.Wal))
+	strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
+	if err != nil {
+		// TODO proper handling
+		return nil
+	}
 
 	buf := bytes.NewBuffer([]byte(strWal))
-	el, err := BuildFromFile(buf)
+	el, err := buildFromFile(buf)
 	if err == nil && len(el) > 0 {
 		walChan <- &el
 
@@ -190,7 +176,8 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 		}
 	}
 
-	return err
+	// TODO proper handling
+	return nil
 }
 
 func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {
@@ -251,13 +238,13 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error retrieving wal list: %v", err)
+		//log.Printf("Error retrieving wal list: %v", err)
 		return nil, nil
 	}
 
 	strUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error parsing wals from S3 response body: %s", err)
+		//log.Printf("Error parsing wals from S3 response body: %s", err)
 		return nil, nil
 	}
 
@@ -270,41 +257,33 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWal(fileName string) ([]EventLog, error) {
+func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
-		log.Printf("Error retrieving wal %s: %s", fileName, err)
-		return nil, nil
+		//log.Printf("Error retrieving wal %s: %s", fileName, err)
+		return nil, err
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
-		log.Printf("Error retrieving file using presigned S3 URL: %s", err)
-		return nil, nil
+		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
+		return nil, err
 	}
 	defer s3Resp.Body.Close()
 
 	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
 	if err != nil {
-		log.Printf("Error parsing wal from S3 response body: %s", err)
-		return nil, nil
+		//log.Printf("Error parsing wal from S3 response body: %s", err)
+		return nil, err
 	}
 
 	// Wals are transmitted over the wire in binary format, so decode
-	wal, err := base64.StdEncoding.DecodeString(string(b64Wal))
+	walBytes, err := base64.StdEncoding.DecodeString(string(b64Wal))
 	if err != nil {
 		//log.Printf("Error decoding wal: %s", err)
-		return nil, nil
+		return nil, err
 	}
-
-	buf := bytes.NewBuffer(wal)
-
-	var el []EventLog
-	if el, err = BuildFromFile(buf); err != nil {
-		log.Printf("Error building wal from S3: %s", err)
-		return nil, nil
-	}
-	return el, nil
+	return walBytes, err
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {
@@ -358,27 +337,6 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
 	}
 	resp.Body.Close()
 	return nil
-}
-
-func (wf *WebWalFile) SetProcessedPartialWals(partialWal string) {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	wf.processedPartialWals[partialWal] = struct{}{}
-}
-
-func (wf *WebWalFile) IsPartialWalProcessed(partialWal string) bool {
-	wf.processedPartialWalsLock.Lock()
-	defer wf.processedPartialWalsLock.Unlock()
-	_, exists := wf.processedPartialWals[partialWal]
-	return exists
-}
-
-func (wf *WebWalFile) AwaitPull() {
-	<-wf.RefreshTicker.C
-}
-
-func (wf *WebWalFile) StopTickers() {
-	wf.RefreshTicker.Stop()
 }
 
 func (wf *WebWalFile) GetMode() string          { return wf.mode }

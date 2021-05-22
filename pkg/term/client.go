@@ -288,7 +288,9 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 
 		// Account for horizontal offset if on curItem
 		if i == t.curY-reservedTopLines {
-			line = line[t.horizOffset:]
+			if len(line) > 0 {
+				line = line[t.horizOffset:]
+			}
 		}
 
 		// Emit line
@@ -625,9 +627,9 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 					openURL(url)
 				}
 			}
-		case tcell.KeyCtrlCarat:
-			// This is experimental functionality atm, hence the weird keypress
-			t.db.GenerateView(t.search, t.showHidden)
+		//case tcell.KeyCtrlCarat:
+		//    // This is experimental functionality atm, hence the weird keypress
+		//    t.db.GenerateView(t.search, t.showHidden)
 		case tcell.KeyCtrlP:
 			// Paste functionality
 			if t.copiedItem != nil {

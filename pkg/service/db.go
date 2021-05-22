@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"log"
 	"os"
 )
@@ -75,16 +76,55 @@ func (r *DBListRepo) Stop() error {
 	return nil
 }
 
-func (r *DBListRepo) RegisterWeb(w *Web) error {
-	return w.establishWebSocketConnection()
+func (r *DBListRepo) registerWeb() error {
+	// registerWeb is used periodically during runtime as well as at startup, so purge any
+	// web walfiles prior to continuing
+	r.clearWebWalFiles()
+
+	if err := r.web.establishWebSocketConnection(); err != nil {
+		return err
+	}
+
+	// Retrieve remotes from API
+	remotes, err := r.web.GetRemotes("", nil)
+	if err != nil {
+		return errors.New("Error when trying to retrieve remotes config from API")
+	}
+
+	for _, remote := range remotes {
+		if remote.IsActive {
+			webWalFile := NewWebWalFile(remote, r.web)
+			r.RegisterWalFile(webWalFile)
+		}
+	}
+
+	return nil
+}
+
+// clearWebWalFiles is used to remove references of stored web walfiles. At the mo, primary use-case
+// is to allow us to refresh them periodically.
+func (r *DBListRepo) clearWebWalFiles() {
+	for _, wf := range r.webWalFiles {
+		delete(r.web.walFileMap, wf.GetUUID())
+	}
+	r.webWalFiles = []WalFile{}
 }
 
 func (r *DBListRepo) RegisterWalFile(wf WalFile) {
-	r.walFiles = append(r.walFiles, wf)
+	switch wf.(type) {
+	case *s3WalFile:
+		r.s3WalFiles = append(r.s3WalFiles, wf)
+	case *WebWalFile:
+		r.webWalFiles = append(r.webWalFiles, wf)
+	}
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
 	// when consuming websocket events or on pull. This covers some edge cases where local updates
 	// on foreign items will not emit to remotes, as we can use the cache in the getMatchedWal call
 	if r.web != nil && wf.GetUUID() != "" {
 		r.web.walFileMap[wf.GetUUID()] = &wf
 	}
+}
+
+func (r *DBListRepo) allWalFiles() []WalFile {
+	return append(append(r.s3WalFiles, r.LocalWalFile), r.webWalFiles...)
 }

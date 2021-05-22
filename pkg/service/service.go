@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -15,9 +16,12 @@ type (
 const (
 	rootFileName    = "primary.db"
 	walFilePattern  = "wal_%v.db"
-	viewFilePattern = "view_%v.db"
+	viewFilePattern = "view_%v"
 
 	latestFileSchemaID = fileSchemaID(3)
+
+	DefaultSyncFrequency   = uint16(10000) // 10 seconds
+	DefaultGatherFrequency = uint16(30000) // 30 seconds
 )
 
 type bits uint32
@@ -64,14 +68,23 @@ type DBListRepo struct {
 	listItemTracker   map[string]*ListItem
 	LocalWalFile      LocalWalFile
 	walFiles          []WalFile
+	webWalFiles       []WalFile
+	s3WalFiles        []WalFile
 	eventsChan        chan EventLog
 	stop              chan struct{}
-	pushTicker        *time.Ticker
 	web               *Web
+
+	webSyncTicker  *time.Ticker
+	fileSyncTicker *time.Ticker
+	pushTicker     *time.Ticker
+	gatherTicker   *time.Ticker
+
+	processedPartialWals     map[string]struct{}
+	processedPartialWalsLock *sync.Mutex
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushFrequency uint16) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16, gatherFrequency uint16) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
@@ -79,6 +92,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 	}
 
 	listRepo := &DBListRepo{
+		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
@@ -86,10 +100,12 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 		log:               &[]EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
-		LocalWalFile:      localWalFile, // TODO naming
+		LocalWalFile:      localWalFile,
 		eventsChan:        make(chan EventLog),
 		stop:              make(chan struct{}, 1),
-		pushTicker:        time.NewTicker(time.Millisecond * time.Duration(pushFrequency)),
+
+		processedPartialWals:     make(map[string]struct{}),
+		processedPartialWalsLock: &sync.Mutex{},
 	}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
@@ -97,27 +113,31 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, pushF
 	// it as we call all walfiles in the next line.
 	listRepo.RegisterWalFile(localWalFile)
 
-	// Tokens are gererated on `login`
+	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.RefreshToken() != "" {
 		web := NewWeb(webTokenStore)
-		web.uuid = listRepo.uuid // TODO
-		err := listRepo.RegisterWeb(web)
-		if err == nil {
-			listRepo.web = web
-			// Retrieve remotes from API
-			remotes, err := web.GetRemotes("", nil)
-			if err != nil {
-				log.Fatal("Error when trying to retrieve remotes config from API")
-			}
-			for _, r := range remotes {
-				if r.IsActive {
-					webWalFile := NewWebWalFile(r, web)
-					listRepo.RegisterWalFile(webWalFile)
-				}
-			}
-		}
+		web.uuid = listRepo.uuid // TODO does web need to store uuid??
+
+		// Default the other ticker intervals
+		fileSyncFrequency = DefaultSyncFrequency
+		gatherFrequency = DefaultGatherFrequency
+
+		// registerWeb also deals with the retrieval and instantiation of the web remotes
+		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
+		// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
+		listRepo.web = web
 	}
+
+	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
+	// disabled at the mo so leave in (it's inexpensive)
+	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(DefaultSyncFrequency))
+	// If the `web` integration isn't enabled (websockets et al), we allow the user to pass intervals
+	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
+	// real time via websockets, and therefore short intervals aren't required.
+	listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 
 	return listRepo
 }
@@ -128,7 +148,6 @@ type ListItem struct {
 	Line         string
 	Note         *[]byte
 	IsHidden     bool
-	Offset       int
 	originUUID   uuid
 	creationTime int64
 	child        *ListItem
