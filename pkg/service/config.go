@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	//"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -56,18 +55,16 @@ func NewWeb(webTokens WebTokenStore) *Web {
 //    //Mode  Mode
 //    Mode     Mode
 //    Match    string
-//    MatchAll bool
 //}
 
 type S3Remote struct {
 	//remote
-	Mode     string
-	Match    string
-	MatchAll bool
-	Key      string
-	Secret   string
-	Bucket   string
-	Prefix   string
+	Mode   string
+	Match  string
+	Key    string
+	Secret string
+	Bucket string
+	Prefix string
 }
 
 type WebRemote struct {
@@ -77,7 +74,6 @@ type WebRemote struct {
 	UUID     string `json:"WalUUID"`
 	Mode     string `json:"Mode"`
 	Match    string `json:"Match"`
-	MatchAll bool   `json:"MatchAll"`
 	IsOwner  bool   `json:"IsOwner"`
 	IsActive bool   `json:"IsActive"`
 }
@@ -108,7 +104,7 @@ func GetS3Config(root string) []S3Remote {
 
 // OverrideBaseUUID will attempt to retrieve an existing UUID to set and store within the primary.db file
 // If we don't do this, we randomly generate a UUID and add a remote each time we log in.
-// Only use an existing UUID if there is a remote with MatchAll set to True, otherwise
+// Only use an existing UUID if there is a remote with empty match term, otherwise
 // maintain the randomly generated UUID.
 func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile, ctx interface{}) error {
 	remotes, err := w.GetRemotes("", nil)
@@ -118,7 +114,7 @@ func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile, ctx interface{}) error
 	if len(remotes) > 0 {
 		var baseUUID64 uint64
 		for _, r := range remotes {
-			if r.MatchAll {
+			if r.Match == "" {
 				var err error
 				baseUUID64, err = strconv.ParseUint(r.UUID, 10, 32)
 				if err != nil {
@@ -147,7 +143,6 @@ func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
 		u.Path = p
 	}
 
-	//log.Fatal(u.String())
 	req, err := http.NewRequest("GET", u.String(), nil)
 	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
 	req.Header.Add(iDTokenHeader, w.tokens.IDToken())

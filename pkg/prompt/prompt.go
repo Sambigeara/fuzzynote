@@ -53,14 +53,12 @@ func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]
 	nameKey := fmt.Sprintf("Name: %s", r.Name)
 	modeKey := fmt.Sprintf("Mode: %s", r.Mode)
 	matchKey := fmt.Sprintf("Match: %s", r.Match)
-	matchAllKey := fmt.Sprintf("MatchAll: %v", r.MatchAll)
 	isActiveKey := fmt.Sprintf("IsActive: %v", r.IsActive)
 
 	fields := []string{
 		nameKey,
 		modeKey,
 		matchKey,
-		matchAllKey,
 		isActiveKey,
 	}
 
@@ -76,13 +74,6 @@ func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]
 		},
 		matchKey: func(v string) error {
 			r.Match = v
-			return w.UpdateRemote(r)
-		},
-		matchAllKey: func(v string) error {
-			r.MatchAll = false
-			if v == "true" {
-				r.MatchAll = true
-			}
 			return w.UpdateRemote(r)
 		},
 		isActiveKey: func(v string) error {
@@ -105,7 +96,6 @@ func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]
 		nameKey:     alwaysValid,
 		modeKey:     alwaysValid,
 		matchKey:    alwaysValid,
-		matchAllKey: boolValidationFn,
 		isActiveKey: boolValidationFn,
 	}
 
@@ -389,7 +379,7 @@ func LaunchRemotesCLI(w *service.Web, wf *service.LocalFileWalFile) {
 				if newVal == exitKey {
 					break
 				}
-			} else if field == "IsActive" || field == "MatchAll" {
+			} else if field == "IsActive" {
 				sel = promptui.Select{
 					Label: "Select",
 					Items: []string{"true", "false", exitKey},
