@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	//"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,7 +31,6 @@ const (
 	noKey           = "No"
 	newRemoteKey    = "Add new remote..."
 	manageCollabKey = "Manage collaborators..."
-	archiveKey      = "Archive? WARNING: cannot be undone"
 	addCollabKey    = "Add new collaborator..."
 	exitKey         = "Exit"
 	selectSize      = 20
@@ -72,15 +72,14 @@ type S3Remote struct {
 
 type WebRemote struct {
 	//remote
-	Email      string `json:"Email"`
-	Name       string `json:"WalName"`
-	UUID       string `json:"WalUUID"`
-	Mode       string `json:"Mode"`
-	Match      string `json:"Match"`
-	MatchAll   bool   `json:"MatchAll"`
-	IsOwner    bool   `json:"IsOwner"`
-	IsActive   bool   `json:"IsActive"`
-	IsArchived bool
+	Email    string `json:"Email"`
+	Name     string `json:"WalName"`
+	UUID     string `json:"WalUUID"`
+	Mode     string `json:"Mode"`
+	Match    string `json:"Match"`
+	MatchAll bool   `json:"MatchAll"`
+	IsOwner  bool   `json:"IsOwner"`
+	IsActive bool   `json:"IsActive"`
 }
 
 // Remotes represent a single remote Wal target (rather than a type), and the config lists
@@ -148,6 +147,7 @@ func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
 		u.Path = p
 	}
 
+	//log.Fatal(u.String())
 	req, err := http.NewRequest("GET", u.String(), nil)
 	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
 	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
@@ -159,7 +159,7 @@ func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
 
 	body, _ := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Error retrieving remotes: %s", body)
+		return nil, fmt.Errorf("Not authorized, please try logging in")
 	}
 	remotes := []WebRemote{}
 	err = json.Unmarshal(body, &remotes)
@@ -224,9 +224,9 @@ func (w *Web) UpdateRemote(remote WebRemote) error {
 	return nil
 }
 
-func (w *Web) ArchiveRemote(uuid string) error {
+func (w *Web) DeleteRemote(uuid string) error {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "remote", uuid, "archive")
+	u.Path = path.Join(u.Path, "remote", uuid, "delete")
 	remote := WebRemote{
 		UUID: uuid,
 	}
@@ -251,7 +251,7 @@ func (w *Web) ArchiveRemote(uuid string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("Error creating new remote: %s", respBody)
+		return fmt.Errorf("Error deleting remote: %s", respBody)
 	}
 	return nil
 }

@@ -22,7 +22,7 @@ const (
 	noKey           = "No"
 	newRemoteKey    = "Add new remote..."
 	manageCollabKey = "Manage collaborators..."
-	archiveKey      = "Archive? WARNING: cannot be undone"
+	deleteBaseKey   = "Delete?"
 	addCollabKey    = "Add new collaborator..."
 	exitKey         = "Exit"
 	selectSize      = 20
@@ -225,10 +225,12 @@ func LaunchRemotesCLI(w *service.Web) {
 		for {
 			remote := remoteMap[remoteResult]
 			fields, updateFuncMap, validationFuncMap := getRemoteFields(w, remote)
+			deleteKey := deleteBaseKey
 			if remote.IsOwner {
 				fields = append([]string{manageCollabKey}, fields...)
-				fields = append(fields, archiveKey)
+				deleteKey += " (for all collaborators)"
 			}
+			fields = append(fields, deleteKey)
 			fields = append(fields, exitKey)
 
 			sel = promptui.Select{
@@ -303,23 +305,23 @@ func LaunchRemotesCLI(w *service.Web) {
 					}
 				}
 				continue
-			} else if resultField == archiveKey {
+			} else if resultField == deleteKey {
 				// TODO dedup
-				// Bring up Archive yes/no option
+				// Bring up Delete yes/no option
 				sel = promptui.Select{
 					Label: "Are you sure?",
 					Items: []string{yesKey, noKey},
 					Size:  selectSize,
 				}
 
-				_, archiveResult, err := sel.Run()
+				_, deleteResult, err := sel.Run()
 				if err != nil {
 					return
 				}
 
-				if archiveResult == yesKey {
-					if err = w.ArchiveRemote(remote.UUID); err != nil {
-						fmt.Printf("Failed to archive remote: %s", err)
+				if deleteResult == yesKey {
+					if err = w.DeleteRemote(remote.UUID); err != nil {
+						fmt.Printf("Failed to delete remote: %s", err)
 						os.Exit(1)
 					}
 				}
