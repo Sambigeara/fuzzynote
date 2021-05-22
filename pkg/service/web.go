@@ -283,7 +283,7 @@ func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
 		//log.Printf("Error decoding wal: %s", err)
 		return nil, err
 	}
-	return walBytes, err
+	return walBytes, nil
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {

@@ -874,7 +874,8 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 				//defer wg.Done()
 				newWalBytes, err := wf.GetWalBytes(fileName)
 				if err != nil {
-					log.Fatal(err)
+					// TODO handle
+					//log.Fatal(err)
 				}
 				byteWals = append(byteWals, newWalBytes)
 				//}()
