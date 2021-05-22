@@ -33,6 +33,8 @@ const (
 
 	walSyncAuthorizationHeader = "Authorization"
 	iDTokenHeader              = "Id-Token"
+
+	nAllowedActiveRemotes = 5
 )
 
 var emailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
@@ -181,7 +183,17 @@ func LaunchRemotesCLI(w *service.Web) {
 			remotesSelectOptions = append(remotesSelectOptions, r.Key())
 			remoteMap[r.Key()] = r
 		}
-		remotesSelectOptions = append(remotesSelectOptions, newRemoteKey, exitKey)
+
+		nActiveRemotes := 0
+		for _, r := range remotes {
+			if r.IsActive {
+				nActiveRemotes++
+			}
+		}
+		if nActiveRemotes < nAllowedActiveRemotes {
+			remotesSelectOptions = append(remotesSelectOptions, newRemoteKey)
+		}
+		remotesSelectOptions = append(remotesSelectOptions, exitKey)
 
 		sel := promptui.Select{
 			Label: "Select action",
