@@ -54,6 +54,9 @@ func main() {
 	// existence here.
 	os.Mkdir(cfg.Root, os.ModePerm)
 
+	// Create and register local app WalFile (based in root directory)
+	localWalFile := service.NewLocalFileWalFile(cfg.Root)
+
 	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
 	// TODO atm only triggers on last arg, make smarter!
 	if len(os.Args) > 1 {
@@ -63,12 +66,9 @@ func main() {
 		case remotesArg:
 			webTokens := service.NewFileWebTokenStore(cfg.Root)
 			web := service.NewWeb(webTokens)
-			prompt.LaunchRemotesCLI(web)
+			prompt.LaunchRemotesCLI(web, localWalFile)
 		}
 	}
-
-	// Create and register local app WalFile (based in root directory)
-	localWalFile := service.NewLocalFileWalFile(cfg.Root)
 
 	// Generate FileWebTokenStore
 	webTokens := service.NewFileWebTokenStore(cfg.Root)

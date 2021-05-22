@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/manifoldco/promptui"
@@ -167,14 +168,44 @@ func Login(root string) {
 }
 
 // LaunchRemotesCLI launches the interactive Remote management CLI tool
-func LaunchRemotesCLI(w *service.Web) {
+func LaunchRemotesCLI(w *service.Web, wf *service.LocalFileWalFile) {
 	defer os.Exit(0)
+
+	// Load the local walfile to ensure that a base UUID is already set (or set one if it isn't)
+	fakeCtx := ""
+	baseUUID, err := wf.Load(fakeCtx)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Generate a map of remotes
 	for {
 		remotes, err := w.GetRemotes("", nil)
 		if err != nil {
 			log.Fatalf("%s", err)
+		}
+
+		// If none of the remotes share the same UUID as the current baseUUID, set the local to match, with
+		// precedence towards a remote with no match term set
+		uuidMatches := false
+		var matchAllUUID uint32
+		for i, r := range remotes {
+			if r.UUID == fmt.Sprintf("%d", baseUUID) {
+				uuidMatches = true
+				break
+			}
+			// If a remote has no match term set, we can use it to override the local baseUUID if necessary.
+			// If there is no matchAll remote, set it to an arbitrary one (the last one will do)
+			if matchAllUUID == 0 && (r.Match == "" || i == len(remotes)-1) {
+				uuid64, err := strconv.ParseUint(r.UUID, 10, 32)
+				if err != nil {
+					log.Fatal(err)
+				}
+				matchAllUUID = uint32(uuid64)
+			}
+		}
+		if !uuidMatches {
+			wf.SetBaseUUID(matchAllUUID, fakeCtx)
 		}
 
 		remotesSelectOptions := []string{}
