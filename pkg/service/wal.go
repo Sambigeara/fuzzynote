@@ -1074,6 +1074,49 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 }
 
 func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
+	// Create mutex to protect against dropped websocket events when refreshing web connections
+	webRefreshMut := sync.Mutex{}
+
+	// Prioritise async web start-up to minimise wait time before websocket instantiation
+	if r.web != nil {
+		// If web is available, attempts to consume from the websocket.
+		go func() {
+			for {
+				if r.web.wsConn != nil {
+					err := r.web.consumeWebsocket(walChan)
+					if err != nil {
+						return
+					}
+				} else {
+					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
+					// This is important before we fire up the web connections async after startup, so there will be a
+					// period where the loop above would cycle in an infinite and all-consuming loop
+					time.Sleep(5 * time.Second)
+				}
+			}
+		}()
+		// Also create a loop responsible for periodic refreshing of web connections and web walfiles.
+		go func() {
+			for {
+				webRefreshMut.Lock()
+				// Close off old websocket connection
+				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+				if r.web.wsConn != nil {
+					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				}
+				// Start new one
+				err := r.registerWeb()
+				if err != nil {
+					log.Print(err)
+					os.Exit(0)
+				}
+				webRefreshMut.Unlock()
+				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
+				time.Sleep(webRefreshInterval)
+			}
+		}()
+	}
+
 	// Run an initial blocking load from the local walfile (and put onto channel for immediate
 	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
 	// due to cache, so small amount of duplicated code required).
@@ -1133,48 +1176,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			walChan <- el
 		}
 	}()
-
-	// Create mutex to protect against dropped websocket events when refreshing web connections
-	webRefreshMut := sync.Mutex{}
-
-	if r.web != nil {
-		// If web is available, attempts to consume from the websocket.
-		go func() {
-			for {
-				if r.web.wsConn != nil {
-					err := r.web.consumeWebsocket(walChan)
-					if err != nil {
-						return
-					}
-				} else {
-					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
-					// This is important before we fire up the web connections async after startup, so there will be a
-					// period where the loop above would cycle in an infinite and all-consuming loop
-					time.Sleep(5 * time.Second)
-				}
-			}
-		}()
-		// Also create a loop responsible for periodic refreshing of web connections and web walfiles.
-		go func() {
-			for {
-				webRefreshMut.Lock()
-				// Close off old websocket connection
-				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
-				if r.web.wsConn != nil {
-					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
-				}
-				// Start new one
-				err := r.registerWeb()
-				if err != nil {
-					log.Print(err)
-					os.Exit(0)
-				}
-				webRefreshMut.Unlock()
-				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
-				time.Sleep(webRefreshInterval)
-			}
-		}()
-	}
 
 	// Push to all WalFiles
 	go func() {
