@@ -20,7 +20,7 @@ const (
 )
 
 const (
-	ModePush = "push"
+	//ModePush = "push"
 	ModePull = "pull"
 	ModeSync = "sync"
 )

@@ -1061,7 +1061,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		for _, wf := range r.allWalFiles() {
-			if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
+			if wf.GetMode() == ModeSync {
 				if sync {
 					// TODO Use waitgroups
 					r.push(&el, wf, randomUUID)
@@ -1189,7 +1189,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
 						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
-						if wf.GetMode() == ModeSync || wf.GetMode() == ModePush {
+						if wf.GetMode() == ModeSync {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								e = (*matchedEventLog)[0]

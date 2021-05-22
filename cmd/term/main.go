@@ -84,7 +84,7 @@ func main() {
 	s3Remotes := service.GetS3Config(cfg.Root)
 	for _, r := range s3Remotes {
 		// centralise this logic across different remote types when relevant
-		if (r.Mode == service.ModePush || r.Mode == service.ModeSync) && r.Match == "" && !r.MatchAll {
+		if r.Mode == service.ModeSync && r.Match == "" && !r.MatchAll {
 			log.Fatal("`match` or `matchall` must be explicitly set if mode is `push` or `sync`")
 		}
 		// TODO gracefully deal with missing config
