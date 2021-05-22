@@ -148,7 +148,6 @@ type ListItem struct {
 	Line         string
 	Note         *[]byte
 	IsHidden     bool
-	Offset       int
 	originUUID   uuid
 	creationTime int64
 	child        *ListItem

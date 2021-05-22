@@ -117,7 +117,9 @@ func (w *Web) pushWebsocket(el EventLog, uuid string) {
 	}
 	marshalData, err := json.Marshal(m)
 	if err != nil {
-		log.Fatal("Json marshal: malformed WAL data on websocket push")
+		//log.Fatal("Json marshal: malformed WAL data on websocket push")
+		// TODO proper handling
+		return
 	}
 	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	if err != nil {
@@ -151,7 +153,11 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	if err != nil {
 		return nil
 	}
-	strWal, _ := base64.StdEncoding.DecodeString(string(m.Wal))
+	strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
+	if err != nil {
+		// TODO proper handling
+		return nil
+	}
 
 	buf := bytes.NewBuffer([]byte(strWal))
 	el, err := buildFromFile(buf)
@@ -170,7 +176,8 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 		}
 	}
 
-	return err
+	// TODO proper handling
+	return nil
 }
 
 func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {
