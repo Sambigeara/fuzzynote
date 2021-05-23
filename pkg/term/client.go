@@ -174,7 +174,7 @@ func (t *Terminal) openEditorSession() error {
 	if err != nil {
 		// For now, show a warning and return
 		// TODO make more robust
-		t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
+		//t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
 	}
 
 	// Read back from the temp file, and return to the write function
@@ -240,6 +240,17 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	emitStr(s, 0, t.h-1+reservedBottomLines, footer, text)
 }
 
+func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators []string) {
+	style := tcell.StyleDefault.
+		Foreground(tcell.ColorWhite).Background(tcell.Color25)
+
+	x := 0
+	for _, c := range collaborators {
+		emitStr(s, x, t.h-1+reservedBottomLines, style, c)
+		x += len(c)
+	}
+}
+
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
 	t.w = w - reservedEndChars
@@ -254,19 +265,22 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	t.buildSearchBox(t.S)
 
 	// Style for highlighting currently selected items
-	selectedStyle := tcell.StyleDefault.
-		Background(tcell.ColorGrey).
-		Foreground(tcell.ColorWhite)
+	//selectedStyle := tcell.StyleDefault.
+	//    Background(tcell.ColorGrey).
+	//    Foreground(tcell.ColorWhite)
+	selectedStyle := t.style.Reverse(true)
 
 	// Style for highlighting collaborators currently on the line
 	collabStyle := tcell.StyleDefault.
-		Background(tcell.ColorMaroon).
+		Background(tcell.Color25).
 		Foreground(tcell.ColorWhite)
 
-	// Style for highlighting notes
-	noteStyle := tcell.StyleDefault.
-		Background(tcell.ColorMaroon).
-		Foreground(tcell.ColorWhite)
+	//noteStyle := tcell.StyleDefault.
+	//    Background(tcell.ColorMaroon).
+	//    Foreground(tcell.ColorWhite)
+	noteStyle := t.style.Underline(true).Bold(true)
+
+	collaborators := []string{}
 
 	// Fill lineItems
 	var offset int
@@ -275,13 +289,16 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		offset = i + reservedTopLines
 
 		// Get current collaborators on item, if any
-		collaborators := collabMap[r.Key()]
+		lineCollabers := collabMap[r.Key()]
+		if len(lineCollabers) > 0 {
+			collaborators = append(collaborators, lineCollabers...)
+		}
 
 		// If item is highlighted, indicate accordingly
 		if _, ok := t.selectedItems[i]; ok {
 			// If currently selected
 			style = selectedStyle
-		} else if len(collaborators) > 0 {
+		} else if len(lineCollabers) > 0 {
 			// If collaborators are on line
 			style = collabStyle
 		} else if r.Note != nil && len(*(r.Note)) > 0 {
@@ -309,12 +326,16 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			}
 		}
 
+		if r.IsHidden {
+			style = style.Dim(true)
+		}
+
 		// Emit line
 		emitStr(t.S, 0, offset, style, line)
 		// Emit `hidden` indicator
-		if r.IsHidden {
-			emitStr(t.S, t.w, offset, style, "*")
-		}
+		//if r.IsHidden {
+		//    emitStr(t.S, t.w, offset, style, "*")
+		//}
 		if offset == t.h {
 			break
 		}
@@ -331,13 +352,13 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		}
 	}
 
-	if t.footerMessage != "" {
-		t.buildFooter(t.S, t.footerMessage)
+	// Show active collaborators
+	if len(collaborators) > 0 {
+		t.buildCollabDisplay(t.S, collaborators)
 	}
 
-	//if saveWarning {
-	//    // Fill reserved footer/info line at the bottom of the screen if present
-	//    t.buildFooter(t.S, saveWarningMsg)
+	//if t.footerMessage != "" {
+	//    t.buildFooter(t.S, t.footerMessage)
 	//}
 
 	t.S.ShowCursor(t.curX, t.curY)
