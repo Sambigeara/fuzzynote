@@ -52,6 +52,8 @@ type ListRepo interface {
 	Undo() (string, error)
 	Redo() (string, error)
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
+	SetCollabPosition(string, string)
+	GetCollabPositions() map[string][]string
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
 
@@ -73,6 +75,11 @@ type DBListRepo struct {
 	eventsChan        chan EventLog
 	stop              chan struct{}
 	web               *Web
+
+	remoteCursorMoveChan chan cursorMoveEvent
+	localCursorMoveChan  chan cursorMoveEvent
+	collabPositions      map[string]string
+	collabMapLock        *sync.Mutex
 
 	webSyncTicker  *time.Ticker
 	fileSyncTicker *time.Ticker
@@ -104,6 +111,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		eventsChan:        make(chan EventLog),
 		stop:              make(chan struct{}, 1),
 
+		collabMapLock: &sync.Mutex{},
+
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 	}
@@ -127,6 +136,11 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
 		// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
 		listRepo.web = web
+
+		// Establish the chan used to track and display collaborator cursor positions
+		listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent) // incoming events
+		listRepo.localCursorMoveChan = make(chan cursorMoveEvent)  // outgoing events
+		listRepo.collabPositions = make(map[string]string)         // map[collaboratorEmail]currentKey
 	}
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
@@ -383,6 +397,13 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 		return res, newPos, nil
 	}
 
+	// If web connection is enabled, broadcast a cursor move event
+	if r.web != nil && r.web.wsConn != nil {
+		r.localCursorMoveChan <- cursorMoveEvent{
+			listItemKey: curKey,
+		}
+	}
+
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
 	for {
@@ -430,6 +451,29 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 		}
 		cur = cur.parent
 	}
+}
+
+// GetCollabPositions returns a map of listItemKeys against all collaborators currently on that listItem
+func (r *DBListRepo) GetCollabPositions() map[string][]string {
+	r.collabMapLock.Lock()
+	defer r.collabMapLock.Unlock()
+
+	pos := make(map[string][]string)
+	for email, key := range r.collabPositions {
+		_, exists := pos[key]
+		if !exists {
+			pos[key] = []string{}
+		}
+		pos[key] = append(pos[key], email)
+	}
+	return pos
+}
+
+func (r *DBListRepo) SetCollabPosition(email string, listItemKey string) {
+	r.collabMapLock.Lock()
+	defer r.collabMapLock.Unlock()
+
+	r.collabPositions[email] = listItemKey
 }
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {

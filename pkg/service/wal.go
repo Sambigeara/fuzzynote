@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -1084,12 +1085,14 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		go func() {
 			for {
 				if r.web.wsConn != nil {
-					webRefreshMut.RLock()
-					err := r.web.consumeWebsocket(walChan)
-					if err != nil {
-						return
-					}
-					webRefreshMut.RUnlock()
+					func() {
+						webRefreshMut.RLock()
+						defer webRefreshMut.RUnlock()
+						err := r.web.consumeWebsocket(walChan, r.remoteCursorMoveChan)
+						if err != nil {
+							return
+						}
+					}()
 				} else {
 					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
 					// This is important before we fire up the web connections async after startup, so there will be a
@@ -1098,22 +1101,51 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 			}
 		}()
-		// Also create a loop responsible for periodic refreshing of web connections and web walfiles.
+
+		// Create a loop to deal with any collaborator cursor move events
 		go func() {
 			for {
-				webRefreshMut.Lock()
-				// Close off old websocket connection
-				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+				e := <-r.localCursorMoveChan
+				// TODO dedup webWalFile ModeSync loop
 				if r.web.wsConn != nil {
-					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+					for _, wf := range r.webWalFiles {
+						if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+							func() {
+								m := websocketMessage{
+									Action: "position",
+									UUID:   wf.GetUUID(),
+									Key:    e.listItemKey,
+								}
+								webRefreshMut.RLock()
+								defer webRefreshMut.RUnlock()
+								r.web.pushWebsocket(m)
+							}()
+						}
+					}
+				} else {
+					time.Sleep(5 * time.Second)
 				}
-				// Start new one
-				err := r.registerWeb()
-				if err != nil {
-					log.Print(err)
-					os.Exit(0)
-				}
-				webRefreshMut.Unlock()
+			}
+		}()
+
+		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
+		go func() {
+			for {
+				func() {
+					webRefreshMut.Lock()
+					defer webRefreshMut.Unlock()
+					// Close off old websocket connection
+					// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+					if r.web.wsConn != nil {
+						r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+					}
+					// Start new one
+					err := r.registerWeb()
+					if err != nil {
+						log.Print(err)
+						os.Exit(0)
+					}
+				}()
 				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
 				time.Sleep(webRefreshInterval)
 			}
@@ -1191,14 +1223,23 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				// Write in real time to the websocket, if present
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
-						// TODO getMatchedWal and mode checks should be handled in pushWebsocket maybe
-						if wf.GetMode() == ModeSync {
+						// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
+						if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
-								e = (*matchedEventLog)[0]
-								webRefreshMut.RLock()
-								r.web.pushWebsocket(e, wf.GetUUID())
-								webRefreshMut.RUnlock()
+								// There are only single events, so get the zero index
+								b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})
+								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
+								m := websocketMessage{
+									Action: "wal",
+									UUID:   wf.GetUUID(),
+									Wal:    b64Wal,
+								}
+								func() {
+									webRefreshMut.RLock()
+									defer webRefreshMut.RUnlock()
+									r.web.pushWebsocket(m)
+								}()
 							}
 						}
 					}

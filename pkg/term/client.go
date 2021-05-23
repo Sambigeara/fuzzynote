@@ -247,12 +247,20 @@ func (t *Terminal) resizeScreen() {
 }
 
 func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
+	// Get collaborator map
+	collabMap := t.db.GetCollabPositions()
+
 	// Build top search box
 	t.buildSearchBox(t.S)
 
-	// Style for highlighting currnetly selected items
+	// Style for highlighting currently selected items
 	selectedStyle := tcell.StyleDefault.
 		Background(tcell.ColorGrey).
+		Foreground(tcell.ColorWhite)
+
+	// Style for highlighting collaborators currently on the line
+	collabStyle := tcell.StyleDefault.
+		Background(tcell.ColorMaroon).
 		Foreground(tcell.ColorWhite)
 
 	// Style for highlighting notes
@@ -265,9 +273,17 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	var style tcell.Style
 	for i, r := range matches[t.vertOffset:min(len(matches), t.vertOffset+t.h-reservedTopLines)] {
 		offset = i + reservedTopLines
+
+		// Get current collaborators on item, if any
+		collaborators := collabMap[r.Key()]
+
 		// If item is highlighted, indicate accordingly
 		if _, ok := t.selectedItems[i]; ok {
+			// If currently selected
 			style = selectedStyle
+		} else if len(collaborators) > 0 {
+			// If collaborators are on line
+			style = collabStyle
 		} else if r.Note != nil && len(*(r.Note)) > 0 {
 			// If note is present, indicate with a different style
 			style = noteStyle
