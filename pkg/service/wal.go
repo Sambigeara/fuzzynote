@@ -1076,7 +1076,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 
 func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
-	webRefreshMut := sync.Mutex{}
+	webRefreshMut := sync.RWMutex{}
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	if r.web != nil {
@@ -1084,10 +1084,12 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		go func() {
 			for {
 				if r.web.wsConn != nil {
+					webRefreshMut.RLock()
 					err := r.web.consumeWebsocket(walChan)
 					if err != nil {
 						return
 					}
+					webRefreshMut.RUnlock()
 				} else {
 					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
 					// This is important before we fire up the web connections async after startup, so there will be a
@@ -1194,9 +1196,9 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								e = (*matchedEventLog)[0]
-								webRefreshMut.Lock()
+								webRefreshMut.RLock()
 								r.web.pushWebsocket(e, wf.GetUUID())
-								webRefreshMut.Unlock()
+								webRefreshMut.RUnlock()
 							}
 						}
 					}

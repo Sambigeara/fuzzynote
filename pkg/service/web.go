@@ -143,6 +143,8 @@ func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// TODO line below sometimes triggers `invalid memory address or nil pointer derefence`.
+	// 2021-05-23: Added in a mutex lock to see if it solves
 	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
 		// Do nothing for now
