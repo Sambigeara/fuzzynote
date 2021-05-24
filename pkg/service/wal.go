@@ -866,7 +866,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 
 	// IO bound: For each walFile, retrieve the WalFile byte representations for all previously unseen
 	// filenames
-	byteWals := [][]byte{}
+	byteWals := make(map[WalFile][]byte)
 	for wf, fileNames := range fileNameMap {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
@@ -878,7 +878,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 					// TODO handle
 					//log.Fatal(err)
 				}
-				byteWals = append(byteWals, newWalBytes)
+				byteWals[wf] = newWalBytes
 				//}()
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
@@ -891,13 +891,20 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	// CPU bound: Now we have all the byteWals, generate the wals and merge then in a single thread
 	// (to prevent tying up the CPU completely)
 	newMergedWal := []EventLog{}
-	for _, bWal := range byteWals {
+	for wf, bWal := range byteWals {
 		buf := bytes.NewBuffer(bWal)
-		newWal, err := buildFromFile(buf)
+		newWfWal, err := buildFromFile(buf)
 		if err != nil {
 			log.Fatal(err)
 		}
-		newMergedWal = *(merge(&newMergedWal, &newWal))
+
+		// Ackowledge the events for all walfile maps
+		for _, ev := range newWfWal {
+			key, _ := ev.getKeys()
+			wf.SetProcessedEvent(key)
+		}
+
+		newMergedWal = *(merge(&newMergedWal, &newWfWal))
 	}
 
 	return &newMergedWal, nil
