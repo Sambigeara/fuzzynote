@@ -694,11 +694,13 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 
 	// Return false if only one is nil
 	if (ptrA != nil && ptrB == nil) || (ptrA == nil && ptrB != nil) {
+		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 		return false
 	}
 
 	// Check root equality
 	if !areListItemsEqual(ptrA, ptrB, true) {
+		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 		return false
 	}
 
@@ -713,11 +715,34 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 		ptrA = ptrA.parent
 		ptrB = ptrB.parent
 		if !areListItemsEqual(ptrA, ptrB, true) {
+			log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 			return false
 		}
 	}
 
-	return areListItemsEqual(ptrA, ptrB, true)
+	if !areListItemsEqual(ptrA, ptrB, true) {
+		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
+		return false
+	}
+	return true
+}
+
+func writePlainWalToFile(wal []EventLog) {
+	f, err := os.Create(fmt.Sprintf("debug_%d", time.Now().UnixNano()))
+	if err != nil {
+		fmt.Println(err)
+		f.Close()
+		return
+	}
+	defer f.Close()
+
+	for _, e := range wal {
+		fmt.Fprintln(f, e)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
 }
 
 func compact(wal *[]EventLog) *[]EventLog {
@@ -785,6 +810,8 @@ func compact(wal *[]EventLog) *[]EventLog {
 	// TODO remove this once confidence with compact is there!
 	// This is a circuit breaker which will blow up if compact generates inconsistent results
 	if !walsAreEquivalent(wal, &compactedWal) {
+		writePlainWalToFile(*wal)
+		writePlainWalToFile(compactedWal)
 		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
 	return &compactedWal
