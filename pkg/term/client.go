@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"runtime"
@@ -35,7 +36,7 @@ type Terminal struct {
 	curItem           *service.ListItem // The currently selected item
 	S                 tcell.Screen
 	style             tcell.Style
-	promptStyle       tcell.Style
+	colour            string
 	Editor            string
 	w, h              int
 	curX, curY        int // Cur "screen" index, not related to matched item lists
@@ -52,21 +53,12 @@ type Terminal struct {
 func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 	encoding.Register()
 
-	var defStyle, promptStyle tcell.Style
-	if colour == "light" {
-		defStyle = tcell.StyleDefault.
-			Background(tcell.ColorWhite).
-			Foreground(tcell.ColorBlack)
-		promptStyle = tcell.StyleDefault.
-			Background(tcell.ColorWhite).
-			Foreground(tcell.ColorGray)
-	} else {
-		defStyle = tcell.StyleDefault.
-			Background(tcell.ColorBlack).
-			Foreground(tcell.ColorWhite)
-		promptStyle = tcell.StyleDefault.
-			Background(tcell.ColorBlack).
-			Foreground(tcell.ColorGray)
+	defStyle := tcell.StyleDefault.
+		Background(tcell.ColorWhite).
+		Foreground(tcell.ColorBlack)
+
+	if colour == "dark" {
+		defStyle = defStyle.Reverse(true)
 	}
 
 	s := newInstantiatedScreen(defStyle)
@@ -83,7 +75,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 		db:            db,
 		S:             s,
 		style:         defStyle,
-		promptStyle:   promptStyle,
+		colour:        colour,
 		Editor:        editor,
 		w:             w,
 		h:             h,
@@ -174,7 +166,7 @@ func (t *Terminal) openEditorSession() error {
 	if err != nil {
 		// For now, show a warning and return
 		// TODO make more robust
-		t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
+		//t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
 	}
 
 	// Read back from the temp file, and return to the write function
@@ -199,7 +191,7 @@ func (t *Terminal) openEditorSession() error {
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	// If no search items at all, display emptySearchLinePrompt and return
 	if len(t.search) == 0 || len(t.search) == 1 && len(t.search[0]) == 0 {
-		emitStr(s, 0, 0, t.promptStyle, emptySearchLinePrompt)
+		emitStr(s, 0, 0, t.style.Dim(true), emptySearchLinePrompt)
 	}
 
 	searchStyle := tcell.StyleDefault.
@@ -215,7 +207,7 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	// Display `TAB` prompt after final search group if only one search group
 	// +1 just to give some breathing room
 	if len(t.search) == 1 && len(t.search[0]) > 0 && t.curY == 0 {
-		emitStr(s, pos+1, 0, t.promptStyle, searchGroupPrompt)
+		emitStr(s, pos+1, 0, t.style.Dim(true), searchGroupPrompt)
 	}
 
 	// Display whether all items or just non-hidden items are currently displayed
@@ -240,39 +232,88 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	emitStr(s, 0, t.h-1+reservedBottomLines, footer, text)
 }
 
+func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style]string) {
+	x := 0
+	for style, collabStr := range collaborators {
+		emitStr(s, x, t.h-1+reservedBottomLines, style, collabStr)
+		x += len(collabStr)
+	}
+}
+
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
 	t.w = w - reservedEndChars
 	t.h = h - reservedBottomLines
 }
 
+// A selection of colour combos to apply to collaborators
+var (
+	collabStyleCombos []tcell.Style = []tcell.Style{
+		tcell.StyleDefault.
+			Background(tcell.Color25).
+			Foreground(tcell.ColorWhite),
+		tcell.StyleDefault.
+			Background(tcell.Color90).
+			Foreground(tcell.ColorWhite),
+		tcell.StyleDefault.
+			Background(tcell.Color124).
+			Foreground(tcell.ColorWhite),
+		tcell.StyleDefault.
+			Background(tcell.Color126).
+			Foreground(tcell.ColorWhite),
+		tcell.StyleDefault.
+			Background(tcell.Color136).
+			Foreground(tcell.ColorWhite),
+		tcell.StyleDefault.
+			Background(tcell.Color166).
+			Foreground(tcell.ColorWhite),
+	}
+	collabStyleIncStart = rand.Intn(len(collabStyleCombos))
+)
+
 func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
+	// Get collaborator map
+	collabMap := t.db.GetCollabPositions()
+
 	// Build top search box
 	t.buildSearchBox(t.S)
 
-	// Style for highlighting currnetly selected items
-	selectedStyle := tcell.StyleDefault.
-		Background(tcell.ColorGrey).
-		Foreground(tcell.ColorWhite)
+	// Store comma separated strings of collaborator emails against the style
+	collaborators := make(map[tcell.Style]string)
 
-	// Style for highlighting notes
-	noteStyle := tcell.StyleDefault.
-		Background(tcell.ColorMaroon).
-		Foreground(tcell.ColorWhite)
-
-	// Fill lineItems
-	var offset int
-	var style tcell.Style
+	// Randomise the starting colour index for bants
+	collabStyleInc := collabStyleIncStart
+	offset := 0
 	for i, r := range matches[t.vertOffset:min(len(matches), t.vertOffset+t.h-reservedTopLines)] {
+		style := t.style
 		offset = i + reservedTopLines
-		// If item is highlighted, indicate accordingly
+
+		// Get current collaborators on item, if any
+		lineCollabers := collabMap[r.Key()]
+
+		// Mutually exclusive style triggers
 		if _, ok := t.selectedItems[i]; ok {
-			style = selectedStyle
-		} else if r.Note != nil && len(*(r.Note)) > 0 {
-			// If note is present, indicate with a different style
-			style = noteStyle
-		} else {
-			style = t.style
+			// Currently selected with Ctrl-S
+			// By default, we reverse the colourscheme for "dark" settings, so undo the
+			// reversal, to reverse again...
+			if t.colour == "light" {
+				style = style.Reverse(true)
+			} else if t.colour == "dark" {
+				style = style.Reverse(false)
+			}
+		} else if len(lineCollabers) > 0 {
+			// If collaborators are on line
+			style = collabStyleCombos[collabStyleInc%len(collabStyleCombos)]
+			collaborators[style] = strings.Join(lineCollabers, ",")
+			collabStyleInc++
+		}
+
+		if r.Note != nil && len(*(r.Note)) > 0 {
+			style = style.Underline(true).Bold(true)
+		}
+
+		if r.IsHidden {
+			style = style.Dim(true)
 		}
 
 		line := r.Line
@@ -295,10 +336,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 
 		// Emit line
 		emitStr(t.S, 0, offset, style, line)
-		// Emit `hidden` indicator
-		if r.IsHidden {
-			emitStr(t.S, t.w, offset, style, "*")
-		}
+
 		if offset == t.h {
 			break
 		}
@@ -309,19 +347,19 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	if len(matches) == 0 {
 		if len(t.search) > 0 && len(t.search[0]) > 0 {
 			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.search))
-			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrefixPrompt)
+			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
 		} else {
-			emitStr(t.S, 0, reservedTopLines, t.promptStyle, newLinePrompt)
+			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrompt)
 		}
 	}
 
-	if t.footerMessage != "" {
-		t.buildFooter(t.S, t.footerMessage)
+	// Show active collaborators
+	if len(collaborators) > 0 {
+		t.buildCollabDisplay(t.S, collaborators)
 	}
 
-	//if saveWarning {
-	//    // Fill reserved footer/info line at the bottom of the screen if present
-	//    t.buildFooter(t.S, saveWarningMsg)
+	//if t.footerMessage != "" {
+	//    t.buildFooter(t.S, t.footerMessage)
 	//}
 
 	t.S.ShowCursor(t.curX, t.curY)

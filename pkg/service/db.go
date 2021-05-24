@@ -53,6 +53,10 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 					}
 					os.Exit(0)
 				}
+			case ev := <-r.remoteCursorMoveChan:
+				// Update active key position of collaborator
+				r.SetCollabPosition(ev.email, ev.listItemKey)
+				client.Refresh()
 			}
 		}
 	}()

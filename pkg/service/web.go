@@ -93,88 +93,97 @@ func (w *Web) establishWebSocketConnection() error {
 	return err
 }
 
-type message struct {
-	UUID   string `json:"uuid"`
-	Wal    string `json:"wal"`
+type websocketMessage struct {
 	Action string `json:"action"`
+
+	// `wal` events
+	UUID string `json:"uuid"`
+	Wal  string `json:"wal"`
+
+	// `position` events (collaborator cursor positions)
+	Email string `json:"email"`
+	Key   string `json:"key"`
 }
 
-func (w *Web) pushWebsocket(el EventLog, uuid string) {
-	// TODO this is a hack to work around the GetUUID stubs I have in place atm:
-	if uuid == "" {
-		return
-	}
+type cursorMoveEvent struct {
+	email       string
+	listItemKey string
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-
-	b := buildByteWal(&[]EventLog{el})
-	b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-	m := message{
-		UUID:   uuid,
-		Wal:    b64Wal,
-		Action: "wal",
-	}
+func (w *Web) pushWebsocket(m websocketMessage) {
 	marshalData, err := json.Marshal(m)
 	if err != nil {
 		//log.Fatal("Json marshal: malformed WAL data on websocket push")
 		// TODO proper handling
 		return
 	}
-	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
-	if err != nil {
-		// Re-establish websocket connection on error
-		// TODO currently attempting to re-establish connection on ANY error - do better at
-		// identifying websocket connect issues
-		w.establishWebSocketConnection()
 
-		// if re-establish successful (e.g. wsConn != nil) reattempt write
-		if w.wsConn != nil {
-			err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
-			if err != nil {
-				w.wsConn = nil
-			}
-		}
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	//if err != nil {
+	//    // Re-establish websocket connection on error
+	//    // TODO currently attempting to re-establish connection on ANY error - do better at
+	//    // identifying websocket connect issues
+	//    w.establishWebSocketConnection()
+
+	//    // if re-establish successful (e.g. wsConn != nil) reattempt write
+	//    if w.wsConn != nil {
+	//        err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	//        if err != nil {
+	//            w.wsConn = nil
+	//        }
+	//    }
+	//}
 }
 
-func (w *Web) consumeWebsocket(walChan chan *[]EventLog) error {
+func (w *Web) consumeWebsocket(walChan chan *[]EventLog, remoteCursorMoveChan chan cursorMoveEvent) error {
 	var err error
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// TODO line below sometimes triggers `invalid memory address or nil pointer derefence`.
-	// 2021-05-23: Added in a mutex lock to see if it solves
+	// 2021-05-23: Added in a RWMutex lock to see if it solves
 	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
 		// Do nothing for now
 	}
 
-	var m message
+	var m websocketMessage
 	err = json.Unmarshal(body, &m)
 	if err != nil {
 		return nil
 	}
-	strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
-	if err != nil {
-		// TODO proper handling
-		return nil
-	}
 
-	buf := bytes.NewBuffer([]byte(strWal))
-	el, err := buildFromFile(buf)
-	if err == nil && len(el) > 0 {
-		walChan <- &el
+	switch m.Action {
+	case "wal":
+		strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
+		if err != nil {
+			// TODO proper handling
+			return nil
+		}
 
-		// Acknowledge the event in the WalFile event cache, so we know to emit further events even
-		// if the match term doesn't match
-		wf, exists := w.walFileMap[m.UUID]
+		buf := bytes.NewBuffer([]byte(strWal))
+		el, err := buildFromFile(buf)
+		if err == nil && len(el) > 0 {
+			walChan <- &el
 
-		// TODO Add the walfile if it doesn't exist in the map already.
-		// This can occur when running two independent instances for the same user.
-		if exists {
-			key, _ := el[0].getKeys()
-			(*wf).SetProcessedEvent(key)
+			// Acknowledge the event in the WalFile event cache, so we know to emit further events even
+			// if the match term doesn't match
+			wf, exists := w.walFileMap[m.UUID]
+
+			// TODO Add the walfile if it doesn't exist in the map already.
+			// This can occur when running two independent instances for the same user.
+			if exists {
+				key, _ := el[0].getKeys()
+				(*wf).SetProcessedEvent(key)
+			}
+		}
+	case "position":
+		remoteCursorMoveChan <- cursorMoveEvent{
+			email:       m.Email,
+			listItemKey: m.Key,
 		}
 	}
 
