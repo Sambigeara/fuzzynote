@@ -36,6 +36,7 @@ type Terminal struct {
 	curItem           *service.ListItem // The currently selected item
 	S                 tcell.Screen
 	style             tcell.Style
+	colour            string
 	Editor            string
 	w, h              int
 	curX, curY        int // Cur "screen" index, not related to matched item lists
@@ -74,6 +75,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 		db:            db,
 		S:             s,
 		style:         defStyle,
+		colour:        colour,
 		Editor:        editor,
 		w:             w,
 		h:             h,
@@ -292,7 +294,13 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		// Mutually exclusive style triggers
 		if _, ok := t.selectedItems[i]; ok {
 			// Currently selected with Ctrl-S
-			style = style.Reverse(true)
+			// By default, we reverse the colourscheme for "dark" settings, so undo the
+			// reversal, to reverse again...
+			if t.colour == "light" {
+				style = style.Reverse(true)
+			} else if t.colour == "dark" {
+				style = style.Reverse(false)
+			}
 		} else if len(lineCollabers) > 0 {
 			// If collaborators are on line
 			style = collabStyleCombos[collabStyleInc%len(collabStyleCombos)]
