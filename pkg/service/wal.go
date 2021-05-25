@@ -881,9 +881,9 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	}
 	//wg.Wait()
 
-	// IO bound: For each walFile, retrieve the WalFile byte representations for all previously unseen
-	// filenames
-	byteWals := make(map[WalFile][]byte)
+	// IO bound (apart from local): For each walFile, retrieve the WalFile byte representations for all
+	// previously unseen filenames
+	byteWals := make(map[WalFile][][]byte)
 	for wf, fileNames := range fileNameMap {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
@@ -895,7 +895,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 					// TODO handle
 					//log.Fatal(err)
 				}
-				byteWals[wf] = newWalBytes
+				byteWals[wf] = append(byteWals[wf], newWalBytes)
 				//}()
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
@@ -908,20 +908,22 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	// CPU bound: Now we have all the byteWals, generate the wals and merge then in a single thread
 	// (to prevent tying up the CPU completely)
 	newMergedWal := []EventLog{}
-	for wf, bWal := range byteWals {
-		buf := bytes.NewBuffer(bWal)
-		newWfWal, err := buildFromFile(buf)
-		if err != nil {
-			log.Fatal(err)
-		}
+	for wf, bWals := range byteWals {
+		for _, bWal := range bWals {
+			buf := bytes.NewBuffer(bWal)
+			newWfWal, err := buildFromFile(buf)
+			if err != nil {
+				log.Fatal(err)
+			}
 
-		// Ackowledge the events for all walfile maps
-		for _, ev := range newWfWal {
-			key, _ := ev.getKeys()
-			wf.SetProcessedEvent(key)
-		}
+			// Ackowledge the events for all walfile maps
+			for _, ev := range newWfWal {
+				key, _ := ev.getKeys()
+				wf.SetProcessedEvent(key)
+			}
 
-		newMergedWal = *(merge(&newMergedWal, &newWfWal))
+			newMergedWal = *(merge(&newMergedWal, &newWfWal))
+		}
 	}
 
 	return &newMergedWal, nil
@@ -1291,12 +1293,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
-	// Flush full log to local walfile
-	// TODO this should just be any unflushed changes (aka anything in the partial wal above)
-	// TODO CANNOT compact when only flushing partial wal
-	localLog := compact(r.log)
-	r.push(localLog, r.LocalWalFile, "")
-
 	// Stop tickers
 	r.webSyncTicker.Stop()
 	r.fileSyncTicker.Stop()
