@@ -283,15 +283,18 @@ func (r *DBListRepo) MoveUp(idx int) error {
 	var targetCreationTime int64
 	var targetUUID uuid
 	if listItem.matchChild != nil {
-		targetCreationTime = listItem.matchChild.creationTime
-		targetUUID = listItem.matchChild.originUUID
-	} else if listItem.child != nil {
-		// Cover nil child case (e.g. attempting to move top of list up)
-
-		// matchChild will only be null in this context on initial startup with loading
-		// from the WAL
-		targetCreationTime = listItem.child.creationTime
-		targetUUID = listItem.child.originUUID
+		// We need to target the child of the child (as when we apply move events, we specify the target that we want to be
+		// the new child. Only relevant for non-startup case
+		if listItem.matchChild.child != nil {
+			targetCreationTime = listItem.matchChild.child.creationTime
+			targetUUID = listItem.matchChild.child.originUUID
+		}
+		//} else if listItem.child != nil {
+		//    // Cover nil child case (e.g. attempting to move top of list up)
+		//    // matchChild will only be null in this context on initial startup with loading
+		//    // from the WAL
+		//    targetCreationTime = listItem.child.creationTime
+		//    targetUUID = listItem.child.originUUID
 	}
 
 	r.processEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
@@ -316,9 +319,9 @@ func (r *DBListRepo) MoveDown(idx int) error {
 	if listItem.matchParent != nil {
 		targetCreationTime = listItem.matchParent.creationTime
 		targetUUID = listItem.matchParent.originUUID
-	} else if listItem.parent != nil {
-		targetCreationTime = listItem.parent.creationTime
-		targetUUID = listItem.parent.originUUID
+		//} else if listItem.parent != nil {
+		//    targetCreationTime = listItem.parent.creationTime
+		//    targetUUID = listItem.parent.originUUID
 	}
 
 	r.processEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)

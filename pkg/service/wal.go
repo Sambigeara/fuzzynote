@@ -323,16 +323,8 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		root, err = r.del(root, item)
 		delete(r.listItemTracker, key)
 	case MoveUpEvent:
-		if targetItem == nil {
-			return root, item, err
-		}
-		root, item, err = r.move(root, item, targetItem.child)
-		// Need to override the listItemTracker to ensure pointers are correct
-		r.listItemTracker[key] = item
+		fallthrough
 	case MoveDownEvent:
-		if targetItem == nil {
-			return root, item, err
-		}
 		root, item, err = r.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.listItemTracker[key] = item
@@ -694,13 +686,11 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 
 	// Return false if only one is nil
 	if (ptrA != nil && ptrB == nil) || (ptrA == nil && ptrB != nil) {
-		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 		return false
 	}
 
 	// Check root equality
 	if !areListItemsEqual(ptrA, ptrB, true) {
-		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 		return false
 	}
 
@@ -715,13 +705,11 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 		ptrA = ptrA.parent
 		ptrB = ptrB.parent
 		if !areListItemsEqual(ptrA, ptrB, true) {
-			log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 			return false
 		}
 	}
 
 	if !areListItemsEqual(ptrA, ptrB, true) {
-		log.Printf("\nA: %v\nB: %v", ptrA, ptrB)
 		return false
 	}
 	return true
@@ -761,15 +749,10 @@ func compact(wal *[]EventLog) *[]EventLog {
 	updateWithNote := make(map[string]struct{})
 	updateWithLine := make(map[string]struct{})
 
-	keysToPurge := make(map[string]struct{})
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key, _ := e.getKeys()
-
-		if _, purged := keysToPurge[key]; purged {
-			continue
-		}
 
 		// TODO figure out how to reintegrate full purge of deleted events, whilst guaranteeing consistent
 		// state of ListItems. OR purge everything older than X days, so ordering doesn't matter cos users
@@ -810,8 +793,6 @@ func compact(wal *[]EventLog) *[]EventLog {
 	// TODO remove this once confidence with compact is there!
 	// This is a circuit breaker which will blow up if compact generates inconsistent results
 	if !walsAreEquivalent(wal, &compactedWal) {
-		writePlainWalToFile(*wal)
-		writePlainWalToFile(compactedWal)
 		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
 	return &compactedWal
