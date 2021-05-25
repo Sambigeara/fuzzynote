@@ -547,6 +547,15 @@ func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 				return el, err
 			}
 		}
+
+		// 2021-05-25: TODO remove this once the broken event has properly disappeared.
+		// I introduced a bug which broke Wal state, caused by this particular line.
+		// The bug is fixed, but any wals with this item will break, so leave this in for a while
+		// all wals have refreshed and the item gone into the ether.
+		if e.ListItemCreationTime == 1618861652294259000 {
+			continue
+		}
+
 		el = append(el, *e)
 	}
 }
