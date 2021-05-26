@@ -645,23 +645,6 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
-// checkListItemPtrs traverses the full linked list to assert that all child<->parent pointer
-// relationships are correct
-func checkListItemPtrs(item *ListItem) error {
-	if item.child != nil {
-		return errors.New("list integrity error: root has a child pointer")
-	}
-
-	for item.parent != nil {
-		if item.parent.child != item {
-			return fmt.Errorf("list integrity error: mismatch between child %s and parent %s", item.Key(), item.parent.Key())
-		}
-		item = item.parent
-	}
-
-	return nil
-}
-
 func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	// checkPointers prevents recursion
 	if a == nil && b == nil {
@@ -686,6 +669,28 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 		}
 	}
 	return true
+}
+
+func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
+	if listItem.child != nil {
+		return errors.New("list integrity error: root has a child pointer")
+	}
+
+	i := 0
+	processedItems := make(map[string]struct{})
+	for listItem.parent != nil {
+		if !areListItemsEqual(listItem, &matchItems[i], false) {
+			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.Key())
+		}
+		if _, exists := processedItems[listItem.Key()]; exists {
+			return fmt.Errorf("list integrity error: listItem %s has appeared twice", listItem.Key())
+		}
+		processedItems[listItem.Key()] = struct{}{}
+		listItem = listItem.parent
+		i++
+	}
+
+	return nil
 }
 
 // walsAreEquivalent builds the resultant ListItem linked lists from the input wals, and traverses both to
@@ -715,10 +720,20 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
 	// This has since been fixed, but to catch other potential cases, we run this check.
 	chkA, chkB := repoA.Root, repoB.Root
-	if err := checkListItemPtrs(chkA); err != nil {
+
+	matchItemsA, _, err := repoA.Match([][]rune{}, true, "")
+	if err != nil {
+		log.Fatal("failed to generate match items for list integrity check")
+	}
+	if err := checkListItemPtrs(chkA, matchItemsA); err != nil {
 		log.Fatalf("pre-compact: %s", err)
 	}
-	if err := checkListItemPtrs(chkB); err != nil {
+
+	matchItemsB, _, err := repoB.Match([][]rune{}, true, "")
+	if err != nil {
+		log.Fatal("failed to generate match items for list integrity check")
+	}
+	if err := checkListItemPtrs(chkB, matchItemsB); err != nil {
 		log.Fatalf("post-compact: %s", err)
 	}
 
