@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -323,16 +324,8 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		root, err = r.del(root, item)
 		delete(r.listItemTracker, key)
 	case MoveUpEvent:
-		if targetItem == nil {
-			return root, item, err
-		}
-		root, item, err = r.move(root, item, targetItem.child)
-		// Need to override the listItemTracker to ensure pointers are correct
-		r.listItemTracker[key] = item
+		fallthrough
 	case MoveDownEvent:
-		if targetItem == nil {
-			return root, item, err
-		}
 		root, item, err = r.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.listItemTracker[key] = item
@@ -555,6 +548,15 @@ func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 				return el, err
 			}
 		}
+
+		// 2021-05-25: TODO remove this once the broken event has properly disappeared.
+		// I introduced a bug which broke Wal state, caused by this particular list item.
+		// The bug is fixed, but any wals with this item will break, so leave this in for a while
+		// all wals have refreshed and the item gone into the ether.
+		if e.ListItemCreationTime == 1618861652294259000 {
+			continue
+		}
+
 		el = append(el, *e)
 	}
 }
@@ -643,6 +645,23 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
+// checkListItemPtrs traverses the full linked list to assert that all child<->parent pointer
+// relationships are correct
+func checkListItemPtrs(item *ListItem) error {
+	if item.child != nil {
+		return errors.New("list integrity error: root has a child pointer")
+	}
+
+	for item.parent != nil {
+		if item.parent.child != item {
+			return fmt.Errorf("list integrity error: mismatch between child %s and parent %s", item.Key(), item.parent.Key())
+		}
+		item = item.parent
+	}
+
+	return nil
+}
+
 func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	// checkPointers prevents recursion
 	if a == nil && b == nil {
@@ -690,6 +709,19 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 		log.Fatal(err)
 	}
 
+	// TODO remove circuit breaker down the line, and add in self-recovery
+	// This check traverses from the root node to the last parent and checks the state of the pointer
+	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
+	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
+	// This has since been fixed, but to catch other potential cases, we run this check.
+	chkA, chkB := repoA.Root, repoB.Root
+	if err := checkListItemPtrs(chkA); err != nil {
+		log.Fatalf("pre-compact: %s", err)
+	}
+	if err := checkListItemPtrs(chkB); err != nil {
+		log.Fatalf("post-compact: %s", err)
+	}
+
 	ptrA, ptrB := repoA.Root, repoB.Root
 
 	// Return false if only one is nil
@@ -720,6 +752,24 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 	return areListItemsEqual(ptrA, ptrB, true)
 }
 
+func writePlainWalToFile(wal []EventLog) {
+	f, err := os.Create(fmt.Sprintf("debug_%d", time.Now().UnixNano()))
+	if err != nil {
+		fmt.Println(err)
+		f.Close()
+		return
+	}
+	defer f.Close()
+
+	for _, e := range wal {
+		fmt.Fprintln(f, e)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+}
+
 func compact(wal *[]EventLog) *[]EventLog {
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
 	// NOTE delete event purging is currently disabled
@@ -736,15 +786,10 @@ func compact(wal *[]EventLog) *[]EventLog {
 	updateWithNote := make(map[string]struct{})
 	updateWithLine := make(map[string]struct{})
 
-	keysToPurge := make(map[string]struct{})
 	compactedWal := []EventLog{}
 	for i := len(*wal) - 1; i >= 0; i-- {
 		e := (*wal)[i]
 		key, _ := e.getKeys()
-
-		if _, purged := keysToPurge[key]; purged {
-			continue
-		}
 
 		// TODO figure out how to reintegrate full purge of deleted events, whilst guaranteeing consistent
 		// state of ListItems. OR purge everything older than X days, so ordering doesn't matter cos users
@@ -864,9 +909,9 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	}
 	//wg.Wait()
 
-	// IO bound: For each walFile, retrieve the WalFile byte representations for all previously unseen
-	// filenames
-	byteWals := make(map[WalFile][]byte)
+	// IO bound (apart from local): For each walFile, retrieve the WalFile byte representations for all
+	// previously unseen filenames
+	byteWals := make(map[WalFile][][]byte)
 	for wf, fileNames := range fileNameMap {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
@@ -878,7 +923,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 					// TODO handle
 					//log.Fatal(err)
 				}
-				byteWals[wf] = newWalBytes
+				byteWals[wf] = append(byteWals[wf], newWalBytes)
 				//}()
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
@@ -891,20 +936,22 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 	// CPU bound: Now we have all the byteWals, generate the wals and merge then in a single thread
 	// (to prevent tying up the CPU completely)
 	newMergedWal := []EventLog{}
-	for wf, bWal := range byteWals {
-		buf := bytes.NewBuffer(bWal)
-		newWfWal, err := buildFromFile(buf)
-		if err != nil {
-			log.Fatal(err)
-		}
+	for wf, bWals := range byteWals {
+		for _, bWal := range bWals {
+			buf := bytes.NewBuffer(bWal)
+			newWfWal, err := buildFromFile(buf)
+			if err != nil {
+				log.Fatal(err)
+			}
 
-		// Ackowledge the events for all walfile maps
-		for _, ev := range newWfWal {
-			key, _ := ev.getKeys()
-			wf.SetProcessedEvent(key)
-		}
+			// Ackowledge the events for all walfile maps
+			for _, ev := range newWfWal {
+				key, _ := ev.getKeys()
+				wf.SetProcessedEvent(key)
+			}
 
-		newMergedWal = *(merge(&newMergedWal, &newWfWal))
+			newMergedWal = *(merge(&newMergedWal, &newWfWal))
+		}
 	}
 
 	return &newMergedWal, nil
@@ -1274,12 +1321,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
-	// Flush full log to local walfile
-	// TODO this should just be any unflushed changes (aka anything in the partial wal above)
-	// TODO CANNOT compact when only flushing partial wal
-	localLog := compact(r.log)
-	r.push(localLog, r.LocalWalFile, "")
-
 	// Stop tickers
 	r.webSyncTicker.Stop()
 	r.fileSyncTicker.Stop()
