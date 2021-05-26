@@ -138,16 +138,10 @@ func (w *Web) pushWebsocket(m websocketMessage) {
 	//}
 }
 
-func (w *Web) consumeWebsocket(walChan chan *[]EventLog, remoteCursorMoveChan chan cursorMoveEvent) error {
-	var err error
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// TODO line below sometimes triggers `invalid memory address or nil pointer derefence`.
-	// 2021-05-23: Added in a RWMutex lock to see if it solves
+func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, remoteCursorMoveChan chan cursorMoveEvent) error {
 	_, body, err := w.wsConn.Read(ctx)
 	if err != nil {
-		// Do nothing for now
+		return err
 	}
 
 	var m websocketMessage

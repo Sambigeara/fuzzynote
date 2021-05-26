@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -1150,24 +1151,53 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	if r.web != nil {
-		// If web is available, attempts to consume from the websocket.
+		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
 		go func() {
 			for {
-				if r.web.wsConn != nil {
-					func() {
-						webRefreshMut.RLock()
-						defer webRefreshMut.RUnlock()
-						err := r.web.consumeWebsocket(walChan, r.remoteCursorMoveChan)
+				func() {
+					webRefreshMut.Lock()
+					defer webRefreshMut.Unlock()
+					// Close off old websocket connection
+					// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+					if r.web.wsConn != nil {
+						r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+					}
+					// Start new one
+					err := r.registerWeb()
+					if err != nil {
+						log.Print(err)
+						os.Exit(0)
+					}
+				}()
+
+				// To avoid deadlocks between the web refresh and blockign consumeWebsocket reads, we explicitly
+				// define the context which is manually cancelled on each timed interation of the web refresh
+				ctx, cancel := context.WithCancel(context.Background())
+
+				go func() {
+					for {
+						if r.web.wsConn == nil {
+							// Return to wait on blocking web refresh, to prevent infinite loop
+							return
+						}
+						err := func() error {
+							webRefreshMut.RLock()
+							defer webRefreshMut.RUnlock()
+							err := r.web.consumeWebsocket(ctx, walChan, r.remoteCursorMoveChan)
+							if err != nil {
+								return err
+							}
+							return nil
+						}()
 						if err != nil {
 							return
 						}
-					}()
-				} else {
-					// No point tying up CPU for no-op, sleep 5 seconds between attempts to self-heal websocket
-					// This is important before we fire up the web connections async after startup, so there will be a
-					// period where the loop above would cycle in an infinite and all-consuming loop
-					time.Sleep(5 * time.Second)
-				}
+					}
+				}()
+
+				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
+				time.Sleep(webRefreshInterval)
+				cancel()
 			}
 		}()
 
@@ -1194,29 +1224,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				} else {
 					time.Sleep(5 * time.Second)
 				}
-			}
-		}()
-
-		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
-		go func() {
-			for {
-				func() {
-					webRefreshMut.Lock()
-					defer webRefreshMut.Unlock()
-					// Close off old websocket connection
-					// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
-					if r.web.wsConn != nil {
-						r.web.wsConn.Close(websocket.StatusNormalClosure, "")
-					}
-					// Start new one
-					err := r.registerWeb()
-					if err != nil {
-						log.Print(err)
-						os.Exit(0)
-					}
-				}()
-				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
-				time.Sleep(webRefreshInterval)
 			}
 		}()
 	}
