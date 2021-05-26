@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -644,6 +645,23 @@ func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
 	return &mergedEl
 }
 
+// checkListItemPtrs traverses the full linked list to assert that all child<->parent pointer
+// relationships are correct
+func checkListItemPtrs(item *ListItem) error {
+	if item.child != nil {
+		return errors.New("list integrity error: root has a child pointer")
+	}
+
+	for item.parent != nil {
+		if item.parent.child != item {
+			return fmt.Errorf("list integrity error: mismatch between child %s and parent %s", item.Key(), item.parent.Key())
+		}
+		item = item.parent
+	}
+
+	return nil
+}
+
 func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	// checkPointers prevents recursion
 	if a == nil && b == nil {
@@ -689,6 +707,19 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 	}
 	if err := repoB.Replay(walB); err != nil {
 		log.Fatal(err)
+	}
+
+	// TODO remove circuit breaker down the line, and add in self-recovery
+	// This check traverses from the root node to the last parent and checks the state of the pointer
+	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
+	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
+	// This has since been fixed, but to catch other potential cases, we run this check.
+	chkA, chkB := repoA.Root, repoB.Root
+	if err := checkListItemPtrs(chkA); err != nil {
+		log.Fatalf("pre-compact: %s", err)
+	}
+	if err := checkListItemPtrs(chkB); err != nil {
+		log.Fatalf("post-compact: %s", err)
 	}
 
 	ptrA, ptrB := repoA.Root, repoB.Root
