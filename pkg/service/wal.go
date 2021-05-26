@@ -749,10 +749,7 @@ func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
 		}
 	}
 
-	if !areListItemsEqual(ptrA, ptrB, true) {
-		return false
-	}
-	return true
+	return areListItemsEqual(ptrA, ptrB, true)
 }
 
 func writePlainWalToFile(wal []EventLog) {
