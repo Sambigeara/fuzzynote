@@ -324,9 +324,12 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	case DeleteEvent:
 		root, err = r.del(root, item)
 		delete(r.listItemTracker, key)
-	case MoveUpEvent:
-		fallthrough
 	case MoveDownEvent:
+		if targetItem == nil {
+			return root, item, nil
+		}
+		fallthrough
+	case MoveUpEvent:
 		root, item, err = r.move(root, item, targetItem)
 		// Need to override the listItemTracker to ensure pointers are correct
 		r.listItemTracker[key] = item
