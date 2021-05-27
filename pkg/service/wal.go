@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -25,22 +26,10 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 2
+const latestWalSchemaID uint16 = 3
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
-}
-
-// TODO remove
-type walItemSchema1 struct {
-	UUID                       uuid
-	TargetUUID                 uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	EventTime                  int64
-	EventType                  EventType
-	LineLength                 uint64
-	NoteLength                 uint64
 }
 
 type walItemSchema2 struct {
@@ -452,36 +441,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
-	// TODO remove
-	if schemaVersionID == 1 {
-		item := walItemSchema1{}
-		err := binary.Read(b, binary.LittleEndian, &item)
-		if err != nil {
-			return nil, err
-		}
-		el.ListItemCreationTime = item.ListItemCreationTime
-		el.TargetListItemCreationTime = item.TargetListItemCreationTime
-		el.UnixNanoTime = item.EventTime
-		el.UUID = item.UUID
-		el.TargetUUID = item.TargetUUID
-		el.EventType = item.EventType
-
-		line := make([]byte, item.LineLength)
-		err = binary.Read(b, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.Line = string(line)
-
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
-			err = binary.Read(b, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.Note = &note
-		}
-	} else {
+	if schemaVersionID >= 2 {
 		item := walItemSchema2{}
 		err := binary.Read(b, binary.LittleEndian, &item)
 		if err != nil {
@@ -512,18 +472,16 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 			}
 			el.Note = &note
 		}
+	} else {
+		return nil, errors.New("unrecognised wal schema version")
 	}
 	return &el, nil
 }
 
-func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
-	// The first two bytes of each file represents the file schema ID. For now this means nothing
-	// so we can seek forwards 2 bytes
-	//f.Seek(int64(unsafe.Sizeof(latestWalSchemaID)), io.SeekStart)
-
+func buildFromFile(raw *bytes.Buffer) ([]EventLog, error) {
 	el := []EventLog{}
 	var walSchemaVersionID uint16
-	err := binary.Read(b, binary.LittleEndian, &walSchemaVersionID)
+	err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
 		if err == io.EOF {
 			return el, nil
@@ -532,8 +490,26 @@ func buildFromFile(b *bytes.Buffer) ([]EventLog, error) {
 		return el, err
 	}
 
+	// Version 3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+	// prior to passing it to the loop below
+	var b bytes.Buffer
+	if walSchemaVersionID == 3 {
+		zr, err := gzip.NewReader(raw)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if _, err := io.Copy(&b, zr); err != nil {
+			log.Fatal(err)
+		}
+		if err := zr.Close(); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		b = *raw
+	}
+
 	for {
-		e, err := getNextEventLogFromWalFile(b, walSchemaVersionID)
+		e, err := getNextEventLogFromWalFile(&b, walSchemaVersionID)
 		if err != nil {
 			switch err {
 			case io.EOF:
@@ -974,13 +950,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 }
 
 func buildByteWal(el *[]EventLog) *bytes.Buffer {
-	var b bytes.Buffer
-	// Write the schema ID
-	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	var toZipBuf bytes.Buffer
 	for _, e := range *el {
 		lenLine := uint64(len([]byte(e.Line)))
 		var lenNote uint64
@@ -1008,13 +978,33 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 			data = append(data, e.Note)
 		}
 		for _, v := range data {
-			err = binary.Write(&b, binary.LittleEndian, v)
+			err := binary.Write(&toZipBuf, binary.LittleEndian, v)
 			if err != nil {
-				fmt.Printf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-				log.Fatal(err)
+				log.Fatalf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
 			}
 		}
 	}
+
+	// gzip the wal bytes and append to the versioned file
+	var b bytes.Buffer
+
+	// Write the schema ID
+	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Then write in the compressed bytes
+	zw := gzip.NewWriter(&b)
+	_, err = zw.Write(toZipBuf.Bytes())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := zw.Close(); err != nil {
+		log.Fatal(err)
+	}
+
 	return &b
 }
 
@@ -1170,8 +1160,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					}
 				}()
 
-				// To avoid deadlocks between the web refresh and blockign consumeWebsocket reads, we explicitly
-				// define the context which is manually cancelled on each timed interation of the web refresh
+				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
+				// define the context which is manually cancelled on each timed iteration of the web refresh
 				ctx, cancel := context.WithCancel(context.Background())
 
 				go func() {
