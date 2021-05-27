@@ -441,7 +441,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
-	if schemaVersionID >= 2 {
+	if schemaVersionID == 2 || schemaVersionID == 3 {
 		item := walItemSchema2{}
 		err := binary.Read(b, binary.LittleEndian, &item)
 		if err != nil {
@@ -521,7 +521,6 @@ func buildFromFile(raw *bytes.Buffer) ([]EventLog, error) {
 				// TODO implement a decent retry mech here
 				return []EventLog{}, nil
 			default:
-				fmt.Println("binary.Read failed on remote WAL sync:", err)
 				return el, err
 			}
 		}
@@ -933,7 +932,8 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 			buf := bytes.NewBuffer(bWal)
 			newWfWal, err := buildFromFile(buf)
 			if err != nil {
-				log.Fatal(err)
+				// Ignore incompatible files
+				continue
 			}
 
 			// Ackowledge the events for all walfile maps
@@ -1082,6 +1082,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 
 		// Gather origin files
 		mergedWal := []EventLog{}
+		filesToDelete := []string{}
 		for _, fileName := range originFiles {
 			newWalBytes, err := wf.GetWalBytes(fileName)
 			if err != nil {
@@ -1093,8 +1094,10 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 			buf := bytes.NewBuffer(newWalBytes)
 			wal, err := buildFromFile(buf)
 			if err != nil {
-				log.Fatal(err)
+				continue
 			}
+			// Only delete files which were successfully pulled
+			filesToDelete = append(filesToDelete, fileName)
 			mergedWal = *(merge(&mergedWal, &wal))
 		}
 
@@ -1113,7 +1116,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		fullMergedWal = *(merge(&fullMergedWal, &mergedWal))
 
 		// Schedule a delete on the files
-		wf.RemoveWals(originFiles)
+		wf.RemoveWals(filesToDelete)
 	}
 
 	return &fullMergedWal, nil
