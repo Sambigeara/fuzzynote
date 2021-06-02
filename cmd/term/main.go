@@ -16,6 +16,7 @@ import (
 const (
 	namespace  = "FZN"
 	loginArg   = "login"
+	deleteArg  = "delete"
 	remotesArg = "cfg"
 )
 
@@ -63,6 +64,8 @@ func main() {
 		switch os.Args[len(os.Args)-1] {
 		case loginArg:
 			prompt.Login(cfg.Root)
+		case deleteArg:
+			localWalFile.Purge(nil)
 		case remotesArg:
 			webTokens := service.NewFileWebTokenStore(cfg.Root)
 			web := service.NewWeb(webTokens)
