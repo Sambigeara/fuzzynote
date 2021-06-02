@@ -810,8 +810,6 @@ func recoverWal(wal *[]EventLog, matches *[]ListItem) *[]EventLog {
 		}
 	}
 
-	// Now, we iterate over the map, and add each item as if they were new, but with all the existing
-	// metadata attached
 	// Now, iterate over the ordered list of item keys in reverse order, and pull the item from the map,
 	// generating an AddEvent for each.
 	newWal := []EventLog{}
