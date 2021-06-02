@@ -95,6 +95,7 @@ type LocalWalFile interface {
 	Load(interface{}) (uint32, error)
 	Stop(uint32, interface{}) error
 	SetBaseUUID(uint32, interface{}) error
+	Purge(interface{})
 
 	WalFile
 }
@@ -197,6 +198,13 @@ func (wf *LocalFileWalFile) SetBaseUUID(uid uint32, ctx interface{}) error {
 	defer f.Close()
 
 	return wf.flushPrimary(f, uuid(uid))
+}
+
+func (wf *LocalFileWalFile) Purge(ctx interface{}) {
+	if err := os.RemoveAll(wf.rootDir); err != nil {
+		log.Fatal(err)
+	}
+	os.Exit(0)
 }
 
 func (wf *LocalFileWalFile) GetUUID() string {
@@ -643,6 +651,10 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 }
 
 func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
+	if listItem == nil {
+		return nil
+	}
+
 	if listItem.child != nil {
 		return errors.New("list integrity error: root has a child pointer")
 	}
