@@ -95,6 +95,7 @@ type LocalWalFile interface {
 	Load(interface{}) (uint32, error)
 	Stop(uint32, interface{}) error
 	SetBaseUUID(uint32, interface{}) error
+	Purge(interface{})
 
 	WalFile
 }
@@ -197,6 +198,13 @@ func (wf *LocalFileWalFile) SetBaseUUID(uid uint32, ctx interface{}) error {
 	defer f.Close()
 
 	return wf.flushPrimary(f, uuid(uid))
+}
+
+func (wf *LocalFileWalFile) Purge(ctx interface{}) {
+	if err := os.RemoveAll(wf.rootDir); err != nil {
+		log.Fatal(err)
+	}
+	os.Exit(0)
 }
 
 func (wf *LocalFileWalFile) GetUUID() string {
@@ -643,6 +651,10 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 }
 
 func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
+	if listItem == nil {
+		return nil
+	}
+
 	if listItem.child != nil {
 		return errors.New("list integrity error: root has a child pointer")
 	}
@@ -1178,7 +1190,8 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		}
 
 		// If there's only 1 file, there's no point gathering them, so skip
-		if len(originFiles) <= 1 {
+		// We need to let it pass for the 0 case (e.g. fresh roots with no existing wals)
+		if len(originFiles) == 1 {
 			// We still want to process other walFiles, so continue
 			continue
 		}
@@ -1336,9 +1349,18 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 
 	// Schedule push to all non-local walFiles
 	// This is required for flushing new files that have been manually dropped into local root
-	for _, wf := range r.allWalFiles() {
-		if wf != r.LocalWalFile {
-			go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+	// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
+	// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
+	// heading into edge cases of edge cases so won't worry about it for now
+	localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(localFileNames) > 1 {
+		for _, wf := range r.allWalFiles() {
+			if wf != r.LocalWalFile {
+				go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+			}
 		}
 	}
 
@@ -1439,6 +1461,12 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
+	// Gather the local walfile
+	// TODO this is a bit of a "catch-all" convenience hack which guarantees that *all* in mem logs
+	// will always be persisted to disk on close. Ideally, we'd just flush to disk whenever we pulled
+	// new logs from remotes, but for now, this will do.
+	r.gather([]WalFile{r.LocalWalFile})
+
 	// Stop tickers
 	r.webSyncTicker.Stop()
 	r.fileSyncTicker.Stop()
