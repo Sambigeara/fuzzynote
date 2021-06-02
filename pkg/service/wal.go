@@ -528,14 +528,6 @@ func buildFromFile(raw *bytes.Buffer) ([]EventLog, error) {
 			}
 		}
 
-		// 2021-05-25: TODO remove this once the broken event has properly disappeared.
-		// I introduced a bug which broke Wal state, caused by this particular list item.
-		// The bug is fixed, but any wals with this item will break, so leave this in for a while
-		// all wals have refreshed and the item gone into the ether.
-		if e.ListItemCreationTime == 1618861652294259000 {
-			continue
-		}
-
 		el = append(el, *e)
 	}
 }
@@ -672,52 +664,10 @@ func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
 	return nil
 }
 
-// walsAreEquivalent builds the resultant ListItem linked lists from the input wals, and traverses both to
-// check for equality. It returns `true` if they generate identical lists, or `false` otherwise.
+// listsAreEquivalent traverses both test generated list item linked lists (from full and compacted wals) to
+// check for equality. It returns `true` if they they are identical lists, or `false` otherwise.
 // This is primarily used as a temporary measure to check the correctness of the compaction algo
-func walsAreEquivalent(walA *[]EventLog, walB *[]EventLog) bool {
-	repoA := DBListRepo{
-		log:             &[]EventLog{},
-		listItemTracker: make(map[string]*ListItem),
-	}
-	repoB := DBListRepo{
-		log:             &[]EventLog{},
-		listItemTracker: make(map[string]*ListItem),
-	}
-
-	// Use the Replay function to generate the linked lists
-	if err := repoA.Replay(walA); err != nil {
-		log.Fatal(err)
-	}
-	if err := repoB.Replay(walB); err != nil {
-		log.Fatal(err)
-	}
-
-	// TODO remove circuit breaker down the line, and add in self-recovery
-	// This check traverses from the root node to the last parent and checks the state of the pointer
-	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
-	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
-	// This has since been fixed, but to catch other potential cases, we run this check.
-	chkA, chkB := repoA.Root, repoB.Root
-
-	matchItemsA, _, err := repoA.Match([][]rune{}, true, "")
-	if err != nil {
-		log.Fatal("failed to generate match items for list integrity check")
-	}
-	if err := checkListItemPtrs(chkA, matchItemsA); err != nil {
-		log.Fatalf("pre-compact: %s", err)
-	}
-
-	matchItemsB, _, err := repoB.Match([][]rune{}, true, "")
-	if err != nil {
-		log.Fatal("failed to generate match items for list integrity check")
-	}
-	if err := checkListItemPtrs(chkB, matchItemsB); err != nil {
-		log.Fatalf("post-compact: %s", err)
-	}
-
-	ptrA, ptrB := repoA.Root, repoB.Root
-
+func listsAreEquivalent(ptrA *ListItem, ptrB *ListItem) bool {
 	// Return false if only one is nil
 	if (ptrA != nil && ptrB == nil) || (ptrA == nil && ptrB != nil) {
 		return false
@@ -764,7 +714,151 @@ func writePlainWalToFile(wal []EventLog) {
 	}
 }
 
-func compact(wal *[]EventLog) *[]EventLog {
+func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
+	// Generate a test repo and use it to generate a match set, then inspect the health
+	// of said match set.
+	testRepo := DBListRepo{
+		log:             &[]EventLog{},
+		listItemTracker: make(map[string]*ListItem),
+	}
+
+	// Use the Replay function to generate the linked lists
+	if err := testRepo.Replay(wal); err != nil {
+		return nil, nil, err
+	}
+
+	// This check traverses from the root node to the last parent and checks the state of the pointer
+	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
+	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
+	// This has since been fixed, but to catch other potential cases, we run this check.
+	testMatchItems, _, err := testRepo.Match([][]rune{}, true, "")
+	if err != nil {
+		return nil, nil, errors.New("failed to generate match items for list integrity check")
+	}
+
+	if err := checkListItemPtrs(testRepo.Root, testMatchItems); err != nil {
+		return nil, &testMatchItems, err
+	}
+
+	return testRepo.Root, &testMatchItems, nil
+}
+
+// recoverWal is responsible for recovering Wals that are very broken, in a variety of ways.
+// It collects as much metadata about each item as it can, from both the existing broken wal and the returned
+// match set, and then uses it to rebuild a fresh wal, maintaining as much of the original state as possible -
+// specifically with regards to DTs and ordering.
+func recoverWal(wal *[]EventLog, matches *[]ListItem) *[]EventLog {
+	acknowledgedItems := make(map[string]ListItem)
+	listOrder := []string{}
+
+	// Iterate over the match items and add all to the map
+	for _, item := range *matches {
+		key := item.Key()
+		if _, exists := acknowledgedItems[key]; !exists {
+			listOrder = append(listOrder, key)
+		}
+		acknowledgedItems[key] = item
+	}
+
+	// Iterate over the wal and collect data, updating the items in the map as we go.
+	// We update metadata based on Updates only (Move*s are unimportant here). We honour deletes, and will remove
+	// then from the map (although any subsequent updates will put them back in)
+	// This cleanup will also dedup Add events if there are cases with duplicates.
+	for _, e := range *wal {
+		key, _ := e.getKeys()
+		item, exists := acknowledgedItems[key]
+		switch e.EventType {
+		case AddEvent:
+			fallthrough
+		case UpdateEvent:
+			if !exists {
+				item = ListItem{
+					Line:         e.Line,
+					Note:         e.Note,
+					originUUID:   e.UUID,
+					creationTime: e.ListItemCreationTime,
+				}
+				if key != item.Key() {
+					log.Fatal("ListItem key mismatch during recovery")
+				}
+			} else {
+				if e.EventType == AddEvent {
+					item.Line = e.Line
+					item.Note = e.Note
+				} else {
+					// Updates handle Line and Note mutations separately
+					if e.Note != nil {
+						item.Note = e.Note
+					} else {
+						item.Line = e.Line
+					}
+				}
+			}
+			acknowledgedItems[key] = item
+		case HideEvent:
+			if exists {
+				item.IsHidden = true
+				acknowledgedItems[key] = item
+			}
+		case ShowEvent:
+			if exists {
+				item.IsHidden = false
+				acknowledgedItems[key] = item
+			}
+		case DeleteEvent:
+			delete(acknowledgedItems, key)
+		}
+	}
+
+	// Now, iterate over the ordered list of item keys in reverse order, and pull the item from the map,
+	// generating an AddEvent for each.
+	newWal := []EventLog{}
+	for i := len(listOrder) - 1; i >= 0; i-- {
+		item := acknowledgedItems[listOrder[i]]
+		el := EventLog{
+			EventType:            AddEvent,
+			UUID:                 item.originUUID,
+			UnixNanoTime:         item.creationTime, // Use original creation time
+			ListItemCreationTime: item.creationTime,
+			Line:                 item.Line,
+			Note:                 item.Note,
+		}
+		newWal = append(newWal, el)
+
+		if item.IsHidden {
+			el := EventLog{
+				EventType:            HideEvent,
+				UUID:                 item.originUUID,
+				UnixNanoTime:         time.Now().UnixNano(),
+				ListItemCreationTime: item.creationTime,
+			}
+			newWal = append(newWal, el)
+		}
+	}
+
+	return &newWal
+}
+
+func (r *DBListRepo) compact(wal *[]EventLog) *[]EventLog {
+	// Check the integrity of the incoming full wal prior to compaction.
+	// If broken in some way, call the recovery function.
+	testRootA, matchItemsA, err := checkWalIntegrity(wal)
+	if err != nil {
+		// If we get here, shit's on fire. This function is the equivalent of the fire brigade.
+		wal = recoverWal(wal, matchItemsA)
+		testRootA, matchItemsA, err = checkWalIntegrity(wal)
+		if err != nil {
+			log.Fatal("wal recovery failed!")
+		}
+		// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
+		// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
+		// broken log will just be merged back in. We want to remove it entirely.
+		r.log = &[]EventLog{}
+
+		// There's also no point in compacting at this point, so return early
+		return wal
+	}
+
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
 	// NOTE delete event purging is currently disabled
 	// - Delete events, and any events preceding a DeleteEvent
@@ -821,9 +915,15 @@ func compact(wal *[]EventLog) *[]EventLog {
 	for i, j := 0, len(compactedWal)-1; i < j; i, j = i+1, j-1 {
 		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
 	}
+
 	// TODO remove this once confidence with compact is there!
 	// This is a circuit breaker which will blow up if compact generates inconsistent results
-	if !walsAreEquivalent(wal, &compactedWal) {
+	testRootB, _, err := checkWalIntegrity(&compactedWal)
+	if err != nil {
+		log.Fatalf("`compact` caused wal to lose integrity: %s", err)
+	}
+
+	if !listsAreEquivalent(testRootA, testRootB) {
 		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
 	return &compactedWal
@@ -1108,7 +1208,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		mergedWal = *(merge(&mergedWal, r.log))
 
 		// Compact
-		mergedWal = *(compact(&mergedWal))
+		mergedWal = *(r.compact(&mergedWal))
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
