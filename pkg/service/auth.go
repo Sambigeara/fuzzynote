@@ -119,7 +119,7 @@ func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, 
 		return http.DefaultClient.Do(req)
 	}
 	resp, err := f(req)
-	if err != nil && resp.StatusCode != http.StatusUnauthorized {
+	if err != nil && (resp == nil || resp.StatusCode != http.StatusUnauthorized) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {

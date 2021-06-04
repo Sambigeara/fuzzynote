@@ -84,7 +84,8 @@ func TestWalCompact(t *testing.T) {
 			EventType:    DeleteEvent,
 		})
 
-		compactedWal := *(compact(&el))
+		compactedWalPtr, _ := compact(&el)
+		compactedWal := *compactedWalPtr
 		if len(compactedWal) != 0 {
 			t.Fatalf("Compacted wal should be empty")
 		}
@@ -148,7 +149,8 @@ func TestWalCompact(t *testing.T) {
 			EventType:    MoveDownEvent,
 		})
 
-		compactedWal := *(compact(&el))
+		compactedWalPtr, _ := compact(&el)
+		compactedWal := *compactedWalPtr
 		checkResult := func() {
 			if len(compactedWal) != 5 {
 				t.Fatalf("Expected %d events in compacted wal but had %d", 4, len(compactedWal))
@@ -220,7 +222,8 @@ func TestWalCompact(t *testing.T) {
 			EventType:    ShowEvent,
 		})
 
-		compactedWal := *(compact(&el))
+		compactedWalPtr, _ := compact(&el)
+		compactedWal := *compactedWalPtr
 		if len(compactedWal) != 6 {
 			t.Fatalf("Compacted wal should be untouched")
 		}
@@ -284,9 +287,12 @@ func TestWalCompact(t *testing.T) {
 			EventType:    MoveDownEvent,
 		})
 
-		compactedWal := *(compact(&el))
+		compactedWalPtr, _ := compact(&el)
+		compactedWal := *compactedWalPtr
 
-		if !walsAreEquivalent(&el, &compactedWal) {
+		testRootA, _, _ := checkWalIntegrity(&el)
+		testRootB, _, _ := checkWalIntegrity(&compactedWal)
+		if !listsAreEquivalent(testRootA, testRootB) {
 			t.Fatal("Wals should be equivalent")
 		}
 	})
@@ -356,9 +362,12 @@ func TestWalCompact(t *testing.T) {
 			EventType:    MoveDownEvent,
 		})
 
-		compactedWal := *(compact(&el))
+		compactedWalPtr, _ := compact(&el)
+		compactedWal := *compactedWalPtr
 
-		if !walsAreEquivalent(&el, &compactedWal) {
+		testRootA, _, _ := checkWalIntegrity(&el)
+		testRootB, _, _ := checkWalIntegrity(&compactedWal)
+		if !listsAreEquivalent(testRootA, testRootB) {
 			t.Fatal("Wals should be equivalent")
 		}
 	})

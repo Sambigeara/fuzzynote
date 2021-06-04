@@ -44,6 +44,10 @@ type walItemSchema2 struct {
 	NoteLength                 uint64
 }
 
+var (
+	errWalIntregrity = errors.New("the wal was forcefully recovered, r.log needs to be purged")
+)
+
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
 // (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
@@ -851,7 +855,7 @@ func recoverWal(wal *[]EventLog, matches *[]ListItem) *[]EventLog {
 	return &newWal
 }
 
-func (r *DBListRepo) compact(wal *[]EventLog) *[]EventLog {
+func compact(wal *[]EventLog) (*[]EventLog, error) {
 	// Check the integrity of the incoming full wal prior to compaction.
 	// If broken in some way, call the recovery function.
 	testRootA, matchItemsA, err := checkWalIntegrity(wal)
@@ -862,13 +866,8 @@ func (r *DBListRepo) compact(wal *[]EventLog) *[]EventLog {
 		if err != nil {
 			log.Fatal("wal recovery failed!")
 		}
-		// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
-		// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
-		// broken log will just be merged back in. We want to remove it entirely.
-		r.log = &[]EventLog{}
 
-		// There's also no point in compacting at this point, so return early
-		return wal
+		return wal, errWalIntregrity
 	}
 
 	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
@@ -938,7 +937,7 @@ func (r *DBListRepo) compact(wal *[]EventLog) *[]EventLog {
 	if !listsAreEquivalent(testRootA, testRootB) {
 		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
-	return &compactedWal
+	return &compactedWal, nil
 }
 
 func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
@@ -1178,7 +1177,7 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
-func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
+func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) (*[]EventLog, error) {
 	// TODO separate IO/CPU bound ops to optimise
 	fullMergedWal := []EventLog{}
 	for _, wf := range walFiles {
@@ -1191,7 +1190,7 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 
 		// If there's only 1 file, there's no point gathering them, so skip
 		// We need to let it pass for the 0 case (e.g. fresh roots with no existing wals)
-		if len(originFiles) == 1 {
+		if len(originFiles) == 1 && !forceGather {
 			// We still want to process other walFiles, so continue
 			continue
 		}
@@ -1221,7 +1220,18 @@ func (r *DBListRepo) gather(walFiles []WalFile) (*[]EventLog, error) {
 		mergedWal = *(merge(&mergedWal, r.log))
 
 		// Compact
-		mergedWal = *(r.compact(&mergedWal))
+		compactedWal, err := compact(&mergedWal)
+		if err != nil {
+			if err == errWalIntregrity {
+				// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
+				// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
+				// broken log will just be merged back in. We want to remove it entirely.
+				r.log = &[]EventLog{}
+			} else {
+				return nil, err
+			}
+		}
+		mergedWal = *compactedWal
 
 		// Flush the gathered Wal
 		if err := r.push(&mergedWal, wf, ""); err != nil {
@@ -1398,7 +1408,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					log.Fatal(err)
 				}
 			case <-r.gatherTicker.C:
-				if el, err = r.gather(r.allWalFiles()); err != nil {
+				if el, err = r.gather(r.allWalFiles(), false); err != nil {
 					log.Fatal(err)
 				}
 			}
@@ -1465,7 +1475,7 @@ func (r *DBListRepo) finish() error {
 	// TODO this is a bit of a "catch-all" convenience hack which guarantees that *all* in mem logs
 	// will always be persisted to disk on close. Ideally, we'd just flush to disk whenever we pulled
 	// new logs from remotes, but for now, this will do.
-	r.gather([]WalFile{r.LocalWalFile})
+	r.gather([]WalFile{r.LocalWalFile}, true)
 
 	// Stop tickers
 	r.webSyncTicker.Stop()
