@@ -101,13 +101,15 @@ type websocketMessage struct {
 	Wal  string `json:"wal"`
 
 	// `position` events (collaborator cursor positions)
-	Email string `json:"email"`
-	Key   string `json:"key"`
+	Email        string `json:"email"`
+	Key          string `json:"key"`
+	UnixNanoTime int64  `json:"dt"`
 }
 
 type cursorMoveEvent struct {
-	email       string
-	listItemKey string
+	email        string
+	listItemKey  string
+	unixNanoTime int64
 }
 
 func (w *Web) pushWebsocket(m websocketMessage) {
@@ -174,8 +176,9 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 		}
 	case "position":
 		remoteCursorMoveChan <- cursorMoveEvent{
-			email:       m.Email,
-			listItemKey: m.Key,
+			email:        m.Email,
+			listItemKey:  m.Key,
+			unixNanoTime: m.UnixNanoTime,
 		}
 	}
 

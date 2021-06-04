@@ -1330,9 +1330,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
 							func() {
 								m := websocketMessage{
-									Action: "position",
-									UUID:   wf.GetUUID(),
-									Key:    e.listItemKey,
+									Action:       "position",
+									UUID:         wf.GetUUID(),
+									Key:          e.listItemKey,
+									UnixNanoTime: e.unixNanoTime,
 								}
 								webRefreshMut.RLock()
 								defer webRefreshMut.RUnlock()

@@ -52,7 +52,7 @@ type ListRepo interface {
 	Undo() (string, error)
 	Redo() (string, error)
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
-	SetCollabPosition(string, string)
+	SetCollabPosition(cursorMoveEvent) bool
 	GetCollabPositions() map[string][]string
 	GenerateView(matchKeys [][]rune, showHidden bool) error
 }
@@ -78,7 +78,7 @@ type DBListRepo struct {
 
 	remoteCursorMoveChan chan cursorMoveEvent
 	localCursorMoveChan  chan cursorMoveEvent
-	collabPositions      map[string]string
+	collabPositions      map[string]cursorMoveEvent
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
@@ -139,9 +139,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		listRepo.web = web
 
 		// Establish the chan used to track and display collaborator cursor positions
-		listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent) // incoming events
-		listRepo.localCursorMoveChan = make(chan cursorMoveEvent)  // outgoing events
-		listRepo.collabPositions = make(map[string]string)         // map[collaboratorEmail]currentKey
+		listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent)  // incoming events
+		listRepo.localCursorMoveChan = make(chan cursorMoveEvent)   // outgoing events
+		listRepo.collabPositions = make(map[string]cursorMoveEvent) // map[collaboratorEmail]currentKey
 	}
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
@@ -411,7 +411,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 	// 4. trigger stage 1 on remote...
 	if curKey != r.previousListItemKey && r.web != nil && r.web.wsConn != nil {
 		r.localCursorMoveChan <- cursorMoveEvent{
-			listItemKey: curKey,
+			listItemKey:  curKey,
+			unixNanoTime: time.Now().UnixNano(),
 		}
 	}
 
@@ -472,7 +473,8 @@ func (r *DBListRepo) GetCollabPositions() map[string][]string {
 	defer r.collabMapLock.Unlock()
 
 	pos := make(map[string][]string)
-	for email, key := range r.collabPositions {
+	for email, ev := range r.collabPositions {
+		key := ev.listItemKey
 		_, exists := pos[key]
 		if !exists {
 			pos[key] = []string{}
@@ -482,11 +484,17 @@ func (r *DBListRepo) GetCollabPositions() map[string][]string {
 	return pos
 }
 
-func (r *DBListRepo) SetCollabPosition(email string, listItemKey string) {
+func (r *DBListRepo) SetCollabPosition(ev cursorMoveEvent) bool {
 	r.collabMapLock.Lock()
 	defer r.collabMapLock.Unlock()
 
-	r.collabPositions[email] = listItemKey
+	// Only update if the event occurred more recently
+	old, exists := r.collabPositions[ev.email]
+	if !exists || old.unixNanoTime < ev.unixNanoTime {
+		r.collabPositions[ev.email] = ev
+		return true
+	}
+	return false
 }
 
 func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
