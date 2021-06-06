@@ -24,7 +24,6 @@ const (
 	apiURL       = "https://api.fuzzynote.co.uk/v1"
 
 	walSyncAuthorizationHeader = "Authorization"
-	iDTokenHeader              = "Id-Token"
 	webRefreshInterval         = time.Minute * 10
 )
 
@@ -66,7 +65,7 @@ func (w *Web) establishWebSocketConnection() error {
 
 	var resp *http.Response
 	var err error
-	w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+	w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
 	if err != nil && resp == nil {
 		return fmt.Errorf("Failed to establish websocket connection: %s", err)
 	}
@@ -85,7 +84,7 @@ func (w *Web) establishWebSocketConnection() error {
 		if err != nil {
 			return err
 		}
-		w.wsConn, resp, err = dialFunc(w.tokens.AccessToken())
+		w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
 		// need to return within this nested block otherwise the outside err still holds
 		// data from previous calls
 		return err
@@ -201,9 +200,8 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 		return "", err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
-	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
+	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return "", err
 	}
@@ -236,9 +234,8 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 		log.Fatalf("Error creating wal list request: %v", err)
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
-	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
+	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return nil, err
 	}
@@ -311,9 +308,8 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 		return err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, wf.web.tokens.IDToken())
-	resp, err := wf.web.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
+	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return err
 	}

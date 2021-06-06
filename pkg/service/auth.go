@@ -114,7 +114,7 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 
 // CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
 // expired AccessToken, will reauth, and then retry the original function.
-func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, error) {
+func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 	f := func(req *http.Request) (*http.Response, error) {
 		return http.DefaultClient.Do(req)
 	}
@@ -134,7 +134,7 @@ func (w *Web) CallWithReAuth(req *http.Request, header string) (*http.Response, 
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set(header, w.tokens.AccessToken())
+		req.Header.Set(walSyncAuthorizationHeader, w.tokens.IDToken())
 		resp, err = f(req)
 	}
 	return resp, err

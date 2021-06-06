@@ -32,9 +32,6 @@ const (
 	websocketURL = "wss://ws.fuzzynote.co.uk/v1"
 	apiURL       = "https://api.fuzzynote.co.uk/v1"
 
-	walSyncAuthorizationHeader = "Authorization"
-	iDTokenHeader              = "Id-Token"
-
 	nAllowedActiveRemotes = 5
 )
 

@@ -144,9 +144,8 @@ func (w *Web) GetRemotes(uuid string, u *url.URL) ([]WebRemote, error) {
 	}
 
 	req, err := http.NewRequest("GET", u.String(), nil)
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
-	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req)
 	if err != nil {
 		return nil, err
 	}
@@ -176,9 +175,8 @@ func (w *Web) PostRemote(remote *WebRemote, u *url.URL) error {
 		return err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
-	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req)
 	if err != nil {
 		return err
 	}
@@ -205,9 +203,8 @@ func (w *Web) UpdateRemote(remote WebRemote) error {
 		return err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
-	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req)
 	if err != nil {
 		return err
 	}
@@ -236,9 +233,8 @@ func (w *Web) DeleteRemote(uuid string) error {
 		return err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.AccessToken())
-	req.Header.Add(iDTokenHeader, w.tokens.IDToken())
-	resp, err := w.CallWithReAuth(req, walSyncAuthorizationHeader)
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+	resp, err := w.CallWithReAuth(req)
 	if err != nil {
 		return err
 	}
