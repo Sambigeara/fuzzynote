@@ -1,48 +1,84 @@
-# Fuzzy-search based note tool
+Fuzzynote (fzn)
+![Github release (latest by date)](https://img.shields.io/github/v/release/sambigeara/fuzzynote)
+![Status](https://img.shields.io/badge/status-beta-blue)
+![Downloads](https://img.shields.io/github/downloads/sambigeara/fuzzynote/total.svg)
+==========
 
-**IMPORTANT**: This app is in it's very early stages - it may break in unexpected ways and you *may* lose your data. Be wary of what you store in it, or take regular backups of the data in `$HOME/.fzn/` as this is where it stores it's files (see below).
+## Hyper-fast, local-first, CRDT-backed, collaborative note-taking tool
 
-## Config
+### Simple, powerful, extremely fast search
 
-The root data directory location `$HOME/.fzn/`. You can override this by setting `FZN_ROOT_DIR`. This stores the main list in a file in `primary.db` , and subsequent list item notes in `$FZN_ROOT_DIR/notes/`. 
+String together numerous full or fuzzy match groups. Zoom in using common prefixes. FZN is "local-first" - it acts on local in-memory data, meaning native speeds (and as-good-as instant performance).
 
-## Running
+### Real time collaboration
 
-Run the bin direct `./bin/fzn` or add to your PATH (soz, haven't yet gotten my head around proper Go build/install processes).
+Backed by a [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type)-based, append-only, mergeable text database. Collaborate on a list live, or make changes offline and sync later, with guaranteed and consistent output.
 
-## Search
+### Single view, multiple documents
 
-The top line of the client is used as a search bar. You can separate search terms with `TAB`, each "search group" will be run on each line separately. If you want to match on a full string, prepend the search group with `=`. To inverse string match (on full strings), prepend the search group with `=!`.
+Rather than collaborating on single documents, FZN will sync lines matching specific terms to different remotes. Remotes can have any number of "collaborators" with access. Therefore you can collaborate on multiple "documents" from the same view at the same time.
 
-Examples:
+### S3 remote support
 
-- `foo` will match `fobo`
-- `=foo` will not match on `fobo`, but will match on `foo`
-- `=!foo` will ignore any lines with the **full** string `foo` in it
+Fuzzynote can be powered by a single shared static file store. Configure one yourself and share between collaborators for near real-time collaboration and backup.
 
-## Controls
+### Hosted offering
 
-### Navigation
+*link*
 
-- `Arrow keys`: General navigation
-- `Ctrl-a` (not search line): Go to start of item
-- `Ctrl-e` (not search line): Go to end of item
-- `ESCAPE` (not top line): Go to search line
-- `Double ESCAPE`: Exit
+## Installation
 
-### Search
+Compile locally (requires Go):
 
-- `TAB (top line)`: Add new search group
-- `Enter`: Add new line below (prepends search line to new line)
-- `Ctrl-d`: Copies line into buffer and deletes it, or clear search groups
-- `Alt-]/Alt-[`: Moves the current item up or down in the list
-- `Ctrl-s`: Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items.
+```shell
+git clone git@github.com:Sambigeara/fuzzynote.git
+cd fuzzynote
+make build # Installs binary to `/bin/fzn`
+```
 
-### State
+Or download the binary direct from the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
 
-- `Ctrl-u/Ctrl-r`: Undo/Redo
+## Quick-start
 
-### Items
+### General usage
+
+#### Search
+
+Any number of tab-separated search groups are applied to the lists independently. Use full, fuzzy, or inverse string matching.
+
+- Full string match: prepend the search group with `=`
+
+- Inverse string match (full strings), prepend the search group with `=!`
+
+- Separate search groups with `TAB`
+
+E.g.:
+
+```shell
+foo # matches "fobo"
+=foo # will not match "fobo"
+=!foo # will ignore any lines with "foo" in it
+```
+
+#### Controls
+
+##### Navigation
+
+- General navigation: `Arrow keys`
+- Go to start of item: `Ctrl-a`
+- Go to end of item: `Ctrl-e`
+- Go to search line: `ESCAPE`
+- Exit: `Double ESCAPE`
+
+##### State
+
+- Add new line below (prepending search line to new line): `Enter`
+- Copies line into buffer and deletes it, or clear search groups: `Ctrl-d`
+- Moves the current item up or down in the list: `Alt-]/Alt-[`
+- Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items: `Ctrl-s`
+- Undo/Redo: `Ctrl-u/Ctrl-r`
+
+#### Items
 
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
@@ -51,26 +87,12 @@ Examples:
 - `Ctrl-p`: Paste current item from buffer below current position
 - `Ctrl-_`: If there are any URLs in the string, open the first using the default browser
 
-## Token operators
+### Token operators
 
 When typed in a search group, the following character combinations will parse to different useful outputs:
 
 - `{d}`: A date in the form `Mon, Jan 2, 2006`
 
-## Colour scheme
+### Colour scheme
 
 You can trigger between `light` and `dark` by setting `FZN_COLOUR` to the former or latter accordingly.
-
-## Workflowy importer
-
-I have historically used Workflowy as my note-taking tool of choice. Because of this, I've written an importer which converts the output XML from Workflowy's `export` function into the flat format fzn expects. It will also take care of converting notes that existed on the Workflowy nodes. To use this, do the following:
-
-1. Export data from workflowy in the OPML (aka extended XML) format
-2. Paste this data into a file named `workflowy_source.xml` in the project root
-3. Run `./bin/importer`
-4. By default, this generates all the data in `$FZN_ROOT_DIR/import/` (to prevent any accidental merges - you can then move to `.fzn/` manually)
-5. If you wish to merge directly with any existing data, you can specify the directory with the `FZN_IMPORT_ROOT_DIR` argument as such:
-
-```bash
-FZN_IMPORT_ROOT_DIR=$HOME/.fzn/ ./bin/import
-```
