@@ -6,6 +6,8 @@ Fuzzynote (fzn)
 
 ## Hyper-fast, local-first, CRDT-backed, collaborative note-taking tool
 
+![](joe+frodo1.gif)
+
 ### Simple, powerful, extremely fast search
 
 String together numerous full or fuzzy match groups. Zoom in using common prefixes. FZN is "local-first" - it acts on local in-memory data, meaning native speeds (and as-good-as instant performance).
@@ -20,7 +22,7 @@ Rather than collaborating on single documents, FZN will sync lines matching spec
 
 ### S3 remote support
 
-Fuzzynote can be powered by a single shared static file store. Configure one yourself and share between collaborators for near real-time collaboration and backup.
+Fuzzynote can be backed by a single shared static file store. Configure one yourself and share between collaborators for near real-time collaboration and backup.
 
 ### Hosted offering
 
