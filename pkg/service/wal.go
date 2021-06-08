@@ -1268,6 +1268,27 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
 
+	// We want to trigger a web sync as soon as the web connection has been established
+	webSyncTriggerChan := make(chan time.Time)
+	fileSyncTriggerChan := make(chan time.Time)
+
+	// Trigger initial file sync
+	go func() {
+		fileSyncTriggerChan <- time.Time{}
+	}()
+
+	// Schedule ongoing wal file syncs
+	go func() {
+		for {
+			select {
+			case t := <-r.webSyncTicker.C:
+				webSyncTriggerChan <- t
+			case t := <-r.fileSyncTicker.C:
+				fileSyncTriggerChan <- t
+			}
+		}
+	}()
+
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	if r.web != nil {
 		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
@@ -1287,6 +1308,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						log.Print(err)
 						os.Exit(0)
 					}
+					// Trigger web walfile sync (mostly relevant on initial start)
+					webSyncTriggerChan <- time.Time{}
 				}()
 
 				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
@@ -1374,25 +1397,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			}
 		}
 	}
-
-	webSyncTriggerChan := make(chan time.Time)
-	fileSyncTriggerChan := make(chan time.Time)
-	go func() {
-		for {
-			select {
-			case t := <-r.webSyncTicker.C:
-				webSyncTriggerChan <- t
-			case t := <-r.fileSyncTicker.C:
-				fileSyncTriggerChan <- t
-			}
-		}
-	}()
-	// Trigger initial instantaneous sync
-	go func() {
-		t := time.Time{}
-		webSyncTriggerChan <- t
-		fileSyncTriggerChan <- t
-	}()
 
 	// Main sync event loop
 	fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
