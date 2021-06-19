@@ -77,7 +77,7 @@ In short you can collaborate on multiple "documents" from the same view at the s
 ./fzn
 ```
 
-## Add a remote and collaborator
+## Add a "remote" and collaborator
 
 In this example, Frodo creates a remote for `important project` and invites Joe to collaborate
 
@@ -89,8 +89,8 @@ In this example, Frodo creates a remote for `important project` and invites Joe 
 ```
 # Example output
 ? Select action:
-  ▸ Remote: main (1748937357)
-    Add new remote...  # <- select this
+    Remote: main (1748937357)
+  ▸ Add new remote...
     Exit
 ```
 3. Specify the name, Frodo chooses `important project`
@@ -101,8 +101,8 @@ In this example, Frodo creates a remote for `important project` and invites Joe 
 4. Select newly created remote
 ```
 ? Select action:
-  ▸ Remote: main (1748937357)
-    Remote: important project (8934754397)  # <- select this
+    Remote: main (1748937357)
+  ▸ Remote: important project (8934754397)
     Add new remote...
     Exit
 ```
@@ -110,26 +110,26 @@ In this example, Frodo creates a remote for `important project` and invites Joe 
 ```
 ? Remote: important project (8934754397):
     Manage collaborators...
-  ▸ Name: important project
-    Match: UPDATE ME 2596996162  # <- select this, and enter "important project"
+    Name: important project
+  ▸ Match: UPDATE ME 2596996162
     IsActive: true
     Delete? (for all collaborators)
     Exit
 ```
-6. Add Joe as a collaborator
+6. Select `Manage collaborators...`
 ```
-# Go to collaborator management
 ? Remote: important project (8934754397):
-    Manage collaborators...  # <- select this
-  ▸ Name: important project
+  ▸ Manage collaborators...
+    Name: important project
     Match: important project
     IsActive: true
     Delete? (for all collaborators)
     Exit
-
-# Invite Joe
+```
+7. Select `Add new collaborator...` and enter email
+```
 ? Manage collaborators:
-  ▸ Add new collaborator...  # <- select this, and add the email
+  ▸ Add new collaborator...
     Exit
 ```
 
