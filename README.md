@@ -5,7 +5,7 @@ Fuzzynote (fzn)
 ![Follow](https://img.shields.io/twitter/follow/fuzzynote_app?style=social)
 ==========
 
-# Hyper-fast, local-first, CRDT-backed, collaborative note-taking tool
+# Terminal-based, hyper-fast, CRDT-backed, collaborative note-taking tool
 
 ## Simple, powerful, extremely fast search
 
@@ -42,11 +42,12 @@ In short you can collaborate on multiple "documents" from the same view at the s
 
 ![collaboration](collab.gif)
 
-*Frodo (left) and Joe (right) only share lines with match term `important project`. Non-matched lines remain private. NOTE: Frodo and Joe are using the cloud support to manage their remotes, and for real time collaboration.*
+*Frodo (left) and Joe (right) only share lines with match term `important project`. Non-matched lines remain private. NOTE: Frodo and Joe are using the web support to manage their remotes, and for real time collaboration.*
 
 # Remotes
 
-- A "remote" is a remote target where we sync lists.
+A "remote" is a remote target where we sync lists.
+
 - Sync all lines, or specify match terms to sync only some. A remote can be a full or partial view.
 - Add any number of collaborators who will have access to each remote.
 
@@ -56,86 +57,11 @@ In short you can collaborate on multiple "documents" from the same view at the s
 - Real time collaboration
 - Managed cloud data store, easy data sync across different computers (simply `fzn login` and start `fzn`)
 
-*Note: for full transparency, if the project takes off, I plan on integrating a paid subscription system to enable me to support the infrastructure and the project in general moving forwards! I'll be proactive in communicating this and will acknowledge any support from early users when making any decisions. Consider this an N-month free trial with "early-release" user status, whatever that means.*
+*Note: for full transparency, if the project takes off, I'll integrate a paid subscription system to enable me to support the infrastructure and the project on an ongoing basis. I'll be proactive in communicating this and will acknowledge any support from early users when making any decisions! Consider this an N-month free trial with "early-release" user status.*
 
 ## S3 ([quickstart TODO](foo))
 
-- Configure an S3 bucket yourself and share between collaborators for near real-time collaboration and backup.
-
-# Quickstart
-
-## Web sign-up, terminal login
-
-1. [Install `fzn`](#installation)
-2. Sign up [here](https://fuzzynote.auth.eu-west-1.amazoncognito.com/signup?client_id=5a7brt2fuvlfnl8aql1af3758m&response_type=token&scope=email+openid&redirect_uri=https://github.com/Sambigeara/fuzzynote)
-3. Login
-```
-./fzn login
-```
-4. Start
-```
-./fzn
-```
-
-## Add a "remote" and collaborator
-
-In this example, Frodo creates a remote for `important project` and invites Joe to collaborate
-
-1. Open the interactive menu
-```
-./fzn cfg
-```
-2. Select `Add new remote...`
-```
-# Example output
-? Select action:
-    Remote: main (1748937357)
-  ▸ Add new remote...
-    Exit
-```
-3. Specify the name, Frodo chooses `important project`
-```
-✔ Add new remote...
-✔ Specify name for new remote: important project
-```
-4. Select newly created remote
-```
-? Select action:
-    Remote: main (1748937357)
-  ▸ Remote: important project (8934754397)
-    Add new remote...
-    Exit
-```
-5. Set the "match term" - all lines that match this term will sync with the remote. Note: this includes lines that previously matched the term, but no longer do.
-```
-? Remote: important project (8934754397):
-    Manage collaborators...
-    Name: important project
-  ▸ Match: UPDATE ME 2596996162
-    IsActive: true
-    Delete? (for all collaborators)
-    Exit
-```
-6. Select `Manage collaborators...`
-```
-? Remote: important project (8934754397):
-  ▸ Manage collaborators...
-    Name: important project
-    Match: important project
-    IsActive: true
-    Delete? (for all collaborators)
-    Exit
-```
-7. Select `Add new collaborator...` and enter email
-```
-? Manage collaborators:
-  ▸ Add new collaborator...
-    Exit
-```
-
-## Accept and configure invite to remote
-
-Joe responds to the invite above
+Configure an S3 bucket yourself and share between collaborators for near real-time collaboration and backup.
 
 # Installation
 
@@ -148,6 +74,152 @@ make build # Installs binary to `/bin/fzn`
 ```
 
 Or download the binary direct from the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
+
+# Quickstart
+
+## Web sign-up, terminal login
+
+1. [Install `fzn`](#installation)
+2. Sign up [here](https://fuzzynote.auth.eu-west-1.amazoncognito.com/signup?client_id=5a7brt2fuvlfnl8aql1af3758m&response_type=token&scope=email+openid&redirect_uri=https://github.com/Sambigeara/fuzzynote)
+3. Login and follow prompts
+```shell
+./fzn login
+```
+4. Start
+```shell
+./fzn
+```
+
+## Add a "remote" and collaborator
+
+In this example, Frodo creates a remote for `important project` and invites Joe to collaborate
+
+1. Open the interactive menu
+```shell
+./fzn cfg
+```
+2. Select `Add new remote...`
+```shell
+# Example output
+? Select action:
+    Remote: main (1748937357)
+  ▸ Add new remote...
+    Exit
+```
+3. Specify the name, Frodo chooses `important project`
+```shell
+✔ Add new remote...
+✔ Specify name for new remote: important project
+```
+4. Select newly created remote
+```shell
+? Select action:
+    Remote: main (1748937357)
+  ▸ Remote: important project (8934754397)
+    Add new remote...
+    Exit
+```
+5. Set the "match term" - all lines that match this term will sync with the remote. Note: this includes lines that previously matched the term, but no longer do.
+```shell
+# Select "Match"
+? Remote: important project (8934754397):
+    Manage collaborators...
+    Name: important project
+  ▸ Match: UPDATE ME 2596996162
+    IsActive: true
+    Delete? (for all collaborators)
+    Exit
+
+# Enter new match term and press Enter
+✔ Enter new value: important project
+```
+6. Add Joe as a collaborator
+```shell
+# Select "Manage collaborators..."
+? Remote: important project (8934754397):
+  ▸ Manage collaborators...
+    Name: important project
+    Match: important project
+    IsActive: true
+    Delete? (for all collaborators)
+    Exit
+
+# Select "Add new collaborator..."
+? Manage collaborators:
+  ▸ Add new collaborator...
+    Exit
+
+# Add email address, and press Enter
+✔ Enter email address: joe@bloggs.com
+```
+
+## Accept and configure invite to the "remote"
+
+Joe responds to the invite above
+
+1. Open the interactive menu
+
+```shell
+./fzn cfg
+```
+
+2. Selected the newly added remote - all invited remotes will start with `INVITE: `
+
+```shell
+? Select action:
+    Remote: main (6782346574)
+  ▸ Remote: INVITE: important project (8934754397)
+    Add new remote...
+    Exit
+```
+
+3. (Optional) update the name
+
+```shell
+# Select "Name"
+? Remote: INVITE: important project (8934754397):
+  ▸ Name: INVITE: important project
+    Match: UPDATE ME 7398574395
+    IsActive: false
+    Delete?
+    Exit
+    
+# Enter new name and press Enter
+✔ Enter new value: important project
+```
+
+4. Update the match term (this can be anything, and does not need to be consistent with other collaborators match terms - but keeping them consistent is more predictable).
+
+```shell
+# Select "Match"
+? Remote: important project (8934754397):
+    Name: important project
+  ▸ Match: UPDATE ME 7398574395
+    IsActive: false
+    Delete?
+    Exit
+
+# Enter new match term and press Enter
+✔ Enter new value: important project
+```
+
+5. Activate the remote (it's `false` by default to prevent accidental sharing of your personal notes)
+
+```shell
+# Select "IsActive" and choose "true"
+? Remote: important project (8934754397):
+    Name: important project
+    Match: UPDATE ME 7398574395
+  ▸ IsActive: false
+    Delete?
+    Exit
+```
+
+6. Start the app - the sync will occur in the background and you can start collaborating on the remote
+
+```shell
+./fzn
+```
 
 # Quick-start
 
