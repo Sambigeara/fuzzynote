@@ -80,11 +80,20 @@ Or download the binary direct from the [releases page](https://github.com/Sambig
 
 # Quickstart
 
+- [Basic usage](#basic-usage)
 - [Web sign-up, terminal login](#web-sign-up-terminal-login)
 - [Add a "remote"](#add-a-remote)
 - [Add a collaborator](#add-a-collaborator)
 - [Accept an invitation](#accept-an-invitation)
 <!--- [Setup an S3 remote](#setup-an-s3-remote)-->
+
+## Basic usage
+
+1. [Install `fzn`](#installation)
+2. Start
+```shell
+./fzn
+```
 
 ## Web sign-up, terminal login
 
@@ -128,7 +137,7 @@ In this example, Frodo creates a remote for `important project`
     Add new remote...
     Exit
 ```
-5. Set the "match term" - all lines that match this term will sync with the remote. Note: this includes lines that previously matched the term, but no longer do.
+5. Set the "match term" - **all lines that match this term will sync with the remote**. **NOTE**: this includes lines that previously matched the term, but no longer do.
 ```shell
 # Select "Match"
 ? Remote: important project (8934754397):
@@ -176,7 +185,7 @@ Joe responds to the invite above
 ./fzn cfg
 ```
 
-2. Selected the newly added remote - all invited remotes will start with `INVITE: `
+2. Select the newly added remote - all invited remotes will start with `INVITE: `
 
 ```shell
 ? Select action:
