@@ -5,6 +5,9 @@ Fuzzynote (fzn)
 ![Follow](https://img.shields.io/twitter/follow/fuzzynote_app?style=social)
 ==========
 
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+
 # Terminal-based, hyper-fast, CRDT-backed, collaborative note-taking tool
 
 ## Simple, powerful, extremely fast search
