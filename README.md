@@ -271,15 +271,21 @@ Joe responds to the invite above
 
 # Controls
 
-## Search
+## Navigation
+
+- General navigation: `Arrow keys`
+- Go to start of item: `Ctrl-a`
+- Go to end of item: `Ctrl-e`
+- Go to search line: `ESCAPE`
+- Exit: `Double ESCAPE`
+
+## Search (top line)
 
 Any number of tab-separated search groups are applied to the lists independently. Use full, fuzzy, or inverse string matching.
 
-- Full string match: prepend the search group with `=`
-
-- Inverse string match (full strings), prepend the search group with `=!`
-
-- Separate search groups with `TAB`
+- Full string match: start the search group with `=`
+- Inverse string match (full strings), start the search group with `=!`
+- Separate search groups: `TAB`
 
 E.g.:
 
@@ -289,30 +295,19 @@ foo # matches "fobo"
 =!foo # will ignore any lines with "foo" in it
 ```
 
-## Navigation
-
-- General navigation: `Arrow keys`
-- Go to start of item: `Ctrl-a`
-- Go to end of item: `Ctrl-e`
-- Go to search line: `ESCAPE`
-- Exit: `Double ESCAPE`
-
-## State
+## List items
 
 - Add new line below (prepending search line to new line): `Enter`
-- Copies line into buffer and deletes it, or clear search groups: `Ctrl-d`
+- Delete line (and copy into buffer), or clear search groups: `Ctrl-d`
 - Moves the current item up or down in the list: `Alt-]/Alt-[`
 - Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items: `Ctrl-s`
 - Undo/Redo: `Ctrl-u/Ctrl-r`
-
-## Items
-
-- `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
-- `Ctrl-i`: Toggle visibility of current item
-- `Ctrl-o`: Opens "Notes" on the currently selected list item. For now, this opens a vim buffer, which will be attributed to the item in question. The note will save when you write and quit out of vim
-- `Ctrl-c`: Copy current item into buffer. If there are any URLs in the string, copy the first into the system clipboard
-- `Ctrl-p`: Paste current item from buffer below current position
-- `Ctrl-_`: If there are any URLs in the string, open the first using the default browser
+- Open note on the currently selected list item in selected terminal editor (default is Vim). Save in editor saves to list item: `Ctrl-o`
+- Copy current item into buffer. Also copy first URL from list item into the system clipboard: `Ctrl-c`
+- Paste current item from buffer below current position: `Ctrl-p`
+- Open first URL in list item: `Ctrl-_`
+- Toggle between `show all` and `show visible`: `Ctrl-i (top line)`
+- Toggle visibility of current item: `Ctrl-i`
 
 ## Token operators
 
@@ -320,6 +315,8 @@ When typed in a search group, the following character combinations will parse to
 
 - `{d}`: A date in the form `Mon, Jan 2, 2006`
 
-## Colour scheme
+## Other configuration
 
-You can trigger between `light` and `dark` by setting `FZN_COLOUR` to the former or latter accordingly.
+### Colour scheme
+
+You can trigger between `light` and `dark` by setting the `FZN_COLOUR` envvar to the former or latter accordingly.
