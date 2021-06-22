@@ -7,6 +7,7 @@ Fuzzynote (fzn)
 
 - [Installation](#installation)
 - [Quickstart](#quickstart)
+- [Controls](#controls)
 
 # Terminal-based, hyper-fast, CRDT-backed, collaborative note-taking tool
 
@@ -286,8 +287,6 @@ Any number of tab-separated search groups are applied to the lists independently
 - Full string match: start the search group with `=`
 - Inverse string match (full strings), start the search group with `=!`
 - Separate search groups: `TAB`
-
-E.g.:
 
 ```shell
 foo # matches "fobo"
