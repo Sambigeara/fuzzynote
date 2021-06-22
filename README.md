@@ -3,11 +3,14 @@ Fuzzynote (fzn)
 ![Status](https://img.shields.io/badge/status-beta-blue)
 ![Downloads](https://img.shields.io/github/downloads/sambigeara/fuzzynote/total.svg)
 ![Follow](https://img.shields.io/twitter/follow/fuzzynote_app?style=social)
-==========
+---
 
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [Controls](#controls)
+- [Configuration](#configuration)
+
+---
 
 # Terminal-based, hyper-fast, CRDT-backed, collaborative note-taking tool
 
@@ -275,8 +278,8 @@ Joe responds to the invite above
 ## Navigation
 
 - General navigation: `Arrow keys`
-- Go to start of item: `Ctrl-a`
-- Go to end of item: `Ctrl-e`
+- Go to start of line: `Ctrl-a`
+- Go to end of line: `Ctrl-e`
 - Go to search line: `ESCAPE`
 - Exit: `Double ESCAPE`
 
@@ -294,28 +297,56 @@ foo # matches "fobo"
 =!foo # will ignore any lines with "foo" in it
 ```
 
-## List items
+## List items (lines)
 
-- Add new line below (prepending search line to new line): `Enter`
-- Delete line (and copy into buffer), or clear search groups: `Ctrl-d`
-- Moves the current item up or down in the list: `Alt-]/Alt-[`
-- Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items: `Ctrl-s`
-- Undo/Redo: `Ctrl-u/Ctrl-r`
+- Add new line (prepending search line text to new line): `Enter`
+- Delete line: `Ctrl-d`
+- Undo/Redo last operation: `Ctrl-u/Ctrl-r`
+- Moves current item up or down: `Alt-]/Alt-[`
 - Open note on the currently selected list item in selected terminal editor (default is Vim). Save in editor saves to list item: `Ctrl-o`
-- Copy current item into buffer. Also copy first URL from list item into the system clipboard: `Ctrl-c`
-- Paste current item from buffer below current position: `Ctrl-p`
+- Copy current item into buffer: `Ctrl-c`
+- Paste current item from buffer: `Ctrl-p`
+
+## Group operations
+
+- Select item under cursor: `Ctrl-s`
+- Set common prefix string to search line: `Enter`
+- Clear selected items: `Escape`
+
+## Visibility
+
+- Toggle global visibility: `Ctrl-i (top line)`
+- Toggle list item visibility: `Ctrl-i`
+
+## Handy functions
+
 - Open first URL in list item: `Ctrl-_`
-- Toggle between `show all` and `show visible`: `Ctrl-i (top line)`
-- Toggle visibility of current item: `Ctrl-i`
+- Copy first URL from list item into the system clipboard: `Ctrl-c`
 
 ## Token operators
 
-When typed in a search group, the following character combinations will parse to different useful outputs:
+The following character combinations will parse to different useful outputs:
 
 - `{d}`: A date in the form `Mon, Jan 2, 2006`
 
-## Other configuration
+# Configuration
 
-### Colour scheme
+`fzn --help` will print out the configurable options.
 
-You can trigger between `light` and `dark` by setting the `FZN_COLOUR` envvar to the former or latter accordingly.
+```
+> fzn --help
+Usage: fzn [options] [arguments]
+
+OPTIONS
+  --root/$FZN_ROOT                                <string>
+  --colour/$FZN_COLOUR                            <string>  (default: light)
+  --editor/$FZN_EDITOR                            <string>  (default: vim)
+  --sync-frequency-ms/$FZN_SYNC_FREQUENCY_MS      <uint>    (default: 10000)
+  --gather-frequency-ms/$FZN_GATHER_FREQUENCY_MS  <uint>    (default: 30000)
+  --help/-h
+  display this help messageshell
+```
+
+- `editor`: specifies the terminal emulator which is used when opening notes on list items. `vim`, `emacs` and `nano` all appear to work. Others may too.
+- `sync-frequency-ms`/`gather-frequency-ms`: these can be ignored for now
+- `root`: **(mostly for testing and can be ignored for general use)** specifies the directory that `fzn` will treat as it's root. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows.
