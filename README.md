@@ -80,6 +80,11 @@ Or download the binary direct from the [releases page](https://github.com/Sambig
 
 # Quickstart
 
+- [Web sign-up, terminal login](#web-sign-up-terminal-login)
+- [Add a "remote"](#add-a-remote)
+- [Add a collaborator](#add-a-collaborator)
+- [Accept an invitation](#accept-an-invitation)
+
 ## Web sign-up, terminal login
 
 1. [Install `fzn`](#installation)
@@ -93,9 +98,9 @@ Or download the binary direct from the [releases page](https://github.com/Sambig
 ./fzn
 ```
 
-## Add a "remote" and collaborator
+## Add a "remote"
 
-In this example, Frodo creates a remote for `important project` and invites Joe to collaborate
+In this example, Frodo creates a remote for `important project`
 
 1. Open the interactive menu
 ```shell
@@ -136,7 +141,11 @@ In this example, Frodo creates a remote for `important project` and invites Joe 
 # Enter new match term and press Enter
 ✔ Enter new value: important project
 ```
-6. Add Joe as a collaborator
+
+## Add a collaborator
+
+Joe is invited to the `important project` remote:
+
 ```shell
 # Select "Manage collaborators..."
 ? Remote: important project (8934754397):
@@ -156,7 +165,7 @@ In this example, Frodo creates a remote for `important project` and invites Joe 
 ✔ Enter email address: joe@bloggs.com
 ```
 
-## Accept and configure invite to the "remote"
+## Accept an invitation
 
 Joe responds to the invite above
 
@@ -191,7 +200,7 @@ Joe responds to the invite above
 ✔ Enter new value: important project
 ```
 
-4. Update the match term (this can be anything, and does not need to be consistent with other collaborators match terms - but keeping them consistent is more predictable).
+4. Update the match term (this can be anything, and does not need to be consistent with other collaborator's match terms - but keeping them consistent is more predictable).
 
 ```shell
 # Select "Match"
