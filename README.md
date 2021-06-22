@@ -137,7 +137,10 @@ In this example, Frodo creates a remote for `important project`
     Add new remote...
     Exit
 ```
-5. Set the "match term" - **all lines that match this term will sync with the remote**. **NOTE**: this includes lines that previously matched the term, but no longer do.
+5. Set the "match term"
+   - **All lines that match this term will sync with the remote**
+   - **Setting to an empty string will mean that ALL lines will be sync'd and all collaborators will have access**
+   - **Note**: this includes lines that previously matched the term, but no longer do (e.g. if you delete the particular matching substring from the line)
 ```shell
 # Select "Match"
 ? Remote: important project (8934754397):
