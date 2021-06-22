@@ -268,11 +268,10 @@ Joe responds to the invite above
 <!--./fzn-->
 <!--```-->
 
-# Quick-start
 
-## General usage
+# Controls
 
-### Search
+## Search
 
 Any number of tab-separated search groups are applied to the lists independently. Use full, fuzzy, or inverse string matching.
 
@@ -290,9 +289,7 @@ foo # matches "fobo"
 =!foo # will ignore any lines with "foo" in it
 ```
 
-### Controls
-
-#### Navigation
+## Navigation
 
 - General navigation: `Arrow keys`
 - Go to start of item: `Ctrl-a`
@@ -300,7 +297,7 @@ foo # matches "fobo"
 - Go to search line: `ESCAPE`
 - Exit: `Double ESCAPE`
 
-#### State
+## State
 
 - Add new line below (prepending search line to new line): `Enter`
 - Copies line into buffer and deletes it, or clear search groups: `Ctrl-d`
@@ -308,7 +305,7 @@ foo # matches "fobo"
 - Select items under cursor. Then press `Enter` to set common prefix to search, or `Escape` to clear selected items: `Ctrl-s`
 - Undo/Redo: `Ctrl-u/Ctrl-r`
 
-### Items
+## Items
 
 - `Ctrl-i (top line)`: Toggle between `show all` and `show visible`
 - `Ctrl-i`: Toggle visibility of current item
