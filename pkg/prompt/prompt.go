@@ -48,13 +48,13 @@ func isEmailValid(e string) error {
 // TODO rename
 func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]func(string) error, map[string]func(string) error) {
 	nameKey := fmt.Sprintf("Name: %s", r.Name)
-	modeKey := fmt.Sprintf("Mode: %s", r.Mode)
+	//modeKey := fmt.Sprintf("Mode: %s", r.Mode)
 	matchKey := fmt.Sprintf("Match: %s", r.Match)
 	isActiveKey := fmt.Sprintf("IsActive: %v", r.IsActive)
 
 	fields := []string{
 		nameKey,
-		modeKey,
+		//modeKey,
 		matchKey,
 		isActiveKey,
 	}
@@ -65,10 +65,10 @@ func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]
 			r.Name = v
 			return w.UpdateRemote(r)
 		},
-		modeKey: func(v string) error {
-			r.Mode = v
-			return w.UpdateRemote(r)
-		},
+		//modeKey: func(v string) error {
+		//    r.Mode = v
+		//    return w.UpdateRemote(r)
+		//},
 		matchKey: func(v string) error {
 			r.Match = v
 			return w.UpdateRemote(r)
@@ -90,8 +90,8 @@ func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]
 		return nil
 	}
 	validationFuncMap := map[string]func(string) error{
-		nameKey:     alwaysValid,
-		modeKey:     alwaysValid,
+		nameKey: alwaysValid,
+		//modeKey:     alwaysValid,
 		matchKey:    alwaysValid,
 		isActiveKey: boolValidationFn,
 	}
