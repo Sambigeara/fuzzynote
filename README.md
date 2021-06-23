@@ -9,6 +9,8 @@ Fuzzynote (fzn)
 - [Quickstart](#quickstart)
 - [Controls](#controls)
 - [Configuration](#configuration)
+- [Future Plans](#future-plans)
+- [Issues/Considerations](#issuesconsiderations)
 
 ---
 
@@ -350,3 +352,16 @@ OPTIONS
 - `editor`: specifies the terminal emulator which is used when opening notes on list items. `vim`, `emacs` and `nano` all appear to work. Others may too.
 - `sync-frequency-ms`/`gather-frequency-ms`: these can be ignored for now
 - `root`: **(mostly for testing and can be ignored for general use)** specifies the directory that `fzn` will treat as it's root. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows.
+
+# Future plans
+
+- Web-app (Wasm)
+- E2E encryption
+
+# Issues/Considerations
+
+The terminal client is fully functioning, however given the early stages of the project, and the (at points) rapid development, there are likely to be some bugs hanging around. Things to look out for:
+
+- If `fzn` is left idle for some time, it might ungracefully error (usually due to some web connection issue) and exit. Under very rare circumstances, it might hang and require the user to kill the process manually (via `kill` commands). Due to the nature of the app, your data will almost certainly be unaffected.
+- Sometimes the sync algorithm gets confused. Usually, all that is needed is just to add or delete a line or character (adding additional events to the WAL will trigger a flush and get things moving). If that doesn't work, turning it off and on again usually does the trick.
+- Notice something wrong? Please do [open an issue](https://github.com/Sambigeara/fuzzynote/issues/new)!
