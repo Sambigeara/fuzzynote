@@ -2,7 +2,6 @@ Fuzzynote (fzn)
 ![Github release (latest by date)](https://img.shields.io/github/v/release/sambigeara/fuzzynote)
 ![Status](https://img.shields.io/badge/status-beta-blue)
 ![Downloads](https://img.shields.io/github/downloads/sambigeara/fuzzynote/total.svg)
-![Follow](https://img.shields.io/twitter/follow/fuzzynote_app?style=social)
 ---
 
 - [Installation](#installation)
@@ -11,6 +10,8 @@ Fuzzynote (fzn)
 - [Configuration](#configuration)
 - [Future Plans](#future-plans)
 - [Issues/Considerations](#issuesconsiderations)
+
+[Follow me on Twitter](https://twitter.com/fuzzynote_app) for the latest `fzn` updates and announcements, or just to watch me talk to myself.
 
 ---
 
