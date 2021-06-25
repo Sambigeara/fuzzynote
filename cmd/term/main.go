@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"time"
 
 	"github.com/ardanlabs/conf"
 
@@ -19,6 +20,8 @@ const (
 	deleteArg  = "delete"
 	remotesArg = "cfg"
 )
+
+var version = "development"
 
 func main() {
 	var cfg struct {
@@ -45,6 +48,9 @@ func main() {
 				log.Fatalf("generating config usage: %s", err)
 			}
 			fmt.Println(usage)
+			os.Exit(0)
+		} else if err == conf.ErrVersionWanted {
+			fmt.Printf("fuzzynote %s (%s)\n", version, time.Now().Format("2006-01-02"))
 			os.Exit(0)
 		}
 		log.Fatalf("main : Parsing Root Config : %v", err)

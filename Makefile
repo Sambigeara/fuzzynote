@@ -1,5 +1,7 @@
+VERSION := $(shell git describe --abbrev=0 --tags)
+
 build:
-	go build -o bin/fzn ./cmd/term
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/fzn ./cmd/term
 
 test:
 	go test ./... -count=1
