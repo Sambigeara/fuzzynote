@@ -254,9 +254,9 @@ Joe responds to the invite above
 
 ## Setup an S3 remote
 
-1. Configure an S3 bucket with access via access key/secret - [link to AWS docs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html)
+1. Configure an S3 bucket with access via access key/secret - [link to AWS docs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html).
 
-2. Create a file called `config.yml` in the `fzn` root directory. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows (if you've already ran `fzn`, the root directory will have a `primary.db` and one or more `wal_*.db` files, for reference).
+2. Create a file called `config.yml` in the `fzn` root directory. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows. If you've already run `fzn`, the root directory will have a `primary.db` and one or more `wal_*.db` files, for reference.
 
 3. Add the following to the file, using key/secret from above:
 ```yml
@@ -267,17 +267,33 @@ s3:
     prefix: some_prefix
 ```
 
-4. Optionally, you can specify the "match term" to only sync matching lines:
+4. **Optional:** specify the "match term" to only sync matching lines:
 ```yml
 s3:
   - key: {AWS_ACCESS_KEY}
     secret: {AWS_SECRET}
     bucket: bucket_name
     prefix: some_prefix
-    match: some match term
+    match: some match term  # Add this to only sync matching lines
 ```
 
-5. Start the app
+5. **Optional:** set the `sync` intervals (via envvar or inline flag on startup). The default interval is 10 seconds, meaning `fzn` will flush local changes to the remote every 10 seconds. Likewise, in a separate thread, `fzn` will retrieve new changes _from_ the remote every 10 seconds.
+
+   If you want nearer real-time sync (perhaps for collaboration?), you can reduce the interval via an envvar, e.g.:
+   ```shell
+   export FZN_SYNC_FREQUENCY_MS=1000
+   ```
+
+   or in-line:
+   ```shell
+   ./fzn --sync-frequency-ms=1000
+   ```
+
+   Each of the above will set to the interval to 1000ms (1 second).
+
+   **Note:** extensive I/O to S3 can be more expensive than expected, albeit only pennies in the beginning - worth keeping an eye out if you favour short sync intervals.
+
+5. Start the app, if you haven't already
 ```shell
 ./fzn
 ```
