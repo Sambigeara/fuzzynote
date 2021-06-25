@@ -54,7 +54,7 @@ func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
 		secret:                   cfg.Secret,
 		bucket:                   cfg.Bucket,
 		prefix:                   cfg.Prefix,
-		mode:                     cfg.Mode,
+		mode:                     ModeSync, // Default to sync for now
 		pushMatchTerm:            []rune(cfg.Match),
 		processedEventMap:        make(map[string]struct{}),
 		processedEventLock:       &sync.Mutex{},
