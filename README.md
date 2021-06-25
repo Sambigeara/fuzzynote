@@ -68,9 +68,9 @@ A "remote" is a remote target where we sync lists.
 
 *Note: for full transparency, if the project takes off, I'll integrate a paid subscription system to enable me to support the infrastructure and the project on an ongoing basis. I'll be proactive in communicating this and will acknowledge any support from early users when making any decisions! Consider this an N-month free trial with "early-release" user status.*
 
-<!--## S3 ([quickstart TODO](foo))-->
+## S3 ([quickstart](#setup-an-s3-remote))
 
-<!--Configure an S3 bucket yourself and share between collaborators for near real-time collaboration and backup.-->
+Configure an S3 bucket yourself and share between collaborators for near real-time collaboration and backup.
 
 # Installation
 
@@ -91,7 +91,7 @@ Or download the binary direct from the [releases page](https://github.com/Sambig
 - [Add a "remote"](#add-a-remote)
 - [Add a collaborator](#add-a-collaborator)
 - [Accept an invitation](#accept-an-invitation)
-<!--- [Setup an S3 remote](#setup-an-s3-remote)-->
+- [Setup an S3 remote](#setup-an-s3-remote)
 
 ## Basic usage
 
@@ -252,28 +252,55 @@ Joe responds to the invite above
 ./fzn
 ```
 
-<!--## Setup an S3 remote-->
+## Setup an S3 remote
 
-<!--1. Configure an S3 bucket with access via access key/secret - [link to AWS docs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html)-->
+1. Configure an S3 bucket with access via access key/secret - [link to AWS docs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html).
 
-<!--2. Create a file called `config.yml` in the `fzn` root directory. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows.-->
+2. Create a file called `config.yml` in the `fzn` root directory. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows. If you've already run `fzn`, the root directory will have a `primary.db` and one or more `wal_*.db` files, for reference.
 
-<!--3. Add the following to the file, using key/secret from above:-->
+3. Add the following to the file, using key/secret from above:
+```yml
+s3:
+  - key: {AWS_ACCESS_KEY}
+    secret: {AWS_SECRET}
+    bucket: bucket_name
+    prefix: some_prefix
+```
 
-<!--```yml-->
-<!--s3:-->
-<!--  - key: {AWS_ACCESS_KEY}-->
-<!--    secret: {AWS_SECRET}-->
-<!--    bucket: fuzzynote-->
-<!--    prefix: main-->
-<!--```-->
+4. **Optional:** specify the "match term" to only sync matching lines:
+```yml
+s3:
+  - key: {AWS_ACCESS_KEY}
+    secret: {AWS_SECRET}
+    bucket: bucket_name
+    prefix: some_prefix
+    match: some match term  # Add this to only sync matching lines
+```
 
-<!--4. Start the app-->
+5. **Optional:** set the `sync` intervals (via envvar or inline flag on startup). The default interval is 10 seconds, meaning `fzn` will flush local changes to the remote every 10 seconds. Likewise, in a separate thread, `fzn` will retrieve new changes _from_ the remote every 10 seconds.
 
-<!--```shell-->
-<!--./fzn-->
-<!--```-->
+   If you want nearer real-time sync (perhaps for collaboration?), you can reduce the interval via an envvar, e.g.:
+   ```shell
+   export FZN_SYNC_FREQUENCY_MS=1000
+   ```
 
+   or in-line:
+   ```shell
+   ./fzn --sync-frequency-ms=1000
+   ```
+
+   Each of the above will set to the interval to 1000ms (1 second).
+
+   **Note:** extensive I/O to S3 can be more expensive than expected, albeit only pennies in the beginning - worth keeping an eye out if you favour short sync intervals.
+
+5. Start the app, if you haven't already
+```shell
+./fzn
+```
+
+## Other remote platforms?
+
+At present `fzn` only supports S3 as a remote target. However, it is easily extensible, so if there is demand for additional platforms, then please make a request via a [new issue](https://github.com/Sambigeara/fuzzynote/issues/new)!
 
 # Controls
 
