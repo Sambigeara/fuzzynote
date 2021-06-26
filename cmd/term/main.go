@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/ardanlabs/conf"
@@ -21,10 +22,14 @@ const (
 	remotesArg = "cfg"
 )
 
-var version = "development"
+var (
+	version = "development"
+	date    = "0" // the linker passes a unixtime string which needs to be converted
+)
 
 func main() {
 	var cfg struct {
+		Version           conf.Version
 		Root              string
 		Colour            string `conf:"default:light"`
 		Editor            string `conf:"default:vim"`
@@ -50,7 +55,14 @@ func main() {
 			fmt.Println(usage)
 			os.Exit(0)
 		} else if err == conf.ErrVersionWanted {
-			fmt.Printf("fuzzynote %s (%s)\n", version, time.Now().Format("2006-01-02"))
+			// Convert to ISO-8601 date, fail silently if unable
+			dateString := "1970-01-01"
+			i, err := strconv.ParseInt(date, 10, 64)
+			if err == nil {
+				unixTime := time.Unix(i, 0)
+				dateString = unixTime.Format("2006-01-02")
+			}
+			fmt.Printf("fuzzynote %s (%s)\n", version, dateString)
 			os.Exit(0)
 		}
 		log.Fatalf("main : Parsing Root Config : %v", err)
