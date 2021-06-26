@@ -18,8 +18,15 @@ build:
 	-o bin/fzn ./cmd/term
 	@echo "Build complete"
 
+# The following are sequential commands, but I'm separating to reduce the chance of mistakes...
+new-tag:
+	test $(tag)
+	echo "$(tag)" > $(FILE)
+	git add $(FILE)
+	git commit -m "Release: $(tag)"
+	git tag $(tag)
 release:
-	@echo "$(VERSION)" > $(FILE)
+	git push --tags
 	goreleaser release --rm-dist
 
 test:
