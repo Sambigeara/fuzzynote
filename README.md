@@ -75,6 +75,8 @@ Configure an S3 bucket yourself and share between collaborators for near real-ti
 
 # Installation
 
+## Local compilation
+
 Compile locally (requires Go):
 
 ```shell
@@ -83,7 +85,19 @@ cd fuzzynote
 make build # Installs binary to `/bin/fzn`
 ```
 
-Or download the binary direct from the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
+## Direct download
+
+From the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
+
+## ArchLinux
+
+[Link to AUR package](https://aur.archlinux.org/packages/fuzzynote/).
+
+ArchLinux users can build and install `fzn` with:
+
+```shell
+yay -S fuzzynote
+```
 
 # Quickstart
 
@@ -374,7 +388,9 @@ OPTIONS
   --sync-frequency-ms/$FZN_SYNC_FREQUENCY_MS      <uint>    (default: 10000)
   --gather-frequency-ms/$FZN_GATHER_FREQUENCY_MS  <uint>    (default: 30000)
   --help/-h
-  display this help messageshell
+  display this help message
+  --version/-v
+  display version information
 ```
 
 - `editor`: specifies the terminal editor which is used when opening notes on list items. `vim`, `emacs` and `nano` all appear to work. Others may too.
