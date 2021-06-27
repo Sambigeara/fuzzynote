@@ -26,6 +26,7 @@ new-tag:
 	git commit -m "Release: $(tag)"
 	git tag $(tag)
 release:
+	git push
 	git push --tags
 	goreleaser release --rm-dist
 
