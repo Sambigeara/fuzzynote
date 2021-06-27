@@ -511,13 +511,13 @@ func buildFromFile(raw *bytes.Buffer) ([]EventLog, error) {
 	if walSchemaVersionID == 3 {
 		zr, err := gzip.NewReader(raw)
 		if err != nil {
-			log.Fatal(err)
+			return el, err
 		}
 		if _, err := io.Copy(&b, zr); err != nil {
-			log.Fatal(err)
+			return el, err
 		}
 		if err := zr.Close(); err != nil {
-			log.Fatal(err)
+			return el, err
 		}
 	} else {
 		b = *raw

@@ -11,7 +11,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-const walDirPattern = "wal_%v.db"
+const (
+	walDirPattern         = "wal_%v.db"
+	testLatestWalSchemaID = uint16(2) // TODO use current prod version, and fix tests
+)
 
 func TestEventEquality(t *testing.T) {
 	t.Run("Check event comparisons", func(t *testing.T) {
@@ -401,7 +404,7 @@ func TestWalMerge(t *testing.T) {
 		line0 := []byte("First item")
 		line1 := []byte("Second item")
 		data := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       repo.uuid,
 				TargetUUID:                 repo.uuid,
@@ -484,7 +487,7 @@ func TestWalMerge(t *testing.T) {
 		line0 := []byte("First item")
 		line2 := []byte("Third item")
 		localData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       repo.uuid,
 				TargetUUID:                 repo.uuid,
@@ -546,7 +549,7 @@ func TestWalMerge(t *testing.T) {
 		line1 := []byte("Second item")
 		line3 := []byte("Fourth item")
 		remoteData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
@@ -641,7 +644,7 @@ func TestWalMerge(t *testing.T) {
 
 		line0 := []byte("First item")
 		localData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       repo.uuid,
 				TargetUUID:                 repo.uuid,
@@ -671,7 +674,7 @@ func TestWalMerge(t *testing.T) {
 
 		line1 := []byte("Second item")
 		remoteData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       remoteUUID,
 				TargetUUID:                 remoteUUID,
@@ -813,7 +816,7 @@ func TestWalMerge(t *testing.T) {
 		line0 := []byte("First item")
 		line1 := []byte("Updated item")
 		localData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       repo.uuid,
 				TargetUUID:                 repo.uuid,
@@ -861,7 +864,7 @@ func TestWalMerge(t *testing.T) {
 		f.Close()
 
 		remoteData := []interface{}{
-			latestWalSchemaID,
+			testLatestWalSchemaID,
 			walItemSchema2{
 				UUID:                       repo.uuid,
 				TargetUUID:                 repo.uuid,
