@@ -366,6 +366,7 @@ foo # matches "fobo"
 
 - Open first URL in list item: `Ctrl-_`
 - Copy first URL from list item into the system clipboard: `Ctrl-c`
+- Export current matched lines to text file (will output to `current_dir/export_*.txt`): `Ctrl-^`
 
 ## Token operators
 

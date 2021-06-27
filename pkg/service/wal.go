@@ -940,6 +940,29 @@ func compact(wal *[]EventLog) (*[]EventLog, error) {
 	return &compactedWal, nil
 }
 
+// generatePlainTextFile takes the current matchset, and writes the lines separately to a
+// local file. Notes are ignored.
+func (r *DBListRepo) generatePlainTextFile(matchItems []ListItem) error {
+	curWd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	// Will be in the form `{currentDirectory}/export_1624785401.txt`
+	fileName := path.Join(curWd, fmt.Sprintf(exportFilePattern, time.Now().Unix()))
+	f, err := os.Create(fileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	for _, i := range matchItems {
+		if _, err := f.Write([]byte(fmt.Sprintf("%s\n", i.Line))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// This function is currently unused
 func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	wal := []EventLog{}
 	//now := time.Now().AddDate(-1, 0, 0).UnixNano()

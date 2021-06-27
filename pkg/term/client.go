@@ -665,9 +665,8 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 					openURL(url)
 				}
 			}
-		//case tcell.KeyCtrlCarat:
-		//    // This is experimental functionality atm, hence the weird keypress
-		//    t.db.GenerateView(t.search, t.showHidden)
+		case tcell.KeyCtrlCarat:
+			t.db.ExportToPlainText(t.search, t.showHidden)
 		case tcell.KeyCtrlP:
 			// Paste functionality
 			if t.copiedItem != nil {

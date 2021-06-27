@@ -14,9 +14,10 @@ type (
 )
 
 const (
-	rootFileName    = "primary.db"
-	walFilePattern  = "wal_%v.db"
-	viewFilePattern = "view_%v"
+	rootFileName      = "primary.db"
+	walFilePattern    = "wal_%v.db"
+	viewFilePattern   = "view_%v"
+	exportFilePattern = "export_%v.txt"
 
 	latestFileSchemaID = fileSchemaID(3)
 
@@ -54,7 +55,7 @@ type ListRepo interface {
 	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
 	SetCollabPosition(cursorMoveEvent) bool
 	GetCollabPositions() map[string][]string
-	GenerateView(matchKeys [][]rune, showHidden bool) error
+	ExportToPlainText(matchKeys [][]rune, showHidden bool) error
 }
 
 // DBListRepo is an implementation of the ListRepo interface
@@ -497,7 +498,7 @@ func (r *DBListRepo) SetCollabPosition(ev cursorMoveEvent) bool {
 	return false
 }
 
-func (r *DBListRepo) GenerateView(matchKeys [][]rune, showHidden bool) error {
+func (r *DBListRepo) ExportToPlainText(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
-	return r.generatePartialView(matchedItems)
+	return r.generatePlainTextFile(matchedItems)
 }
