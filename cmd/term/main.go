@@ -20,6 +20,7 @@ const (
 	loginArg   = "login"
 	deleteArg  = "delete"
 	remotesArg = "cfg"
+	importArg  = "import"
 )
 
 var (
@@ -35,6 +36,7 @@ func main() {
 		Editor            string `conf:"default:vim"`
 		SyncFrequencyMs   uint16 `conf:"default:10000"`
 		GatherFrequencyMs uint16 `conf:"default:30000"`
+		Args              conf.Args
 	}
 
 	// Pre-instantiate default root direct (can't pass value dynamically to default above)
@@ -77,9 +79,8 @@ func main() {
 	localWalFile := service.NewLocalFileWalFile(cfg.Root)
 
 	// Check for Login or Remotes management flow (run and exit - bypassing the main program)
-	// TODO atm only triggers on last arg, make smarter!
-	if len(os.Args) > 1 {
-		switch os.Args[len(os.Args)-1] {
+	if len(cfg.Args) > 0 {
+		switch cfg.Args.Num(0) {
 		case loginArg:
 			prompt.Login(cfg.Root)
 		case deleteArg:
@@ -88,6 +89,53 @@ func main() {
 			webTokens := service.NewFileWebTokenStore(cfg.Root)
 			web := service.NewWeb(webTokens)
 			prompt.LaunchRemotesCLI(web, localWalFile)
+		case importArg:
+			// Gather and assert existence of the remaining args.
+			// Bit of an odd way of handling it, but we need to assert existence of `--show` or `--hide` explicitly, and then accept any
+			// arbitrary input for the file path (within reason)
+			filePath := ""
+			visibilityArg := ""
+			for i := 1; i <= 2; i++ {
+				switch a := cfg.Args.Num(i); a {
+				case "--show":
+					visibilityArg = "s"
+				case "--hide":
+					visibilityArg = "h"
+				default:
+					filePath = a
+				}
+			}
+			if filePath == "" || visibilityArg == "" {
+				fmt.Println("please specify imported item visibility via one of: `--show` or `--hide`.\ne.g: `./fzn import --show path/to/file`")
+				os.Exit(0)
+			}
+
+			hideItems := false
+			if visibilityArg == "h" {
+				hideItems = true
+			}
+
+			curWd, err := os.Getwd()
+			if err != nil {
+				fmt.Println("failed to retrieve local directory")
+				os.Exit(1)
+			}
+
+			f, err := os.Open(path.Join(curWd, filePath))
+			if err != nil {
+				fmt.Println("failed to open plain text file:", filePath)
+				os.Exit(0)
+			}
+			defer f.Close()
+
+			if err := service.BuildWalFromPlainText(localWalFile, f, hideItems); err != nil {
+				fmt.Println("failed to generate wal file from plain text file")
+				os.Exit(1)
+			}
+			os.Exit(0)
+		default:
+			fmt.Println("unrecognised arg:", cfg.Args.Num(0))
+			os.Exit(0)
 		}
 	}
 

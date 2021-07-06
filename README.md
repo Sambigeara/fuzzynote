@@ -8,6 +8,7 @@ Fuzzynote (fzn)
 - [Quickstart](#quickstart)
 - [Controls](#controls)
 - [Configuration](#configuration)
+- [Import/export](#importexport)
 - [Future Plans](#future-plans)
 - [Issues/Considerations](#issuesconsiderations)
 
@@ -75,6 +76,8 @@ Configure an S3 bucket yourself and share between collaborators for near real-ti
 
 # Installation
 
+## Local compilation
+
 Compile locally (requires Go):
 
 ```shell
@@ -83,7 +86,19 @@ cd fuzzynote
 make build # Installs binary to `/bin/fzn`
 ```
 
-Or download the binary direct from the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
+## Direct download
+
+From the [releases page](https://github.com/Sambigeara/fuzzynote/releases/latest).
+
+## ArchLinux
+
+[Link to AUR package](https://aur.archlinux.org/packages/fuzzynote/).
+
+ArchLinux users can build and install `fzn` with:
+
+```shell
+yay -S fuzzynote
+```
 
 # Quickstart
 
@@ -352,6 +367,7 @@ foo # matches "fobo"
 
 - Open first URL in list item: `Ctrl-_`
 - Copy first URL from list item into the system clipboard: `Ctrl-c`
+- Export current matched lines to text file (will output to `current_dir/export_*.txt`): `Ctrl-^`
 
 ## Token operators
 
@@ -374,12 +390,31 @@ OPTIONS
   --sync-frequency-ms/$FZN_SYNC_FREQUENCY_MS      <uint>    (default: 10000)
   --gather-frequency-ms/$FZN_GATHER_FREQUENCY_MS  <uint>    (default: 30000)
   --help/-h
-  display this help messageshell
+  display this help message
+  --version/-v
+  display version information
 ```
 
 - `editor`: specifies the terminal editor which is used when opening notes on list items. `vim`, `emacs` and `nano` all appear to work. Others may too.
 - `sync-frequency-ms`/`gather-frequency-ms`: these can be ignored for now
 - `root`: **(mostly for testing and can be ignored for general use)** specifies the directory that `fzn` will treat as it's root. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows.
+
+# Import/Export
+
+`fzn` supports importing from and exporting to line separated plain text files.
+
+## Import
+
+Import will generate a new set of list items based on individual lines in a plain text file. You need to specify the visibility each time as per the examples below:
+
+```shell
+./fzn import path/to/file --show # Items will be shown by default
+./fzn import --hide path/to/file # Items will be hidden by default
+```
+
+## Export
+
+Export allows you to generate a plain text file (in the directory from which `fzn` was invoked) based on the current match-set in the app. In short: search for something, press `Ctrl-^`, and `fzn` will spit out a file named something along the lines of `export_*.txt`.
 
 # Future plans
 
