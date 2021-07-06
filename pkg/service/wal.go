@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -712,6 +713,7 @@ func listsAreEquivalent(ptrA *ListItem, ptrB *ListItem) bool {
 	return areListItemsEqual(ptrA, ptrB, true)
 }
 
+// NOTE: not in use - debug function
 func writePlainWalToFile(wal []EventLog) {
 	f, err := os.Create(fmt.Sprintf("debug_%d", time.Now().UnixNano()))
 	if err != nil {
@@ -1519,5 +1521,58 @@ func (r *DBListRepo) finish() error {
 	if r.web != nil && r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
+	return nil
+}
+
+// BuildWalFromPlainText accepts an io.Reader with line separated plain text, and generates a wal db file
+// which is dumped in fzn root directory.
+func BuildWalFromPlainText(wf WalFile, r io.Reader, isHidden bool) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Split(bufio.ScanLines)
+	el := []EventLog{}
+
+	// any random UUID is fine
+	uuid := generateUUID()
+	targetListItemCreationTime := int64(0)
+	// we need to set a unique UnixNanoTime for each event log, so we take Now() and then increment
+	// by one for each new log. This isn't a perfect solution given that the number of lines in the input
+	// can be unbounded, and therefore theoretically we could end up generating events in the future,
+	// but realistically, this is _highly_ unlikely to occur and I don't think it causes issues anyway.
+	unixNanoTime := time.Now().UnixNano()
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) == 0 {
+			continue
+		}
+
+		listItemCreationTime := unixNanoTime
+		el = append(el, EventLog{
+			UUID:                       uuid,
+			TargetUUID:                 uuid,
+			ListItemCreationTime:       listItemCreationTime,
+			TargetListItemCreationTime: targetListItemCreationTime,
+			UnixNanoTime:               unixNanoTime,
+			EventType:                  AddEvent,
+			Line:                       line,
+		})
+		unixNanoTime++
+
+		if isHidden {
+			el = append(el, EventLog{
+				UUID:                       uuid,
+				TargetUUID:                 uuid,
+				ListItemCreationTime:       listItemCreationTime,
+				TargetListItemCreationTime: targetListItemCreationTime,
+				UnixNanoTime:               unixNanoTime,
+				EventType:                  HideEvent,
+			})
+			unixNanoTime++
+		}
+		targetListItemCreationTime = listItemCreationTime
+	}
+
+	b := buildByteWal(&el)
+	wf.Flush(b, fmt.Sprintf("%d", uuid))
+
 	return nil
 }

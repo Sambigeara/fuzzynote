@@ -8,6 +8,7 @@ Fuzzynote (fzn)
 - [Quickstart](#quickstart)
 - [Controls](#controls)
 - [Configuration](#configuration)
+- [Import/export](#importexport)
 - [Future Plans](#future-plans)
 - [Issues/Considerations](#issuesconsiderations)
 
@@ -397,6 +398,23 @@ OPTIONS
 - `editor`: specifies the terminal editor which is used when opening notes on list items. `vim`, `emacs` and `nano` all appear to work. Others may too.
 - `sync-frequency-ms`/`gather-frequency-ms`: these can be ignored for now
 - `root`: **(mostly for testing and can be ignored for general use)** specifies the directory that `fzn` will treat as it's root. By default, this is at `$HOME/.fzn/` on `*nix` systems, or `%USERPROFILE%\.fzn` on Windows.
+
+# Import/Export
+
+`fzn` supports importing from and exporting to line separated plain text files.
+
+## Import
+
+Import will generate a new set of list items based on individual lines in a plain text file. You need to specify the visibility each time as per the examples below:
+
+```shell
+./fzn import path/to/file --show # Items will be shown by default
+./fzn import --hide path/to/file # Items will be hidden by default
+```
+
+## Export
+
+Export allows you to generate a plain text file (in the directory from which `fzn` was invoked) based on the current match-set in the app. In short: search for something, press `Ctrl-^`, and `fzn` will spit out a file named something along the lines of `export_*.txt`.
 
 # Future plans
 
