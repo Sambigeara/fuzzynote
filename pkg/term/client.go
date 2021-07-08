@@ -65,7 +65,7 @@ func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
 
 	showHidden := false
 
-	matches, _, err := db.Match([][]rune{}, showHidden, "")
+	matches, _, err := db.Match([][]rune{}, showHidden, "", 0, 0)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -874,7 +874,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
-	t.matches, matchIdx, err = t.db.Match(t.search, t.showHidden, itemKey)
+	t.matches, matchIdx, err = t.db.Match(t.search, t.showHidden, itemKey, 0, 50)
 
 	windowSize := t.h - reservedTopLines - reservedBottomLines
 

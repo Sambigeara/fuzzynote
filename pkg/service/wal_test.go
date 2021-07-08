@@ -448,7 +448,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 2 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
@@ -613,7 +613,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 8 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		if len(matches) != 4 {
 			t.Fatalf("Expected 4 matches items but had %d", len(*repo.log))
@@ -703,7 +703,7 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ := repo.pull([]WalFile{localWalFile})
 		repo.Replay(eventLog)
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(*repo.log))
@@ -734,7 +734,7 @@ func TestWalMerge(t *testing.T) {
 		eventLog, _ = repo.pull([]WalFile{localWalFile})
 		repo.Replay(eventLog)
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 		if len(matches) != 2 {
 			t.Fatalf("Expected 2 matches items but had %d", len(matches))
@@ -921,7 +921,7 @@ func TestWalMerge(t *testing.T) {
 			t.Fatalf("Expected 4 events in WAL EventLog but had %d", len(*repo.log))
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("Expected 1 matches items but had %d", len(*repo.log))
@@ -1247,7 +1247,7 @@ func TestWalFilter(t *testing.T) {
 
 		repo.log = &[]EventLog{}
 		repo.Replay(&el)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("There should be one matched item")
@@ -1267,7 +1267,7 @@ func TestWalFilter(t *testing.T) {
 			},
 		}
 		repo.Replay(&newEl)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("There should be one matched item")
@@ -1345,7 +1345,7 @@ func TestWalFilter(t *testing.T) {
 
 		// After replay, the remote repo should see a single matched item
 		repo2.Replay(filteredEl)
-		repo2.Match([][]rune{}, true, "")
+		repo2.Match([][]rune{}, true, "", 0, 0)
 		matches := repo2.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("There should be one matched item")
@@ -1369,7 +1369,7 @@ func TestWalFilter(t *testing.T) {
 		repo1.push(&el, filteredWalFile, "")
 		filteredEl, _ = repo2.pull([]WalFile{walFile2})
 		repo2.Replay(filteredEl)
-		repo2.Match([][]rune{}, true, "")
+		repo2.Match([][]rune{}, true, "", 0, 0)
 		matches = repo2.matchListItems
 		if len(matches) != 1 {
 			t.Fatalf("There should be one matched item")
@@ -1407,7 +1407,7 @@ func TestWalReplay(t *testing.T) {
 
 		repo.log = &[]EventLog{}
 		repo.Replay(&el)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if len(matches) != 1 {
@@ -1434,7 +1434,7 @@ func TestWalReplay(t *testing.T) {
 
 		repo.log = &[]EventLog{}
 		repo.Replay(&el)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if len(matches) != 1 {
@@ -1484,7 +1484,7 @@ func TestWalReplay(t *testing.T) {
 
 		repo.log = &[]EventLog{}
 		repo.Replay(&el)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if len(matches) != 1 {
@@ -1504,7 +1504,7 @@ func TestWalReplay(t *testing.T) {
 			},
 		}
 		repo.Replay(&newEl)
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 
 		if len(matches) != 1 {
