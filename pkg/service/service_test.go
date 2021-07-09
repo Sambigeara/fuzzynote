@@ -1054,6 +1054,78 @@ func TestServiceMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("Full match items in list with offset and limit", func(t *testing.T) {
+		localWalFile := NewLocalFileWalFile(rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+		repo.Add("Fifth", nil, 0)
+		repo.Add("Fourth", nil, 0)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
+
+		// Partial response
+		matches, _, _ := repo.Match([][]rune{}, true, "", 2, 0)
+		expectedLen := 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+		if matches[2].Line != "Fifth" {
+			t.Error()
+		}
+
+		// Partial response with limit
+		matches, _, _ = repo.Match([][]rune{}, true, "", 2, 2)
+		expectedLen = 2
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+
+		// Partial response with out-of-range limit
+		matches, _, _ = repo.Match([][]rune{}, true, "", 2, 5)
+		expectedLen = 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+		if matches[2].Line != "Fifth" {
+			t.Error()
+		}
+
+		// Offset = boundary, zero response
+		matches, _, _ = repo.Match([][]rune{}, true, "", 5, 0)
+		expectedLen = 0
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		// Invalid offset
+		matches, _, err := repo.Match([][]rune{}, true, "", -1, 0)
+		if err == nil {
+			t.Error()
+		}
+	})
+
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
