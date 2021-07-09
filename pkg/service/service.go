@@ -468,7 +468,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 				idx++
 			}
 		}
-		// Terminate if we reach the root, or for when pagination is active and we reach the end boundary
+		// Terminate if we reach the root, or for when pagination is active and we reach the max boundary
 		if cur.parent == nil || (limit > 0 && idx == offset+limit) {
 			if p, exists := listItemMatchIdx[curKey]; exists {
 				newPos = p
