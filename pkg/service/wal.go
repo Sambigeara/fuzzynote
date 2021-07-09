@@ -749,7 +749,7 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
 	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
 	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
 	// This has since been fixed, but to catch other potential cases, we run this check.
-	testMatchItems, _, err := testRepo.Match([][]rune{}, true, "")
+	testMatchItems, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
 	if err != nil {
 		return nil, nil, errors.New("failed to generate match items for list integrity check")
 	}

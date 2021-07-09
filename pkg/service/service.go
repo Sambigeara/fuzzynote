@@ -52,7 +52,7 @@ type ListRepo interface {
 	ToggleVisibility(idx int) (string, error)
 	Undo() (string, error)
 	Redo() (string, error)
-	Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error)
+	Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error)
 	SetCollabPosition(cursorMoveEvent) bool
 	GetCollabPositions() map[string][]string
 	ExportToPlainText(matchKeys [][]rune, showHidden bool) error
@@ -387,15 +387,21 @@ func (r *DBListRepo) Redo() (string, error) {
 }
 
 // Match takes a set of search groups and applies each to all ListItems, returning those that
-// fulfil all rules.
-func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]ListItem, int, error) {
-	// For each line, iterate through each searchGroup. We should be left with lines with fulfil all groups
+// fulfil all rules. `showHidden` dictates whether or not hidden items are returned. `curKey` is used to identify
+// the currently selected item. `offset` and `limit` can be passed to paginate over the match-set, if `limit==0`, all matches
+// from `offset` will be returned (e.g. no limit will be applied).
+func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error) {
+	res := []ListItem{}
+	if offset < 0 {
+		return res, 0, errors.New("offset must be >= 0")
+	} else if limit < 0 {
+		return res, 0, errors.New("limit must be >= 0")
+	}
 
 	cur := r.Root
 	var lastCur *ListItem
 
 	r.matchListItems = []*ListItem{}
-	res := []ListItem{}
 
 	newPos := -1
 	if cur == nil {
@@ -444,21 +450,26 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string) ([]Lis
 				}
 			}
 			if matched {
-				r.matchListItems = append(r.matchListItems, cur)
-				res = append(res, *cur)
+				// Pagination: only add to results set if we've surpassed the min boundary of the page,
+				// otherwise only increment `idx`.
+				if idx >= offset {
+					r.matchListItems = append(r.matchListItems, cur)
+					res = append(res, *cur)
 
-				if lastCur != nil {
-					lastCur.matchParent = cur
+					if lastCur != nil {
+						lastCur.matchParent = cur
+					}
+					cur.matchChild = lastCur
+					lastCur = cur
+
+					// Set the new idx for the next iteration
+					listItemMatchIdx[cur.Key()] = idx
 				}
-				cur.matchChild = lastCur
-				lastCur = cur
-
-				// Set the new idx for the next iteration
-				listItemMatchIdx[cur.Key()] = idx
 				idx++
 			}
 		}
-		if cur.parent == nil {
+		// Terminate if we reach the root, or for when pagination is active and we reach the max boundary
+		if cur.parent == nil || (limit > 0 && idx == offset+limit) {
 			if p, exists := listItemMatchIdx[curKey]; exists {
 				newPos = p
 			}
@@ -499,6 +510,6 @@ func (r *DBListRepo) SetCollabPosition(ev cursorMoveEvent) bool {
 }
 
 func (r *DBListRepo) ExportToPlainText(matchKeys [][]rune, showHidden bool) error {
-	matchedItems, _, _ := r.Match(matchKeys, showHidden, "")
+	matchedItems, _, _ := r.Match(matchKeys, showHidden, "", 0, 0)
 	return r.generatePlainTextFile(matchedItems)
 }

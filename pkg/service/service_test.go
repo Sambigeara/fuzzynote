@@ -154,7 +154,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		newItem := matches[0]
 
@@ -191,7 +191,7 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item at end of list", func(t *testing.T) {
 		newLine := "I should be last"
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 		oldLen := len(matches)
 		oldParent := matches[len(matches)-1]
@@ -201,7 +201,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 		newItem := matches[len(matches)-1]
 
@@ -243,7 +243,7 @@ func TestServiceAdd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		expectedItem := matches[newIdx]
@@ -275,7 +275,7 @@ func TestServiceAdd(t *testing.T) {
 		newLine := "First item in list"
 		repo.Add(newLine, nil, 0)
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if len(matches) != 1 {
@@ -318,14 +318,14 @@ func TestServiceDelete(t *testing.T) {
 
 		item2 := repo.Root.parent
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		_, err := repo.Delete(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if matches[0] != item2 {
@@ -363,14 +363,14 @@ func TestServiceDelete(t *testing.T) {
 
 		item2 := repo.Root.parent
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		_, err := repo.Delete(2)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		expectedLen := 2
@@ -405,14 +405,14 @@ func TestServiceDelete(t *testing.T) {
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		_, err := repo.Delete(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if matches[0] != item1 {
@@ -457,7 +457,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		err := repo.MoveUp(len(matches) - 1)
@@ -465,7 +465,7 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 
 		if repo.Root.Key() != item1.Key() {
@@ -515,14 +515,14 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		err := repo.MoveUp(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if repo.Root.Key() != item2.Key() {
@@ -572,14 +572,14 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		err := repo.MoveUp(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if repo.Root.Key() != item1.Key() {
@@ -612,14 +612,14 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		err := repo.MoveDown(0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if repo.Root.Key() != item2.Key() {
@@ -669,14 +669,14 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		err := repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if repo.Root.Key() != item1.Key() {
@@ -726,7 +726,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		err := repo.MoveDown(len(matches) - 1)
@@ -734,7 +734,7 @@ func TestServiceMove(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches = repo.matchListItems
 
 		if repo.Root.Key() != item1.Key() {
@@ -767,7 +767,7 @@ func TestServiceMove(t *testing.T) {
 		item3 := repo.Root.parent.parent
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		err := repo.MoveDown(0)
 		if err != nil {
@@ -775,13 +775,13 @@ func TestServiceMove(t *testing.T) {
 		}
 
 		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		err = repo.MoveDown(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, true, "")
+		repo.Match([][]rune{}, true, "", 0, 0)
 		matches := repo.matchListItems
 
 		if repo.Root.Key() != item2.Key() {
@@ -835,7 +835,7 @@ func TestServiceUpdate(t *testing.T) {
 	repo.Add("First", nil, 0)
 
 	// Call matches to trigger matchListItems creation
-	repo.Match([][]rune{}, true, "")
+	repo.Match([][]rune{}, true, "", 0, 0)
 
 	expectedLine := "Oooo I'm new"
 	err := repo.Update(expectedLine, nil, 1)
@@ -843,7 +843,7 @@ func TestServiceUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo.Match([][]rune{}, true, "")
+	repo.Match([][]rune{}, true, "", 0, 0)
 	matches := repo.matchListItems
 
 	expectedLen := 3
@@ -879,7 +879,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, _, err := repo.Match(search, true, "")
+		_, _, err := repo.Match(search, true, "", 0, 0)
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -957,7 +957,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'s', 'c', 'o', 'n', 'd'},
 		}
-		_, _, err := repo.Match(search, true, "")
+		_, _, err := repo.Match(search, true, "", 0, 0)
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -1034,7 +1034,7 @@ func TestServiceMatch(t *testing.T) {
 		search := [][]rune{
 			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
-		_, _, err := repo.Match(search, true, "")
+		_, _, err := repo.Match(search, true, "", 0, 0)
 		matches := repo.matchListItems
 		if err != nil {
 			t.Fatal(err)
@@ -1054,6 +1054,78 @@ func TestServiceMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("Full match items in list with offset and limit", func(t *testing.T) {
+		localWalFile := NewLocalFileWalFile(rootDir)
+		webTokenStore := NewFileWebTokenStore(rootDir)
+		os.Mkdir(rootDir, os.ModePerm)
+		defer clearUp()
+		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
+		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+		repo.Add("Fifth", nil, 0)
+		repo.Add("Fourth", nil, 0)
+		repo.Add("Third", nil, 0)
+		repo.Add("Second", nil, 0)
+		repo.Add("First", nil, 0)
+
+		// Partial response
+		matches, _, _ := repo.Match([][]rune{}, true, "", 2, 0)
+		expectedLen := 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+		if matches[2].Line != "Fifth" {
+			t.Error()
+		}
+
+		// Partial response with limit
+		matches, _, _ = repo.Match([][]rune{}, true, "", 2, 2)
+		expectedLen = 2
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+
+		// Partial response with out-of-range limit
+		matches, _, _ = repo.Match([][]rune{}, true, "", 2, 5)
+		expectedLen = 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+		if matches[0].Line != "Third" {
+			t.Error()
+		}
+		if matches[1].Line != "Fourth" {
+			t.Error()
+		}
+		if matches[2].Line != "Fifth" {
+			t.Error()
+		}
+
+		// Offset = boundary, zero response
+		matches, _, _ = repo.Match([][]rune{}, true, "", 5, 0)
+		expectedLen = 0
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		// Invalid offset
+		matches, _, err := repo.Match([][]rune{}, true, "", -1, 0)
+		if err == nil {
+			t.Error()
+		}
+	})
+
 	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -1069,13 +1141,13 @@ func TestServiceMatch(t *testing.T) {
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches := repo.matchListItems
 
 		err := repo.MoveUp(len(matches) - 1)
@@ -1083,7 +1155,7 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches = repo.matchListItems
 
 		if repo.Root.Key() != item3.Key() {
@@ -1151,13 +1223,13 @@ func TestServiceMatch(t *testing.T) {
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches := repo.matchListItems
 
 		err := repo.MoveUp(len(matches) - 1)
@@ -1167,7 +1239,7 @@ func TestServiceMatch(t *testing.T) {
 
 		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 		repo.Stop()
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches = repo.matchListItems
 
 		if repo.Root.Line != item3.Line {
@@ -1235,13 +1307,13 @@ func TestServiceMatch(t *testing.T) {
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 
 		// Hide middle item
 		repo.ToggleVisibility(1)
 
 		// Preset Match pointers with Match call
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches := repo.matchListItems
 
 		err := repo.MoveDown(0)
@@ -1249,7 +1321,7 @@ func TestServiceMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		repo.Match([][]rune{}, false, "")
+		repo.Match([][]rune{}, false, "", 0, 0)
 		matches = repo.matchListItems
 
 		if repo.Root.Line != item2.Line {
