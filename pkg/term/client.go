@@ -874,7 +874,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
-	t.matches, matchIdx, err = t.db.Match(t.search, t.showHidden, itemKey, 0, 50)
+	t.matches, matchIdx, err = t.db.Match(t.search, t.showHidden, itemKey, 0, 0)
 
 	windowSize := t.h - reservedTopLines - reservedBottomLines
 
