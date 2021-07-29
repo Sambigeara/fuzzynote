@@ -21,7 +21,13 @@ type listItemSchema1 struct {
 }
 
 // Start begins push/pull for all WalFiles
-func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsChan chan interface{}) error {
+func (r *DBListRepo) Start(client Client) error {
+	// TODO stricter control around event type
+	//inputEvtsChan := make(chan tcell.Event)
+	inputEvtsChan := make(chan interface{})
+
+	walChan := make(chan *[]EventLog)
+
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	err := r.startSync(walChan)
@@ -41,7 +47,20 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 				if err := r.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
-				client.Refresh()
+				// TODO figure out how to only add if there's not 1 in the channel already
+				// trigger a refresh
+				go func() {
+					inputEvtsChan <- struct{}{}
+				}()
+			case ev := <-r.remoteCursorMoveChan:
+				// Update active key position of collaborator if changes have occurred
+				updated := r.SetCollabPosition(ev)
+				if updated {
+					// trigger a refresh
+					go func() {
+						inputEvtsChan <- struct{}{}
+					}()
+				}
 			case ev := <-inputEvtsChan:
 				cont, err := client.HandleEvent(ev)
 				if err != nil {
@@ -53,17 +72,18 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 					}
 					os.Exit(0)
 				}
-			case ev := <-r.remoteCursorMoveChan:
-				// Update active key position of collaborator if changes have occurred
-				updated := r.SetCollabPosition(ev)
-				if updated {
-					client.Refresh()
-				}
 			}
 		}
 	}()
 
-	return nil
+	// This is the main loop of operation in the app.
+	// We consume all term events into our own channel (handled above).
+	for {
+		// TODO handle exiting more gracefully
+		inputEvtsChan <- client.AwaitEvent()
+	}
+
+	//return nil
 }
 
 // Stop is called on app shutdown. It flushes all state changes in memory to disk

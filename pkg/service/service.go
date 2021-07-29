@@ -39,24 +39,23 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 type Client interface {
 	HandleEvent(interface{}) (bool, error)
 	AwaitEvent() interface{}
-	Refresh()
 }
 
+// TODO can this be made useful?
 // ListRepo represents the main interface to the in-mem ListItem store
-type ListRepo interface {
-	Add(line string, note *[]byte, idx int) (string, error)
-	Update(line string, note *[]byte, idx int) error
-	Delete(idx int) (string, error)
-	MoveUp(idx int) error
-	MoveDown(idx int) error
-	ToggleVisibility(idx int) (string, error)
-	Undo() (string, error)
-	Redo() (string, error)
-	Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error)
-	SetCollabPosition(cursorMoveEvent) bool
-	GetCollabPositions() map[string][]string
-	ExportToPlainText(matchKeys [][]rune, showHidden bool) error
-}
+//type ListRepo interface {
+//    Add(line string, note *[]byte, idx int) (string, error)
+//    Update(line string, note *[]byte, idx int) error
+//    Delete(idx int) (string, error)
+//    MoveUp(idx int) error
+//    MoveDown(idx int) error
+//    ToggleVisibility(idx int) (string, error)
+//    Undo() (string, error)
+//    Redo() (string, error)
+//    Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error)
+//    //SetCollabPosition(cursorMoveEvent) bool
+//    //GetCollabPositions() map[string][]string
+//}
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {

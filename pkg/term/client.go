@@ -30,7 +30,7 @@ const (
 )
 
 type Terminal struct {
-	db                service.ListRepo
+	db                *service.DBListRepo
 	search            [][]rune
 	matches           []service.ListItem
 	curItem           *service.ListItem // The currently selected item
@@ -50,7 +50,7 @@ type Terminal struct {
 	footerMessage     string    // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
 }
 
-func NewTerm(db service.ListRepo, colour string, editor string) *Terminal {
+func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
 	encoding.Register()
 
 	defStyle := tcell.StyleDefault.
@@ -497,16 +497,10 @@ func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	return l
 }
 
-func (t *Terminal) Refresh() {
-	t.S.PostEvent(&RefreshKey{})
-}
-
-//func (t *Terminal) AwaitEvent() tcell.Event {
 func (t *Terminal) AwaitEvent() interface{} {
 	return t.S.PollEvent()
 }
 
-//func (t *Terminal) HandleEvent(ev tcell.Event) (bool, error) {
 func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
