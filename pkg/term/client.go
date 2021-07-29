@@ -442,15 +442,6 @@ func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	return [][]rune{[]rune(fmt.Sprintf("=%s", prefix))}
 }
 
-type RefreshKey struct {
-	T time.Time
-}
-
-// Implementing When() to fulfil the tcell.Event interface
-func (ev *RefreshKey) When() time.Time {
-	return ev.T
-}
-
 func matchFirstURL(line string) string {
 	// Attempt to match any urls in the line.
 	// If present, copy the first to the system clipboard.

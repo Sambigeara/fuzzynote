@@ -35,6 +35,28 @@ func (r *DBListRepo) Start(client Client) error {
 		return err
 	}
 
+	// In the case of wal merges and receiving remote cursor positions below, we emit generic
+	// null events which are handled in the main loop to refresh the client/UI state.
+	// There is no need to schedule a refresh if there is already one waiting - in fact, this can
+	// lead to a large backlog of unnecessary work.
+	// Therefore, we create a channel buffered to 1 slot, and check this when scheduling a refresh.
+	// If the slot is already taken, we skip, otherwise we schedule. The main loop consumer below
+	// is responsible for clearing the slot once it's handled the refresh event.
+	type refreshKey struct{}
+	refreshChan := make(chan refreshKey, 1)
+	scheduleRefresh := func() {
+		// TODO pointless error return
+		go func() error {
+			select {
+			case refreshChan <- refreshKey{}:
+				inputEvtsChan <- refreshKey{}
+				return nil
+			default:
+				return errors.New("Refresh channel already full")
+			}
+		}()
+	}
+
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
 	// that differs from when the user intended due to async updates).
@@ -48,24 +70,29 @@ func (r *DBListRepo) Start(client Client) error {
 					log.Fatal(err)
 				}
 				// TODO figure out how to only add if there's not 1 in the channel already
-				// trigger a refresh
-				go func() {
-					inputEvtsChan <- struct{}{}
-				}()
+				scheduleRefresh()
+				//go func() {
+				//    inputEvtsChan <- struct{}{}
+				//}()
 			case ev := <-r.remoteCursorMoveChan:
 				// Update active key position of collaborator if changes have occurred
 				updated := r.SetCollabPosition(ev)
 				if updated {
-					// trigger a refresh
-					go func() {
-						inputEvtsChan <- struct{}{}
-					}()
+					scheduleRefresh()
+					//go func() {
+					//    inputEvtsChan <- struct{}{}
+					//}()
 				}
 			case ev := <-inputEvtsChan:
 				cont, err := client.HandleEvent(ev)
 				if err != nil {
 					log.Fatal(err)
-				} else if !cont {
+				}
+				// Clear refreshChan if the event is of type refreshKey
+				if _, isRefreshKey := ev.(refreshKey); isRefreshKey {
+					<-refreshChan
+				}
+				if !cont {
 					err := r.Stop()
 					if err != nil {
 						log.Fatal(err)
