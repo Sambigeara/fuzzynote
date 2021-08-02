@@ -2,9 +2,11 @@ package term
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -26,23 +28,10 @@ const (
 type Terminal struct {
 	db *service.DBListRepo
 
-	//search            [][]rune
-	//matches           []service.ListItem
-	//curItem           *service.ListItem // The currently selected item
-
 	S      tcell.Screen
 	style  tcell.Style
 	colour string
 	Editor string
-
-	//w, h              int
-	//curX, curY        int // Cur "screen" index, not related to matched item lists
-	//vertOffset        int // The index of the first displayed item in the match set
-	//horizOffset       int // The index of the first displayed char in the curItem
-	//showHidden        bool
-	//selectedItems     map[int]string // struct{} is more space efficient than bool
-	//copiedItem        *service.ListItem
-	//hiddenMatchPrefix string    // The common string that we want to truncate from each line
 
 	previousKey tcell.Key // Keep track of the previous keypress
 
@@ -79,11 +68,6 @@ func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
 		style:  defStyle,
 		colour: colour,
 		Editor: editor,
-		//w:             w,
-		//h:             h,
-		//showHidden:    showHidden,
-		//selectedItems: make(map[int]string),
-		//matches:       matches,
 	}
 	t.paint(matches, false)
 	return &t
@@ -297,6 +281,54 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	return nil
 }
 
+func (t *Terminal) openEditorSession() error {
+	// Write text to temp file
+	tmpfile, err := ioutil.TempFile("", "fzn_buffer")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer os.Remove(tmpfile.Name())
+
+	var note []byte
+	if t.C.CurItem.Note != nil {
+		note = *t.C.CurItem.Note
+	}
+	if _, err := tmpfile.Write(note); err != nil {
+		log.Fatal(err)
+		return err
+	}
+
+	//https://stackoverflow.com/questions/21513321/how-to-start-vim-from-go
+	cmd := exec.Command(t.Editor, tmpfile.Name())
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	err = cmd.Run()
+	if err != nil {
+		// For now, show a warning and return
+		// TODO make more robust
+		//t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
+	}
+
+	// Read back from the temp file, and return to the write function
+	newDat, err := ioutil.ReadFile(tmpfile.Name())
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	err = t.db.Update("", &newDat, t.C.CurY-reservedTopLines)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := tmpfile.Close(); err != nil {
+		log.Fatal(err)
+	}
+
+	return nil
+}
+
 func (t *Terminal) AwaitEvent() interface{} {
 	return t.S.PollEvent()
 }
@@ -317,7 +349,18 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		case tcell.KeyCtrlD:
 			interactionEvent.T = service.KeyDeleteItem
 		case tcell.KeyCtrlO:
-			interactionEvent.T = service.KeyOpenNote
+			//interactionEvent.T = service.KeyOpenNote
+			if t.C.CurY+t.C.VertOffset != 0 {
+				if err := t.S.Suspend(); err == nil {
+					err = t.openEditorSession()
+					if err != nil {
+						log.Fatal(err)
+					}
+					if err := t.S.Resume(); err != nil {
+						panic("failed to resume: " + err.Error())
+					}
+				}
+			}
 		case tcell.KeyCtrlA:
 			interactionEvent.T = service.KeyGotoStart
 		case tcell.KeyCtrlE:

@@ -26,7 +26,7 @@ type ClientBase struct {
 	db                *DBListRepo
 	Search            [][]rune
 	matches           []ListItem
-	curItem           *ListItem // The currently selected item
+	CurItem           *ListItem // The currently selected item
 	Editor            string
 	W, H              int
 	CurX, CurY        int // Cur "screen" index, not related to matched item lists
@@ -255,8 +255,8 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 	// match but not have the prefix truncated
 	offsetX := t.HorizOffset + t.CurX
 	lenHiddenMatchPrefix := 0
-	if t.curItem != nil {
-		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.curItem.Line, t.HiddenMatchPrefix)
+	if t.CurItem != nil {
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
 	}
 	offsetX += lenHiddenMatchPrefix
 	var err error
@@ -301,7 +301,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 			t.Search = [][]rune{}
 		} else {
 			// Copy into buffer in case we're moving it elsewhere
-			t.copiedItem = t.curItem
+			t.copiedItem = t.CurItem
 			if relativeY-1 != len(t.matches)-1 {
 				// TODO make `==` and reorder
 				// Default behaviour on delete is to return and set position to the child item.
@@ -324,18 +324,18 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 			}
 		}
 		t.HorizOffset = 0
-	case KeyOpenNote:
-		//if relativeY != 0 {
-		//    if err := t.S.Suspend(); err == nil {
-		//        err = t.openEditorSession()
-		//        if err != nil {
-		//            log.Fatal(err)
-		//        }
-		//        if err := t.S.Resume(); err != nil {
-		//            panic("failed to resume: " + err.Error())
-		//        }
-		//    }
-		//}
+	//case KeyOpenNote:
+	//    if relativeY != 0 {
+	//        if err := t.S.Suspend(); err == nil {
+	//            err = t.openEditorSession()
+	//            if err != nil {
+	//                log.Fatal(err)
+	//            }
+	//            if err := t.S.Resume(); err != nil {
+	//                panic("failed to resume: " + err.Error())
+	//            }
+	//        }
+	//    }
 	case KeyGotoStart:
 		// Go to beginning of line
 		// TODO decouple cursor mutation from key handling
@@ -347,7 +347,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 			t.CurX = t.getLenSearchBox()
 		} else {
 			// TODO
-			t.CurX = len([]rune(t.curItem.Line))
+			t.CurX = len([]rune(t.CurItem.Line))
 		}
 		t.HorizOffset = t.CurX - t.W
 	case KeyVisibility:
@@ -381,14 +381,14 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 	case KeyCopy:
 		// Copy functionality
 		if relativeY != reservedTopLines-1 {
-			t.copiedItem = t.curItem
-			if url := matchFirstURL(t.curItem.Line); url != "" {
+			t.copiedItem = t.CurItem
+			if url := matchFirstURL(t.CurItem.Line); url != "" {
 				clipboard.WriteAll(url)
 			}
 		}
 	case KeyOpenURL:
 		if relativeY != reservedTopLines-1 {
-			if url := matchFirstURL(t.curItem.Line); url != "" {
+			if url := matchFirstURL(t.CurItem.Line); url != "" {
 				openURL(url)
 			}
 		}
@@ -454,7 +454,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.curItem.Line)
+			newLine := []rune(t.CurItem.Line)
 			if t.HorizOffset+t.CurX > 0 && len(newLine) > 0 {
 				newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
@@ -499,7 +499,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.curItem.Line)
+			newLine := []rune(t.CurItem.Line)
 			if len(newLine) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(newLine) {
 				newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
@@ -528,7 +528,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = t.curItem.Key()
+			itemKey = t.CurItem.Key()
 		}
 	case KeyMoveItemDown:
 		if relativeY > reservedTopLines-1 {
@@ -537,7 +537,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = t.curItem.Key()
+			itemKey = t.CurItem.Key()
 		}
 	case KeyCursorDown:
 		posDiff[1]++
@@ -567,7 +567,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 			}
 			posDiff[0]++
 		} else {
-			newLine := []rune(t.curItem.Line)
+			newLine := []rune(t.CurItem.Line)
 			// Insert characters at position
 			if len(newLine) == 0 || len(newLine) == offsetX {
 				newLine = append(newLine, ev.R)
@@ -620,9 +620,9 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 	// Set curItem before establishing max X position based on the len of the curItem line (to avoid
 	// nonexistent array indexes). If on search line, just set to nil
 	if isSearchLine || len(t.matches) == 0 {
-		t.curItem = nil
+		t.CurItem = nil
 	} else {
-		t.curItem = &t.matches[matchIdx]
+		t.CurItem = &t.matches[matchIdx]
 	}
 
 	// Then refresh the X position based on vertical position and curItem
@@ -648,14 +648,14 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 			}
 			t.CurX = 0 // Prevent index < 0
 		} else {
-			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.curItem.Line) {
+			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.CurItem.Line) {
 				t.HorizOffset++
 			}
 			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
 			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
 			// before the cursor sets to the end of the line and we're at risk of an index error).
-			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.curItem.Line, t.HiddenMatchPrefix)
-			newXIdx = Min(newXIdx, len([]rune(t.curItem.Line))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
+			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
 			t.CurX = Min(newXIdx, t.W-1)                                                           // Prevent going out of range of the page
 		}
 	}
