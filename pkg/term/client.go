@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/mattn/go-runewidth"
@@ -17,7 +18,6 @@ import (
 )
 
 const (
-	dateFormat                            = "Mon, Jan 02, 2006"
 	reservedTopLines, reservedBottomLines = 1, 1
 	reservedEndChars                      = 1
 	emptySearchLinePrompt                 = "Search here..."
@@ -27,6 +27,7 @@ const (
 
 type Terminal struct {
 	db *service.DBListRepo
+	c  *service.ClientBase
 
 	S      tcell.Screen
 	style  tcell.Style
@@ -36,8 +37,6 @@ type Terminal struct {
 	previousKey tcell.Key // Keep track of the previous keypress
 
 	//footerMessage     string    // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
-
-	C *service.ClientBase
 }
 
 func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
@@ -53,23 +52,15 @@ func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
 
 	s := newInstantiatedScreen(defStyle)
 
-	showHidden := false
-
-	matches, _, err := db.Match([][]rune{}, showHidden, "", 0, 0)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	w, h := s.Size()
 	t := Terminal{
 		db:     db,
-		C:      service.NewClientBase(db, matches, w, h),
+		c:      service.NewClientBase(db, w, h),
 		S:      s,
 		style:  defStyle,
 		colour: colour,
 		Editor: editor,
 	}
-	t.paint(matches, false)
 	return &t
 }
 
@@ -105,7 +96,7 @@ func newInstantiatedScreen(style tcell.Style) tcell.Screen {
 
 func (t *Terminal) buildSearchBox(s tcell.Screen) {
 	// If no search items at all, display emptySearchLinePrompt and return
-	if len(t.C.Search) == 0 || len(t.C.Search) == 1 && len(t.C.Search[0]) == 0 {
+	if len(t.c.Search) == 0 || len(t.c.Search) == 1 && len(t.c.Search[0]) == 0 {
 		emitStr(s, 0, 0, t.style.Dim(true), emptySearchLinePrompt)
 	}
 
@@ -113,7 +104,7 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 		Foreground(tcell.ColorWhite).Background(tcell.ColorGrey)
 
 	var pos, l int
-	for _, key := range t.C.Search {
+	for _, key := range t.c.Search {
 		emitStr(s, pos, 0, searchStyle, string(key))
 		l = len(key)
 		pos = pos + l + 1 // Add a separator between groups with `+ 1`
@@ -121,17 +112,17 @@ func (t *Terminal) buildSearchBox(s tcell.Screen) {
 
 	// Display `TAB` prompt after final search group if only one search group
 	// +1 just to give some breathing room
-	if len(t.C.Search) == 1 && len(t.C.Search[0]) > 0 && t.C.CurY == 0 {
+	if len(t.c.Search) == 1 && len(t.c.Search[0]) > 0 && t.c.CurY == 0 {
 		emitStr(s, pos+1, 0, t.style.Dim(true), searchGroupPrompt)
 	}
 
 	// Display whether all items or just non-hidden items are currently displayed
-	if t.C.ShowHidden {
+	if t.c.ShowHidden {
 		indicator := "VIS"
-		emitStr(s, t.C.W-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
+		emitStr(s, t.c.W-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
 	} else {
 		indicator := "HID"
-		emitStr(s, t.C.W-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
+		emitStr(s, t.c.W-len([]byte(indicator))+reservedEndChars, 0, searchStyle, indicator)
 	}
 }
 
@@ -141,24 +132,24 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 
 	// Pad out remaining line with spaces to ensure whole bar is filled
 	lenStr := len([]rune(text))
-	text += string(make([]rune, t.C.W-lenStr))
-	// reservedBottomLines is subtracted from t.C.H globally, and we want to print on the bottom line
+	text += string(make([]rune, t.c.W-lenStr))
+	// reservedBottomLines is subtracted from t.c.H globally, and we want to print on the bottom line
 	// so add it back in here
-	emitStr(s, 0, t.C.H-1+reservedBottomLines, footer, text)
+	emitStr(s, 0, t.c.H-1+reservedBottomLines, footer, text)
 }
 
 func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style]string) {
 	x := 0
 	for style, collabStr := range collaborators {
-		emitStr(s, x, t.C.H-1+reservedBottomLines, style, collabStr)
+		emitStr(s, x, t.c.H-1+reservedBottomLines, style, collabStr)
 		x += len(collabStr)
 	}
 }
 
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
-	t.C.W = w - reservedEndChars
-	t.C.H = h - reservedBottomLines
+	t.c.W = w - reservedEndChars
+	t.c.H = h - reservedBottomLines
 }
 
 // A selection of colour combos to apply to collaborators
@@ -187,6 +178,9 @@ var (
 )
 
 func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
+	t.S.Clear()
+	t.resizeScreen()
+
 	// Get collaborator map
 	collabMap := t.db.GetCollabPositions()
 
@@ -199,7 +193,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// Randomise the starting colour index for bants
 	collabStyleInc := collabStyleIncStart
 	offset := 0
-	for i, r := range matches[t.C.VertOffset:service.Min(len(matches), t.C.VertOffset+t.C.H-reservedTopLines)] {
+	for i, r := range matches[t.c.VertOffset:service.Min(len(matches), t.c.VertOffset+t.c.H-reservedTopLines)] {
 		style := t.style
 		offset = i + reservedTopLines
 
@@ -207,7 +201,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		lineCollabers := collabMap[r.Key()]
 
 		// Mutually exclusive style triggers
-		if _, ok := t.C.SelectedItems[i]; ok {
+		if _, ok := t.c.SelectedItems[i]; ok {
 			// Currently selected with Ctrl-S
 			// By default, we reverse the colourscheme for "dark" settings, so undo the
 			// reversal, to reverse again...
@@ -236,23 +230,23 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		// Truncate the full search string from any lines matching the entire thing,
 		// ignoring search operators
 		// Op needs to be case-insensitive, but must not mutate underlying line
-		if strings.HasPrefix(strings.ToLower(line), t.C.HiddenMatchPrefix) {
-			line = string([]rune(line)[len([]byte(t.C.HiddenMatchPrefix)):])
+		if strings.HasPrefix(strings.ToLower(line), t.c.HiddenMatchPrefix) {
+			line = string([]rune(line)[len([]byte(t.c.HiddenMatchPrefix)):])
 		}
 		// If we strip the match prefix, and there is a space remaining, trim that too
 		line = strings.TrimPrefix(line, " ")
 
 		// Account for horizontal offset if on curItem
-		if i == t.C.CurY-reservedTopLines {
+		if i == t.c.CurY-reservedTopLines {
 			if len(line) > 0 {
-				line = line[t.C.HorizOffset:]
+				line = line[t.c.HorizOffset:]
 			}
 		}
 
 		// Emit line
 		emitStr(t.S, 0, offset, style, line)
 
-		if offset == t.C.H {
+		if offset == t.c.H {
 			break
 		}
 	}
@@ -260,8 +254,8 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// If no matches, display help prompt on first line
 	// TODO ordering
 	if len(matches) == 0 {
-		if len(t.C.Search) > 0 && len(t.C.Search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.C.Search))
+		if len(t.c.Search) > 0 && len(t.c.Search[0]) > 0 {
+			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.c.Search))
 			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrompt)
@@ -277,7 +271,9 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	//    t.buildFooter(t.S, t.footerMessage)
 	//}
 
-	t.S.ShowCursor(t.C.CurX, t.C.CurY)
+	t.S.ShowCursor(t.c.CurX, t.c.CurY)
+	t.S.Show()
+
 	return nil
 }
 
@@ -291,8 +287,8 @@ func (t *Terminal) openEditorSession() error {
 	defer os.Remove(tmpfile.Name())
 
 	var note []byte
-	if t.C.CurItem.Note != nil {
-		note = *t.C.CurItem.Note
+	if t.c.CurItem.Note != nil {
+		note = *t.c.CurItem.Note
 	}
 	if _, err := tmpfile.Write(note); err != nil {
 		log.Fatal(err)
@@ -317,7 +313,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", &newDat, t.C.CurY-reservedTopLines)
+	err = t.db.Update("", &newDat, t.c.CurY-reservedTopLines)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -350,7 +346,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 			interactionEvent.T = service.KeyDeleteItem
 		case tcell.KeyCtrlO:
 			//interactionEvent.T = service.KeyOpenNote
-			if t.C.CurY+t.C.VertOffset != 0 {
+			if t.c.CurY+t.c.VertOffset != 0 {
 				if err := t.S.Suspend(); err == nil {
 					err = t.openEditorSession()
 					if err != nil {
@@ -372,6 +368,9 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		case tcell.KeyCtrlR:
 			interactionEvent.T = service.KeyRedo
 		case tcell.KeyCtrlC:
+			if url := service.MatchFirstURL(t.c.CurItem.Line); url != "" {
+				clipboard.WriteAll(url)
+			}
 			interactionEvent.T = service.KeyCopy
 		case tcell.KeyCtrlUnderscore:
 			interactionEvent.T = service.KeyOpenURL
@@ -408,9 +407,8 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		}
 		t.previousKey = ev.Key()
 	}
-	t.S.Clear()
 
-	matches, cont, err := t.C.HandleInteraction(interactionEvent)
+	matches, cont, err := t.c.HandleInteraction(interactionEvent)
 	if err != nil {
 		return cont, err
 	}
@@ -418,9 +416,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		return false, nil
 	}
 
-	t.resizeScreen()
 	t.paint(matches, false)
-	t.S.Show()
 
 	return true, nil
 }

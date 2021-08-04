@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"mvdan.cc/xurls/v2"
 )
 
@@ -41,16 +40,12 @@ type ClientBase struct {
 }
 
 // NewClientBase ...
-func NewClientBase(db *DBListRepo, matches []ListItem, maxWidth int, maxHeight int) *ClientBase {
-	showHidden := false
-
+func NewClientBase(db *DBListRepo, maxWidth int, maxHeight int) *ClientBase {
 	return &ClientBase{
 		db:            db,
 		W:             maxWidth,
 		H:             maxHeight,
-		ShowHidden:    showHidden,
 		SelectedItems: make(map[int]string),
-		matches:       matches,
 	}
 }
 
@@ -151,7 +146,7 @@ func (t *ClientBase) getLenSearchBox() int {
 	return lenSearchBox
 }
 
-func matchFirstURL(line string) string {
+func MatchFirstURL(line string) string {
 	// Attempt to match any urls in the line.
 	// If present, copy the first to the system clipboard.
 	// Try "Strict" match first. This only matches if scheme is included.
@@ -382,13 +377,10 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 		// Copy functionality
 		if relativeY != reservedTopLines-1 {
 			t.copiedItem = t.CurItem
-			if url := matchFirstURL(t.CurItem.Line); url != "" {
-				clipboard.WriteAll(url)
-			}
 		}
 	case KeyOpenURL:
 		if relativeY != reservedTopLines-1 {
-			if url := matchFirstURL(t.CurItem.Line); url != "" {
+			if url := MatchFirstURL(t.CurItem.Line); url != "" {
 				openURL(url)
 			}
 		}
