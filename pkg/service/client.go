@@ -184,7 +184,9 @@ func openURL(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-func (t *ClientBase) getSearchGroupIdxAndOffset() (int, int) {
+// GetSearchGroupIdxAndOffset returns the group index and offset within that group, respectively.
+// This might have unpredictable results if called on non-search lines (e.g. when CurY != -1)
+func (t *ClientBase) GetSearchGroupIdxAndOffset() (int, int) {
 	// Get search group to operate on, and the char within that
 	grpIdx, start := 0, 0
 	end := len(t.Search[grpIdx])
@@ -424,7 +426,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 				// If `Tabbing` in the middle of the search group, we need to split the group into two
 				// The character immediately after the current position will represent the first
 				// character in the new (right most) search group
-				grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				currentGroup := t.Search[grpIdx]
 				newLeft, newRight := currentGroup[:charOffset], currentGroup[charOffset:]
 				t.Search = append(t.Search, []rune{})
@@ -437,7 +439,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 	case KeyBackspace:
 		if relativeY == reservedTopLines-1 {
 			if len(t.Search) > 0 {
-				grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := []rune(t.Search[grpIdx])
 
 				// If charOffset == 0 we are acting on the previous separator
@@ -485,7 +487,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 		// TODO this is very similar to the Backspace logic above, refactor to avoid duplication
 		if relativeY == reservedTopLines-1 {
 			if len(t.Search) > 0 {
-				grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := []rune(t.Search[grpIdx])
 
 				// If charOffset == len(t.Search[grpIdx]) we need to merge with the next group (if present)
@@ -554,7 +556,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 	case KeyRune:
 		if relativeY == reservedTopLines-1 {
 			if len(t.Search) > 0 {
-				grpIdx, charOffset := t.getSearchGroupIdxAndOffset()
+				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := make([]rune, len(t.Search[grpIdx]))
 				copy(newGroup, t.Search[grpIdx])
 
