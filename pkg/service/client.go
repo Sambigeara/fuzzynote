@@ -231,6 +231,18 @@ func getHiddenLinePrefix(keys [][]rune) string {
 	return shortenedPrefix
 }
 
+// TrimPrefix ...
+func (t *ClientBase) TrimPrefix(line string) string {
+	// Truncate the full search string from any lines matching the entire thing,
+	// ignoring search operators
+	// Op needs to be case-insensitive, but must not mutate underlying line
+	if strings.HasPrefix(strings.ToLower(line), t.HiddenMatchPrefix) {
+		line = string([]rune(line)[len([]byte(t.HiddenMatchPrefix)):])
+	}
+	// If we strip the match prefix, and there is a space remaining, trim that too
+	return strings.TrimPrefix(line, " ")
+}
+
 // TODO rename t
 func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations

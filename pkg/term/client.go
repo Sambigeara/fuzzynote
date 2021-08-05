@@ -225,16 +225,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			style = style.Dim(true)
 		}
 
-		line := r.Line
-
-		// Truncate the full search string from any lines matching the entire thing,
-		// ignoring search operators
-		// Op needs to be case-insensitive, but must not mutate underlying line
-		if strings.HasPrefix(strings.ToLower(line), t.c.HiddenMatchPrefix) {
-			line = string([]rune(line)[len([]byte(t.c.HiddenMatchPrefix)):])
-		}
-		// If we strip the match prefix, and there is a space remaining, trim that too
-		line = strings.TrimPrefix(line, " ")
+		line := t.c.TrimPrefix(r.Line)
 
 		// Account for horizontal offset if on curItem
 		if i == t.c.CurY-reservedTopLines {
