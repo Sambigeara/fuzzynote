@@ -305,7 +305,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 		}
 	case KeyDeleteItem:
 		if relativeY == reservedTopLines-1 {
-			t.Search = [][]rune{}
+			t.Search = [][]rune{[]rune{}}
 		} else {
 			// Copy into buffer in case we're moving it elsewhere
 			t.copiedItem = t.CurItem
