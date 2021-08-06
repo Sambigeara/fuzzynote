@@ -399,7 +399,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		t.previousKey = ev.Key()
 	}
 
-	matches, cont, err := t.c.HandleInteraction(interactionEvent)
+	matches, cont, err := t.c.HandleInteraction(interactionEvent, 0)
 	if err != nil {
 		return cont, err
 	}

@@ -185,7 +185,7 @@ func openURL(url string) error {
 }
 
 // GetSearchGroupIdxAndOffset returns the group index and offset within that group, respectively.
-// This might have unpredictable results if called on non-search lines (e.g. when CurY != -1)
+// This might have unpredictable results if called on non-search lines (e.g. when CurY != 0)
 func (t *ClientBase) GetSearchGroupIdxAndOffset() (int, int) {
 	// Get search group to operate on, and the char within that
 	grpIdx, start := 0, 0
@@ -246,7 +246,7 @@ func (t *ClientBase) TrimPrefix(line string) string {
 }
 
 // TODO rename t
-func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, error) {
+func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListItem, bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
 	// itemKey represents the unique identifying key for the ListItem. We set it explicitly only
@@ -604,7 +604,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent) ([]ListItem, bool, e
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
-	t.matches, matchIdx, err = t.db.Match(t.Search, t.ShowHidden, itemKey, 0, 0)
+	t.matches, matchIdx, err = t.db.Match(t.Search, t.ShowHidden, itemKey, 0, limit)
 
 	windowSize := t.H - reservedTopLines - reservedBottomLines
 
