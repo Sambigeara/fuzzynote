@@ -21,8 +21,8 @@ const (
 
 	latestFileSchemaID = fileSchemaID(3)
 
-	DefaultSyncFrequency   = uint32(10000) // 10 seconds
-	DefaultGatherFrequency = uint32(30000) // 30 seconds
+	//DefaultSyncFrequency   = uint32(10000) // 10 seconds
+	//DefaultGatherFrequency = uint32(30000) // 30 seconds
 )
 
 type bits uint32
@@ -130,8 +130,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		web.uuid = listRepo.uuid // TODO does web need to store uuid??
 
 		// Default the other ticker intervals
-		fileSyncFrequency = DefaultSyncFrequency
-		gatherFrequency = DefaultGatherFrequency
+		//fileSyncFrequency = DefaultSyncFrequency
+		//gatherFrequency = DefaultGatherFrequency
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
@@ -146,7 +146,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
 	// disabled at the mo so leave in (it's inexpensive)
-	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(DefaultSyncFrequency))
+	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
 	// If the `web` integration isn't enabled (websockets et al), we allow the user to pass intervals
 	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
 	// real time via websockets, and therefore short intervals aren't required.
