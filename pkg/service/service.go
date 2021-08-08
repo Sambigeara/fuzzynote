@@ -21,8 +21,8 @@ const (
 
 	latestFileSchemaID = fileSchemaID(3)
 
-	DefaultSyncFrequency   = uint16(10000) // 10 seconds
-	DefaultGatherFrequency = uint16(30000) // 30 seconds
+	DefaultSyncFrequency   = uint32(10000) // 10 seconds
+	DefaultGatherFrequency = uint32(30000) // 30 seconds
 )
 
 type bits uint32
@@ -92,7 +92,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16, gatherFrequency uint16) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint32, gatherFrequency uint32) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {

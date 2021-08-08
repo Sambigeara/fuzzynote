@@ -34,8 +34,8 @@ func main() {
 		Root              string
 		Colour            string `conf:"default:light"`
 		Editor            string `conf:"default:vim"`
-		SyncFrequencyMs   uint16 `conf:"default:10000"`
-		GatherFrequencyMs uint16 `conf:"default:30000"`
+		SyncFrequencyMs   uint32 `conf:"default:10000"`
+		GatherFrequencyMs uint32 `conf:"default:30000"`
 		Args              conf.Args
 	}
 
