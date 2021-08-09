@@ -1301,7 +1301,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		webConnectionRefreshChan <- time.Time{}
 	}()
 
-	webConnectionRefreshTicker := time.NewTicker(time.Minute * 10)
+	//webConnectionRefreshTicker := time.NewTicker(time.Minute * 10)
 
 	// Schedule ongoing wal file syncs
 	go func() {
@@ -1309,10 +1309,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			select {
 			//case t := <-r.webSyncTicker.C:
 			//    webSyncTriggerChan <- t
-			case t := <-r.fileSyncTicker.C:
-				fileSyncTriggerChan <- t
-			case t := <-webConnectionRefreshTicker.C:
-				webConnectionRefreshChan <- t
+			//case t := <-r.fileSyncTicker.C:
+			//    fileSyncTriggerChan <- t
+			//case t := <-webConnectionRefreshTicker.C:
+			//    webConnectionRefreshChan <- t
 			}
 		}
 	}()
@@ -1473,10 +1473,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					}
 					i = 0
 				} else {
-					if el, err = r.pull(r.allWalFiles()); err != nil {
-						log.Fatal(err)
-					}
-
+					// Push
 					// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 					// ephemeral log. If empty, skip.
 					// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -1486,6 +1483,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					elCopy := tempEventLog
 					r.flushPartialWals(elCopy, false)
 					tempEventLog = []EventLog{}
+
+					// Pull
+					if el, err = r.pull(r.allWalFiles()); err != nil {
+						log.Fatal(err)
+					}
 				}
 				walChan <- el
 			//case <-r.gatherTicker.C:
