@@ -275,27 +275,9 @@ func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	}
 	defer s3Resp.Body.Close()
 
-	// Iterate over the response body, decoding each chunk and writing to the pipe
-	// writer as we go
-	buf := make([]byte, 1024)
-	//dec := base64.NewDecoder(base64.StdEncoding, )
-	for {
-		nResp, err := s3Resp.Body.Read(buf)
-		if err != nil && err != io.EOF {
-			return err
-		}
-		if nResp > 0 {
-			bufDec := make([]byte, base64.StdEncoding.EncodedLen(len(buf)))
-			nDec, err := base64.StdEncoding.Decode(bufDec, buf)
-			if err != nil {
-				return err
-			}
-			w.Write(bufDec[:nDec])
-		}
-		if err == io.EOF {
-			return nil
-		}
-	}
+	dec := base64.NewDecoder(base64.StdEncoding, s3Resp.Body)
+
+	io.Copy(w, dec)
 
 	return nil
 }
