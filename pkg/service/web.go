@@ -162,15 +162,15 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 
 		buf := bytes.NewBuffer([]byte(strWal))
 		el, err := buildFromFile(buf)
-		if err == nil && len(el) > 0 {
-			walChan <- &el
+		if err == nil && len(*el) > 0 {
+			walChan <- el
 
 			// Acknowledge the event in the WalFile event cache, so we know to emit further events even
 			// if the match term doesn't match
 			wf, exists := w.walFileMap[m.UUID]
 			// This can occur when running two independent instances for the same user.
 			if exists {
-				key, _ := el[0].getKeys()
+				key, _ := (*el)[0].getKeys()
 				(*wf).SetProcessedEvent(key)
 			}
 		}
