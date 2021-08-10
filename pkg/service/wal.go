@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +27,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 3
+const latestWalSchemaID uint16 = 4
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
@@ -460,12 +461,10 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	return nil
 }
 
-func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog, error) {
+func getNextEventLogFromWalFile(dec *gob.Decoder, r io.Reader, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
 	switch schemaVersionID {
-	case 2:
-		fallthrough
 	case 3:
 		item := walItemSchema2{}
 		err := binary.Read(r, binary.LittleEndian, &item)
@@ -497,6 +496,10 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 			}
 			el.Note = &note
 		}
+	case 4:
+		if err := dec.Decode(&el); err != nil {
+			return &el, err
+		}
 	default:
 		return nil, errors.New("unrecognised wal schema version")
 	}
@@ -511,18 +514,20 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		if err == io.EOF {
 			return el, nil
 		}
-		log.Fatal(err)
 		return el, err
 	}
 
-	// Version 3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+	// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
 	// prior to passing it to the loop below
-	//var b bytes.Buffer
 	r, w := io.Pipe()
 	errChan := make(chan error, 1)
 	go func() {
 		defer w.Close()
-		if walSchemaVersionID == 3 {
+		switch walSchemaVersionID {
+		case 3:
+			fallthrough
+		case 4:
+			//log.Fatal("HERE I AM")
 			zr, err := gzip.NewReader(raw)
 			if err != nil {
 				errChan <- err
@@ -531,7 +536,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			if _, err := io.Copy(w, zr); err != nil {
 				errChan <- err
 			}
-		} else {
+		default:
 			if _, err := io.Copy(w, raw); err != nil {
 				errChan <- err
 			}
@@ -539,6 +544,8 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		errChan <- nil
 	}()
 
+	// This decoder is only relevant for wals with the most recent schema version (4 presently)
+	dec := gob.NewDecoder(r)
 	for {
 		select {
 		case err := <-errChan:
@@ -546,7 +553,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				return el, err
 			}
 		default:
-			e, err := getNextEventLogFromWalFile(r, walSchemaVersionID)
+			e, err := getNextEventLogFromWalFile(dec, r, walSchemaVersionID)
 			if err != nil {
 				switch err {
 				case io.EOF:
@@ -1162,62 +1169,41 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 //}
 
 func buildByteWal(el *[]EventLog) *bytes.Buffer {
-	var toZipBuf bytes.Buffer
-	for _, e := range *el {
-		lenLine := uint64(len([]byte(e.Line)))
-		var lenNote uint64
-		noteExists := false
-		if e.Note != nil {
-			noteExists = true
-			lenNote = uint64(len(*(e.Note)))
-		}
-		i := walItemSchema2{
-			UUID:                       e.UUID,
-			TargetUUID:                 e.TargetUUID,
-			ListItemCreationTime:       e.ListItemCreationTime,
-			TargetListItemCreationTime: e.TargetListItemCreationTime,
-			EventTime:                  e.UnixNanoTime,
-			EventType:                  e.EventType,
-			LineLength:                 lenLine,
-			NoteExists:                 noteExists,
-			NoteLength:                 lenNote,
-		}
-		data := []interface{}{
-			i,
-			[]byte(e.Line),
-		}
-		if e.Note != nil {
-			data = append(data, e.Note)
-		}
-		for _, v := range data {
-			err := binary.Write(&toZipBuf, binary.LittleEndian, v)
-			if err != nil {
-				log.Fatalf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
-			}
-		}
-	}
-
-	// gzip the wal bytes and append to the versioned file
-	var b bytes.Buffer
+	var compressedBuf bytes.Buffer
 
 	// Write the schema ID
-	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	err := binary.Write(&compressedBuf, binary.LittleEndian, latestWalSchemaID)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	//pr, pw := io.Pipe()
+	var buf bytes.Buffer
+	//enc := gob.NewEncoder(pw)
+	enc := gob.NewEncoder(&buf)
+	//go func() {
+	for _, e := range *el {
+		if err := enc.Encode(e); err != nil {
+			log.Fatal(err) // TODO
+		}
+	}
+	//}()
+
 	// Then write in the compressed bytes
-	zw := gzip.NewWriter(&b)
-	_, err = zw.Write(toZipBuf.Bytes())
+	zw := gzip.NewWriter(&compressedBuf)
+	//if _, err := io.Copy(zw, pr); err != nil {
+	//    log.Fatal(err) // TODO
+	//}
+	_, err = zw.Write(buf.Bytes())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if err := zw.Close(); err != nil {
-		log.Fatal(err)
+		log.Fatal(err) // TODO
 	}
 
-	return &b
+	return &compressedBuf
 }
 
 func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
