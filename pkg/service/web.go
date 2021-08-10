@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -260,33 +261,43 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
+func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
 		//log.Printf("Error retrieving wal %s: %s", fileName, err)
-		return nil, err
+		return err
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
 		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
-		return nil, err
+		return err
 	}
 	defer s3Resp.Body.Close()
 
-	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
-	if err != nil {
-		//log.Printf("Error parsing wal from S3 response body: %s", err)
-		return nil, err
+	// Iterate over the response body, decoding each chunk and writing to the pipe
+	// writer as we go
+	buf := make([]byte, 1024)
+	//dec := base64.NewDecoder(base64.StdEncoding, )
+	for {
+		nResp, err := s3Resp.Body.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if nResp > 0 {
+			bufDec := make([]byte, base64.StdEncoding.EncodedLen(len(buf)))
+			nDec, err := base64.StdEncoding.Decode(bufDec, buf)
+			if err != nil {
+				return err
+			}
+			w.Write(bufDec[:nDec])
+		}
+		if err == io.EOF {
+			return nil
+		}
 	}
 
-	// Wals are transmitted over the wire in binary format, so decode
-	walBytes, err := base64.StdEncoding.DecodeString(string(b64Wal))
-	if err != nil {
-		//log.Printf("Error decoding wal: %s", err)
-		return nil, err
-	}
-	return walBytes, nil
+	return nil
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {
