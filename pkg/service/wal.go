@@ -612,22 +612,29 @@ func checkEquality(event1 EventLog, event2 EventLog) int {
 }
 
 func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
-	mergedEl := []EventLog{}
 	if len(*wal1) == 0 && len(*wal2) == 0 {
-		return &mergedEl
+		return &[]EventLog{}
 	} else if len(*wal1) == 0 {
 		return wal2
 	} else if len(*wal2) == 0 {
 		return wal1
 	}
 
+	// Pre-allocate a slice with the maximum possible items (sum of both lens). Although under many circumstances, it's
+	// unlikely we'll fill the capacity, it's far more optimal than each separate append re-allocating to a new slice.
+	mergedEl := make([]EventLog, 0, len(*wal1)+len(*wal2))
+
 	// Before merging, check to see that the the most recent from one wal isn't older than the oldest from another.
 	// If that is the case, append the newer to the older and return.
+	// We append to the newly allocated mergedEl twice, as we can guarantee that the underlying capacity will be enough
+	// (so no further allocations are needed)
 	if checkEquality((*wal1)[0], (*wal2)[len(*wal2)-1]) == rightEventOlder {
-		mergedEl = append(*wal2, *wal1...)
+		mergedEl = append(mergedEl, *wal2...)
+		mergedEl = append(mergedEl, *wal1...)
 		return &mergedEl
 	} else if checkEquality((*wal2)[0], (*wal1)[len(*wal1)-1]) == rightEventOlder {
-		mergedEl = append(*wal1, *wal2...)
+		mergedEl = append(mergedEl, *wal1...)
+		mergedEl = append(mergedEl, *wal2...)
 		return &mergedEl
 	}
 
@@ -1589,8 +1596,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 							return
 						}
 						err := func() error {
-							webRefreshMut.RLock()
-							defer webRefreshMut.RUnlock()
+							//webRefreshMut.RLock()
+							//defer webRefreshMut.RUnlock()
 							err := r.web.consumeWebsocket(ctx, walChan, r.remoteCursorMoveChan)
 							if err != nil {
 								return err

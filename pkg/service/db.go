@@ -69,19 +69,12 @@ func (r *DBListRepo) Start(client Client) error {
 				if err := r.Replay(partialWal); err != nil {
 					log.Fatal(err)
 				}
-				// TODO figure out how to only add if there's not 1 in the channel already
 				scheduleRefresh()
-				//go func() {
-				//    inputEvtsChan <- struct{}{}
-				//}()
 			case ev := <-r.remoteCursorMoveChan:
 				// Update active key position of collaborator if changes have occurred
 				updated := r.SetCollabPosition(ev)
 				if updated {
 					scheduleRefresh()
-					//go func() {
-					//    inputEvtsChan <- struct{}{}
-					//}()
 				}
 			case ev := <-inputEvtsChan:
 				cont, err := client.HandleEvent(ev)
