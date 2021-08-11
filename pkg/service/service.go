@@ -82,17 +82,18 @@ type DBListRepo struct {
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
-	webSyncTicker  *time.Ticker
-	fileSyncTicker *time.Ticker
-	pushTicker     *time.Ticker
-	gatherTicker   *time.Ticker
+	//webSyncTicker  *time.Ticker
+	//fileSyncTicker *time.Ticker
+	syncTicker   *time.Ticker
+	pushTicker   *time.Ticker
+	gatherTicker *time.Ticker
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint32, gatherFrequency uint32) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncFrequency uint32, gatherFrequency uint32) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
@@ -146,12 +147,13 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
 	// disabled at the mo so leave in (it's inexpensive)
-	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	//listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
 	// If the `web` integration isn't enabled (websockets et al), we allow the user to pass intervals
 	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
 	// real time via websockets, and therefore short intervals aren't required.
-	listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
-	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	//listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	listRepo.syncTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
+	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
 	listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 
 	return listRepo

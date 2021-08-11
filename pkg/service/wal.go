@@ -1294,255 +1294,263 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	}
 }
 
+// TODO keeping this implementation around for reference. It was a (working) attempt at putting
+// all CPU heavy stuff in a single loop, but for some reason it performed a _lot_ worst in the wasm
+// webapp. However, leaving it here cos it might provide the base of a next attempt.
+//func (r *DBListRepo) startSyncNew(walChan chan *[]EventLog) error {
+//// We want to trigger a web sync as soon as the web connection has been established
+////webSyncTriggerChan := make(chan time.Time)
+//fileSyncTriggerChan := make(chan time.Time)
+//webConnectionRefreshChan := make(chan time.Time)
+
+//// Trigger initial file sync and web connection creation
+//go func() {
+//    fileSyncTriggerChan <- time.Time{}
+//    webConnectionRefreshChan <- time.Time{}
+//}()
+
+//webConnectionRefreshTicker := time.NewTicker(time.Minute * 10)
+
+//// Schedule ongoing wal file syncs
+//go func() {
+//    for {
+//        select {
+//        //case t := <-r.webSyncTicker.C:
+//        //    webSyncTriggerChan <- t
+//        case t := <-r.fileSyncTicker.C:
+//            fileSyncTriggerChan <- t
+//        case t := <-webConnectionRefreshTicker.C:
+//            webConnectionRefreshChan <- t
+//        }
+//    }
+//}()
+
+//// Instantiate the ephemeral event log here. We aggregate websocket push events and then periodically
+//// flush them (and set a new empty log) in the `push` step in a separate thread below.
+//var tempEventLog []EventLog
+
+//websocketConsumeChan := make(chan *[]EventLog)
+//websocketCursorConsumeChan := make(chan cursorMoveEvent)
+
+//var webConnectionRefreshCtx context.Context
+//var webConnectionRefreshCancelFn context.CancelFunc
+
+//// Handle websocket push events in the same goroutine
+//go func() {
+//    for {
+//        select {
+//        case <-webConnectionRefreshChan:
+//            if r.web != nil {
+//                // TODO what happens if this hasn't been set? E.g. initial iteration?
+//                // Cancel the context from the previous iteration (if there was one) to exit
+//                // the websocket consumption goroutine
+//                if webConnectionRefreshCancelFn != nil {
+//                    webConnectionRefreshCancelFn()
+//                }
+
+//                // Close off old websocket connection
+//                // Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+//                if r.web.wsConn != nil {
+//                    r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+//                }
+//                // Start new one
+//                err := r.registerWeb()
+//                if err != nil {
+//                    log.Print(err)
+//                    os.Exit(0)
+//                }
+//                // Trigger web walfile sync (mostly relevant on initial start)
+//                //webSyncTriggerChan <- time.Time{}
+
+//                // To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
+//                // define the context which is manually cancelled on each timed iteration of the web refresh
+//                webConnectionRefreshCtx, webConnectionRefreshCancelFn = context.WithCancel(context.Background())
+//                go func() {
+//                    for {
+//                        if r.web.wsConn == nil {
+//                            // Return to wait on blocking web refresh, to prevent infinite loop
+//                            return
+//                        }
+//                        err := r.web.consumeWebsocket(webConnectionRefreshCtx, websocketConsumeChan, websocketCursorConsumeChan)
+//                        if err != nil {
+//                            return
+//                        }
+//                    }
+//                }()
+//            }
+//        case e := <-websocketConsumeChan:
+//            walChan <- e
+//        case e := <-websocketCursorConsumeChan:
+//            r.remoteCursorMoveChan <- e
+//        // The events chan contains single events. We want to aggregate them between intervals
+//        // and then emit them in batches, for great efficiency gains.
+//        case e := <-r.eventsChan:
+//            // Write in real time to the websocket, if present
+//            if r.web != nil {
+//                for _, wf := range r.webWalFiles {
+//                    // TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
+//                    if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+//                        matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
+//                        if len(*matchedEventLog) > 0 {
+//                            // There are only single events, so get the zero index
+//                            b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})
+//                            b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
+//                            m := websocketMessage{
+//                                Action: "wal",
+//                                UUID:   wf.GetUUID(),
+//                                Wal:    b64Wal,
+//                            }
+//                            r.web.pushWebsocket(m)
+//                        }
+//                    }
+//                }
+//            }
+//            // Add to an ephemeral log
+//            tempEventLog = append(tempEventLog, e)
+//        // Emit local cursor move events
+//        case e := <-r.localCursorMoveChan:
+//            // TODO dedup webWalFile ModeSync loop
+//            if r.web != nil && r.web.wsConn != nil {
+//                for _, wf := range r.webWalFiles {
+//                    if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+//                        m := websocketMessage{
+//                            Action:       "position",
+//                            UUID:         wf.GetUUID(),
+//                            Key:          e.listItemKey,
+//                            UnixNanoTime: e.unixNanoTime,
+//                        }
+//                        r.web.pushWebsocket(m)
+//                    }
+//                }
+//            }
+//        }
+//    }
+//}()
+
+//// Run an initial blocking load from the local walfile (and put onto channel for immediate
+//// processing in main loop). Also push to all walFiles (this will get missed in async loop below
+//// due to cache, so small amount of duplicated code required).
+//var localEl *[]EventLog
+//var err error
+//if localEl, err = r.pull([]WalFile{r.LocalWalFile}); err != nil {
+//    return err
+//}
+//go func() { walChan <- localEl }()
+
+//// Schedule push to all non-local walFiles
+//// This is required for flushing new files that have been manually dropped into local root
+//// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
+//// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
+//// heading into edge cases of edge cases so won't worry about it for now
+//localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+//if err != nil {
+//    log.Fatal(err)
+//}
+//if len(localFileNames) > 1 {
+//    for _, wf := range r.allWalFiles() {
+//        if wf != r.LocalWalFile {
+//            go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+//        }
+//    }
+//}
+
+//// Main sync event loop
+////fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
+
+//// Main "sync" loop. We handle all of the computationally heavy `push`, `pull` and `gather`
+//// events in the same thread to try and maintain some explicit control over the computationally
+//// heavy operations.
+//go func() {
+//    i := 0
+//    for {
+//        var el *[]EventLog
+//        select {
+//        // Pull tasks
+//        //case <-webSyncTriggerChan:
+//        //    if el, err = r.pull(r.webWalFiles); err != nil {
+//        //        log.Fatal(err)
+//        //    }
+//        //    walChan <- el
+//        //case <-fileSyncTriggerChan:
+//        //    if el, err = r.pull(fileWalFiles); err != nil {
+//        //        log.Fatal(err)
+//        //    }
+//        //    walChan <- el
+//        case <-fileSyncTriggerChan:
+//            if i == 3 {
+//                if el, err = r.gather(r.allWalFiles(), false); err != nil {
+//                    log.Fatal(err)
+//                }
+//                i = 0
+//            } else {
+//                if el, err = r.pull(r.allWalFiles()); err != nil {
+//                    log.Fatal(err)
+//                }
+//            }
+
+//            // On ticks, Flush what we've aggregated to all walfiles, and then reset the
+//            // ephemeral log. If empty, skip.
+//            // We pass by reference, so we'll need to create a copy prior to sending to `push`
+//            // otherwise the underlying el may change before `push` has a chance to process it
+//            // If we start passing by value later on, this won't be required (as go will pass
+//            // copies by default, I think).
+//            elCopy := tempEventLog
+//            r.flushPartialWals(elCopy, false)
+//            tempEventLog = []EventLog{}
+//            //}
+//            walChan <- el
+//        //case <-r.gatherTicker.C:
+//        //if el, err = r.gather(r.allWalFiles(), false); err != nil {
+//        //    log.Fatal(err)
+//        //}
+//        //walChan <- el
+
+//        // Push tasks
+//        //case <-r.pushTicker.C:
+//        //    // On ticks, Flush what we've aggregated to all walfiles, and then reset the
+//        //    // ephemeral log. If empty, skip.
+//        //    // We pass by reference, so we'll need to create a copy prior to sending to `push`
+//        //    // otherwise the underlying el may change before `push` has a chance to process it
+//        //    // If we start passing by value later on, this won't be required (as go will pass
+//        //    // copies by default, I think).
+//        //    elCopy := tempEventLog
+//        //    r.flushPartialWals(elCopy, false)
+//        //    tempEventLog = []EventLog{}
+//        case <-r.stop:
+//            r.flushPartialWals(tempEventLog, true)
+//            r.stop <- struct{}{}
+//        }
+//    }
+//}()
+//return nil
+//}
+
 func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
-	//// We want to trigger a web sync as soon as the web connection has been established
-	////webSyncTriggerChan := make(chan time.Time)
-	//fileSyncTriggerChan := make(chan time.Time)
-	//webConnectionRefreshChan := make(chan time.Time)
-
-	//// Trigger initial file sync and web connection creation
-	//go func() {
-	//    fileSyncTriggerChan <- time.Time{}
-	//    webConnectionRefreshChan <- time.Time{}
-	//}()
-
-	//webConnectionRefreshTicker := time.NewTicker(time.Minute * 10)
-
-	//// Schedule ongoing wal file syncs
-	//go func() {
-	//    for {
-	//        select {
-	//        //case t := <-r.webSyncTicker.C:
-	//        //    webSyncTriggerChan <- t
-	//        case t := <-r.fileSyncTicker.C:
-	//            fileSyncTriggerChan <- t
-	//        case t := <-webConnectionRefreshTicker.C:
-	//            webConnectionRefreshChan <- t
-	//        }
-	//    }
-	//}()
-
-	//// Instantiate the ephemeral event log here. We aggregate websocket push events and then periodically
-	//// flush them (and set a new empty log) in the `push` step in a separate thread below.
-	//var tempEventLog []EventLog
-
-	//websocketConsumeChan := make(chan *[]EventLog)
-	//websocketCursorConsumeChan := make(chan cursorMoveEvent)
-
-	//var webConnectionRefreshCtx context.Context
-	//var webConnectionRefreshCancelFn context.CancelFunc
-
-	//// Handle websocket push events in the same goroutine
-	//go func() {
-	//    for {
-	//        select {
-	//        case <-webConnectionRefreshChan:
-	//            if r.web != nil {
-	//                // TODO what happens if this hasn't been set? E.g. initial iteration?
-	//                // Cancel the context from the previous iteration (if there was one) to exit
-	//                // the websocket consumption goroutine
-	//                if webConnectionRefreshCancelFn != nil {
-	//                    webConnectionRefreshCancelFn()
-	//                }
-
-	//                // Close off old websocket connection
-	//                // Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
-	//                if r.web.wsConn != nil {
-	//                    r.web.wsConn.Close(websocket.StatusNormalClosure, "")
-	//                }
-	//                // Start new one
-	//                err := r.registerWeb()
-	//                if err != nil {
-	//                    log.Print(err)
-	//                    os.Exit(0)
-	//                }
-	//                // Trigger web walfile sync (mostly relevant on initial start)
-	//                //webSyncTriggerChan <- time.Time{}
-
-	//                // To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
-	//                // define the context which is manually cancelled on each timed iteration of the web refresh
-	//                webConnectionRefreshCtx, webConnectionRefreshCancelFn = context.WithCancel(context.Background())
-	//                go func() {
-	//                    for {
-	//                        if r.web.wsConn == nil {
-	//                            // Return to wait on blocking web refresh, to prevent infinite loop
-	//                            return
-	//                        }
-	//                        err := r.web.consumeWebsocket(webConnectionRefreshCtx, websocketConsumeChan, websocketCursorConsumeChan)
-	//                        if err != nil {
-	//                            return
-	//                        }
-	//                    }
-	//                }()
-	//            }
-	//        case e := <-websocketConsumeChan:
-	//            walChan <- e
-	//        case e := <-websocketCursorConsumeChan:
-	//            r.remoteCursorMoveChan <- e
-	//        // The events chan contains single events. We want to aggregate them between intervals
-	//        // and then emit them in batches, for great efficiency gains.
-	//        case e := <-r.eventsChan:
-	//            // Write in real time to the websocket, if present
-	//            if r.web != nil {
-	//                for _, wf := range r.webWalFiles {
-	//                    // TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-	//                    if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
-	//                        matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
-	//                        if len(*matchedEventLog) > 0 {
-	//                            // There are only single events, so get the zero index
-	//                            b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})
-	//                            b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-	//                            m := websocketMessage{
-	//                                Action: "wal",
-	//                                UUID:   wf.GetUUID(),
-	//                                Wal:    b64Wal,
-	//                            }
-	//                            r.web.pushWebsocket(m)
-	//                        }
-	//                    }
-	//                }
-	//            }
-	//            // Add to an ephemeral log
-	//            tempEventLog = append(tempEventLog, e)
-	//        // Emit local cursor move events
-	//        case e := <-r.localCursorMoveChan:
-	//            // TODO dedup webWalFile ModeSync loop
-	//            if r.web != nil && r.web.wsConn != nil {
-	//                for _, wf := range r.webWalFiles {
-	//                    if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
-	//                        m := websocketMessage{
-	//                            Action:       "position",
-	//                            UUID:         wf.GetUUID(),
-	//                            Key:          e.listItemKey,
-	//                            UnixNanoTime: e.unixNanoTime,
-	//                        }
-	//                        r.web.pushWebsocket(m)
-	//                    }
-	//                }
-	//            }
-	//        }
-	//    }
-	//}()
-
-	//// Run an initial blocking load from the local walfile (and put onto channel for immediate
-	//// processing in main loop). Also push to all walFiles (this will get missed in async loop below
-	//// due to cache, so small amount of duplicated code required).
-	//var localEl *[]EventLog
-	//var err error
-	//if localEl, err = r.pull([]WalFile{r.LocalWalFile}); err != nil {
-	//    return err
-	//}
-	//go func() { walChan <- localEl }()
-
-	//// Schedule push to all non-local walFiles
-	//// This is required for flushing new files that have been manually dropped into local root
-	//// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
-	//// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
-	//// heading into edge cases of edge cases so won't worry about it for now
-	//localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-	//if err != nil {
-	//    log.Fatal(err)
-	//}
-	//if len(localFileNames) > 1 {
-	//    for _, wf := range r.allWalFiles() {
-	//        if wf != r.LocalWalFile {
-	//            go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
-	//        }
-	//    }
-	//}
-
-	//// Main sync event loop
-	////fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
-
-	//// Main "sync" loop. We handle all of the computationally heavy `push`, `pull` and `gather`
-	//// events in the same thread to try and maintain some explicit control over the computationally
-	//// heavy operations.
-	//go func() {
-	//    i := 0
-	//    for {
-	//        var el *[]EventLog
-	//        select {
-	//        // Pull tasks
-	//        //case <-webSyncTriggerChan:
-	//        //    if el, err = r.pull(r.webWalFiles); err != nil {
-	//        //        log.Fatal(err)
-	//        //    }
-	//        //    walChan <- el
-	//        //case <-fileSyncTriggerChan:
-	//        //    if el, err = r.pull(fileWalFiles); err != nil {
-	//        //        log.Fatal(err)
-	//        //    }
-	//        //    walChan <- el
-	//        case <-fileSyncTriggerChan:
-	//            if i == 3 {
-	//                if el, err = r.gather(r.allWalFiles(), false); err != nil {
-	//                    log.Fatal(err)
-	//                }
-	//                i = 0
-	//            } else {
-	//                if el, err = r.pull(r.allWalFiles()); err != nil {
-	//                    log.Fatal(err)
-	//                }
-	//            }
-
-	//            // On ticks, Flush what we've aggregated to all walfiles, and then reset the
-	//            // ephemeral log. If empty, skip.
-	//            // We pass by reference, so we'll need to create a copy prior to sending to `push`
-	//            // otherwise the underlying el may change before `push` has a chance to process it
-	//            // If we start passing by value later on, this won't be required (as go will pass
-	//            // copies by default, I think).
-	//            elCopy := tempEventLog
-	//            r.flushPartialWals(elCopy, false)
-	//            tempEventLog = []EventLog{}
-	//            //}
-	//            walChan <- el
-	//        //case <-r.gatherTicker.C:
-	//        //if el, err = r.gather(r.allWalFiles(), false); err != nil {
-	//        //    log.Fatal(err)
-	//        //}
-	//        //walChan <- el
-
-	//        // Push tasks
-	//        //case <-r.pushTicker.C:
-	//        //    // On ticks, Flush what we've aggregated to all walfiles, and then reset the
-	//        //    // ephemeral log. If empty, skip.
-	//        //    // We pass by reference, so we'll need to create a copy prior to sending to `push`
-	//        //    // otherwise the underlying el may change before `push` has a chance to process it
-	//        //    // If we start passing by value later on, this won't be required (as go will pass
-	//        //    // copies by default, I think).
-	//        //    elCopy := tempEventLog
-	//        //    r.flushPartialWals(elCopy, false)
-	//        //    tempEventLog = []EventLog{}
-	//        case <-r.stop:
-	//            r.flushPartialWals(tempEventLog, true)
-	//            r.stop <- struct{}{}
-	//        }
-	//    }
-	//}()
-
-	//return nil
-
-	// TODO OLD CODE FROM HERE
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
 
 	// We want to trigger a web sync as soon as the web connection has been established
-	webSyncTriggerChan := make(chan time.Time)
-	fileSyncTriggerChan := make(chan time.Time)
+	//webSyncTriggerChan := make(chan time.Time)
+	//fileSyncTriggerChan := make(chan time.Time)
+	syncTriggerChan := make(chan time.Time)
 
 	// Trigger initial file sync
 	go func() {
-		fileSyncTriggerChan <- time.Time{}
+		// TODO This will trigger a sync on all walFiles, but we skip web walFiles which we currently
+		// have no access to, so it's cheap
+		syncTriggerChan <- time.Time{}
 	}()
 
 	// Schedule ongoing wal file syncs
 	go func() {
 		for {
 			select {
-			case t := <-r.webSyncTicker.C:
-				webSyncTriggerChan <- t
-			case t := <-r.fileSyncTicker.C:
-				fileSyncTriggerChan <- t
+			//case t := <-r.webSyncTicker.C:
+			//    webSyncTriggerChan <- t
+			//case t := <-r.fileSyncTicker.C:
+			//    fileSyncTriggerChan <- t
+			case t := <-r.syncTicker.C:
+				syncTriggerChan <- t
 			}
 		}
 	}()
@@ -1567,7 +1575,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						os.Exit(0)
 					}
 					// Trigger web walfile sync (mostly relevant on initial start)
-					webSyncTriggerChan <- time.Time{}
+					syncTriggerChan <- time.Time{}
 				}()
 
 				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
@@ -1657,17 +1665,21 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Main sync event loop
-	fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
+	//fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
 	go func() {
 		for {
 			var el *[]EventLog
 			select {
-			case <-webSyncTriggerChan:
-				if el, err = r.pull(r.webWalFiles); err != nil {
-					log.Fatal(err)
-				}
-			case <-fileSyncTriggerChan:
-				if el, err = r.pull(fileWalFiles); err != nil {
+			//case <-webSyncTriggerChan:
+			//    if el, err = r.pull(r.webWalFiles); err != nil {
+			//        log.Fatal(err)
+			//    }
+			//case <-fileSyncTriggerChan:
+			//    if el, err = r.pull(fileWalFiles); err != nil {
+			//        log.Fatal(err)
+			//    }
+			case <-syncTriggerChan:
+				if el, err = r.pull(r.allWalFiles()); err != nil {
 					log.Fatal(err)
 				}
 			case <-r.gatherTicker.C:
@@ -1741,8 +1753,9 @@ func (r *DBListRepo) finish() error {
 	r.gather([]WalFile{r.LocalWalFile}, true)
 
 	// Stop tickers
-	r.webSyncTicker.Stop()
-	r.fileSyncTicker.Stop()
+	//r.webSyncTicker.Stop()
+	//r.fileSyncTicker.Stop()
+	r.syncTicker.Stop()
 	r.pushTicker.Stop()
 	r.gatherTicker.Stop()
 
