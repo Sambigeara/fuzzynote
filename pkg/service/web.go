@@ -154,7 +154,7 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 
 	switch m.Action {
 	case "wal":
-		strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
+		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
 		if err != nil {
 			// TODO proper handling
 			return nil
