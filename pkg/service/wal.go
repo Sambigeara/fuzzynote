@@ -1262,7 +1262,6 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 }
 
 func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
-	log.Print("Pushing...")
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
@@ -1289,6 +1288,7 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 }
 
 func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
+	log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		for _, wf := range r.allWalFiles() {
@@ -1539,9 +1539,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
 
-	// We want to trigger a web sync as soon as the web connection has been established
 	syncTriggerChan := make(chan time.Time, 1)
+	pushTriggerChan := make(chan time.Time, 1)
 
+	// We want to trigger a web sync as soon as the web connection has been established
 	scheduleSync := func() {
 		// Attempt to put onto the channel, else pass
 		select {
@@ -1549,12 +1550,18 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		default:
 		}
 	}
+	schedulePush := func() {
+		// Unlike schedule above (which can be called from numerous locations), we want to block
+		// when attempting to put a time on the channel
+		pushTriggerChan <- time.Time{}
+	}
 
-	// Trigger initial file sync
+	// Trigger initial sync, and start the cycle for pushes also
 	go func() {
 		// TODO This will trigger a sync on all walFiles, but we skip web walFiles which we currently
 		// have no access to, so it's cheap
 		scheduleSync()
+		schedulePush()
 	}()
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
@@ -1732,7 +1739,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 				// Add to an ephemeral log
 				el = append(el, e)
-			case <-r.pushTicker.C:
+			//case <-r.pushTicker.C:
+			case <-pushTriggerChan:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -1742,6 +1750,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				elCopy := el
 				r.flushPartialWals(elCopy, false)
 				el = []EventLog{}
+				go func() {
+					time.Sleep(time.Second * 30)
+					schedulePush()
+				}()
 			case <-r.stop:
 				r.flushPartialWals(el, true)
 				r.stop <- struct{}{}
@@ -1763,7 +1775,7 @@ func (r *DBListRepo) finish() error {
 	//r.webSyncTicker.Stop()
 	//r.fileSyncTicker.Stop()
 	//r.syncTicker.Stop()
-	r.pushTicker.Stop()
+	//r.pushTicker.Stop()
 	//r.gatherTicker.Stop()
 
 	// Flush all unpushed changes to non-local walfiles
