@@ -2,8 +2,6 @@ package service
 
 import (
 	"errors"
-	"log"
-	"os"
 )
 
 type fileHeader struct {
@@ -62,12 +60,13 @@ func (r *DBListRepo) Start(client Client) error {
 	// that differs from when the user intended due to async updates).
 	// Therefore, we consume client events into a channel, and consume from it in the same loop
 	// as the pull/replay loop.
+	errChan := make(chan error, 1)
 	go func() {
 		for {
 			select {
 			case partialWal := <-walChan:
 				if err := r.Replay(partialWal); err != nil {
-					log.Fatal(err)
+					errChan <- err
 				}
 				scheduleRefresh()
 			case ev := <-r.remoteCursorMoveChan:
@@ -79,7 +78,7 @@ func (r *DBListRepo) Start(client Client) error {
 			case ev := <-inputEvtsChan:
 				cont, err := client.HandleEvent(ev)
 				if err != nil {
-					log.Fatal(err)
+					errChan <- err
 				}
 				// Clear refreshChan if the event is of type refreshKey
 				if _, isRefreshKey := ev.(refreshKey); isRefreshKey {
@@ -88,9 +87,9 @@ func (r *DBListRepo) Start(client Client) error {
 				if !cont {
 					err := r.Stop()
 					if err != nil {
-						log.Fatal(err)
+						errChan <- err
 					}
-					os.Exit(0)
+					errChan <- nil
 				}
 			}
 		}
@@ -99,8 +98,11 @@ func (r *DBListRepo) Start(client Client) error {
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
 	for {
-		// TODO handle exiting more gracefully
-		inputEvtsChan <- client.AwaitEvent()
+		select {
+		case inputEvtsChan <- client.AwaitEvent():
+		case err := <-errChan:
+			return err
+		}
 	}
 
 	//return nil
