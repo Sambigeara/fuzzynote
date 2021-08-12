@@ -1680,6 +1680,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					if el, err = r.pull(r.allWalFiles()); err != nil {
 						log.Fatal(err)
 					}
+					i++
 				} else {
 					//case <-r.gatherTicker.C:
 					if el, err = r.gather(r.allWalFiles(), false); err != nil {
