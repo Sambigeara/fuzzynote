@@ -1556,14 +1556,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		pushTriggerChan <- time.Time{}
 	}
 
-	// Trigger initial sync, and start the cycle for pushes also
-	go func() {
-		// TODO This will trigger a sync on all walFiles, but we skip web walFiles which we currently
-		// have no access to, so it's cheap
-		scheduleSync()
-		schedulePush()
-	}()
-
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	if r.web != nil {
 		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
@@ -1644,7 +1636,21 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 			}
 		}()
+	} else {
+		// We want to wait for the web connection to be established before triggering an intial sync,
+		// otherwise we end up waiting the full interval (after local sync) before it pulls down any
+		//remote changes.
+		// This `else` just covers the case where web is not active and therefore no sync is scheduled
+		// in the case above
+		go func() {
+			scheduleSync()
+		}()
 	}
+
+	// Start the cycle for pushes
+	go func() {
+		schedulePush()
+	}()
 
 	// Run an initial blocking load from the local walfile (and put onto channel for immediate
 	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
