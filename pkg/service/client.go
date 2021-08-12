@@ -101,7 +101,7 @@ func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	}
 	prefix := strings.TrimSpace(longestCommonPrefix(lines))
 	if len(prefix) == 0 {
-		return [][]rune{}
+		return [][]rune{[]rune{}}
 	}
 	return [][]rune{[]rune(fmt.Sprintf("=%s", prefix))}
 }
@@ -189,17 +189,31 @@ func openURL(url string) error {
 func (t *ClientBase) GetSearchGroupIdxAndOffset() (int, int) {
 	// Get search group to operate on, and the char within that
 	grpIdx, start := 0, 0
+	// This is a public API, so it's worth covering false cases when this is called on zero/empty search
+	// groups
+	if len(t.Search) == 0 {
+		return 0, 0
+	}
 	end := len(t.Search[grpIdx])
 	for end < t.CurX {
 		grpIdx++
 		start = end + 1 // `1` accounts for the visual separator between groups
-		end = start + len(t.Search[grpIdx])
+		end = start
+		if grpIdx < len(t.Search) {
+			end += len(t.Search[grpIdx])
+		}
 	}
 	charOffset := t.CurX - start
 	return grpIdx, charOffset
 }
 
 func insertCharInPlace(line []rune, offset int, newChar rune) []rune {
+	// TODO this is an ugly catch to prevent an edge condition that sometimes occurs.
+	// Better to just ignore the op rather than crashing the program...
+	// (until I find the solution I mean)
+	if len(line) < offset {
+		return line
+	}
 	line = append(line, 0)
 	copy(line[offset+1:], line[offset:])
 	line[offset] = newChar
