@@ -1070,6 +1070,7 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 }
 
 func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
+	log.Print("Pulling...")
 	// To protect against excessive memory usage, and to keep computational complexity consistent and
 	// predictable, we now synchronously iterate over each WalFile, generate an io.Pipe into which we
 	// read the files, and then consume these in the `buildFromFile` function
@@ -1123,6 +1124,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
 func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) (*[]EventLog, error) {
+	log.Print("Gathering...")
 	// TODO separate IO/CPU bound ops to optimise
 	fullMergedWal := []EventLog{}
 	for _, wf := range walFiles {
@@ -1260,6 +1262,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 }
 
 func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
+	log.Print("Pushing...")
 	// Apply any filtering based on Push match configuration
 	el = getMatchedWal(el, wf)
 
