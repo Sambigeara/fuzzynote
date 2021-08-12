@@ -84,9 +84,9 @@ type DBListRepo struct {
 
 	//webSyncTicker  *time.Ticker
 	//fileSyncTicker *time.Ticker
-	syncTicker   *time.Ticker
-	pushTicker   *time.Ticker
-	gatherTicker *time.Ticker
+	syncTicker *time.Ticker
+	pushTicker *time.Ticker
+	//gatherTicker *time.Ticker
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -154,7 +154,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	//listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
 	listRepo.syncTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
 	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
-	listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
+	//listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 
 	return listRepo
 }

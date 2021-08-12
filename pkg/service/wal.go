@@ -1537,8 +1537,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	webRefreshMut := sync.RWMutex{}
 
 	// We want to trigger a web sync as soon as the web connection has been established
-	//webSyncTriggerChan := make(chan time.Time)
-	//fileSyncTriggerChan := make(chan time.Time)
 	syncTriggerChan := make(chan time.Time)
 
 	// Trigger initial file sync
@@ -1552,10 +1550,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	go func() {
 		for {
 			select {
-			//case t := <-r.webSyncTicker.C:
-			//    webSyncTriggerChan <- t
-			//case t := <-r.fileSyncTicker.C:
-			//    fileSyncTriggerChan <- t
 			case t := <-r.syncTicker.C:
 				syncTriggerChan <- t
 			}
@@ -1672,26 +1666,23 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Main sync event loop
-	//fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
 	go func() {
+		i := 0
 		for {
 			var el *[]EventLog
+			// Every fourth iteration is a `gather`
 			select {
-			//case <-webSyncTriggerChan:
-			//    if el, err = r.pull(r.webWalFiles); err != nil {
-			//        log.Fatal(err)
-			//    }
-			//case <-fileSyncTriggerChan:
-			//    if el, err = r.pull(fileWalFiles); err != nil {
-			//        log.Fatal(err)
-			//    }
 			case <-syncTriggerChan:
-				if el, err = r.pull(r.allWalFiles()); err != nil {
-					log.Fatal(err)
-				}
-			case <-r.gatherTicker.C:
-				if el, err = r.gather(r.allWalFiles(), false); err != nil {
-					log.Fatal(err)
+				if i < 3 {
+					if el, err = r.pull(r.allWalFiles()); err != nil {
+						log.Fatal(err)
+					}
+				} else {
+					//case <-r.gatherTicker.C:
+					if el, err = r.gather(r.allWalFiles(), false); err != nil {
+						log.Fatal(err)
+					}
+					i = 0
 				}
 			}
 			walChan <- el
@@ -1764,7 +1755,7 @@ func (r *DBListRepo) finish() error {
 	//r.fileSyncTicker.Stop()
 	r.syncTicker.Stop()
 	r.pushTicker.Stop()
-	r.gatherTicker.Stop()
+	//r.gatherTicker.Stop()
 
 	// Flush all unpushed changes to non-local walfiles
 	// TODO handle this more gracefully
