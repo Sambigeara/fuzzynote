@@ -84,7 +84,7 @@ type DBListRepo struct {
 
 	//webSyncTicker  *time.Ticker
 	//fileSyncTicker *time.Ticker
-	syncTicker *time.Ticker
+	//syncTicker *time.Ticker
 	pushTicker *time.Ticker
 	//gatherTicker *time.Ticker
 
@@ -152,7 +152,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
 	// real time via websockets, and therefore short intervals aren't required.
 	//listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
-	listRepo.syncTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
+	//listRepo.syncTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
 	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
 	//listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 

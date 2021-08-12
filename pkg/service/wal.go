@@ -1540,23 +1540,21 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	webRefreshMut := sync.RWMutex{}
 
 	// We want to trigger a web sync as soon as the web connection has been established
-	syncTriggerChan := make(chan time.Time)
+	syncTriggerChan := make(chan time.Time, 1)
+
+	scheduleSync := func() {
+		// Attempt to put onto the channel, else pass
+		select {
+		case syncTriggerChan <- time.Time{}:
+		default:
+		}
+	}
 
 	// Trigger initial file sync
 	go func() {
 		// TODO This will trigger a sync on all walFiles, but we skip web walFiles which we currently
 		// have no access to, so it's cheap
-		syncTriggerChan <- time.Time{}
-	}()
-
-	// Schedule ongoing wal file syncs
-	go func() {
-		for {
-			select {
-			case t := <-r.syncTicker.C:
-				syncTriggerChan <- t
-			}
-		}
+		scheduleSync()
 	}()
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
@@ -1579,7 +1577,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						os.Exit(0)
 					}
 					// Trigger web walfile sync (mostly relevant on initial start)
-					syncTriggerChan <- time.Time{}
+					scheduleSync()
 				}()
 
 				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
@@ -1690,6 +1688,13 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 			}
 			walChan <- el
+			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
+			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
+			// program with it's CPU constantly tied up, which leads to performance degradation.
+			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
+			// onto the syncTriggerChan
+			time.Sleep(time.Second * 30)
+			scheduleSync()
 		}
 	}()
 
@@ -1757,7 +1762,7 @@ func (r *DBListRepo) finish() error {
 	// Stop tickers
 	//r.webSyncTicker.Stop()
 	//r.fileSyncTicker.Stop()
-	r.syncTicker.Stop()
+	//r.syncTicker.Stop()
 	r.pushTicker.Stop()
 	//r.gatherTicker.Stop()
 
