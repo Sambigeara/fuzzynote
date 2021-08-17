@@ -267,8 +267,11 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
 	key := ""
-	if listItem.child != nil {
-		key = listItem.child.Key()
+	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
+	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
+	// not match the current specified search groups)
+	if listItem.matchChild != nil {
+		key = listItem.matchChild.Key()
 	}
 	return key, nil
 }
