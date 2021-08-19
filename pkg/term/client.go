@@ -393,7 +393,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 			interactionEvent.T = service.KeyCursorLeft
 		default:
 			interactionEvent.T = service.KeyRune
-			interactionEvent.R = ev.Rune()
+			interactionEvent.R = []rune{ev.Rune()}
 			//t.footerMessage = ""
 		}
 		t.previousKey = ev.Key()

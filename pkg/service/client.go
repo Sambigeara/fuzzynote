@@ -55,7 +55,7 @@ type InteractionEventType uint32
 // InteractionEvent ...
 type InteractionEvent struct {
 	T InteractionEventType
-	R rune
+	R []rune
 }
 
 const (
@@ -207,16 +207,17 @@ func (t *ClientBase) GetSearchGroupIdxAndOffset() (int, int) {
 	return grpIdx, charOffset
 }
 
-func insertCharInPlace(line []rune, offset int, newChar rune) []rune {
+func insertCharInPlace(line []rune, offset int, newChars []rune) []rune {
 	// TODO this is an ugly catch to prevent an edge condition that sometimes occurs.
 	// Better to just ignore the op rather than crashing the program...
 	// (until I find the solution I mean)
 	if len(line) < offset {
 		return line
 	}
-	line = append(line, 0)
-	copy(line[offset+1:], line[offset:])
-	line[offset] = newChar
+	lenNewChars := len(newChars)
+	line = append(line, newChars...)
+	copy(line[offset+lenNewChars:], line[offset:])
+	copy(line[offset:], newChars)
 	return line
 }
 
@@ -582,15 +583,14 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				posDiff[0] += len(parsedGroup) - oldLen
 			} else {
 				var newTerm []rune
-				newTerm = append(newTerm, ev.R)
+				newTerm = append(newTerm, ev.R...)
 				t.Search = append(t.Search, newTerm)
 			}
-			posDiff[0]++
 		} else {
 			newLine := []rune(t.CurItem.Line)
 			// Insert characters at position
 			if len(newLine) == 0 || len(newLine) == offsetX {
-				newLine = append(newLine, ev.R)
+				newLine = append(newLine, ev.R...)
 			} else {
 				newLine = insertCharInPlace(newLine, offsetX, ev.R)
 			}
@@ -600,8 +600,9 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			if err != nil {
 				log.Fatal(err)
 			}
-			posDiff[0] += len([]rune(parsedNewLine)) - oldLen + 1
+			posDiff[0] += len([]rune(parsedNewLine)) - oldLen
 		}
+		posDiff[0] += len(ev.R)
 		t.footerMessage = ""
 	}
 	//t.previousKey = ev.T
