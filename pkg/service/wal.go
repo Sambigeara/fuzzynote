@@ -1775,7 +1775,7 @@ func (r *DBListRepo) finish() error {
 	// TODO this is a bit of a "catch-all" convenience hack which guarantees that *all* in mem logs
 	// will always be persisted to disk on close. Ideally, we'd just flush to disk whenever we pulled
 	// new logs from remotes, but for now, this will do.
-	r.gather([]WalFile{r.LocalWalFile}, true)
+	//r.gather([]WalFile{r.LocalWalFile}, true)
 
 	// Stop tickers
 	//r.webSyncTicker.Stop()

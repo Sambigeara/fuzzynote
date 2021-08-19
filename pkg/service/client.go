@@ -286,9 +286,6 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	var err error
 	switch ev.T {
 	case KeyEscape:
-		//if t.previousKey == KeyEscape {
-		//    return t.matches, false, nil
-		//}
 		if len(t.SelectedItems) > 0 {
 			t.SelectedItems = make(map[int]string)
 		} else {
