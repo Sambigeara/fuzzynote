@@ -1785,10 +1785,12 @@ func (r *DBListRepo) finish() error {
 
 	// When we pull wals from remotes, we merge into our in-mem logs, but will only flush to local walfile
 	// on gather. To ensure we store all logs locally, for now, we can just push the entire in-mem log to
-	// the local walfile.
+	// the local walfile. We can remove any other files to avoid overuse of local storage.
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
+	filesToDelete, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
 	r.push(r.log, r.LocalWalFile, "")
+	r.LocalWalFile.RemoveWals(filesToDelete)
 
 	if r.web != nil && r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")
