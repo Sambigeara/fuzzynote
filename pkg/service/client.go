@@ -148,7 +148,6 @@ func (t *ClientBase) getLenSearchBox() int {
 
 func MatchFirstURL(line string) string {
 	// Attempt to match any urls in the line.
-	// If present, copy the first to the system clipboard.
 	// Try "Strict" match first. This only matches if scheme is included.
 	rxStrict := xurls.Strict()
 	var match string
