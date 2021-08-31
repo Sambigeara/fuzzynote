@@ -587,6 +587,13 @@ func buildFromFile(raw io.Reader) (*[]EventLog, error) {
 		if err := <-errChan; err != nil {
 			return &el, err
 		}
+
+		// Instantiate any explicitly empty notes
+		for _, e := range el {
+			if e.Note != nil && uint8((*e.Note)[0]) == uint8(0) {
+				*e.Note = []byte{}
+			}
+		}
 	}
 
 	return &el, err
@@ -1211,6 +1218,14 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	//pr, pw := io.Pipe()
 	var buf bytes.Buffer
 	//enc := gob.NewEncoder(pw)
+
+	// If we have empty/non-null notes, we need to explicitly set them to our empty note
+	// pattern, otherwise gob will treat a ptr to an empty byte array as null when decoding
+	for _, e := range *el {
+		if e.Note != nil && len(*e.Note) == 0 {
+			*e.Note = []byte{0}
+		}
+	}
 
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(el); err != nil {

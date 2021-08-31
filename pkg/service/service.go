@@ -196,7 +196,20 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 		Line:                       newLine,
 		Note:                       newNote,
 	}
-	r.eventsChan <- el
+	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
+	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
+	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
+	// updated on the original event which we pass to CallFunctionForEventLog. This is still the case
+	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
+	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
+	// copy for the websocket event.
+	elCopy := el
+	if el.Note != nil {
+		newNote := *el.Note
+		elCopy.Note = &newNote
+	}
+
+	r.eventsChan <- elCopy
 	*r.log = append(*r.log, el)
 	var err error
 	var item *ListItem

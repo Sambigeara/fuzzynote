@@ -217,7 +217,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			collabStyleInc++
 		}
 
-		if r.Note != nil && len(*(r.Note)) > 0 {
+		if r.Note != nil && len(*r.Note) > 0 {
 			style = style.Underline(true).Bold(true)
 		}
 
