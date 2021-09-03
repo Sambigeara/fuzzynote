@@ -1715,7 +1715,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					i = 0
 				}
 			}
-			walChan <- el
+			// Currently even empty event logs will trigger a client refresh which is very wasteful, so only publish to
+			// the channel if not empty
+			if len(*el) > 0 {
+				walChan <- el
+			}
 			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
 			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
 			// program with it's CPU constantly tied up, which leads to performance degradation.
