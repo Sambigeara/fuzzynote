@@ -7,10 +7,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -27,7 +27,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 3
+const latestWalSchemaID uint16 = 4
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
@@ -84,7 +84,7 @@ type WalFile interface {
 	GetUUID() string
 	GetRoot() string
 	GetMatchingWals(string) ([]string, error)
-	GetWalBytes(string) ([]byte, error)
+	GetWalBytes(io.Writer, string) error
 	RemoveWals([]string) error
 	Flush(*bytes.Buffer, string) error
 
@@ -236,14 +236,21 @@ func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, erro
 	return uuids, nil
 }
 
-func (wf *LocalFileWalFile) GetWalBytes(fileName string) ([]byte, error) {
-	var b []byte
+func (wf *LocalFileWalFile) GetWalBytes(w io.Writer, fileName string) error {
+	//var b []byte
 	fileName = fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)
-	b, err := ioutil.ReadFile(fileName)
+	f, err := os.Open(fileName)
 	if err != nil {
-		return b, err
+		return nil
 	}
-	return b, nil
+	if _, err := io.Copy(w, f); err != nil {
+		return err
+	}
+	//b, err := ioutil.ReadFile(fileName)
+	//if err != nil {
+	//    return b, err
+	//}
+	return nil
 }
 
 func (wf *LocalFileWalFile) RemoveWals(fileNames []string) error {
@@ -454,12 +461,13 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	return nil
 }
 
-func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*EventLog, error) {
+func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog, error) {
 	el := EventLog{}
 
-	if schemaVersionID == 2 || schemaVersionID == 3 {
+	switch schemaVersionID {
+	case 3:
 		item := walItemSchema2{}
-		err := binary.Read(b, binary.LittleEndian, &item)
+		err := binary.Read(r, binary.LittleEndian, &item)
 		if err != nil {
 			return nil, err
 		}
@@ -471,7 +479,7 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		el.EventType = item.EventType
 
 		line := make([]byte, item.LineLength)
-		err = binary.Read(b, binary.LittleEndian, &line)
+		err = binary.Read(r, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
@@ -482,67 +490,104 @@ func getNextEventLogFromWalFile(b *bytes.Buffer, schemaVersionID uint16) (*Event
 		}
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
-			err = binary.Read(b, binary.LittleEndian, &note)
+			err = binary.Read(r, binary.LittleEndian, &note)
 			if err != nil {
 				return nil, err
 			}
 			el.Note = &note
 		}
-	} else {
+	//case 4:
+	//    if err := dec.Decode(&el); err != nil {
+	//        return &el, err
+	//    }
+	default:
 		return nil, errors.New("unrecognised wal schema version")
 	}
 	return &el, nil
 }
 
-func buildFromFile(raw *bytes.Buffer) ([]EventLog, error) {
-	el := []EventLog{}
+func buildFromFile(raw io.Reader) (*[]EventLog, error) {
+	var el []EventLog
 	var walSchemaVersionID uint16
 	err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID)
 	if err != nil {
 		if err == io.EOF {
-			return el, nil
+			return &el, nil
 		}
-		log.Fatal(err)
-		return el, err
+		return &el, err
 	}
 
-	// Version 3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+	// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
 	// prior to passing it to the loop below
-	var b bytes.Buffer
-	if walSchemaVersionID == 3 {
-		zr, err := gzip.NewReader(raw)
-		if err != nil {
-			return el, err
-		}
-		if _, err := io.Copy(&b, zr); err != nil {
-			return el, err
-		}
-		if err := zr.Close(); err != nil {
-			return el, err
-		}
-	} else {
-		b = *raw
-	}
-
-	for {
-		e, err := getNextEventLogFromWalFile(&b, walSchemaVersionID)
-		if err != nil {
-			switch err {
-			case io.EOF:
-				return el, nil
-			case io.ErrUnexpectedEOF:
-				// Given the distributed concurrent nature of this app, we sometimes pick up partially
-				// uploaded files which will fail, but may well be complete later on, therefore just
-				// return for now and attempt again later
-				// TODO implement a decent retry mech here
-				return []EventLog{}, nil
-			default:
-				return el, err
+	r, w := io.Pipe()
+	errChan := make(chan error, 1)
+	go func() {
+		defer w.Close()
+		switch walSchemaVersionID {
+		case 3:
+			fallthrough
+		case 4:
+			zr, err := gzip.NewReader(raw)
+			if err != nil {
+				errChan <- err
+			}
+			defer zr.Close()
+			if _, err := io.Copy(w, zr); err != nil {
+				errChan <- err
+			}
+		default:
+			if _, err := io.Copy(w, raw); err != nil {
+				errChan <- err
 			}
 		}
+		errChan <- nil
+	}()
 
-		el = append(el, *e)
+	// This decoder is only relevant for wals with the most recent schema version (4 presently)
+	if walSchemaVersionID <= 3 {
+		for {
+			select {
+			case err := <-errChan:
+				if err != nil {
+					return &el, err
+				}
+			default:
+				e, err := getNextEventLogFromWalFile(r, walSchemaVersionID)
+				if err != nil {
+					switch err {
+					case io.EOF:
+						return &el, nil
+					case io.ErrUnexpectedEOF:
+						// Given the distributed concurrent nature of this app, we sometimes pick up partially
+						// uploaded files which will fail, but may well be complete later on, therefore just
+						// return for now and attempt again later
+						// TODO implement a decent retry mech here
+						return &el, nil
+					default:
+						return &el, err
+					}
+				}
+				el = append(el, *e)
+			}
+		}
+	} else if walSchemaVersionID == 4 {
+		dec := gob.NewDecoder(r)
+		if err := dec.Decode(&el); err != nil {
+			return &el, err
+		}
+		if err := <-errChan; err != nil {
+			return &el, err
+		}
+
+		// Instantiate any explicitly empty notes
+		for _, e := range el {
+			if e.Note != nil && uint8((*e.Note)[0]) == uint8(0) {
+				*e.Note = []byte{}
+			}
+		}
 	}
+
+	return &el, err
 }
 
 const (
@@ -565,22 +610,29 @@ func checkEquality(event1 EventLog, event2 EventLog) int {
 }
 
 func merge(wal1 *[]EventLog, wal2 *[]EventLog) *[]EventLog {
-	mergedEl := []EventLog{}
 	if len(*wal1) == 0 && len(*wal2) == 0 {
-		return &mergedEl
+		return &[]EventLog{}
 	} else if len(*wal1) == 0 {
 		return wal2
 	} else if len(*wal2) == 0 {
 		return wal1
 	}
 
+	// Pre-allocate a slice with the maximum possible items (sum of both lens). Although under many circumstances, it's
+	// unlikely we'll fill the capacity, it's far more optimal than each separate append re-allocating to a new slice.
+	mergedEl := make([]EventLog, 0, len(*wal1)+len(*wal2))
+
 	// Before merging, check to see that the the most recent from one wal isn't older than the oldest from another.
 	// If that is the case, append the newer to the older and return.
+	// We append to the newly allocated mergedEl twice, as we can guarantee that the underlying capacity will be enough
+	// (so no further allocations are needed)
 	if checkEquality((*wal1)[0], (*wal2)[len(*wal2)-1]) == rightEventOlder {
-		mergedEl = append(*wal2, *wal1...)
+		mergedEl = append(mergedEl, *wal2...)
+		mergedEl = append(mergedEl, *wal1...)
 		return &mergedEl
 	} else if checkEquality((*wal2)[0], (*wal1)[len(*wal1)-1]) == rightEventOlder {
-		mergedEl = append(*wal1, *wal2...)
+		mergedEl = append(mergedEl, *wal1...)
+		mergedEl = append(mergedEl, *wal2...)
 		return &mergedEl
 	}
 
@@ -1016,135 +1068,176 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 }
 
 func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
-	// IO bound: Gather fileNames for all walFiles, mapped to the given walFiles (we need the specific
-	// walFile metadata in the GetWalBytes calls)
-	fileNameMap := make(map[WalFile][]string)
-	m := sync.Mutex{}
-	//var wg sync.WaitGroup
+	//log.Print("Pulling...")
+	// To protect against excessive memory usage, and to keep computational complexity consistent and
+	// predictable, we now synchronously iterate over each WalFile, generate an io.Pipe into which we
+	// read the files, and then consume these in the `buildFromFile` function
+	// TODO rename buildFromFile
+	newMergedWal := []EventLog{}
 	for _, wf := range walFiles {
-		//wg.Add(1)
 		var fileNames []string
 		var err error
-		//go func() {
-		//    defer wg.Done()
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 		fileNames, err = wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 		if err != nil {
 			log.Fatal(err)
 		}
-		m.Lock()
-		fileNameMap[wf] = fileNames
-		m.Unlock()
-		//}()
-	}
-	//wg.Wait()
 
-	// IO bound (apart from local): For each walFile, retrieve the WalFile byte representations for all
-	// previously unseen filenames
-	byteWals := make(map[WalFile][][]byte)
-	for wf, fileNames := range fileNameMap {
 		for _, fileName := range fileNames {
 			if !r.isPartialWalProcessed(fileName) {
-				//wg.Add(1)
-				//go func() {
-				//defer wg.Done()
-				newWalBytes, err := wf.GetWalBytes(fileName)
-				if err != nil {
-					// TODO handle
-					//log.Fatal(err)
-				}
-				byteWals[wf] = append(byteWals[wf], newWalBytes)
-				//}()
+				pr, pw := io.Pipe()
+				go func() {
+					defer pw.Close()
+					if err := wf.GetWalBytes(pw, fileName); err != nil {
+						// TODO handle
+						//log.Fatal(err)
+					}
+				}()
+
 				// Add to the processed cache
 				// TODO this be done separately after fully merging the wals in case of failure??
+				// TODO this is done synchronously, we no longer need this lock
 				r.setProcessedPartialWals(fileName)
-			}
-		}
-	}
-	//wg.Wait()
 
-	// CPU bound: Now we have all the byteWals, generate the wals and merge then in a single thread
-	// (to prevent tying up the CPU completely)
-	newMergedWal := []EventLog{}
-	for wf, bWals := range byteWals {
-		for _, bWal := range bWals {
-			buf := bytes.NewBuffer(bWal)
-			newWfWal, err := buildFromFile(buf)
-			if err != nil {
-				// Ignore incompatible files
-				continue
-			}
+				// Build new wals
+				newWfWal, err := buildFromFile(pr)
+				if err != nil {
+					// Ignore incompatible files
+					continue
+				}
 
-			// Ackowledge the events for all walfile maps
-			for _, ev := range newWfWal {
-				key, _ := ev.getKeys()
-				wf.SetProcessedEvent(key)
-			}
+				for _, ev := range *newWfWal {
+					key, _ := ev.getKeys()
+					wf.SetProcessedEvent(key)
+				}
 
-			newMergedWal = *(merge(&newMergedWal, &newWfWal))
+				newMergedWal = *(merge(&newMergedWal, newWfWal))
+			}
 		}
 	}
 
 	return &newMergedWal, nil
 }
 
-func buildByteWal(el *[]EventLog) *bytes.Buffer {
-	var toZipBuf bytes.Buffer
-	for _, e := range *el {
-		lenLine := uint64(len([]byte(e.Line)))
-		var lenNote uint64
-		noteExists := false
-		if e.Note != nil {
-			noteExists = true
-			lenNote = uint64(len(*(e.Note)))
+// gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
+// to delete the old ones
+func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) (*[]EventLog, error) {
+	//log.Print("Gathering...")
+	// TODO separate IO/CPU bound ops to optimise
+	fullMergedWal := []EventLog{}
+	for _, wf := range walFiles {
+		// Handle ALL wals
+		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
+		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+		if err != nil {
+			log.Fatal(err)
 		}
-		i := walItemSchema2{
-			UUID:                       e.UUID,
-			TargetUUID:                 e.TargetUUID,
-			ListItemCreationTime:       e.ListItemCreationTime,
-			TargetListItemCreationTime: e.TargetListItemCreationTime,
-			EventTime:                  e.UnixNanoTime,
-			EventType:                  e.EventType,
-			LineLength:                 lenLine,
-			NoteExists:                 noteExists,
-			NoteLength:                 lenNote,
+
+		// If there's only 1 file, there's no point gathering them, so skip
+		// We need to let it pass for the 0 case (e.g. fresh roots with no existing wals)
+		if len(originFiles) == 1 && !forceGather {
+			// We still want to process other walFiles, so continue
+			continue
 		}
-		data := []interface{}{
-			i,
-			[]byte(e.Line),
-		}
-		if e.Note != nil {
-			data = append(data, e.Note)
-		}
-		for _, v := range data {
-			err := binary.Write(&toZipBuf, binary.LittleEndian, v)
+
+		// Gather origin files
+		mergedWal := []EventLog{}
+		filesToDelete := []string{}
+		for _, fileName := range originFiles {
+			pr, pw := io.Pipe()
+			go func() {
+				defer pw.Close()
+				if err := wf.GetWalBytes(pw, fileName); err != nil {
+					// TODO handle
+					//log.Fatal(err)
+				}
+			}()
+
+			// Build new wals
+			wal, err := buildFromFile(pr)
 			if err != nil {
-				log.Fatalf("binary.Write failed when writing field for WAL log item %v: %s\n", v, err)
+				// Ignore incompatible files
+				continue
+			}
+
+			// Only delete files which were successfully pulled
+			filesToDelete = append(filesToDelete, fileName)
+			mergedWal = *(merge(&mergedWal, wal))
+		}
+
+		// Merge with entire local log
+		mergedWal = *(merge(&mergedWal, r.log))
+
+		// Compact
+		compactedWal, err := compact(&mergedWal)
+		if err != nil {
+			if err == errWalIntregrity {
+				// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
+				// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
+				// broken log will just be merged back in. We want to remove it entirely.
+				r.log = &[]EventLog{}
+			} else {
+				return nil, err
 			}
 		}
+		mergedWal = *compactedWal
+
+		// Flush the gathered Wal
+		if err := r.push(&mergedWal, wf, ""); err != nil {
+			log.Fatal(err)
+		}
+
+		// Merge into the full wal (which will be returned at the end of the function)
+		fullMergedWal = *(merge(&fullMergedWal, &mergedWal))
+
+		// Schedule a delete on the files
+		wf.RemoveWals(filesToDelete)
 	}
 
-	// gzip the wal bytes and append to the versioned file
-	var b bytes.Buffer
+	return &fullMergedWal, nil
+}
+
+func buildByteWal(el *[]EventLog) *bytes.Buffer {
+	var compressedBuf bytes.Buffer
 
 	// Write the schema ID
-	err := binary.Write(&b, binary.LittleEndian, latestWalSchemaID)
+	err := binary.Write(&compressedBuf, binary.LittleEndian, latestWalSchemaID)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	//pr, pw := io.Pipe()
+	var buf bytes.Buffer
+	//enc := gob.NewEncoder(pw)
+
+	// If we have empty/non-null notes, we need to explicitly set them to our empty note
+	// pattern, otherwise gob will treat a ptr to an empty byte array as null when decoding
+	for _, e := range *el {
+		if e.Note != nil && len(*e.Note) == 0 {
+			*e.Note = []byte{0}
+		}
+	}
+
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(el); err != nil {
+		log.Fatal(err) // TODO
+	}
+
 	// Then write in the compressed bytes
-	zw := gzip.NewWriter(&b)
-	_, err = zw.Write(toZipBuf.Bytes())
+	zw := gzip.NewWriter(&compressedBuf)
+	//if _, err := io.Copy(zw, pr); err != nil {
+	//    log.Fatal(err) // TODO
+	//}
+	_, err = zw.Write(buf.Bytes())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if err := zw.Close(); err != nil {
-		log.Fatal(err)
+		log.Fatal(err) // TODO
 	}
 
-	return &b
+	return &compressedBuf
 }
 
 func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
@@ -1200,80 +1293,8 @@ func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	return nil
 }
 
-// gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
-// to delete the old ones
-func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) (*[]EventLog, error) {
-	// TODO separate IO/CPU bound ops to optimise
-	fullMergedWal := []EventLog{}
-	for _, wf := range walFiles {
-		// Handle ALL wals
-		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
-		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// If there's only 1 file, there's no point gathering them, so skip
-		// We need to let it pass for the 0 case (e.g. fresh roots with no existing wals)
-		if len(originFiles) == 1 && !forceGather {
-			// We still want to process other walFiles, so continue
-			continue
-		}
-
-		// Gather origin files
-		mergedWal := []EventLog{}
-		filesToDelete := []string{}
-		for _, fileName := range originFiles {
-			newWalBytes, err := wf.GetWalBytes(fileName)
-			if err != nil {
-				// GetWalBytes can fail if a file is no longer available, so fail silently and
-				// continue with other walFiles
-				continue
-			}
-
-			buf := bytes.NewBuffer(newWalBytes)
-			wal, err := buildFromFile(buf)
-			if err != nil {
-				continue
-			}
-			// Only delete files which were successfully pulled
-			filesToDelete = append(filesToDelete, fileName)
-			mergedWal = *(merge(&mergedWal, &wal))
-		}
-
-		// Merge with entire local log
-		mergedWal = *(merge(&mergedWal, r.log))
-
-		// Compact
-		compactedWal, err := compact(&mergedWal)
-		if err != nil {
-			if err == errWalIntregrity {
-				// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
-				// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
-				// broken log will just be merged back in. We want to remove it entirely.
-				r.log = &[]EventLog{}
-			} else {
-				return nil, err
-			}
-		}
-		mergedWal = *compactedWal
-
-		// Flush the gathered Wal
-		if err := r.push(&mergedWal, wf, ""); err != nil {
-			log.Fatal(err)
-		}
-
-		// Merge into the full wal (which will be returned at the end of the function)
-		fullMergedWal = *(merge(&fullMergedWal, &mergedWal))
-
-		// Schedule a delete on the files
-		wf.RemoveWals(filesToDelete)
-	}
-
-	return &fullMergedWal, nil
-}
-
 func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
+	//log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		for _, wf := range r.allWalFiles() {
@@ -1293,26 +1314,22 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
 
+	syncTriggerChan := make(chan time.Time, 1)
+	pushTriggerChan := make(chan time.Time, 1)
+
 	// We want to trigger a web sync as soon as the web connection has been established
-	webSyncTriggerChan := make(chan time.Time)
-	fileSyncTriggerChan := make(chan time.Time)
-
-	// Trigger initial file sync
-	go func() {
-		fileSyncTriggerChan <- time.Time{}
-	}()
-
-	// Schedule ongoing wal file syncs
-	go func() {
-		for {
-			select {
-			case t := <-r.webSyncTicker.C:
-				webSyncTriggerChan <- t
-			case t := <-r.fileSyncTicker.C:
-				fileSyncTriggerChan <- t
-			}
+	scheduleSync := func() {
+		// Attempt to put onto the channel, else pass
+		select {
+		case syncTriggerChan <- time.Time{}:
+		default:
 		}
-	}()
+	}
+	schedulePush := func() {
+		// Unlike schedule above (which can be called from numerous locations), we want to block
+		// when attempting to put a time on the channel
+		pushTriggerChan <- time.Time{}
+	}
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	if r.web != nil {
@@ -1334,7 +1351,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						os.Exit(0)
 					}
 					// Trigger web walfile sync (mostly relevant on initial start)
-					webSyncTriggerChan <- time.Time{}
+					scheduleSync()
 				}()
 
 				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
@@ -1348,8 +1365,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 							return
 						}
 						err := func() error {
-							webRefreshMut.RLock()
-							defer webRefreshMut.RUnlock()
+							//webRefreshMut.RLock()
+							//defer webRefreshMut.RUnlock()
 							err := r.web.consumeWebsocket(ctx, walChan, r.remoteCursorMoveChan)
 							if err != nil {
 								return err
@@ -1394,7 +1411,21 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 			}
 		}()
+	} else {
+		// We want to wait for the web connection to be established before triggering an intial sync,
+		// otherwise we end up waiting the full interval (after local sync) before it pulls down any
+		//remote changes.
+		// This `else` just covers the case where web is not active and therefore no sync is scheduled
+		// in the case above
+		go func() {
+			scheduleSync()
+		}()
 	}
+
+	// Start the cycle for pushes
+	go func() {
+		schedulePush()
+	}()
 
 	// Run an initial blocking load from the local walfile (and put onto channel for immediate
 	// processing in main loop). Also push to all walFiles (this will get missed in async loop below
@@ -1424,25 +1455,38 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 
 	// Main sync event loop
-	fileWalFiles := append(r.s3WalFiles, r.LocalWalFile)
 	go func() {
+		i := 0
 		for {
 			var el *[]EventLog
+			// Every fourth iteration is a `gather`
 			select {
-			case <-webSyncTriggerChan:
-				if el, err = r.pull(r.webWalFiles); err != nil {
-					log.Fatal(err)
-				}
-			case <-fileSyncTriggerChan:
-				if el, err = r.pull(fileWalFiles); err != nil {
-					log.Fatal(err)
-				}
-			case <-r.gatherTicker.C:
-				if el, err = r.gather(r.allWalFiles(), false); err != nil {
-					log.Fatal(err)
+			case <-syncTriggerChan:
+				if i < 3 {
+					if el, err = r.pull(r.allWalFiles()); err != nil {
+						log.Fatal(err)
+					}
+					i++
+				} else {
+					//case <-r.gatherTicker.C:
+					if el, err = r.gather(r.allWalFiles(), false); err != nil {
+						log.Fatal(err)
+					}
+					i = 0
 				}
 			}
-			walChan <- el
+			// Currently even empty event logs will trigger a client refresh which is very wasteful, so only publish to
+			// the channel if not empty
+			if len(*el) > 0 {
+				walChan <- el
+			}
+			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
+			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
+			// program with it's CPU constantly tied up, which leads to performance degradation.
+			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
+			// onto the syncTriggerChan
+			time.Sleep(time.Second * 30)
+			scheduleSync()
 		}
 	}()
 
@@ -1480,7 +1524,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 				// Add to an ephemeral log
 				el = append(el, e)
-			case <-r.pushTicker.C:
+			//case <-r.pushTicker.C:
+			case <-pushTriggerChan:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				// We pass by reference, so we'll need to create a copy prior to sending to `push`
@@ -1490,6 +1535,10 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				elCopy := el
 				r.flushPartialWals(elCopy, false)
 				el = []EventLog{}
+				go func() {
+					time.Sleep(time.Second * 30)
+					schedulePush()
+				}()
 			case <-r.stop:
 				r.flushPartialWals(el, true)
 				r.stop <- struct{}{}
@@ -1501,22 +1550,26 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
-	// Gather the local walfile
-	// TODO this is a bit of a "catch-all" convenience hack which guarantees that *all* in mem logs
-	// will always be persisted to disk on close. Ideally, we'd just flush to disk whenever we pulled
-	// new logs from remotes, but for now, this will do.
-	r.gather([]WalFile{r.LocalWalFile}, true)
-
 	// Stop tickers
-	r.webSyncTicker.Stop()
-	r.fileSyncTicker.Stop()
-	r.pushTicker.Stop()
-	r.gatherTicker.Stop()
+	//r.webSyncTicker.Stop()
+	//r.fileSyncTicker.Stop()
+	//r.syncTicker.Stop()
+	//r.pushTicker.Stop()
+	//r.gatherTicker.Stop()
 
 	// Flush all unpushed changes to non-local walfiles
 	// TODO handle this more gracefully
 	r.stop <- struct{}{}
 	<-r.stop
+
+	// When we pull wals from remotes, we merge into our in-mem logs, but will only flush to local walfile
+	// on gather. To ensure we store all logs locally, for now, we can just push the entire in-mem log to
+	// the local walfile. We can remove any other files to avoid overuse of local storage.
+	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
+	// track if any new wals have been pulled, etc)
+	filesToDelete, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+	r.push(r.log, r.LocalWalFile, "")
+	r.LocalWalFile.RemoveWals(filesToDelete)
 
 	if r.web != nil && r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")

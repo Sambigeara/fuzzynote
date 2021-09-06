@@ -81,7 +81,7 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	u.Path = path.Join(u.Path, "auth")
 	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -95,9 +95,8 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	}
 
 	var authResult cognito.AuthenticationResultType
-	err = json.Unmarshal(bodyBytes, &authResult)
-	if err != nil {
-		return nil
+	if err := json.Unmarshal(bodyBytes, &authResult); err != nil {
+		return err
 	}
 	if authResult.AccessToken != nil {
 		wt.SetAccessToken(*authResult.AccessToken)

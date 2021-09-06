@@ -21,8 +21,8 @@ const (
 
 	latestFileSchemaID = fileSchemaID(3)
 
-	DefaultSyncFrequency   = uint16(10000) // 10 seconds
-	DefaultGatherFrequency = uint16(30000) // 30 seconds
+	//DefaultSyncFrequency   = uint32(10000) // 10 seconds
+	//DefaultGatherFrequency = uint32(30000) // 30 seconds
 )
 
 type bits uint32
@@ -39,24 +39,23 @@ func has(b, flag bits) bool    { return b&flag != 0 }
 type Client interface {
 	HandleEvent(interface{}) (bool, error)
 	AwaitEvent() interface{}
-	Refresh()
 }
 
+// TODO can this be made useful?
 // ListRepo represents the main interface to the in-mem ListItem store
-type ListRepo interface {
-	Add(line string, note *[]byte, idx int) (string, error)
-	Update(line string, note *[]byte, idx int) error
-	Delete(idx int) (string, error)
-	MoveUp(idx int) error
-	MoveDown(idx int) error
-	ToggleVisibility(idx int) (string, error)
-	Undo() (string, error)
-	Redo() (string, error)
-	Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error)
-	SetCollabPosition(cursorMoveEvent) bool
-	GetCollabPositions() map[string][]string
-	ExportToPlainText(matchKeys [][]rune, showHidden bool) error
-}
+//type ListRepo interface {
+//    Add(line string, note *[]byte, idx int) (string, error)
+//    Update(line string, note *[]byte, idx int) error
+//    Delete(idx int) (string, error)
+//    MoveUp(idx int) error
+//    MoveDown(idx int) error
+//    ToggleVisibility(idx int) (string, error)
+//    Undo() (string, error)
+//    Redo() (string, error)
+//    Match(keys [][]rune, showHidden bool, curKey string, offset int, limit int) ([]ListItem, int, error)
+//    //SetCollabPosition(cursorMoveEvent) bool
+//    //GetCollabPositions() map[string][]string
+//}
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
@@ -83,17 +82,18 @@ type DBListRepo struct {
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
-	webSyncTicker  *time.Ticker
-	fileSyncTicker *time.Ticker
-	pushTicker     *time.Ticker
-	gatherTicker   *time.Ticker
+	//webSyncTicker  *time.Ticker
+	//fileSyncTicker *time.Ticker
+	//syncTicker *time.Ticker
+	//pushTicker *time.Ticker
+	//gatherTicker *time.Ticker
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileSyncFrequency uint16, gatherFrequency uint16) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncFrequency uint32, gatherFrequency uint32) *DBListRepo {
 	fakeCtx := ""
 	baseUUID, err := localWalFile.Load(fakeCtx)
 	if err != nil {
@@ -131,8 +131,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 		web.uuid = listRepo.uuid // TODO does web need to store uuid??
 
 		// Default the other ticker intervals
-		fileSyncFrequency = DefaultSyncFrequency
-		gatherFrequency = DefaultGatherFrequency
+		//fileSyncFrequency = DefaultSyncFrequency
+		//gatherFrequency = DefaultGatherFrequency
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
@@ -147,13 +147,14 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, fileS
 
 	// Start the web sync ticker. Strictly this isn't required if web isn't enabled, but things break if it's
 	// disabled at the mo so leave in (it's inexpensive)
-	listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(DefaultSyncFrequency))
+	//listRepo.webSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
 	// If the `web` integration isn't enabled (websockets et al), we allow the user to pass intervals
 	// for local/S3 sync/push/gather. If web IS enabled, we override (above) as all syncing is done in
 	// real time via websockets, and therefore short intervals aren't required.
-	listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
-	listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
-	listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
+	//listRepo.fileSyncTicker = time.NewTicker(time.Millisecond * time.Duration(fileSyncFrequency))
+	//listRepo.syncTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
+	//listRepo.pushTicker = time.NewTicker(time.Millisecond * time.Duration(syncFrequency))
+	//listRepo.gatherTicker = time.NewTicker(time.Millisecond * time.Duration(gatherFrequency))
 
 	return listRepo
 }
@@ -195,7 +196,20 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 		Line:                       newLine,
 		Note:                       newNote,
 	}
-	r.eventsChan <- el
+	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
+	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
+	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
+	// updated on the original event which we pass to CallFunctionForEventLog. This is still the case
+	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
+	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
+	// copy for the websocket event.
+	elCopy := el
+	if el.Note != nil {
+		newNote := *el.Note
+		elCopy.Note = &newNote
+	}
+
+	r.eventsChan <- elCopy
 	*r.log = append(*r.log, el)
 	var err error
 	var item *ListItem
@@ -266,8 +280,11 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
 	key := ""
-	if listItem.child != nil {
-		key = listItem.child.Key()
+	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
+	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
+	// not match the current specified search groups)
+	if listItem.matchChild != nil {
+		key = listItem.matchChild.Key()
 	}
 	return key, nil
 }

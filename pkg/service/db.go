@@ -2,8 +2,6 @@ package service
 
 import (
 	"errors"
-	"log"
-	"os"
 )
 
 type fileHeader struct {
@@ -21,7 +19,13 @@ type listItemSchema1 struct {
 }
 
 // Start begins push/pull for all WalFiles
-func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsChan chan interface{}) error {
+func (r *DBListRepo) Start(client Client) error {
+	// TODO stricter control around event type
+	//inputEvtsChan := make(chan tcell.Event)
+	inputEvtsChan := make(chan interface{})
+
+	walChan := make(chan *[]EventLog)
+
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	err := r.startSync(walChan)
@@ -29,41 +33,79 @@ func (r *DBListRepo) Start(client Client, walChan chan *[]EventLog, inputEvtsCha
 		return err
 	}
 
+	// In the case of wal merges and receiving remote cursor positions below, we emit generic
+	// null events which are handled in the main loop to refresh the client/UI state.
+	// There is no need to schedule a refresh if there is already one waiting - in fact, this can
+	// lead to a large backlog of unnecessary work.
+	// Therefore, we create a channel buffered to 1 slot, and check this when scheduling a refresh.
+	// If the slot is already taken, we skip, otherwise we schedule. The main loop consumer below
+	// is responsible for clearing the slot once it's handled the refresh event.
+	type refreshKey struct{}
+	refreshChan := make(chan refreshKey, 1)
+	scheduleRefresh := func() {
+		// TODO pointless error return
+		go func() error {
+			select {
+			case refreshChan <- refreshKey{}:
+				inputEvtsChan <- refreshKey{}
+				return nil
+			default:
+				return errors.New("Refresh channel already full")
+			}
+		}()
+	}
+
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
 	// that differs from when the user intended due to async updates).
 	// Therefore, we consume client events into a channel, and consume from it in the same loop
 	// as the pull/replay loop.
+	errChan := make(chan error, 1)
 	go func() {
 		for {
 			select {
 			case partialWal := <-walChan:
 				if err := r.Replay(partialWal); err != nil {
-					log.Fatal(err)
+					errChan <- err
 				}
-				client.Refresh()
-			case ev := <-inputEvtsChan:
-				cont, err := client.HandleEvent(ev)
-				if err != nil {
-					log.Fatal(err)
-				} else if !cont {
-					err := r.Stop()
-					if err != nil {
-						log.Fatal(err)
-					}
-					os.Exit(0)
-				}
+				scheduleRefresh()
 			case ev := <-r.remoteCursorMoveChan:
 				// Update active key position of collaborator if changes have occurred
 				updated := r.SetCollabPosition(ev)
 				if updated {
-					client.Refresh()
+					scheduleRefresh()
+				}
+			case ev := <-inputEvtsChan:
+				cont, err := client.HandleEvent(ev)
+				if err != nil {
+					errChan <- err
+				}
+				// Clear refreshChan if the event is of type refreshKey
+				if _, isRefreshKey := ev.(refreshKey); isRefreshKey {
+					<-refreshChan
+				}
+				if !cont {
+					err := r.Stop()
+					if err != nil {
+						errChan <- err
+					}
+					errChan <- nil
 				}
 			}
 		}
 	}()
 
-	return nil
+	// This is the main loop of operation in the app.
+	// We consume all term events into our own channel (handled above).
+	for {
+		select {
+		case inputEvtsChan <- client.AwaitEvent():
+		case err := <-errChan:
+			return err
+		}
+	}
+
+	//return nil
 }
 
 // Stop is called on app shutdown. It flushes all state changes in memory to disk

@@ -15,7 +15,7 @@ build:
 	@go build \
 	-buildmode=pie \
 	-ldflags="-X 'main.version=$(VERSION)' -X 'main.date=$(DATE)'" \
-	-o bin/fzn ./cmd/term
+	-o $(shell go env GOPATH)/bin/fzn ./cmd/term
 	@echo "Build complete"
 
 # The following are sequential commands, but I'm separating to reduce the chance of mistakes...

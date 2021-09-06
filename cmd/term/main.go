@@ -34,8 +34,8 @@ func main() {
 		Root              string
 		Colour            string `conf:"default:light"`
 		Editor            string `conf:"default:vim"`
-		SyncFrequencyMs   uint16 `conf:"default:10000"`
-		GatherFrequencyMs uint16 `conf:"default:30000"`
+		SyncFrequencyMs   uint32 `conf:"default:10000"`
+		GatherFrequencyMs uint32 `conf:"default:30000"`
 		Args              conf.Args
 	}
 
@@ -158,22 +158,12 @@ func main() {
 		listRepo.RegisterWalFile(s3FileWal)
 	}
 
-	walChan := make(chan *[]service.EventLog)
-	// TODO stricter control around event type
-	//inputEvtsChan := make(chan tcell.Event)
-	inputEvtsChan := make(chan interface{})
-
 	// Create term client
 	client := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
-	err = listRepo.Start(client, walChan, inputEvtsChan)
+	err = listRepo.Start(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// This is the main loop of operation in the app.
-	// We consume all term events into our own channel (handled above).
-	for {
-		inputEvtsChan <- client.AwaitEvent()
-	}
+	os.Exit(0)
 }

@@ -347,7 +347,7 @@ foo # matches "fobo"
 - Add new line (prepending search line text to new line): `Enter`
 - Delete line: `Ctrl-d`
 - Undo/Redo last operation: `Ctrl-u/Ctrl-r`
-- Moves current item up or down: `Alt-]/Alt-[`
+- Moves current item up or down: `PageUp/PageDown`
 - Open note on the currently selected list item in selected terminal editor (default is Vim). Save in editor saves to list item: `Ctrl-o`
 - Copy current item into buffer: `Ctrl-c`
 - Paste current item from buffer: `Ctrl-p`
@@ -358,10 +358,10 @@ foo # matches "fobo"
 - Set common prefix string to search line: `Enter`
 - Clear selected items: `Escape`
 
-## Visibility
+## Archive
 
-- Toggle global visibility: `Ctrl-i (top line)`
-- Toggle list item visibility: `Ctrl-i`
+- Globally display/hide archived items: `Ctrl-v (top line)`
+- Archive/un-archive list item: `Ctrl-v`
 
 ## Handy functions
 

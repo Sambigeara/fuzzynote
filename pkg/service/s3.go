@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path"
@@ -89,7 +90,9 @@ func (wf *s3WalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *s3WalFile) GetWalBytes(fileName string) ([]byte, error) {
+func (wf *s3WalFile) GetWalBytes(w io.Writer, fileName string) error {
+	// TODO implement streaming
+
 	// Read into bytes rather than file
 	b := aws.NewWriteAtBuffer([]byte{})
 
@@ -108,15 +111,17 @@ func (wf *s3WalFile) GetWalBytes(fileName string) ([]byte, error) {
 			//case "NoSuchKey": // s3.ErrCodeNoSuchKey does not work, aws is missing this error code so we hardwire a string
 			//    return []EventLog{}, nil
 			case s3.ErrCodeNoSuchKey:
-				return []byte{}, nil
+				return nil
 			default:
 				//exitErrorf("Unable to download item %q, %v", fileName, err)
 				// For now, continue silently rather than exiting
-				return []byte{}, err
+				return err
 			}
 		}
 	}
-	return b.Bytes(), nil
+
+	w.Write(b.Bytes())
+	return nil
 }
 
 func (wf *s3WalFile) RemoveWals(fileNames []string) error {

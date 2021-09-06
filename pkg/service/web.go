@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -66,12 +67,9 @@ func (w *Web) establishWebSocketConnection() error {
 	var resp *http.Response
 	var err error
 	w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
-	if err != nil && resp == nil {
-		return fmt.Errorf("Failed to establish websocket connection: %s", err)
-	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
-	if resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
+	if err != nil || resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
@@ -153,7 +151,7 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 
 	switch m.Action {
 	case "wal":
-		strWal, err := base64.StdEncoding.DecodeString(string(m.Wal))
+		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
 		if err != nil {
 			// TODO proper handling
 			return nil
@@ -161,15 +159,15 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 
 		buf := bytes.NewBuffer([]byte(strWal))
 		el, err := buildFromFile(buf)
-		if err == nil && len(el) > 0 {
-			walChan <- &el
+		if err == nil && len(*el) > 0 {
+			walChan <- el
 
 			// Acknowledge the event in the WalFile event cache, so we know to emit further events even
 			// if the match term doesn't match
 			wf, exists := w.walFileMap[m.UUID]
 			// This can occur when running two independent instances for the same user.
 			if exists {
-				key, _ := el[0].getKeys()
+				key, _ := (*el)[0].getKeys()
 				(*wf).SetProcessedEvent(key)
 			}
 		}
@@ -260,33 +258,25 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWalBytes(fileName string) ([]byte, error) {
+func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
 	if err != nil {
 		//log.Printf("Error retrieving wal %s: %s", fileName, err)
-		return nil, err
+		return err
 	}
 
 	s3Resp, err := http.Get(presignedURL)
 	if err != nil {
 		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
-		return nil, err
+		return err
 	}
 	defer s3Resp.Body.Close()
 
-	b64Wal, err := ioutil.ReadAll(s3Resp.Body)
-	if err != nil {
-		//log.Printf("Error parsing wal from S3 response body: %s", err)
-		return nil, err
-	}
+	dec := base64.NewDecoder(base64.StdEncoding, s3Resp.Body)
 
-	// Wals are transmitted over the wire in binary format, so decode
-	walBytes, err := base64.StdEncoding.DecodeString(string(b64Wal))
-	if err != nil {
-		//log.Printf("Error decoding wal: %s", err)
-		return nil, err
-	}
-	return walBytes, nil
+	io.Copy(w, dec)
+
+	return nil
 }
 
 func (wf *WebWalFile) RemoveWals(fileNames []string) error {
