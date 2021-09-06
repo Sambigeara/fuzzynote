@@ -573,16 +573,7 @@ func buildFromFile(raw io.Reader) (*[]EventLog, error) {
 	} else if walSchemaVersionID == 4 {
 		dec := gob.NewDecoder(r)
 		if err := dec.Decode(&el); err != nil {
-			//return &el, err
-			// TODO
-			// TODO
-			// TODO
-			// TODO
-			// TODO remove this!!
-			// I introduced a buggy version 4, but don't need to worry about the contents of the files
-			// if I return err == nil, it'll assume the file was read and empty, and then gather will
-			// handle the deletion
-			return &el, nil
+			return &el, err
 		}
 		if err := <-errChan; err != nil {
 			return &el, err
