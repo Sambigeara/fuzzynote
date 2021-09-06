@@ -1468,7 +1468,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					}
 					i++
 				} else {
-					//case <-r.gatherTicker.C:
 					if el, err = r.gather(r.allWalFiles(), false); err != nil {
 						log.Fatal(err)
 					}
@@ -1524,7 +1523,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				}
 				// Add to an ephemeral log
 				el = append(el, e)
-			//case <-r.pushTicker.C:
 			case <-pushTriggerChan:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
@@ -1550,13 +1548,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 }
 
 func (r *DBListRepo) finish() error {
-	// Stop tickers
-	//r.webSyncTicker.Stop()
-	//r.fileSyncTicker.Stop()
-	//r.syncTicker.Stop()
-	//r.pushTicker.Stop()
-	//r.gatherTicker.Stop()
-
 	// Flush all unpushed changes to non-local walfiles
 	// TODO handle this more gracefully
 	r.stop <- struct{}{}
