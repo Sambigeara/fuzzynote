@@ -82,7 +82,7 @@ func GetS3Config(root string) []S3Remote {
 // If we don't do this, we randomly generate a UUID and add a remote each time we log in.
 // Only use an existing UUID if there is a remote with empty match term, otherwise
 // maintain the randomly generated UUID.
-func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile, ctx interface{}) error {
+func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile) error {
 	remotes, err := w.GetRemotes("", nil)
 	if err != nil {
 		return err
@@ -100,7 +100,7 @@ func (w *Web) OverrideBaseUUID(localWalFile LocalWalFile, ctx interface{}) error
 			}
 		}
 		if baseUUID64 != 0 {
-			localWalFile.SetBaseUUID(uint32(baseUUID64), ctx)
+			localWalFile.SetBaseUUID(uint32(baseUUID64))
 		}
 	}
 	return nil

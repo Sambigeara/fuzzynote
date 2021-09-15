@@ -77,7 +77,7 @@ func (w *Web) establishWebSocketConnection() error {
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		err = Authenticate(w.tokens, body, nil)
+		err = Authenticate(w.tokens, body)
 		if err != nil {
 			return err
 		}

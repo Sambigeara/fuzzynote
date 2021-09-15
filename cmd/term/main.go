@@ -83,7 +83,7 @@ func main() {
 		case loginArg:
 			prompt.Login(cfg.Root)
 		case deleteArg:
-			localWalFile.Purge(nil)
+			localWalFile.Purge()
 		case importArg:
 			// Gather and assert existence of the remaining args.
 			// Bit of an odd way of handling it, but we need to assert existence of `--show` or `--hide` explicitly, and then accept any

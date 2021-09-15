@@ -28,7 +28,7 @@ type WebTokenStore interface {
 	AccessToken() string
 	RefreshToken() string
 	IDToken() string
-	Flush(ctx interface{})
+	Flush()
 }
 
 type FileWebTokenStore struct {
@@ -67,7 +67,7 @@ func (wt *FileWebTokenStore) Email() string            { return wt.User }
 func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
 func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
-func (wt *FileWebTokenStore) Flush(ctx interface{}) {
+func (wt *FileWebTokenStore) Flush() {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
 		log.Fatal(err)
@@ -82,7 +82,7 @@ func (wt *FileWebTokenStore) Flush(ctx interface{}) {
 	f.Write(b)
 }
 
-func Authenticate(wt WebTokenStore, args map[string]string, ctx interface{}) error {
+func Authenticate(wt WebTokenStore, args map[string]string) error {
 	body, err := json.Marshal(args)
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ func Authenticate(wt WebTokenStore, args map[string]string, ctx interface{}) err
 	if authResult.IdToken != nil {
 		wt.SetIDToken(*authResult.IdToken)
 	}
-	wt.Flush(ctx)
+	wt.Flush()
 	return nil
 }
 
@@ -140,7 +140,7 @@ func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		err = Authenticate(w.tokens, body, nil)
+		err = Authenticate(w.tokens, body)
 		if err != nil {
 			return nil, err
 		}

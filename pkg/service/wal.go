@@ -96,10 +96,10 @@ type WalFile interface {
 }
 
 type LocalWalFile interface {
-	Load(interface{}) (uint32, error)
-	Stop(uint32, interface{}) error
-	SetBaseUUID(uint32, interface{}) error
-	Purge(interface{})
+	Load() (uint32, error)
+	Stop(uint32) error
+	SetBaseUUID(uint32) error
+	Purge()
 
 	WalFile
 }
@@ -140,7 +140,7 @@ func (wf *LocalFileWalFile) flushPrimary(f *os.File, uuid uuid) error {
 }
 
 // Load retrieves UUID, instantiates the app and flushes to disk if required
-func (wf *LocalFileWalFile) Load(ctx interface{}) (uint32, error) {
+func (wf *LocalFileWalFile) Load() (uint32, error) {
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -173,7 +173,7 @@ func (wf *LocalFileWalFile) Load(ctx interface{}) (uint32, error) {
 	return uint32(uuid), nil
 }
 
-func (wf *LocalFileWalFile) Stop(uid uint32, ctx interface{}) error {
+func (wf *LocalFileWalFile) Stop(uid uint32) error {
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.Create(rootPath)
 	if err != nil {
@@ -190,7 +190,7 @@ func (wf *LocalFileWalFile) Stop(uid uint32, ctx interface{}) error {
 	return nil
 }
 
-func (wf *LocalFileWalFile) SetBaseUUID(uid uint32, ctx interface{}) error {
+func (wf *LocalFileWalFile) SetBaseUUID(uid uint32) error {
 	// TODO dedup
 	rootPath := path.Join(wf.rootDir, rootFileName)
 	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
@@ -202,7 +202,7 @@ func (wf *LocalFileWalFile) SetBaseUUID(uid uint32, ctx interface{}) error {
 	return wf.flushPrimary(f, uuid(uid))
 }
 
-func (wf *LocalFileWalFile) Purge(ctx interface{}) {
+func (wf *LocalFileWalFile) Purge() {
 	if err := os.RemoveAll(wf.rootDir); err != nil {
 		log.Fatal(err)
 	}

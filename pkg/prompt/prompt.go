@@ -115,14 +115,14 @@ func Login(root string) {
 	}
 
 	wt := service.NewFileWebTokenStore(root)
-	err = service.Authenticate(wt, body, nil)
+	err = service.Authenticate(wt, body)
 	if err != nil {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)
 	}
 
 	w := service.NewWeb(wt)
-	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(root), nil)
+	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(root))
 	if err != nil {
 		log.Fatal(err)
 	}
