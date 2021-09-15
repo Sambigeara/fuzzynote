@@ -332,7 +332,6 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
 	return nil
 }
 
-func (wf *WebWalFile) GetMode() string          { return wf.mode }
 func (wf *WebWalFile) GetPushMatchTerm() []rune { return wf.pushMatchTerm }
 
 func (wf *WebWalFile) SetProcessedEvent(key string) {

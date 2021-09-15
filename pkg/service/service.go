@@ -116,7 +116,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		friends: make(map[string]struct{}), // TODO
 	}
-	//listRepo.friends["joe@bloggs.com"] = struct{}{}
+	//listRepo.friends["joe@bloggs.co.uk"] = struct{}{}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
 	// that require us to only target the local walfile rather than all). We still need to register

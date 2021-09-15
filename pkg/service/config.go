@@ -19,22 +19,6 @@ const (
 	configFileName = "config.yml"
 )
 
-const (
-	//ModePush = "push"
-	ModePull = "pull"
-	ModeSync = "sync"
-)
-
-const (
-	yesKey          = "Yes"
-	noKey           = "No"
-	newRemoteKey    = "Add new remote..."
-	manageCollabKey = "Manage collaborators..."
-	addCollabKey    = "Add new collaborator..."
-	exitKey         = "Exit"
-	selectSize      = 20
-)
-
 type Web struct {
 	wsConn     *websocket.Conn
 	tokens     WebTokenStore
@@ -48,14 +32,6 @@ func NewWeb(webTokens WebTokenStore) *Web {
 		walFileMap: make(map[string]*WalFile),
 	}
 }
-
-//type remote struct {
-//    //UUID  string
-//    //Name  string
-//    //Mode  Mode
-//    Mode     Mode
-//    Match    string
-//}
 
 type S3Remote struct {
 	//remote

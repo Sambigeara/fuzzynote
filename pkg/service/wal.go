@@ -92,7 +92,6 @@ type WalFile interface {
 	SetProcessedEvent(string)
 	IsEventProcessed(string) bool
 
-	GetMode() string
 	GetPushMatchTerm() []rune
 }
 
@@ -107,7 +106,6 @@ type LocalWalFile interface {
 
 type LocalFileWalFile struct {
 	rootDir            string
-	mode               string
 	pushMatchTerm      []rune
 	processedEventLock *sync.Mutex
 	processedEventMap  map[string]struct{}
@@ -116,7 +114,6 @@ type LocalFileWalFile struct {
 func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
 	return &LocalFileWalFile{
 		rootDir:            rootDir,
-		mode:               ModeSync,
 		pushMatchTerm:      []rune{},
 		processedEventLock: &sync.Mutex{},
 		processedEventMap:  make(map[string]struct{}),
@@ -269,10 +266,6 @@ func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, randomUUID string) error {
 	defer f.Close()
 	f.Write(b.Bytes())
 	return nil
-}
-
-func (wf *LocalFileWalFile) GetMode() string {
-	return wf.mode
 }
 
 func (wf *LocalFileWalFile) GetPushMatchTerm() []rune {
@@ -1296,14 +1289,12 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		for _, wf := range r.allWalFiles {
-			//if wf.GetMode() == ModeSync {
 			if sync {
 				// TODO Use waitgroups
 				r.push(&el, wf, randomUUID)
 			} else {
 				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
 			}
-			//}
 		}
 	}
 }
@@ -1387,10 +1378,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		go func() {
 			for {
 				e := <-r.localCursorMoveChan
-				// TODO dedup webWalFile ModeSync loop
 				if r.web.wsConn != nil {
 					for _, wf := range r.webWalFiles {
-						//if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
 						if wf.GetUUID() != "" {
 							func() {
 								m := websocketMessage{
@@ -1499,9 +1488,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				// Write in real time to the websocket, if present
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
-						//os.Exit(0)
 						// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-						//if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
 						if wf.GetUUID() != "" {
 							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
