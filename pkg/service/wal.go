@@ -1240,24 +1240,22 @@ func buildByteWal(el *[]EventLog) *bytes.Buffer {
 	return &compressedBuf
 }
 
-func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
-	matchTerm := wf.GetPushMatchTerm()
+func (r *DBListRepo) getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
+	_, isWebRemote := wf.(*WebWalFile)
+	walOwnerEmail := wf.GetUUID()
 
-	if len(matchTerm) == 0 {
-		return el
-	}
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
-		// For now (for safety) use full pattern matching
-		if isMatch(matchTerm, e.Line, FullMatchPattern) {
+		// TODO wf.uuid currently returns an email
+		if !isWebRemote || walOwnerEmail == r.email || isMatch([]rune(walOwnerEmail), e.Line, FullMatchPattern) {
 			k, _ := e.getKeys()
 			wf.SetProcessedEvent(k)
 		}
 	}
 
-	filteredWal := []EventLog{}
 	// Do a second iteration using the map above, and build a Wal which includes any logs which
 	// fulfilled the match term at some point in it's history.
+	filteredWal := []EventLog{}
 	for _, e := range *el {
 		k, _ := e.getKeys()
 		if wf.IsEventProcessed(k) {
@@ -1269,7 +1267,7 @@ func getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 
 func (r *DBListRepo) push(el *[]EventLog, wf WalFile, randomUUID string) error {
 	// Apply any filtering based on Push match configuration
-	el = getMatchedWal(el, wf)
+	el = r.getMatchedWal(el, wf)
 
 	// Return for empty wals
 	if len(*el) == 0 {
@@ -1297,15 +1295,15 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
-		for _, wf := range r.allWalFiles() {
-			if wf.GetMode() == ModeSync {
-				if sync {
-					// TODO Use waitgroups
-					r.push(&el, wf, randomUUID)
-				} else {
-					go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
-				}
+		for _, wf := range r.allWalFiles {
+			//if wf.GetMode() == ModeSync {
+			if sync {
+				// TODO Use waitgroups
+				r.push(&el, wf, randomUUID)
+			} else {
+				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
 			}
+			//}
 		}
 	}
 }
@@ -1392,7 +1390,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				// TODO dedup webWalFile ModeSync loop
 				if r.web.wsConn != nil {
 					for _, wf := range r.webWalFiles {
-						if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+						//if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+						if wf.GetUUID() != "" {
 							func() {
 								m := websocketMessage{
 									Action:       "position",
@@ -1447,7 +1446,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		log.Fatal(err)
 	}
 	if len(localFileNames) > 1 {
-		for _, wf := range r.allWalFiles() {
+		for _, wf := range r.allWalFiles {
 			if wf != r.LocalWalFile {
 				go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
 			}
@@ -1463,12 +1462,12 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			select {
 			case <-syncTriggerChan:
 				if i < 3 {
-					if el, err = r.pull(r.allWalFiles()); err != nil {
+					if el, err = r.pull(r.syncWalFiles); err != nil {
 						log.Fatal(err)
 					}
 					i++
 				} else {
-					if el, err = r.gather(r.allWalFiles(), false); err != nil {
+					if el, err = r.gather(r.syncWalFiles, false); err != nil {
 						log.Fatal(err)
 					}
 					i = 0
@@ -1500,9 +1499,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				// Write in real time to the websocket, if present
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
+						//os.Exit(0)
 						// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-						if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
-							matchedEventLog := getMatchedWal(&[]EventLog{e}, wf)
+						//if wf.GetMode() == ModeSync && wf.GetUUID() != "" {
+						if wf.GetUUID() != "" {
+							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								// There are only single events, so get the zero index
 								b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})

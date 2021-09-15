@@ -39,7 +39,7 @@ type Web struct {
 	wsConn     *websocket.Conn
 	tokens     WebTokenStore
 	walFileMap map[string]*WalFile
-	uuid       uuid
+	uuid       string
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {

@@ -29,6 +29,7 @@ const (
 )
 
 type WebWalFile struct {
+	// TODO rename uuid to email
 	uuid               string
 	web                *Web
 	mode               string
@@ -39,6 +40,7 @@ type WebWalFile struct {
 
 func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
 	return &WebWalFile{
+		// TODO rename uuid to email
 		uuid:               cfg.UUID,
 		web:                web,
 		mode:               cfg.Mode,
@@ -58,7 +60,8 @@ func (w *Web) establishWebSocketConnection() error {
 		u, _ := url.Parse(websocketURL)
 		q, _ := url.ParseQuery(u.RawQuery)
 		q.Add("auth", accessToken)
-		q.Add("uuid", fmt.Sprintf("%d", w.uuid))
+		escapedUUID := url.QueryEscape(w.uuid)
+		q.Add("uuid", escapedUUID)
 		u.RawQuery = q.Encode()
 
 		return websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
@@ -74,11 +77,7 @@ func (w *Web) establishWebSocketConnection() error {
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		marshalBody, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		err = Authenticate(w.tokens, marshalBody, nil)
+		err = Authenticate(w.tokens, body, nil)
 		if err != nil {
 			return err
 		}
@@ -225,7 +224,9 @@ func (wf *WebWalFile) GetRoot() string { return "" }
 
 func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "wal", "list", wf.uuid)
+	// we now pass emails as `wf.uuid`, so escape it here
+	escapedEmail := url.PathEscape(wf.uuid)
+	u.Path = path.Join(u.Path, "wal", "list", escapedEmail)
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
@@ -245,7 +246,6 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 
 	strUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		//log.Printf("Error parsing wals from S3 response body: %s", err)
 		return nil, nil
 	}
 
@@ -286,7 +286,8 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	}
 
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "wal", "delete", wf.uuid)
+	escapedEmail := url.PathEscape(wf.uuid)
+	u.Path = path.Join(u.Path, "wal", "delete", escapedEmail)
 
 	marshalNames, err := json.Marshal(fileNames)
 	if err != nil {
@@ -307,11 +308,11 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
+func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
-	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
+	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
-	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
+	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, tempUUID, "put")
 	if err != nil || presignedURL == "" {
 		return nil
 	}

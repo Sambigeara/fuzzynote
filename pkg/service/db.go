@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"regexp"
+	"sync"
 )
 
 type fileHeader struct {
@@ -139,10 +141,26 @@ func (r *DBListRepo) registerWeb() error {
 		return errors.New("Error when trying to retrieve remotes config from API")
 	}
 
+	// At the moment remotes can be legacy number UUIDs, or now (more recently) email addresses
+	// Pull all down, and skip over any non email address remotes
+	// TODO remove!
+	emailRegex := regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
 	for _, remote := range remotes {
-		if remote.IsActive {
-			webWalFile := NewWebWalFile(remote, r.web)
-			r.RegisterWalFile(webWalFile)
+		// Check if UUID matches an email pattern
+		if emailRegex.MatchString(remote.UUID) {
+			hasFullAccess := false
+			if remote.UUID == r.email {
+				hasFullAccess = true
+			}
+			r.RegisterWalFile(
+				&WebWalFile{
+					uuid:               remote.UUID,
+					processedEventLock: &sync.Mutex{},
+					processedEventMap:  make(map[string]struct{}),
+					web:                r.web,
+				},
+				hasFullAccess,
+			)
 		}
 	}
 
@@ -158,11 +176,12 @@ func (r *DBListRepo) clearWebWalFiles() {
 	r.webWalFiles = []WalFile{}
 }
 
-func (r *DBListRepo) RegisterWalFile(wf WalFile) {
-	switch wf.(type) {
-	case *s3WalFile:
-		r.s3WalFiles = append(r.s3WalFiles, wf)
-	case *WebWalFile:
+func (r *DBListRepo) RegisterWalFile(wf WalFile, hasFullAccess bool) {
+	r.allWalFiles = append(r.allWalFiles, wf)
+	if hasFullAccess {
+		r.syncWalFiles = append(r.syncWalFiles, wf)
+	}
+	if _, ok := wf.(*WebWalFile); ok {
 		r.webWalFiles = append(r.webWalFiles, wf)
 	}
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
@@ -173,6 +192,6 @@ func (r *DBListRepo) RegisterWalFile(wf WalFile) {
 	}
 }
 
-func (r *DBListRepo) allWalFiles() []WalFile {
-	return append(append(r.s3WalFiles, r.LocalWalFile), r.webWalFiles...)
-}
+//func (r *DBListRepo) allWalFiles() []WalFile {
+//    return append(append(r.s3WalFiles, r.LocalWalFile), r.webWalFiles...)
+//}

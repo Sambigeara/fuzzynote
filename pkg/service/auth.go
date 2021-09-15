@@ -20,9 +20,11 @@ const (
 )
 
 type WebTokenStore interface {
+	SetEmail(string)
 	SetAccessToken(string)
 	SetRefreshToken(string)
 	SetIDToken(string)
+	Email() string
 	AccessToken() string
 	RefreshToken() string
 	IDToken() string
@@ -31,6 +33,7 @@ type WebTokenStore interface {
 
 type FileWebTokenStore struct {
 	root    string
+	User    string `yaml:"user"`
 	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
 	ID      string `yaml:"idToken"`
@@ -40,6 +43,7 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 	// Attempt to read from file
 	tokenFile := path.Join(root, webTokensFileName)
 	f, err := os.Open(tokenFile)
+	defer f.Close()
 
 	wt := &FileWebTokenStore{root: root}
 	if err == nil {
@@ -50,14 +54,16 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 			// TODO handle with appropriate error message
 			return wt
 		}
-		defer f.Close()
 	}
 	return wt
 }
 
+// TODO reconsider this interface...
+func (wt *FileWebTokenStore) SetEmail(s string)        { wt.User = s }
 func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
 func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
+func (wt *FileWebTokenStore) Email() string            { return wt.User }
 func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
 func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
@@ -76,7 +82,12 @@ func (wt *FileWebTokenStore) Flush(ctx interface{}) {
 	f.Write(b)
 }
 
-func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
+func Authenticate(wt WebTokenStore, args map[string]string, ctx interface{}) error {
+	body, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+
 	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "auth")
 	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
@@ -97,6 +108,10 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	var authResult cognito.AuthenticationResultType
 	if err := json.Unmarshal(bodyBytes, &authResult); err != nil {
 		return err
+	}
+
+	if email, ok := args["user"]; ok {
+		wt.SetEmail(email)
 	}
 	if authResult.AccessToken != nil {
 		wt.SetAccessToken(*authResult.AccessToken)
@@ -125,11 +140,7 @@ func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		marshalBody, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		err = Authenticate(w.tokens, marshalBody, nil)
+		err = Authenticate(w.tokens, body, nil)
 		if err != nil {
 			return nil, err
 		}

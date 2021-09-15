@@ -65,10 +65,6 @@ type DBListRepo struct {
 	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
-	LocalWalFile      LocalWalFile
-	walFiles          []WalFile
-	webWalFiles       []WalFile
-	s3WalFiles        []WalFile
 	eventsChan        chan EventLog
 	stop              chan struct{}
 	web               *Web
@@ -78,6 +74,15 @@ type DBListRepo struct {
 	collabPositions      map[string]cursorMoveEvent
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
+
+	email   string
+	friends map[string]struct{}
+
+	// TODO better naming convention
+	LocalWalFile LocalWalFile
+	webWalFiles  []WalFile
+	allWalFiles  []WalFile
+	syncWalFiles []WalFile
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -108,18 +113,24 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
+
+		friends: make(map[string]struct{}), // TODO
 	}
+	//listRepo.friends["joe@bloggs.com"] = struct{}{}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
 	// that require us to only target the local walfile rather than all). We still need to register
 	// it as we call all walfiles in the next line.
-	listRepo.RegisterWalFile(localWalFile)
+	listRepo.RegisterWalFile(localWalFile, true)
 
 	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.RefreshToken() != "" {
 		web := NewWeb(webTokenStore)
-		web.uuid = listRepo.uuid // TODO does web need to store uuid??
+		//web.uuid = listRepo.uuid // TODO does web need to store uuid??
+		web.uuid = listRepo.email // TODO does web need to store uuid??
+
+		listRepo.email = webTokenStore.Email()
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate

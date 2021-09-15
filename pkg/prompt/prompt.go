@@ -1,7 +1,6 @@
 package prompt
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -136,10 +135,9 @@ func Login(root string) {
 		"user":     email,
 		"password": password,
 	}
-	marshalBody, err := json.Marshal(body)
 
 	wt := service.NewFileWebTokenStore(root)
-	err = service.Authenticate(wt, marshalBody, nil)
+	err = service.Authenticate(wt, body, nil)
 	if err != nil {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)
