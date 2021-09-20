@@ -113,9 +113,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 
-		friends: make(map[string]struct{}), // TODO
+		friends: make(map[string]struct{}),
 	}
-	//listRepo.friends["joe@bloggs.co.uk"] = struct{}{}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
 	// that require us to only target the local walfile rather than all). We still need to register

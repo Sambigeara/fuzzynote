@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+var EmailRegex = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+
 type fileHeader struct {
 	SchemaID fileSchemaID
 	UUID     uuid
@@ -143,10 +145,9 @@ func (r *DBListRepo) registerWeb() error {
 	// At the moment remotes can be legacy number UUIDs, or now (more recently) email addresses
 	// Pull all down, and skip over any non email address remotes
 	// TODO remove!
-	emailRegex := regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
 	for _, remote := range remotes {
 		// Check if UUID matches an email pattern
-		if emailRegex.MatchString(remote.UUID) {
+		if EmailRegex.MatchString(remote.UUID) {
 			hasFullAccess := false
 			if remote.UUID == r.email {
 				hasFullAccess = true
