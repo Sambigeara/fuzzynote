@@ -128,61 +128,59 @@ func (r *DBListRepo) Stop() error {
 }
 
 func (r *DBListRepo) registerWeb() error {
-	// registerWeb is used periodically during runtime as well as at startup, so purge any
-	// web walfiles prior to continuing
-	r.clearWebWalFiles()
-
 	if err := r.web.establishWebSocketConnection(); err != nil {
 		return err
 	}
 
 	// Retrieve remotes from API
-	remotes, err := r.web.GetRemotes("", nil)
-	if err != nil {
-		return errors.New("Error when trying to retrieve remotes config from API")
-	}
+	//remotes, err := r.web.GetRemotes("", nil)
+	//if err != nil {
+	//    return errors.New("Error when trying to retrieve remotes config from API")
+	//}
 
-	// At the moment remotes can be legacy number UUIDs, or now (more recently) email addresses
-	// Pull all down, and skip over any non email address remotes
-	// TODO remove!
-	for _, remote := range remotes {
-		// Check if UUID matches an email pattern
-		if EmailRegex.MatchString(remote.UUID) {
-			hasFullAccess := false
-			if remote.UUID == r.email {
-				hasFullAccess = true
-			}
-			r.RegisterWalFile(
-				&WebWalFile{
-					uuid:               remote.UUID,
-					processedEventLock: &sync.Mutex{},
-					processedEventMap:  make(map[string]struct{}),
-					web:                r.web,
-				},
-				hasFullAccess,
-			)
-		}
-	}
+	//// At the moment remotes can be legacy number UUIDs, or now (more recently) email addresses
+	//// Pull all down, and skip over any non email address remotes
+	//// TODO remove!
+	//for _, remote := range remotes {
+	//    // Check if UUID matches an email pattern
+	//    if EmailRegex.MatchString(remote.UUID) {
+	//        hasFullAccess := false
+	//        if remote.UUID == r.email {
+	//            hasFullAccess = true
+	//        }
+	//        r.AddWalFile(
+	//            &WebWalFile{
+	//                uuid:               remote.UUID,
+	//                processedEventLock: &sync.Mutex{},
+	//                processedEventMap:  make(map[string]struct{}),
+	//                web:                r.web,
+	//            },
+	//            hasFullAccess,
+	//        )
+	//    }
+	//}
+
+	r.DeleteWalFile(string(r.email))
+	r.AddWalFile(
+		&WebWalFile{
+			uuid:               string(r.email),
+			processedEventLock: &sync.Mutex{},
+			processedEventMap:  make(map[string]struct{}),
+			web:                r.web,
+		},
+		true,
+	)
 
 	return nil
 }
 
-// clearWebWalFiles is used to remove references of stored web walfiles. At the mo, primary use-case
-// is to allow us to refresh them periodically.
-func (r *DBListRepo) clearWebWalFiles() {
-	for _, wf := range r.webWalFiles {
-		delete(r.web.walFileMap, wf.GetUUID())
-	}
-	r.webWalFiles = []WalFile{}
-}
-
-func (r *DBListRepo) RegisterWalFile(wf WalFile, hasFullAccess bool) {
-	r.allWalFiles = append(r.allWalFiles, wf)
+func (r *DBListRepo) AddWalFile(wf WalFile, hasFullAccess bool) {
+	r.allWalFiles[wf.GetUUID()] = &wf
 	if hasFullAccess {
-		r.syncWalFiles = append(r.syncWalFiles, wf)
+		r.syncWalFiles[wf.GetUUID()] = &wf
 	}
 	if _, ok := wf.(*WebWalFile); ok {
-		r.webWalFiles = append(r.webWalFiles, wf)
+		r.webWalFiles[wf.GetUUID()] = &wf
 	}
 	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
 	// when consuming websocket events or on pull. This covers some edge cases where local updates
@@ -192,6 +190,8 @@ func (r *DBListRepo) RegisterWalFile(wf WalFile, hasFullAccess bool) {
 	}
 }
 
-//func (r *DBListRepo) allWalFiles() []WalFile {
-//    return append(append(r.s3WalFiles, r.LocalWalFile), r.webWalFiles...)
-//}
+func (r *DBListRepo) DeleteWalFile(name string) {
+	delete(r.allWalFiles, name)
+	delete(r.syncWalFiles, name)
+	delete(r.webWalFiles, name)
+}

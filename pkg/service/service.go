@@ -54,6 +54,18 @@ type Client interface {
 //    //GetCollabPositions() map[string][]string
 //}
 
+type friendState int
+
+const (
+	friendActive friendState = iota
+	friendInactive
+)
+
+type friend struct {
+	state        friendState
+	dtLastChange int64
+}
+
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root           *ListItem
@@ -75,14 +87,15 @@ type DBListRepo struct {
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
-	email   string
-	friends map[string]struct{}
+	email          string
+	friends        map[string]friend
+	friendsMapLock sync.Mutex
 
 	// TODO better naming convention
 	LocalWalFile LocalWalFile
-	webWalFiles  []WalFile
-	allWalFiles  []WalFile
-	syncWalFiles []WalFile
+	webWalFiles  map[string]*WalFile
+	allWalFiles  map[string]*WalFile
+	syncWalFiles map[string]*WalFile
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -110,16 +123,21 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		collabMapLock: &sync.Mutex{},
 
+		webWalFiles:  make(map[string]*WalFile),
+		allWalFiles:  make(map[string]*WalFile),
+		syncWalFiles: make(map[string]*WalFile),
+
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 
-		friends: make(map[string]struct{}),
+		friends:        make(map[string]friend),
+		friendsMapLock: sync.Mutex{},
 	}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
 	// that require us to only target the local walfile rather than all). We still need to register
 	// it as we call all walfiles in the next line.
-	listRepo.RegisterWalFile(localWalFile, true)
+	listRepo.AddWalFile(localWalFile, true)
 
 	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
@@ -513,5 +531,5 @@ func (r *DBListRepo) SetCollabPosition(ev cursorMoveEvent) bool {
 
 func (r *DBListRepo) ExportToPlainText(matchKeys [][]rune, showHidden bool) error {
 	matchedItems, _, _ := r.Match(matchKeys, showHidden, "", 0, 0)
-	return r.generatePlainTextFile(matchedItems)
+	return generatePlainTextFile(matchedItems)
 }

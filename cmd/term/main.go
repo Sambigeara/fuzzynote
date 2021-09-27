@@ -150,7 +150,7 @@ func main() {
 		// centralise this logic across different remote types when relevant
 		// TODO gracefully deal with missing config
 		s3FileWal := service.NewS3WalFile(r, cfg.Root)
-		listRepo.RegisterWalFile(s3FileWal, true)
+		listRepo.AddWalFile(s3FileWal, true)
 	}
 
 	// Create term client

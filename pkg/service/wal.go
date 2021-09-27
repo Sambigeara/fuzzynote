@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -287,6 +288,92 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 	return exists
 }
 
+//var cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("fzn_cfg:friend:\"[%s]\"", EmailRegex))
+var cfgFriendRegex = regexp.MustCompile("fzn_cfg:friend +\"(.+)\"")
+
+func getFriendsFromLine(line string) map[string]struct{} {
+	friends := make(map[string]struct{})
+	if len(line) == 0 {
+		return friends
+	}
+	friendMatches := cfgFriendRegex.FindAllStringSubmatch(line, -1)
+	for _, match := range friendMatches {
+		friends[match[1]] = struct{}{}
+	}
+	return friends
+}
+
+func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
+	// This method is responsible for detecting changes to the "friends" configuration in order to update
+	// local state, and to emit events to the cloud API.
+	friendsToAdd := make(map[string]struct{})
+	friendsToRemove := make(map[string]struct{})
+
+	var existingLine string
+	if item != nil {
+		existingLine = item.Line
+	}
+
+	before := getFriendsFromLine(existingLine)
+	switch e.EventType {
+	case AddEvent:
+		fallthrough
+	case UpdateEvent:
+		after := getFriendsFromLine(e.Line)
+		for name := range before {
+			// If a friend has been removed from the line
+			if _, exists := after[name]; !exists {
+				friendsToRemove[name] = struct{}{}
+			}
+		}
+		for name := range after {
+			// If a new friend has appeared in the line
+			if _, exists := before[name]; !exists {
+				friendsToAdd[name] = struct{}{}
+			}
+		}
+	case DeleteEvent:
+		friendsToRemove = before
+	}
+
+	// We now iterate over each friend in the two maps and compare to the cached friends on DBListRepo.
+	// If the friend doesn't exist, or the timestamp is more recent than the cached counterpart, we update.
+	for name := range friendsToAdd {
+		// If the friend doesn't exist or is outdated, we add to or update the map
+		if f, exists := r.friends[name]; !exists || e.UnixNanoTime > f.dtLastChange {
+			r.friendsMapLock.Lock()
+			r.friends[name] = friend{
+				state:        friendActive,
+				dtLastChange: e.UnixNanoTime,
+			}
+			r.friendsMapLock.Unlock()
+			// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
+			r.AddWalFile(
+				&WebWalFile{
+					uuid:               name,
+					processedEventLock: &sync.Mutex{},
+					processedEventMap:  make(map[string]struct{}),
+					web:                r.web,
+				},
+				false,
+			)
+			// TODO add to channel to emit to cloud
+		}
+	}
+	for name := range friendsToRemove {
+		// We only delete and emit the cloud event if the friend exists (which it always should tbf)
+		// Although we ignore the delete if the event timestamp is older than the latest known cache state.
+		if f, exists := r.friends[name]; exists && e.UnixNanoTime > f.dtLastChange {
+			delete(r.friends, name)
+			// TODO move this somewhere better
+			if _, exists := r.allWalFiles[name]; exists {
+				r.DeleteWalFile(name)
+			}
+			// TODO add to channel to emit to cloud
+		}
+	}
+}
+
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
 	item := r.listItemTracker[key]
@@ -299,6 +386,9 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	if item == nil && e.EventType != AddEvent && e.EventType != UpdateEvent {
 		return root, item, nil
 	}
+
+	// TODO actually think about where this should go
+	r.generateFriendChangeEvents(e, item)
 
 	var err error
 	switch e.EventType {
@@ -411,6 +501,8 @@ func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
 	return nil
 }
 
+// Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list
+// which is attached to DBListRepo.Root
 func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	// No point merging with an empty partialWal
 	if len(*partialWal) == 0 {
@@ -783,6 +875,12 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
 	testRepo := DBListRepo{
 		log:             &[]EventLog{},
 		listItemTracker: make(map[string]*ListItem),
+
+		webWalFiles:    make(map[string]*WalFile),
+		allWalFiles:    make(map[string]*WalFile),
+		syncWalFiles:   make(map[string]*WalFile),
+		friends:        make(map[string]friend),
+		friendsMapLock: sync.Mutex{},
 	}
 
 	// Use the Replay function to generate the linked lists
@@ -989,13 +1087,13 @@ func compact(wal *[]EventLog) (*[]EventLog, error) {
 
 // generatePlainTextFile takes the current matchset, and writes the lines separately to a
 // local file. Notes are ignored.
-func (r *DBListRepo) generatePlainTextFile(matchItems []ListItem) error {
+func generatePlainTextFile(matchItems []ListItem) error {
 	curWd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 	// Will be in the form `{currentDirectory}/export_1624785401.txt`
-	fileName := path.Join(curWd, fmt.Sprintf(exportFilePattern, time.Now().Unix()))
+	fileName := path.Join(curWd, fmt.Sprintf(exportFilePattern, time.Now().UnixNano()))
 	f, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
@@ -1240,7 +1338,9 @@ func (r *DBListRepo) getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
 		// TODO wf.uuid currently returns an email
-		if !isWebRemote || walOwnerEmail == r.email || isMatch([]rune(walOwnerEmail), e.Line, FullMatchPattern) {
+		if !isWebRemote ||
+			walOwnerEmail == r.email || // user owns the remote
+			isMatch([]rune(fmt.Sprintf("@%s", wf.GetUUID())), e.Line, FullMatchPattern) {
 			k, _ := e.getKeys()
 			wf.SetProcessedEvent(k)
 		}
@@ -1291,9 +1391,9 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 		for _, wf := range r.allWalFiles {
 			if sync {
 				// TODO Use waitgroups
-				r.push(&el, wf, randomUUID)
+				r.push(&el, *wf, randomUUID)
 			} else {
-				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
+				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(*wf)
 			}
 		}
 	}
@@ -1380,11 +1480,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				e := <-r.localCursorMoveChan
 				if r.web.wsConn != nil {
 					for _, wf := range r.webWalFiles {
-						if wf.GetUUID() != "" {
+						if (*wf).GetUUID() != "" {
 							func() {
 								m := websocketMessage{
 									Action:       "position",
-									UUID:         wf.GetUUID(),
+									UUID:         (*wf).GetUUID(),
 									Key:          e.listItemKey,
 									UnixNanoTime: e.unixNanoTime,
 								}
@@ -1436,8 +1536,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	}
 	if len(localFileNames) > 1 {
 		for _, wf := range r.allWalFiles {
-			if wf != r.LocalWalFile {
-				go func(wf WalFile) { r.push(localEl, wf, "") }(wf)
+			if *wf != r.LocalWalFile {
+				go func(wf WalFile) { r.push(localEl, wf, "") }(*wf)
 			}
 		}
 	}
@@ -1450,13 +1550,17 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			// Every fourth iteration is a `gather`
 			select {
 			case <-syncTriggerChan:
+				syncWalFiles := []WalFile{}
+				for _, wf := range r.syncWalFiles {
+					syncWalFiles = append(syncWalFiles, *wf)
+				}
 				if i < 3 {
-					if el, err = r.pull(r.syncWalFiles); err != nil {
+					if el, err = r.pull(syncWalFiles); err != nil {
 						log.Fatal(err)
 					}
 					i++
 				} else {
-					if el, err = r.gather(r.syncWalFiles, false); err != nil {
+					if el, err = r.gather(syncWalFiles, false); err != nil {
 						log.Fatal(err)
 					}
 					i = 0
@@ -1489,15 +1593,15 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
 						// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-						if wf.GetUUID() != "" {
-							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, wf)
+						if (*wf).GetUUID() != "" {
+							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, *wf)
 							if len(*matchedEventLog) > 0 {
 								// There are only single events, so get the zero index
 								b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 								m := websocketMessage{
 									Action: "wal",
-									UUID:   wf.GetUUID(),
+									UUID:   (*wf).GetUUID(),
 									Wal:    b64Wal,
 								}
 								func() {

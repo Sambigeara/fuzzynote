@@ -1300,7 +1300,7 @@ func TestWalFilter(t *testing.T) {
 		// Create copy
 		filteredWalFile := NewLocalFileWalFile(otherRootDir)
 		filteredWalFile.pushMatchTerm = []rune("foo")
-		repo1.RegisterWalFile(filteredWalFile)
+		repo1.AddWalFile(filteredWalFile)
 
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()
