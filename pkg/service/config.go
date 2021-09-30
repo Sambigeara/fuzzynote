@@ -20,16 +20,14 @@ const (
 )
 
 type Web struct {
-	wsConn     *websocket.Conn
-	tokens     WebTokenStore
-	walFileMap map[string]*WalFile
-	uuid       string
+	wsConn *websocket.Conn
+	tokens WebTokenStore
+	uuid   string
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {
 	return &Web{
-		tokens:     webTokens,
-		walFileMap: make(map[string]*WalFile),
+		tokens: webTokens,
 	}
 }
 

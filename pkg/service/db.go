@@ -182,12 +182,6 @@ func (r *DBListRepo) AddWalFile(wf WalFile, hasFullAccess bool) {
 	if _, ok := wf.(*WebWalFile); ok {
 		r.webWalFiles[wf.GetUUID()] = &wf
 	}
-	// Add the walFile to the map. We use this to retrieve the processed event cache, which we set
-	// when consuming websocket events or on pull. This covers some edge cases where local updates
-	// on foreign items will not emit to remotes, as we can use the cache in the getMatchedWal call
-	if r.web != nil && wf.GetUUID() != "" {
-		r.web.walFileMap[wf.GetUUID()] = &wf
-	}
 }
 
 func (r *DBListRepo) DeleteWalFile(name string) {

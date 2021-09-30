@@ -18,6 +18,7 @@ const (
 	emptySearchLinePrompt                 = "Search here..."
 	searchGroupPrompt                     = "TAB: Create new search group"
 	newLinePrompt                         = "Enter: Create new line"
+	collabEmailPattern                    = "@%s "
 )
 
 // ClientBase ...
@@ -86,17 +87,29 @@ const (
 	KeyRune
 )
 
-func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
+// TODO duplicated in getHiddenLinePrefix function, figure out how to unify
+func getLenHiddenMatchPrefix(owner string, line string, hiddenMatchPrefix string) int {
 	l := 0
+	if owner != "" {
+		ownerPattern := fmt.Sprintf(collabEmailPattern, owner)
+		if strings.HasPrefix(strings.ToLower(line), ownerPattern) {
+			l += len([]byte(ownerPattern))
+			line = strings.TrimPrefix(line, ownerPattern)
+		}
+	}
 	if strings.HasPrefix(strings.ToLower(line), hiddenMatchPrefix) {
-		l = len([]byte(hiddenMatchPrefix))
+		l += len([]byte(hiddenMatchPrefix))
 	}
 	return l
 }
 
-func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
+func getCommonSearchPrefix(owner string, selectedItems map[int]string) [][]rune {
 	var lines []string
 	for _, line := range selectedItems {
+		// Omit any prepended `@{owner_email}` from each line
+		if owner != "" {
+			line = strings.TrimPrefix(line, fmt.Sprintf(collabEmailPattern, owner))
+		}
 		lines = append(lines, strings.TrimSpace(line))
 	}
 	prefix := strings.TrimSpace(longestCommonPrefix(lines))
@@ -110,7 +123,6 @@ func longestCommonPrefix(strs []string) string {
 	if len(strs) == 0 {
 		return ""
 	}
-	// Assume prefix
 	prefix := strs[0]
 	for i := 1; i < len(strs); i++ {
 		for !strings.HasPrefix(strs[i], prefix) {
@@ -232,7 +244,6 @@ func parseOperatorGroups(sub string) string {
 func getHiddenLinePrefix(keys [][]rune) string {
 	// Only apply the trunaction on "closed" search groups (e.g. when the user has tabbed to
 	// the next one).
-
 	if len(keys) == 0 || (len(keys) == 1 && len(keys[0]) == 0) {
 		return ""
 	}
@@ -252,6 +263,17 @@ func (t *ClientBase) TrimPrefix(line string) string {
 	// Truncate the full search string from any lines matching the entire thing,
 	// ignoring search operators
 	// Op needs to be case-insensitive, but must not mutate underlying line
+
+	// If `t.db.owner` is a non-empty string and prepends the line, we separately trim that first.
+	if t.db.email != "" {
+		ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
+		// We explicitly avoid using `strings.TrimPrefix(...)` here because the lines are case-sensitive
+		if strings.HasPrefix(strings.ToLower(line), ownerPattern) {
+			line = string([]rune(line)[len([]byte(ownerPattern)):])
+		}
+	}
+
+	// We explicitly avoid using `strings.TrimPrefix(...)` here because the lines are case-sensitive
 	if strings.HasPrefix(strings.ToLower(line), t.HiddenMatchPrefix) {
 		line = string([]rune(line)[len([]byte(t.HiddenMatchPrefix)):])
 	}
@@ -259,7 +281,7 @@ func (t *ClientBase) TrimPrefix(line string) string {
 	return strings.TrimPrefix(line, " ")
 }
 
-// TODO rename t
+// TODO rename "t"
 func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListItem, bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
@@ -279,9 +301,9 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	offsetX := t.HorizOffset + t.CurX
 	lenHiddenMatchPrefix := 0
 	if t.CurItem != nil {
-		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line, t.HiddenMatchPrefix)
+		offsetX += lenHiddenMatchPrefix
 	}
-	offsetX += lenHiddenMatchPrefix
 	var err error
 	switch ev.T {
 	case KeyEscape:
@@ -294,7 +316,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyEnter:
 		if len(t.SelectedItems) > 0 {
 			// Add common search prefix to search groups
-			t.Search = getCommonSearchPrefix(t.SelectedItems)
+			t.Search = getCommonSearchPrefix(t.db.email, t.SelectedItems)
 			t.SelectedItems = make(map[int]string)
 			t.CurY = 0
 			if len(t.Search) > 0 {
@@ -310,6 +332,16 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				}
 			}
 			newString := GetNewLinePrefix(t.Search)
+			// If the user is logged in, we automatically prepend the client email to each line (this is used
+			// for collaboration purposes), UNLESS the email is already present in the new line prefix
+			// TODO do the email-in check better
+			if t.db.email != "" {
+				ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
+				if !strings.Contains(newString, ownerPattern) {
+					newString = fmt.Sprintf("%s%s", ownerPattern, newString)
+					//posDiff[0] += len([]byte(ownerPattern))
+				}
+			}
 			itemKey, err = t.db.Add(newString, nil, relativeY)
 			if err != nil {
 				log.Fatal(err)
@@ -671,7 +703,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
 			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
 			// before the cursor sets to the end of the line and we're at risk of an index error).
-			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line, t.HiddenMatchPrefix)
 			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
 			t.CurX = Min(newXIdx, t.W-1)                                                           // Prevent going out of range of the page
 		}

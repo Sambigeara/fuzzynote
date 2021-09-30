@@ -288,10 +288,26 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 	return exists
 }
 
+var lineFriendRegex = regexp.MustCompile("@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)")
+
+func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
+	friends := map[string]struct{}{
+		r.email: struct{}{},
+	}
+	if len(line) == 0 {
+		return friends
+	}
+	friendMatches := lineFriendRegex.FindAllStringSubmatch(line, -1)
+	for _, match := range friendMatches {
+		friends[match[1]] = struct{}{}
+	}
+	return friends
+}
+
 //var cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("fzn_cfg:friend:\"[%s]\"", EmailRegex))
 var cfgFriendRegex = regexp.MustCompile("fzn_cfg:friend +\"(.+)\"")
 
-func getFriendsFromLine(line string) map[string]struct{} {
+func getFriendsFromConfigLine(line string) map[string]struct{} {
 	friends := make(map[string]struct{})
 	if len(line) == 0 {
 		return friends
@@ -314,12 +330,12 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		existingLine = item.Line
 	}
 
-	before := getFriendsFromLine(existingLine)
+	before := getFriendsFromConfigLine(existingLine)
 	switch e.EventType {
 	case AddEvent:
 		fallthrough
 	case UpdateEvent:
-		after := getFriendsFromLine(e.Line)
+		after := getFriendsFromConfigLine(e.Line)
 		for name := range before {
 			// If a friend has been removed from the line
 			if _, exists := after[name]; !exists {
@@ -507,6 +523,19 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	// No point merging with an empty partialWal
 	if len(*partialWal) == 0 {
 		return nil
+	}
+
+	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
+	for _, e := range *partialWal {
+		key, _ := e.getKeys()
+		if len(e.Line) > 0 {
+			for f := range r.getFriendsFromLine(e.Line) {
+				if _, isFriend := r.friends[f]; isFriend {
+					wf, _ := r.allWalFiles[f]
+					(*wf).SetProcessedEvent(key)
+				}
+			}
+		}
 	}
 
 	fullMerge := true
@@ -1197,11 +1226,6 @@ func (r *DBListRepo) pull(walFiles []WalFile) (*[]EventLog, error) {
 					continue
 				}
 
-				for _, ev := range *newWfWal {
-					key, _ := ev.getKeys()
-					wf.SetProcessedEvent(key)
-				}
-
 				newMergedWal = *(merge(&newMergedWal, newWfWal))
 			}
 		}
@@ -1337,17 +1361,20 @@ func (r *DBListRepo) getMatchedWal(el *[]EventLog, wf WalFile) *[]EventLog {
 
 	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
 	for _, e := range *el {
-		// TODO wf.uuid currently returns an email
-		if !isWebRemote ||
-			walOwnerEmail == r.email || // user owns the remote
-			isMatch([]rune(fmt.Sprintf("@%s", wf.GetUUID())), e.Line, FullMatchPattern) {
+		var isFriend bool
+		if len(e.Line) > 0 {
+			// Event owner is added to e.Friends by default
+			friends := r.getFriendsFromLine(e.Line)
+			_, isFriend = friends[walOwnerEmail]
+		}
+		if !isWebRemote || isFriend {
 			k, _ := e.getKeys()
 			wf.SetProcessedEvent(k)
 		}
 	}
 
-	// Do a second iteration using the map above, and build a Wal which includes any logs which
-	// fulfilled the match term at some point in it's history.
+	// Only include those events which are/have been shared (this is handled via the event processed
+	// cache elsewhere)
 	filteredWal := []EventLog{}
 	for _, e := range *el {
 		k, _ := e.getKeys()
