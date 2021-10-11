@@ -136,8 +136,8 @@ func (w *Web) pushWebsocket(m websocketMessage) {
 	//}
 }
 
-func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, remoteCursorMoveChan chan cursorMoveEvent) error {
-	_, body, err := w.wsConn.Read(ctx)
+func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog) error {
+	_, body, err := r.web.wsConn.Read(ctx)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 			walChan <- el
 		}
 	case "position":
-		remoteCursorMoveChan <- cursorMoveEvent{
+		r.remoteCursorMoveChan <- cursorMoveEvent{
 			email:        m.Email,
 			listItemKey:  m.Key,
 			unixNanoTime: m.UnixNanoTime,
