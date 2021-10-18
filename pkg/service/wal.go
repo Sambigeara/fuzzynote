@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -336,29 +337,39 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		fallthrough
 	case UpdateEvent:
 		after := getFriendsFromConfigLine(e.Line)
-		for name := range before {
+		for email := range before {
 			// If a friend has been removed from the line
-			if _, exists := after[name]; !exists {
-				friendsToRemove[name] = struct{}{}
+			if _, exists := after[email]; !exists {
+				friendsToRemove[email] = struct{}{}
 			}
 		}
-		for name := range after {
+		for email := range after {
 			// If a new friend has appeared in the line
-			if _, exists := before[name]; !exists {
-				friendsToAdd[name] = struct{}{}
+			if _, exists := before[email]; !exists {
+				friendsToAdd[email] = struct{}{}
 			}
 		}
 	case DeleteEvent:
 		friendsToRemove = before
 	}
 
+	key, _ := e.getKeys()
+
 	// We now iterate over each friend in the two maps and compare to the cached friends on DBListRepo.
 	// If the friend doesn't exist, or the timestamp is more recent than the cached counterpart, we update.
-	for name := range friendsToAdd {
-		// If the friend doesn't exist or is outdated, we add to or update the map
-		if f, exists := r.friends[name]; !exists || e.UnixNanoTime > f.dtLastChange {
+	// We do this on a per-listItem basis to account for duplicate lines.
+	for email := range friendsToAdd {
+		// If the listItem specific friend exists, skip
+		var friendItems map[string]friend
+		var friendExists bool
+		if friendItems, friendExists = r.friends[email]; !friendExists {
+			friendItems = make(map[string]friend)
+			r.friends[email] = friendItems
+		}
+
+		if f, exists := friendItems[key]; !exists || e.UnixNanoTime > f.dtLastChange {
 			r.friendsMapLock.Lock()
-			r.friends[name] = friend{
+			r.friends[email][key] = friend{
 				state:        friendActive,
 				dtLastChange: e.UnixNanoTime,
 			}
@@ -366,27 +377,35 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 			// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 			r.AddWalFile(
 				&WebWalFile{
-					uuid:               name,
+					uuid:               email,
 					processedEventLock: &sync.Mutex{},
 					processedEventMap:  make(map[string]struct{}),
 					web:                r.web,
 				},
 				false,
 			)
-			// TODO add to channel to emit to cloud
 		}
 	}
-	for name := range friendsToRemove {
+	for email := range friendsToRemove {
 		// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 		// Although we ignore the delete if the event timestamp is older than the latest known cache state.
-		if f, exists := r.friends[name]; exists && e.UnixNanoTime > f.dtLastChange {
-			delete(r.friends, name)
-			// TODO move this somewhere better
-			if _, exists := r.allWalFiles[name]; exists {
-				r.DeleteWalFile(name)
+		if friendItems, friendExists := r.friends[email]; friendExists {
+			if f, exists := friendItems[key]; exists && e.UnixNanoTime > f.dtLastChange {
+				r.friendsMapLock.Lock()
+				delete(r.friends[email], key)
+				if len(r.friends[email]) == 0 {
+					delete(r.friends, email)
+					if _, exists := r.allWalFiles[email]; exists {
+						r.DeleteWalFile(email)
+					}
+				}
+				r.friendsMapLock.Unlock()
 			}
-			// TODO add to channel to emit to cloud
 		}
+	}
+
+	if (len(friendsToAdd) > 0 || len(friendsToRemove) > 0) && r.friendsMostRecentChangeDT < e.UnixNanoTime {
+		r.friendsMostRecentChangeDT = e.UnixNanoTime
 	}
 }
 
@@ -908,7 +927,7 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
 		webWalFiles:    make(map[string]*WalFile),
 		allWalFiles:    make(map[string]*WalFile),
 		syncWalFiles:   make(map[string]*WalFile),
-		friends:        make(map[string]friend),
+		friends:        make(map[string]map[string]friend),
 		friendsMapLock: sync.Mutex{},
 	}
 
@@ -1483,7 +1502,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 						err := func() error {
 							//webRefreshMut.RLock()
 							//defer webRefreshMut.RUnlock()
-							err := r.web.consumeWebsocket(ctx, walChan, r.remoteCursorMoveChan)
+							err := r.consumeWebsocket(ctx, walChan)
 							if err != nil {
 								return err
 							}
@@ -1638,6 +1657,33 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 								}()
 							}
 						}
+					}
+
+					// Emit any remote updates if web active and local changes have occurred
+					if r.friendsLastPushDT < r.friendsMostRecentChangeDT {
+						go func() {
+							// Only emit an event if the timestamp is newer than that stored against the local
+							// cache state
+							u, _ := url.Parse(apiURL)
+							u.Path = path.Join(u.Path, "remote")
+
+							emails := []string{}
+							for e := range r.friends {
+								emails = append(emails, e)
+							}
+
+							remote := WebRemote{
+								Emails:       emails,
+								DTLastChange: r.friendsMostRecentChangeDT,
+							}
+
+							if err := r.web.PostRemote(&remote, u); err != nil {
+								fmt.Println(err)
+								os.Exit(0)
+							}
+
+							r.friendsLastPushDT = e.UnixNanoTime
+						}()
 					}
 				}
 				// Add to an ephemeral log

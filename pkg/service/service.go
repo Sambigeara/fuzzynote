@@ -54,14 +54,15 @@ type Client interface {
 //    //GetCollabPositions() map[string][]string
 //}
 
-type friendState int
+type friendState string
 
 const (
-	friendActive friendState = iota
-	friendInactive
+	friendActive   friendState = "active"
+	friendInactive friendState = "inactive"
 )
 
 type friend struct {
+	email        string
 	state        friendState
 	dtLastChange int64
 }
@@ -87,9 +88,11 @@ type DBListRepo struct {
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
-	email          string
-	friends        map[string]friend
-	friendsMapLock sync.Mutex
+	email                     string
+	friends                   map[string]map[string]friend
+	friendsMapLock            sync.Mutex
+	friendsMostRecentChangeDT int64
+	friendsLastPushDT         int64
 
 	// TODO better naming convention
 	LocalWalFile LocalWalFile
@@ -130,7 +133,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 
-		friends:        make(map[string]friend),
+		friends:        make(map[string]map[string]friend),
 		friendsMapLock: sync.Mutex{},
 	}
 
