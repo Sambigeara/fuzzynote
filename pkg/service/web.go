@@ -250,7 +250,7 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 }
 
 func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
-	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
+	presignedURL, err := wf.getPresignedURLForWal(wf.GetUUID(), fileName, "get")
 	if err != nil {
 		//log.Printf("Error retrieving wal %s: %s", fileName, err)
 		return err
@@ -303,7 +303,7 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
 	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
-	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, tempUUID, "put")
+	presignedURL, err := wf.getPresignedURLForWal(wf.GetUUID(), tempUUID, "put")
 	if err != nil || presignedURL == "" {
 		return nil
 	}

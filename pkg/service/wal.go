@@ -1452,6 +1452,32 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	syncTriggerChan := make(chan time.Time, 1)
 	pushTriggerChan := make(chan time.Time, 1)
 
+	// Schedule push to all non-local walFiles
+	// This is required for flushing new files that have been manually dropped into local root, and to cover other off cases.
+	// We block until the web connection is established (or skipped) on initial start, to ensure logs are propagated to all
+	// required remotes.
+	hasRunInitialSync := false
+	triggerInitialSync := func() {
+		if hasRunInitialSync {
+			return
+		}
+		// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
+		// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
+		// heading into edge cases of edge cases so won't worry about it for now
+		localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(localFileNames) > 1 {
+			for _, wf := range r.allWalFiles {
+				if *wf != r.LocalWalFile {
+					go func(wf WalFile) { r.push(r.log, wf, "") }(*wf)
+				}
+			}
+			hasRunInitialSync = true
+		}
+	}
+
 	// We want to trigger a web sync as soon as the web connection has been established
 	scheduleSync := func() {
 		// Attempt to put onto the channel, else pass
@@ -1459,6 +1485,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		case syncTriggerChan <- time.Time{}:
 		default:
 		}
+		triggerInitialSync()
 	}
 	schedulePush := func() {
 		// Unlike schedule above (which can be called from numerous locations), we want to block
@@ -1570,23 +1597,6 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		return err
 	}
 	go func() { walChan <- localEl }()
-
-	// Schedule push to all non-local walFiles
-	// This is required for flushing new files that have been manually dropped into local root
-	// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
-	// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
-	// heading into edge cases of edge cases so won't worry about it for now
-	localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(localFileNames) > 1 {
-		for _, wf := range r.allWalFiles {
-			if *wf != r.LocalWalFile {
-				go func(wf WalFile) { r.push(localEl, wf, "") }(*wf)
-			}
-		}
-	}
 
 	// Main sync event loop
 	go func() {
