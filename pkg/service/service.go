@@ -390,7 +390,17 @@ func (r *DBListRepo) Undo() (string, error) {
 		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
 
-		listItem, err := r.processEventLog(oppositeEvent[uel.eventType], uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
+		// To keep the "append only" nature of the logs consistent and predictable, if an Undo/Redo results in an `Add`,
+		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
+		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
+		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
+		creationTime := uel.listItemCreationTime
+		evType := oppositeEvent[uel.eventType]
+		if evType == AddEvent {
+			creationTime = time.Now().UnixNano()
+		}
+
+		listItem, err := r.processEventLog(evType, creationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx--
 		return listItem.Key(), err
 	}
@@ -402,7 +412,16 @@ func (r *DBListRepo) Redo() (string, error) {
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
 
-		listItem, err := r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
+		// To keep the "append only" nature of the logs consistent and predictable, if an Undo/Redo results in an `Add`,
+		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
+		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
+		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
+		creationTime := uel.listItemCreationTime
+		if uel.eventType == AddEvent {
+			creationTime = time.Now().UnixNano()
+		}
+
+		listItem, err := r.processEventLog(uel.eventType, creationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx++
 		return listItem.Key(), err
 	}
@@ -477,6 +496,12 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 				// otherwise only increment `idx`.
 				if idx >= offset {
 					r.matchListItems = append(r.matchListItems, cur)
+
+					// ListItems stored in the `res` slice are copies, and therefore will not reflect the
+					// matchChild/matchParent setting below. This doesn't reflect normal function as we only
+					// return `res` to the client for displaying lines (any mutations to backend state are done
+					// via index and act on the matchListItems slice which stores the original items by ptr)
+					// TODO centralise this
 					res = append(res, *cur)
 
 					if lastCur != nil {

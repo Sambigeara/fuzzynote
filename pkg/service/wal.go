@@ -428,8 +428,21 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	var err error
 	switch e.EventType {
 	case AddEvent:
-		root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
-		r.listItemTracker[key] = item
+		if item != nil {
+			// 21/11/21: There was a bug caused when a collaborator `Undo` was carried out on a collaborator origin
+			// `Delete`, when the `Delete` was not picked up by the local. This resulted in an `Add` being carried out
+			// with a duplicate ListItem key, which led to some F'd up behaviour in the match set. This catch covers
+			// this case by doing a dumb "if Add on existing item, change to Update". We need to run two updates, as
+			// Note and Line updates are individual operations.
+			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
+			if e.Note != nil {
+				item, err = r.update(e.Line, e.Note, item)
+			}
+			item, err = r.update(e.Line, nil, item)
+		} else {
+			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
+			r.listItemTracker[key] = item
+		}
 	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
 		// - wal1 creates item A
