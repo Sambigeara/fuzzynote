@@ -853,7 +853,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	return true
 }
 
-func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
+func checkListItemPtrs(listItem *ListItem, matchItems []*ListItem) error {
 	if listItem == nil {
 		return nil
 	}
@@ -864,16 +864,33 @@ func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
 
 	i := 0
 	processedItems := make(map[string]struct{})
+	var prev *ListItem
 	for listItem.parent != nil {
-		if !areListItemsEqual(listItem, &matchItems[i], false) {
+		// Ensure current.child points to the previous
+		// TODO check if this is just duplicating a check in areListItemsEqual below
+		if listItem.child != prev {
+			return fmt.Errorf("list integrity error: listItem %s child ptr does not point to the expected item", listItem.Key())
+		}
+
+		//if !areListItemsEqual(listItem, matchItems[i], false) {
+		if listItem != matchItems[i] {
 			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.Key())
 		}
+
 		if _, exists := processedItems[listItem.Key()]; exists {
 			return fmt.Errorf("list integrity error: listItem %s has appeared twice", listItem.Key())
 		}
+
 		processedItems[listItem.Key()] = struct{}{}
+		prev = listItem
 		listItem = listItem.parent
 		i++
+	}
+
+	// Check to see if there are remaining items in the match list
+	// NOTE: `i` will have been incremented one more time beyond the final tested index
+	if i+1 < len(matchItems) {
+		return errors.New("list integrity error: orphaned items in match set")
 	}
 
 	return nil
@@ -930,7 +947,7 @@ func writePlainWalToFile(wal []EventLog) {
 	}
 }
 
-func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
+func checkWalIntegrity(wal *[]EventLog) (*ListItem, []*ListItem, error) {
 	// Generate a test repo and use it to generate a match set, then inspect the health
 	// of said match set.
 	testRepo := DBListRepo{
@@ -949,32 +966,40 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, *[]ListItem, error) {
 		return nil, nil, err
 	}
 
-	// This check traverses from the root node to the last parent and checks the state of the pointer
-	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
-	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
-	// This has since been fixed, but to catch other potential cases, we run this check.
-	testMatchItems, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
+	// 22/11/21: The Match() function usually returns a slice of ListItem copies as the first argument, which is fine for
+	// client operation, as we only reference them for the attached Lines/Notes (and any mutations act on a different
+	// slice of ListItem ptrs).
+	// In order to allow us to check the state of the ListItems more explicitly, we reference the testRepo.matchListItems
+	// which are generated in parallel on Match() calls, as we can then check proper equality between the various items.
+	// This isn't ideal as it's not completely consistent with what's returned to the client, but it's a reasonable check
+	// for now (and I intend on centralising the logic anyway so we don't maintain two versions of state).
+	// TODO, remove this comment when logic is centralised
+	_, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
 	if err != nil {
 		return nil, nil, errors.New("failed to generate match items for list integrity check")
 	}
 
-	if err := checkListItemPtrs(testRepo.Root, testMatchItems); err != nil {
-		return nil, &testMatchItems, err
+	// This check traverses from the root node to the last parent and checks the state of the pointer
+	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
+	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
+	// This has since been fixed, but to catch other potential cases, we run this check.
+	if err := checkListItemPtrs(testRepo.Root, testRepo.matchListItems); err != nil {
+		return nil, testRepo.matchListItems, err
 	}
 
-	return testRepo.Root, &testMatchItems, nil
+	return testRepo.Root, testRepo.matchListItems, nil
 }
 
 // recoverWal is responsible for recovering Wals that are very broken, in a variety of ways.
 // It collects as much metadata about each item as it can, from both the existing broken wal and the returned
 // match set, and then uses it to rebuild a fresh wal, maintaining as much of the original state as possible -
 // specifically with regards to DTs and ordering.
-func recoverWal(wal *[]EventLog, matches *[]ListItem) *[]EventLog {
-	acknowledgedItems := make(map[string]ListItem)
+func recoverWal(wal *[]EventLog, matches []*ListItem) *[]EventLog {
+	acknowledgedItems := make(map[string]*ListItem)
 	listOrder := []string{}
 
 	// Iterate over the match items and add all to the map
-	for _, item := range *matches {
+	for _, item := range matches {
 		key := item.Key()
 		if _, exists := acknowledgedItems[key]; !exists {
 			listOrder = append(listOrder, key)
@@ -994,7 +1019,7 @@ func recoverWal(wal *[]EventLog, matches *[]ListItem) *[]EventLog {
 			fallthrough
 		case UpdateEvent:
 			if !exists {
-				item = ListItem{
+				item = &ListItem{
 					Line:         e.Line,
 					Note:         e.Note,
 					originUUID:   e.UUID,
@@ -1068,7 +1093,7 @@ func compact(wal *[]EventLog) (*[]EventLog, error) {
 	if err != nil {
 		// If we get here, shit's on fire. This function is the equivalent of the fire brigade.
 		wal = recoverWal(wal, matchItemsA)
-		testRootA, matchItemsA, err = checkWalIntegrity(wal)
+		testRootA, _, err = checkWalIntegrity(wal)
 		if err != nil {
 			log.Fatal("wal recovery failed!")
 		}
