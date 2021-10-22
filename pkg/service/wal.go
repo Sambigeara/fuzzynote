@@ -31,6 +31,8 @@ func init() {
 
 const latestWalSchemaID uint16 = 4
 
+var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
+
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
@@ -297,17 +299,22 @@ func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	return friends
 }
 
-//var cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("fzn_cfg:friend:\"[%s]\"", EmailRegex))
-var cfgFriendRegex = regexp.MustCompile("fzn_cfg:friend +\"(.+)\"")
+// TODO account for invisible `{own email prepend} fzn_cfg...` to allow for a preceding "^" in the regex
+var cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("fzn_cfg:friend +(%s) *$", EmailRegex))
 
 func getFriendsFromConfigLine(line string) map[string]struct{} {
+	// this function is currently written to seek out multiple emails in the same line, but the regex is
+	// only written to match a single entry.
+	// TODO consider multi-match case??
 	friends := make(map[string]struct{})
 	if len(line) == 0 {
 		return friends
 	}
 	friendMatches := cfgFriendRegex.FindAllStringSubmatch(line, -1)
 	for _, match := range friendMatches {
-		friends[match[1]] = struct{}{}
+		if len(match) > 1 {
+			friends[match[1]] = struct{}{}
+		}
 	}
 	return friends
 }
