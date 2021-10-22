@@ -3,7 +3,6 @@ package prompt
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/manifoldco/promptui"
@@ -17,60 +16,6 @@ func isEmailValid(e string) error {
 		return errors.New("Invalid email address")
 	}
 	return nil
-}
-
-// TODO rename
-func getRemoteFields(w *service.Web, r service.WebRemote) ([]string, map[string]func(string) error, map[string]func(string) error) {
-	nameKey := fmt.Sprintf("Name: %s", r.Name)
-	modeKey := fmt.Sprintf("Mode: %s", r.Mode)
-	matchKey := fmt.Sprintf("Match: %s", r.Match)
-	isActiveKey := fmt.Sprintf("IsActive: %v", r.IsActive)
-
-	fields := []string{
-		nameKey,
-		modeKey,
-		matchKey,
-		isActiveKey,
-	}
-
-	// TODO make key -> json key mapping more robust
-	updateFuncMap := map[string]func(string) error{
-		nameKey: func(v string) error {
-			r.Name = v
-			return w.UpdateRemote(r)
-		},
-		modeKey: func(v string) error {
-			r.Mode = v
-			return w.UpdateRemote(r)
-		},
-		matchKey: func(v string) error {
-			r.Match = v
-			return w.UpdateRemote(r)
-		},
-		isActiveKey: func(v string) error {
-			r.IsActive = false
-			if v == "true" {
-				r.IsActive = true
-			}
-			return w.UpdateRemote(r)
-		},
-	}
-
-	alwaysValid := func(v string) error { return nil }
-	boolValidationFn := func(v string) error {
-		if v != "true" && v != "false" {
-			return errors.New("")
-		}
-		return nil
-	}
-	validationFuncMap := map[string]func(string) error{
-		nameKey:     alwaysValid,
-		modeKey:     alwaysValid,
-		matchKey:    alwaysValid,
-		isActiveKey: boolValidationFn,
-	}
-
-	return fields, updateFuncMap, validationFuncMap
 }
 
 // Login starts an interacting CLI flow to accept user credentials, and uses them to try and authenticate.
@@ -116,12 +61,6 @@ func Login(root string) {
 	if err != nil {
 		fmt.Print("Login unsuccessful :(\n")
 		os.Exit(0)
-	}
-
-	w := service.NewWeb(wt)
-	err = w.OverrideBaseUUID(service.NewLocalFileWalFile(root))
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	fmt.Print("Login successful!")

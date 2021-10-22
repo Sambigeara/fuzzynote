@@ -93,8 +93,6 @@ type WalFile interface {
 	// TODO these probably don't need to be interface functions
 	SetProcessedEvent(string)
 	IsEventProcessed(string) bool
-
-	GetPushMatchTerm() []rune
 }
 
 type LocalWalFile interface {
@@ -108,7 +106,6 @@ type LocalWalFile interface {
 
 type LocalFileWalFile struct {
 	rootDir            string
-	pushMatchTerm      []rune
 	processedEventLock *sync.Mutex
 	processedEventMap  map[string]struct{}
 }
@@ -116,7 +113,6 @@ type LocalFileWalFile struct {
 func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
 	return &LocalFileWalFile{
 		rootDir:            rootDir,
-		pushMatchTerm:      []rune{},
 		processedEventLock: &sync.Mutex{},
 		processedEventMap:  make(map[string]struct{}),
 	}
@@ -268,10 +264,6 @@ func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, randomUUID string) error {
 	defer f.Close()
 	f.Write(b.Bytes())
 	return nil
-}
-
-func (wf *LocalFileWalFile) GetPushMatchTerm() []rune {
-	return wf.pushMatchTerm
 }
 
 func (wf *LocalFileWalFile) SetProcessedEvent(fileName string) {

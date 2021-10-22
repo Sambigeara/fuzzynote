@@ -29,7 +29,6 @@ type s3WalFile struct {
 	secret                   string
 	bucket                   string
 	prefix                   string
-	pushMatchTerm            []rune
 	processedEventMap        map[string]struct{}
 	processedEventLock       *sync.Mutex
 }
@@ -54,7 +53,6 @@ func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
 		secret:                   cfg.Secret,
 		bucket:                   cfg.Bucket,
 		prefix:                   cfg.Prefix,
-		pushMatchTerm:            []rune(cfg.Match),
 		processedEventMap:        make(map[string]struct{}),
 		processedEventLock:       &sync.Mutex{},
 	}
@@ -179,10 +177,6 @@ func (wf *s3WalFile) Flush(b *bytes.Buffer, randomUUID string) error {
 		return err
 	}
 	return nil
-}
-
-func (wf *s3WalFile) GetPushMatchTerm() []rune {
-	return wf.pushMatchTerm
 }
 
 func (wf *s3WalFile) SetProcessedEvent(fileName string) {

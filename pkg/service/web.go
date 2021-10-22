@@ -33,21 +33,8 @@ type WebWalFile struct {
 	uuid               string
 	web                *Web
 	mode               string
-	pushMatchTerm      []rune
 	processedEventLock *sync.Mutex
 	processedEventMap  map[string]struct{}
-}
-
-func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
-	return &WebWalFile{
-		// TODO rename uuid to email
-		uuid:               cfg.UUID,
-		web:                web,
-		mode:               cfg.Mode,
-		pushMatchTerm:      []rune(cfg.Match),
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]struct{}),
-	}
 }
 
 func (w *Web) establishWebSocketConnection() error {
@@ -322,8 +309,6 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
 	resp.Body.Close()
 	return nil
 }
-
-func (wf *WebWalFile) GetPushMatchTerm() []rune { return wf.pushMatchTerm }
 
 func (wf *WebWalFile) SetProcessedEvent(key string) {
 	wf.processedEventLock.Lock()

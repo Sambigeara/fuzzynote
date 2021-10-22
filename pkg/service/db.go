@@ -132,34 +132,6 @@ func (r *DBListRepo) registerWeb() error {
 		return err
 	}
 
-	// Retrieve remotes from API
-	//remotes, err := r.web.GetRemotes("", nil)
-	//if err != nil {
-	//    return errors.New("Error when trying to retrieve remotes config from API")
-	//}
-
-	//// At the moment remotes can be legacy number UUIDs, or now (more recently) email addresses
-	//// Pull all down, and skip over any non email address remotes
-	//// TODO remove!
-	//for _, remote := range remotes {
-	//    // Check if UUID matches an email pattern
-	//    if EmailRegex.MatchString(remote.UUID) {
-	//        hasFullAccess := false
-	//        if remote.UUID == r.email {
-	//            hasFullAccess = true
-	//        }
-	//        r.AddWalFile(
-	//            &WebWalFile{
-	//                uuid:               remote.UUID,
-	//                processedEventLock: &sync.Mutex{},
-	//                processedEventMap:  make(map[string]struct{}),
-	//                web:                r.web,
-	//            },
-	//            hasFullAccess,
-	//        )
-	//    }
-	//}
-
 	r.DeleteWalFile(string(r.email))
 	r.AddWalFile(
 		&WebWalFile{
