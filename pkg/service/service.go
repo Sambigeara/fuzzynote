@@ -54,19 +54,6 @@ type Client interface {
 //    //GetCollabPositions() map[string][]string
 //}
 
-type friendState string
-
-const (
-	friendActive   friendState = "active"
-	friendInactive friendState = "inactive"
-)
-
-type friend struct {
-	email        string
-	state        friendState
-	dtLastChange int64
-}
-
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	Root           *ListItem
@@ -89,7 +76,7 @@ type DBListRepo struct {
 	previousListItemKey  string
 
 	email                     string
-	friends                   map[string]map[string]friend
+	friends                   map[string]map[string]int64
 	friendsMapLock            sync.Mutex
 	friendsMostRecentChangeDT int64
 	friendsLastPushDT         int64
@@ -133,7 +120,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 
-		friends:        make(map[string]map[string]friend),
+		friends:        make(map[string]map[string]int64),
 		friendsMapLock: sync.Mutex{},
 	}
 

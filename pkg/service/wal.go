@@ -352,19 +352,16 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	// We do this on a per-listItem basis to account for duplicate lines.
 	for email := range friendsToAdd {
 		// If the listItem specific friend exists, skip
-		var friendItems map[string]friend
+		var friendItems map[string]int64
 		var friendExists bool
 		if friendItems, friendExists = r.friends[email]; !friendExists {
-			friendItems = make(map[string]friend)
+			friendItems = make(map[string]int64)
 			r.friends[email] = friendItems
 		}
 
-		if f, exists := friendItems[key]; !exists || e.UnixNanoTime > f.dtLastChange {
+		if dtLastChange, exists := friendItems[key]; !exists || e.UnixNanoTime > dtLastChange {
 			r.friendsMapLock.Lock()
-			r.friends[email][key] = friend{
-				state:        friendActive,
-				dtLastChange: e.UnixNanoTime,
-			}
+			r.friends[email][key] = e.UnixNanoTime
 			r.friendsMapLock.Unlock()
 			// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 			r.AddWalFile(
@@ -382,7 +379,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 		// Although we ignore the delete if the event timestamp is older than the latest known cache state.
 		if friendItems, friendExists := r.friends[email]; friendExists {
-			if f, exists := friendItems[key]; exists && e.UnixNanoTime > f.dtLastChange {
+			if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
 				r.friendsMapLock.Lock()
 				delete(r.friends[email], key)
 				if len(r.friends[email]) == 0 {
@@ -949,7 +946,7 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, []*ListItem, error) {
 		webWalFiles:    make(map[string]*WalFile),
 		allWalFiles:    make(map[string]*WalFile),
 		syncWalFiles:   make(map[string]*WalFile),
-		friends:        make(map[string]map[string]friend),
+		friends:        make(map[string]map[string]int64),
 		friendsMapLock: sync.Mutex{},
 	}
 
