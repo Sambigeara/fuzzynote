@@ -1155,6 +1155,23 @@ func compact(wal *[]EventLog) (*[]EventLog, error) {
 	}
 
 	if !listsAreEquivalent(testRootA, testRootB) {
+		//sliceA := []ListItem{}
+		//node := testRootA
+		//for node != nil {
+		//    sliceA = append(sliceA, *node)
+		//    node = node.parent
+		//}
+		//generatePlainTextFile(sliceA)
+
+		//sliceB := []ListItem{}
+		//node = testRootB
+		//for node != nil {
+		//    sliceB = append(sliceB, *node)
+		//    node = node.parent
+		//}
+		//generatePlainTextFile(sliceB)
+
+		//return wal, nil
 		log.Fatal("`compact` generated inconsistent results and things blew up!")
 	}
 	return &compactedWal, nil
