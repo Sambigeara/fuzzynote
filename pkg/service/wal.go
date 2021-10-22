@@ -1483,6 +1483,34 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 	}
 }
 
+func (r *DBListRepo) emitRemoteUpdate() {
+	if r.web != nil {
+		if r.friendsLastPushDT == 0 || r.friendsLastPushDT < r.friendsMostRecentChangeDT {
+			go func() {
+				u, _ := url.Parse(apiURL)
+				u.Path = path.Join(u.Path, "remote")
+
+				emails := []string{}
+				for e := range r.friends {
+					emails = append(emails, e)
+				}
+
+				remote := WebRemote{
+					Emails:       emails,
+					DTLastChange: r.friendsMostRecentChangeDT,
+				}
+
+				if err := r.web.PostRemote(&remote, u); err != nil {
+					fmt.Println(err)
+					os.Exit(0)
+				}
+
+				r.friendsLastPushDT = r.friendsMostRecentChangeDT
+			}()
+		}
+	}
+}
+
 func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
@@ -1514,6 +1542,9 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			}
 			hasRunInitialSync = true
 		}
+
+		// Do an initial remote update to ensure any offline changes are immediately synced to the cloud
+		r.emitRemoteUpdate()
 	}
 
 	// We want to trigger a web sync as soon as the web connection has been established
@@ -1708,31 +1739,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 					}
 
 					// Emit any remote updates if web active and local changes have occurred
-					if r.friendsLastPushDT < r.friendsMostRecentChangeDT {
-						go func() {
-							// Only emit an event if the timestamp is newer than that stored against the local
-							// cache state
-							u, _ := url.Parse(apiURL)
-							u.Path = path.Join(u.Path, "remote")
-
-							emails := []string{}
-							for e := range r.friends {
-								emails = append(emails, e)
-							}
-
-							remote := WebRemote{
-								Emails:       emails,
-								DTLastChange: r.friendsMostRecentChangeDT,
-							}
-
-							if err := r.web.PostRemote(&remote, u); err != nil {
-								fmt.Println(err)
-								os.Exit(0)
-							}
-
-							r.friendsLastPushDT = e.UnixNanoTime
-						}()
-					}
+					r.emitRemoteUpdate()
 				}
 				// Add to an ephemeral log
 				el = append(el, e)
