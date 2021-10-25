@@ -144,12 +144,12 @@ func (r *DBListRepo) registerWeb() error {
 }
 
 func (r *DBListRepo) AddWalFile(wf WalFile, hasFullAccess bool) {
-	r.allWalFiles[wf.GetUUID()] = &wf
+	r.allWalFiles[wf.GetUUID()] = wf
 	if hasFullAccess {
-		r.syncWalFiles[wf.GetUUID()] = &wf
+		r.syncWalFiles[wf.GetUUID()] = wf
 	}
 	if _, ok := wf.(*WebWalFile); ok {
-		r.webWalFiles[wf.GetUUID()] = &wf
+		r.webWalFiles[wf.GetUUID()] = wf
 	}
 }
 

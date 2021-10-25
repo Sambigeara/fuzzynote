@@ -560,7 +560,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 			for f := range r.getFriendsFromLine(e.Line) {
 				if _, isFriend := r.friends[f]; isFriend {
 					wf, _ := r.allWalFiles[f]
-					(*wf).SetProcessedEvent(key)
+					wf.SetProcessedEvent(key)
 				}
 			}
 		}
@@ -950,9 +950,9 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, []*ListItem, error) {
 		log:             &[]EventLog{},
 		listItemTracker: make(map[string]*ListItem),
 
-		webWalFiles:    make(map[string]*WalFile),
-		allWalFiles:    make(map[string]*WalFile),
-		syncWalFiles:   make(map[string]*WalFile),
+		webWalFiles:    make(map[string]WalFile),
+		allWalFiles:    make(map[string]WalFile),
+		syncWalFiles:   make(map[string]WalFile),
 		friends:        make(map[string]map[string]int64),
 		friendsMapLock: sync.Mutex{},
 	}
@@ -1488,9 +1488,9 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 		for _, wf := range r.allWalFiles {
 			if sync {
 				// TODO Use waitgroups
-				r.push(&el, *wf, randomUUID)
+				r.push(&el, wf, randomUUID)
 			} else {
-				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(*wf)
+				go func(wf WalFile) { r.push(&el, wf, randomUUID) }(wf)
 			}
 		}
 	}
@@ -1549,8 +1549,8 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 		}
 		if len(localFileNames) > 1 {
 			for _, wf := range r.allWalFiles {
-				if *wf != r.LocalWalFile {
-					go func(wf WalFile) { r.push(r.log, wf, "") }(*wf)
+				if wf != r.LocalWalFile {
+					go func(wf WalFile) { r.push(r.log, wf, "") }(wf)
 				}
 			}
 			hasRunInitialSync = true
@@ -1635,11 +1635,11 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				e := <-r.localCursorMoveChan
 				if r.web.wsConn != nil {
 					for _, wf := range r.webWalFiles {
-						if (*wf).GetUUID() != "" {
+						if wf.GetUUID() != "" {
 							func() {
 								m := websocketMessage{
 									Action:       "position",
-									UUID:         (*wf).GetUUID(),
+									UUID:         wf.GetUUID(),
 									Key:          e.listItemKey,
 									UnixNanoTime: e.unixNanoTime,
 								}
@@ -1690,7 +1690,7 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 			case <-syncTriggerChan:
 				syncWalFiles := []WalFile{}
 				for _, wf := range r.syncWalFiles {
-					syncWalFiles = append(syncWalFiles, *wf)
+					syncWalFiles = append(syncWalFiles, wf)
 				}
 				if i < 3 {
 					if el, err = r.pull(syncWalFiles); err != nil {
@@ -1731,15 +1731,15 @@ func (r *DBListRepo) startSync(walChan chan *[]EventLog) error {
 				if r.web != nil {
 					for _, wf := range r.webWalFiles {
 						// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-						if (*wf).GetUUID() != "" {
-							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, *wf)
+						if wf.GetUUID() != "" {
+							matchedEventLog := r.getMatchedWal(&[]EventLog{e}, wf)
 							if len(*matchedEventLog) > 0 {
 								// There are only single events, so get the zero index
 								b := buildByteWal(&[]EventLog{(*matchedEventLog)[0]})
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 								m := websocketMessage{
 									Action: "wal",
-									UUID:   (*wf).GetUUID(),
+									UUID:   wf.GetUUID(),
 									Wal:    b64Wal,
 								}
 								func() {

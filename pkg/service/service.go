@@ -83,9 +83,9 @@ type DBListRepo struct {
 
 	// TODO better naming convention
 	LocalWalFile LocalWalFile
-	webWalFiles  map[string]*WalFile
-	allWalFiles  map[string]*WalFile
-	syncWalFiles map[string]*WalFile
+	webWalFiles  map[string]WalFile
+	allWalFiles  map[string]WalFile
+	syncWalFiles map[string]WalFile
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -113,9 +113,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		collabMapLock: &sync.Mutex{},
 
-		webWalFiles:  make(map[string]*WalFile),
-		allWalFiles:  make(map[string]*WalFile),
-		syncWalFiles: make(map[string]*WalFile),
+		webWalFiles:  make(map[string]WalFile),
+		allWalFiles:  make(map[string]WalFile),
+		syncWalFiles: make(map[string]WalFile),
 
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
