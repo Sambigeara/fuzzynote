@@ -361,41 +361,45 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		// If the listItem specific friend exists, skip
 		var friendItems map[string]int64
 		var friendExists bool
-		if friendItems, friendExists = r.friends[email]; !friendExists {
-			friendItems = make(map[string]int64)
-			r.friends[email] = friendItems
-		}
-
-		if dtLastChange, exists := friendItems[key]; !exists || e.UnixNanoTime > dtLastChange {
+		func() {
 			r.friendsMapLock.Lock()
-			r.friends[email][key] = e.UnixNanoTime
-			r.friendsMapLock.Unlock()
-			// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
-			r.AddWalFile(
-				&WebWalFile{
-					uuid:               email,
-					processedEventLock: &sync.Mutex{},
-					processedEventMap:  make(map[string]struct{}),
-					web:                r.web,
-				},
-				false,
-			)
-		}
+			defer r.friendsMapLock.Unlock()
+			if friendItems, friendExists = r.friends[email]; !friendExists {
+				friendItems = make(map[string]int64)
+				r.friends[email] = friendItems
+			}
+
+			if dtLastChange, exists := friendItems[key]; !exists || e.UnixNanoTime > dtLastChange {
+				r.friends[email][key] = e.UnixNanoTime
+				// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
+				r.AddWalFile(
+					&WebWalFile{
+						uuid:               email,
+						processedEventLock: &sync.Mutex{},
+						processedEventMap:  make(map[string]struct{}),
+						web:                r.web,
+					},
+					false,
+				)
+			}
+		}()
 	}
 	for email := range friendsToRemove {
 		// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 		// Although we ignore the delete if the event timestamp is older than the latest known cache state.
 		if friendItems, friendExists := r.friends[email]; friendExists {
 			if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
-				r.friendsMapLock.Lock()
-				delete(r.friends[email], key)
-				if len(r.friends[email]) == 0 {
-					delete(r.friends, email)
-					if _, exists := r.allWalFiles[email]; exists {
-						r.DeleteWalFile(email)
+				func() {
+					r.friendsMapLock.Lock()
+					defer r.friendsMapLock.Unlock()
+					delete(r.friends[email], key)
+					if len(r.friends[email]) == 0 {
+						delete(r.friends, email)
+						if _, exists := r.allWalFiles[email]; exists {
+							r.DeleteWalFile(email)
+						}
 					}
-				}
-				r.friendsMapLock.Unlock()
+				}()
 			}
 		}
 	}
