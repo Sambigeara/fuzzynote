@@ -82,10 +82,13 @@ type DBListRepo struct {
 	friendsLastPushDT         int64
 
 	// TODO better naming convention
-	LocalWalFile LocalWalFile
-	webWalFiles  map[string]WalFile
-	allWalFiles  map[string]WalFile
-	syncWalFiles map[string]WalFile
+	LocalWalFile   LocalWalFile
+	webWalFiles    map[string]WalFile
+	allWalFiles    map[string]WalFile
+	syncWalFiles   map[string]WalFile
+	webWalFileMut  *sync.RWMutex
+	allWalFileMut  *sync.RWMutex
+	syncWalFileMut *sync.RWMutex
 
 	processedPartialWals     map[string]struct{}
 	processedPartialWalsLock *sync.Mutex
@@ -113,9 +116,12 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		collabMapLock: &sync.Mutex{},
 
-		webWalFiles:  make(map[string]WalFile),
-		allWalFiles:  make(map[string]WalFile),
-		syncWalFiles: make(map[string]WalFile),
+		webWalFiles:    make(map[string]WalFile),
+		allWalFiles:    make(map[string]WalFile),
+		syncWalFiles:   make(map[string]WalFile),
+		webWalFileMut:  &sync.RWMutex{},
+		allWalFileMut:  &sync.RWMutex{},
+		syncWalFileMut: &sync.RWMutex{},
 
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},

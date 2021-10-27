@@ -144,16 +144,30 @@ func (r *DBListRepo) registerWeb() error {
 }
 
 func (r *DBListRepo) AddWalFile(wf WalFile, hasFullAccess bool) {
+	r.allWalFileMut.Lock()
 	r.allWalFiles[wf.GetUUID()] = wf
+	r.allWalFileMut.Unlock()
+
 	if hasFullAccess {
+		r.syncWalFileMut.Lock()
 		r.syncWalFiles[wf.GetUUID()] = wf
+		r.syncWalFileMut.Unlock()
 	}
+
 	if _, ok := wf.(*WebWalFile); ok {
+		r.webWalFileMut.Lock()
 		r.webWalFiles[wf.GetUUID()] = wf
+		r.webWalFileMut.Unlock()
 	}
 }
 
 func (r *DBListRepo) DeleteWalFile(name string) {
+	r.allWalFileMut.Lock()
+	r.syncWalFileMut.Lock()
+	r.webWalFileMut.Lock()
+	defer r.allWalFileMut.Unlock()
+	defer r.syncWalFileMut.Unlock()
+	defer r.webWalFileMut.Unlock()
 	delete(r.allWalFiles, name)
 	delete(r.syncWalFiles, name)
 	delete(r.webWalFiles, name)
