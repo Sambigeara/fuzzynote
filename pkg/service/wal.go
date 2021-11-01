@@ -534,7 +534,11 @@ func (r *DBListRepo) del(root *ListItem, item *ListItem) (*ListItem, error) {
 func (r *DBListRepo) move(root *ListItem, item *ListItem, childItem *ListItem) (*ListItem, *ListItem, error) {
 	var err error
 	root, err = r.del(root, item)
+	isHidden := item.IsHidden
 	root, item, err = r.add(root, item.creationTime, item.Line, item.Note, childItem, item.originUUID)
+	if isHidden {
+		r.setVisibility(item, false)
+	}
 	return root, item, err
 }
 
