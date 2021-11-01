@@ -77,7 +77,6 @@ type DBListRepo struct {
 
 	email                     string
 	friends                   map[string]map[string]int64
-	friendsMapLock            sync.Mutex
 	friendsMostRecentChangeDT int64
 	friendsLastPushDT         int64
 
@@ -126,8 +125,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		processedPartialWals:     make(map[string]struct{}),
 		processedPartialWalsLock: &sync.Mutex{},
 
-		friends:        make(map[string]map[string]int64),
-		friendsMapLock: sync.Mutex{},
+		friends: make(map[string]map[string]int64),
 	}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
