@@ -357,13 +357,15 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	// We now iterate over each friend in the two maps and compare to the cached friends on DBListRepo.
 	// If the friend doesn't exist, or the timestamp is more recent than the cached counterpart, we update.
 	// We do this on a per-listItem basis to account for duplicate lines.
-	for email := range friendsToAdd {
-		// If the listItem specific friend exists, skip
-		var friendItems map[string]int64
-		var friendExists bool
-		func() {
-			r.friendsMapLock.Lock()
-			defer r.friendsMapLock.Unlock()
+	func() {
+		// We need both additions and deletions to be handled in an atomic fully blocking op, so the update events
+		// aren't emitted with pending deletions still present
+		r.friendsUpdateLock.Lock()
+		defer r.friendsUpdateLock.Unlock()
+		for email := range friendsToAdd {
+			// If the listItem specific friend exists, skip
+			var friendItems map[string]int64
+			var friendExists bool
 			if friendItems, friendExists = r.friends[email]; !friendExists {
 				friendItems = make(map[string]int64)
 				r.friends[email] = friendItems
@@ -382,29 +384,24 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 					false,
 				)
 			}
-		}()
-	}
-	for email := range friendsToRemove {
-		// We only delete and emit the cloud event if the friend exists (which it always should tbf)
-		// Although we ignore the delete if the event timestamp is older than the latest known cache state.
-		if friendItems, friendExists := r.friends[email]; friendExists {
-			if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
-				func() {
-					r.friendsMapLock.Lock()
-					defer r.friendsMapLock.Unlock()
+		}
+		for email := range friendsToRemove {
+			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
+			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
+			if friendItems, friendExists := r.friends[email]; friendExists {
+				if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
 					delete(r.friends[email], key)
 					if len(r.friends[email]) == 0 {
 						delete(r.friends, email)
 						r.DeleteWalFile(email)
 					}
-				}()
+				}
 			}
 		}
-	}
-
-	if (len(friendsToAdd) > 0 || len(friendsToRemove) > 0) && r.friendsMostRecentChangeDT < e.UnixNanoTime {
-		r.friendsMostRecentChangeDT = e.UnixNanoTime
-	}
+		if (len(friendsToAdd) > 0 || len(friendsToRemove) > 0) && r.friendsMostRecentChangeDT < e.UnixNanoTime {
+			r.friendsMostRecentChangeDT = e.UnixNanoTime
+		}
+	}()
 }
 
 func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
@@ -563,6 +560,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 	for _, e := range *partialWal {
 		key, _ := e.getKeys()
 		if len(e.Line) > 0 {
+			r.friendsUpdateLock.RLock()
 			for f := range r.getFriendsFromLine(e.Line) {
 				if _, isFriend := r.friends[f]; isFriend {
 					r.allWalFileMut.RLock()
@@ -571,6 +569,7 @@ func (r *DBListRepo) Replay(partialWal *[]EventLog) error {
 					wf.SetProcessedEvent(key)
 				}
 			}
+			r.friendsUpdateLock.RUnlock()
 		}
 	}
 
@@ -965,8 +964,8 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, []*ListItem, error) {
 		allWalFileMut:  &sync.RWMutex{},
 		syncWalFileMut: &sync.RWMutex{},
 
-		friends:        make(map[string]map[string]int64),
-		friendsMapLock: sync.Mutex{},
+		friends:           make(map[string]map[string]int64),
+		friendsUpdateLock: &sync.RWMutex{},
 	}
 
 	// Use the Replay function to generate the linked lists
@@ -1512,28 +1511,31 @@ func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
 
 func (r *DBListRepo) emitRemoteUpdate() {
 	if r.web != nil {
+		// We need to wrap the friendsMostRecentChangeDT comparison check, as the friend map update
+		// and subsequent friendsMostRecentChangeDT update needs to be an atomic operation
+		r.friendsUpdateLock.RLock()
+		defer r.friendsUpdateLock.RUnlock()
 		if r.friendsLastPushDT == 0 || r.friendsLastPushDT < r.friendsMostRecentChangeDT {
+			u, _ := url.Parse(apiURL)
+			u.Path = path.Join(u.Path, "remote")
+
+			emails := []string{}
+			for e := range r.friends {
+				emails = append(emails, e)
+			}
+
+			remote := WebRemote{
+				Emails:       emails,
+				DTLastChange: r.friendsMostRecentChangeDT,
+			}
+
 			go func() {
-				u, _ := url.Parse(apiURL)
-				u.Path = path.Join(u.Path, "remote")
-
-				emails := []string{}
-				for e := range r.friends {
-					emails = append(emails, e)
-				}
-
-				remote := WebRemote{
-					Emails:       emails,
-					DTLastChange: r.friendsMostRecentChangeDT,
-				}
-
 				if err := r.web.PostRemote(&remote, u); err != nil {
 					fmt.Println(err)
 					os.Exit(0)
 				}
-
-				r.friendsLastPushDT = r.friendsMostRecentChangeDT
 			}()
+			r.friendsLastPushDT = r.friendsMostRecentChangeDT
 		}
 	}
 }
