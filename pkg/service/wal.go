@@ -362,6 +362,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		var friendItems map[string]int64
 		var friendExists bool
 		func() {
+			r.friendsMapLock.Lock()
+			defer r.friendsMapLock.Unlock()
 			if friendItems, friendExists = r.friends[email]; !friendExists {
 				friendItems = make(map[string]int64)
 				r.friends[email] = friendItems
@@ -388,6 +390,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		if friendItems, friendExists := r.friends[email]; friendExists {
 			if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
 				func() {
+					r.friendsMapLock.Lock()
+					defer r.friendsMapLock.Unlock()
 					delete(r.friends[email], key)
 					if len(r.friends[email]) == 0 {
 						delete(r.friends, email)
@@ -961,7 +965,8 @@ func checkWalIntegrity(wal *[]EventLog) (*ListItem, []*ListItem, error) {
 		allWalFileMut:  &sync.RWMutex{},
 		syncWalFileMut: &sync.RWMutex{},
 
-		friends: make(map[string]map[string]int64),
+		friends:        make(map[string]map[string]int64),
+		friendsMapLock: sync.Mutex{},
 	}
 
 	// Use the Replay function to generate the linked lists
