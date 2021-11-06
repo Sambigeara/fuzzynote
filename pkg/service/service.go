@@ -387,13 +387,15 @@ func (r *DBListRepo) Undo() (string, error) {
 		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
 		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
 		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
-		creationTime := uel.listItemCreationTime
+		// We need to update the corresponding event in the log too to ensure that the listItemTracker is kept consistent
+		// (given that it uses the `uuid:creationTime` key)
 		evType := oppositeEvent[uel.eventType]
 		if evType == AddEvent {
-			creationTime = time.Now().UnixNano()
+			uel.listItemCreationTime = time.Now().UnixNano()
+			r.eventLogger.log[r.eventLogger.curIdx] = uel
 		}
 
-		listItem, err := r.processEventLog(evType, creationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.processEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx--
 		return listItem.Key(), err
 	}
@@ -409,12 +411,14 @@ func (r *DBListRepo) Redo() (string, error) {
 		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
 		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
 		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
-		creationTime := uel.listItemCreationTime
+		// We need to update the corresponding event in the log too to ensure that the listItemTracker is kept consistent
+		// (given that it uses the `uuid:creationTime` key)
 		if uel.eventType == AddEvent {
-			creationTime = time.Now().UnixNano()
+			uel.listItemCreationTime = time.Now().UnixNano()
+			r.eventLogger.log[r.eventLogger.curIdx+1] = uel
 		}
 
-		listItem, err := r.processEventLog(uel.eventType, creationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx++
 		return listItem.Key(), err
 	}
