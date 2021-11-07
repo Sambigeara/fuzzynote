@@ -299,62 +299,47 @@ func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	return friends
 }
 
-// TODO account for invisible `{own email prepend} fzn_cfg...` to allow for a preceding "^" in the regex
-var cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("fzn_cfg:friend +(%s) *$", EmailRegex))
-
-func getFriendsFromConfigLine(line string) map[string]struct{} {
-	// this function is currently written to seek out multiple emails in the same line, but the regex is
-	// only written to match a single entry.
-	// TODO consider multi-match case??
-	friends := make(map[string]struct{})
+func (r *DBListRepo) getFriendFromConfigLine(line string) string {
 	if len(line) == 0 {
-		return friends
+		return ""
 	}
-	friendMatches := cfgFriendRegex.FindAllStringSubmatch(line, -1)
-	for _, match := range friendMatches {
-		if len(match) > 1 {
-			friends[match[1]] = struct{}{}
-		}
+	match := r.cfgFriendRegex.FindStringSubmatch(line)
+	// First submatch is the email regex
+	if len(match) > 1 {
+		return match[1]
 	}
-	return friends
+	return ""
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	// This method is responsible for detecting changes to the "friends" configuration in order to update
 	// local state, and to emit events to the cloud API.
-	friendsToAdd := make(map[string]struct{})
-	friendsToRemove := make(map[string]struct{})
+	friendToAdd := ""
+	friendToRemove := ""
 
 	var existingLine string
 	if item != nil {
 		existingLine = item.Line
 	}
 
-	before := getFriendsFromConfigLine(existingLine)
+	before := r.getFriendFromConfigLine(existingLine)
 	switch e.EventType {
 	case AddEvent:
 		fallthrough
 	case UpdateEvent:
-		after := getFriendsFromConfigLine(e.Line)
-		for email := range before {
-			// If a friend has been removed from the line
-			if _, exists := after[email]; !exists {
-				friendsToRemove[email] = struct{}{}
-			}
-		}
-		for email := range after {
-			// If a new friend has appeared in the line
-			if _, exists := before[email]; !exists {
-				friendsToAdd[email] = struct{}{}
-			}
+		after := r.getFriendFromConfigLine(e.Line)
+		// If before != after, we know that we need to remove the previous entry, and add the new one.
+		if before != after {
+			friendToRemove = before
+			friendToAdd = after
 		}
 	case DeleteEvent:
-		friendsToRemove = before
+		friendToRemove = before
 	}
 
 	key, _ := e.getKeys()
 
-	// We now iterate over each friend in the two maps and compare to the cached friends on DBListRepo.
+	// We now iterate over each friend in the two slices and compare to the cached friends on DBListRepo.
 	// If the friend doesn't exist, or the timestamp is more recent than the cached counterpart, we update.
 	// We do this on a per-listItem basis to account for duplicate lines.
 	func() {
@@ -362,21 +347,21 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		// aren't emitted with pending deletions still present
 		r.friendsUpdateLock.Lock()
 		defer r.friendsUpdateLock.Unlock()
-		for email := range friendsToAdd {
+		if friendToAdd != "" {
 			// If the listItem specific friend exists, skip
 			var friendItems map[string]int64
 			var friendExists bool
-			if friendItems, friendExists = r.friends[email]; !friendExists {
+			if friendItems, friendExists = r.friends[friendToAdd]; !friendExists {
 				friendItems = make(map[string]int64)
-				r.friends[email] = friendItems
+				r.friends[friendToAdd] = friendItems
 			}
 
 			if dtLastChange, exists := friendItems[key]; !exists || e.UnixNanoTime > dtLastChange {
-				r.friends[email][key] = e.UnixNanoTime
+				r.friends[friendToAdd][key] = e.UnixNanoTime
 				// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 				r.AddWalFile(
 					&WebWalFile{
-						uuid:               email,
+						uuid:               friendToAdd,
 						processedEventLock: &sync.Mutex{},
 						processedEventMap:  make(map[string]struct{}),
 						web:                r.web,
@@ -385,20 +370,21 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				)
 			}
 		}
-		for email := range friendsToRemove {
+		//for email := range friendsToRemove {
+		if friendToRemove != "" {
 			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
-			if friendItems, friendExists := r.friends[email]; friendExists {
+			if friendItems, friendExists := r.friends[friendToRemove]; friendExists {
 				if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
-					delete(r.friends[email], key)
-					if len(r.friends[email]) == 0 {
-						delete(r.friends, email)
-						r.DeleteWalFile(email)
+					delete(r.friends[friendToRemove], key)
+					if len(r.friends[friendToRemove]) == 0 {
+						delete(r.friends, friendToRemove)
+						r.DeleteWalFile(friendToRemove)
 					}
 				}
 			}
 		}
-		if (len(friendsToAdd) > 0 || len(friendsToRemove) > 0) && r.friendsMostRecentChangeDT < e.UnixNanoTime {
+		if (friendToAdd != "" || friendToRemove != "") && r.friendsMostRecentChangeDT < e.UnixNanoTime {
 			r.friendsMostRecentChangeDT = e.UnixNanoTime
 		}
 	}()
@@ -418,7 +404,9 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 	}
 
 	// TODO actually think about where this should go
-	r.generateFriendChangeEvents(e, item)
+	if r.web != nil {
+		r.generateFriendChangeEvents(e, item)
+	}
 
 	var err error
 	switch e.EventType {

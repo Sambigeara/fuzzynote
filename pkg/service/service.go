@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -76,6 +77,7 @@ type DBListRepo struct {
 	previousListItemKey  string
 
 	email                     string
+	cfgFriendRegex            *regexp.Regexp
 	friends                   map[string]map[string]int64
 	friendsUpdateLock         *sync.RWMutex
 	friendsMostRecentChangeDT int64
@@ -143,6 +145,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		web.uuid = listRepo.email // TODO does web need to store uuid??
 
 		listRepo.email = webTokenStore.Email()
+		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^@%s fzn_cfg:friend +(%s) *$", listRepo.email, EmailRegex))
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
