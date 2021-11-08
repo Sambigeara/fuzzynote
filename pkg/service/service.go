@@ -63,7 +63,7 @@ type DBListRepo struct {
 
 	// Wal stuff
 	uuid              uuid
-	log               *[]EventLog // log represents a fresh set of events (unique from the historical log below)
+	log               []EventLog // log represents a fresh set of events (unique from the historical log below)
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
 	eventsChan        chan EventLog
@@ -109,7 +109,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 		// Wal stuff
 		uuid:              uuid(baseUUID),
-		log:               &[]EventLog{},
+		log:               []EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
 		LocalWalFile:      localWalFile,
@@ -212,7 +212,7 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 	}
 
 	r.eventsChan <- elCopy
-	*r.log = append(*r.log, el)
+	r.log = append(r.log, el)
 	var err error
 	var item *ListItem
 	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)

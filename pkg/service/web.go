@@ -123,7 +123,7 @@ func (w *Web) pushWebsocket(m websocketMessage) {
 	//}
 }
 
-func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog) error {
+func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan []EventLog) error {
 	_, body, err := r.web.wsConn.Read(ctx)
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan *[]Event
 
 		buf := bytes.NewBuffer([]byte(strWal))
 		el, err := buildFromFile(buf)
-		if err == nil && len(*el) > 0 {
+		if err == nil && len(el) > 0 {
 			walChan <- el
 		}
 	case "position":

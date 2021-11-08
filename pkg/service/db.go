@@ -25,7 +25,7 @@ func (r *DBListRepo) Start(client Client) error {
 	//inputEvtsChan := make(chan tcell.Event)
 	inputEvtsChan := make(chan interface{})
 
-	walChan := make(chan *[]EventLog)
+	walChan := make(chan []EventLog)
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
