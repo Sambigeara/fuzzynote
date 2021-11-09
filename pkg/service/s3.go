@@ -59,9 +59,7 @@ func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
 }
 
 func (wf *s3WalFile) GetUUID() string {
-	// TODO this is a stub function for now, refactor out
-	// knowledge of UUID is only relevant for WebWalFiles
-	return ""
+	return fmt.Sprintf("%s:%s", wf.bucket, wf.GetRoot())
 }
 
 func (wf *s3WalFile) GetRoot() string {

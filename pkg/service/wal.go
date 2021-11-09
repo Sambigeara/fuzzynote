@@ -217,9 +217,7 @@ func (wf *LocalFileWalFile) Purge() {
 }
 
 func (wf *LocalFileWalFile) GetUUID() string {
-	// TODO this is a stub function for now, refactor out
-	// knowledge of UUID is only relevant for WebWalFiles
-	return ""
+	return "local"
 }
 
 func (wf *LocalFileWalFile) GetRoot() string {
@@ -1513,11 +1511,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog) error {
 			wg.Add(1)
 			go func(wf WalFile) {
 				defer wg.Done()
-				if err := r.push(el, wf, randomUUID); err != nil {
-					errChan <- errors.New("Push failed")
-				} else {
-					errChan <- nil
-				}
+				errChan <- r.push(el, wf, randomUUID)
 			}(wf)
 		}
 		wg.Wait()
