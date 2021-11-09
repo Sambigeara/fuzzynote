@@ -33,12 +33,9 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	pullIntervalSeconds    = 5
-	pushIntervalSeconds    = 5
-	gatherIntervalSeconds  = 60 // gather every minute
-	firstGatherSeconds     = 10 // first gather will occur after 10 seconds
-	gatherOnIncrement      = gatherIntervalSeconds / pullIntervalSeconds
-	firstGatherOnIncrement = (gatherIntervalSeconds - firstGatherSeconds) / pullIntervalSeconds
+	pullIntervalSeconds = 5
+	pushIntervalSeconds = 5
+	gatherWaitDuration  = time.Second * time.Duration(15)
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -1322,7 +1319,7 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 
 // gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
 // to delete the old ones
-func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) ([]EventLog, error) {
+func (r *DBListRepo) gather(walFiles []WalFile, walChan chan []EventLog) error {
 	//log.Print("Gathering...")
 	// TODO separate IO/CPU bound ops to optimise
 	fullMergedWal := []EventLog{}
@@ -1336,7 +1333,7 @@ func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) ([]EventLog, e
 
 		// If there's only 1 file, there's no point gathering them, so skip
 		// We need to let it pass for the 0 case (e.g. fresh roots with no existing wals)
-		if len(originFiles) == 1 && !forceGather {
+		if len(originFiles) == 1 {
 			// We still want to process other walFiles, so continue
 			continue
 		}
@@ -1378,7 +1375,7 @@ func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) ([]EventLog, e
 				// broken log will just be merged back in. We want to remove it entirely.
 				r.log = []EventLog{}
 			} else {
-				return nil, err
+				return err
 			}
 		}
 		mergedWal = compactedWal
@@ -1395,7 +1392,13 @@ func (r *DBListRepo) gather(walFiles []WalFile, forceGather bool) ([]EventLog, e
 		wf.RemoveWals(filesToDelete)
 	}
 
-	return fullMergedWal, nil
+	if len(fullMergedWal) > 0 {
+		go func() {
+			walChan <- fullMergedWal
+		}()
+	}
+
+	return nil
 }
 
 func buildByteWal(el []EventLog) *bytes.Buffer {
@@ -1563,9 +1566,12 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	webRefreshMut := sync.RWMutex{}
 
 	syncTriggerChan := make(chan struct{}, 1)
-	pushTriggerChan := make(chan struct{}, 1)
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	pushAggregateWindowChan := make(chan struct{}, 1)
+	pushTriggerChan := make(chan struct{}, 1)
+	gatherTriggerTimer := time.NewTimer(time.Second * 0)
+	// Drain the initial timer, we want to wait for initial user input
+	<-gatherTriggerTimer.C
 
 	// Schedule push to all non-local walFiles
 	// This is required for flushing new files that have been manually dropped into local root, and to cover other off cases.
@@ -1624,6 +1630,19 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			}()
 		default:
 		}
+
+		// Each time a push is scheduled, successful or not (e.g. on a keypress), we reset the timer for
+		// the next gather trigger (up to the maximum window)
+		// TODO this appears to be working as is without the explicit channel drain, but if things start going
+		// awry here, this thread has useful context:
+		// https://stackoverflow.com/a/58631999
+		//if !gatherTriggerTimer.Stop() {
+		//    select {
+		//    case <-gatherTriggerTimer.C:
+		//    default:
+		//    }
+		//}
+		gatherTriggerTimer.Reset(gatherWaitDuration)
 	}
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
@@ -1727,38 +1746,25 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 
 	// Main sync event loop
 	go func() {
-		i := firstGatherOnIncrement
 		for {
-			// Every fourth iteration is a `gather`
+			syncWalFiles := []WalFile{}
+			r.syncWalFileMut.RLock()
+			for _, wf := range r.syncWalFiles {
+				syncWalFiles = append(syncWalFiles, wf)
+			}
+			r.syncWalFileMut.RUnlock()
+
 			select {
 			case <-syncTriggerChan:
-				syncWalFiles := []WalFile{}
-				r.syncWalFileMut.RLock()
-				for _, wf := range r.syncWalFiles {
-					syncWalFiles = append(syncWalFiles, wf)
+				if err := r.pull(syncWalFiles, walChan); err != nil {
+					log.Fatal(err)
 				}
-				r.syncWalFileMut.RUnlock()
-				if i < gatherOnIncrement {
-					if err := r.pull(syncWalFiles, walChan); err != nil {
-						log.Fatal(err)
-					}
-					i++
-				} else {
-					// TODO pass walChan to gather
-					if el, err := r.gather(syncWalFiles, false); err != nil {
-						log.Fatal(err)
-					} else {
-						// Currently even empty event logs will trigger a client refresh which is very wasteful, so only publish to
-						// the channel if not empty
-						if len(el) > 0 {
-							go func() {
-								walChan <- el
-							}()
-						}
-					}
-					i = 0
+			case <-gatherTriggerTimer.C:
+				if err := r.gather(syncWalFiles, walChan); err != nil {
+					log.Fatal(err)
 				}
 			}
+
 			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
 			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
 			// program with it's CPU constantly tied up, which leads to performance degradation.
