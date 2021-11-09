@@ -34,8 +34,9 @@ const latestWalSchemaID uint16 = 4
 // sync intervals
 const (
 	pullIntervalSeconds    = 5
+	pushIntervalSeconds    = 5
 	gatherIntervalSeconds  = 60 // gather every minute
-	firstGatherSeconds     = 10 // first gather will occur after 12 seconds
+	firstGatherSeconds     = 10 // first gather will occur after 10 seconds
 	gatherOnIncrement      = gatherIntervalSeconds / pullIntervalSeconds
 	firstGatherOnIncrement = (gatherIntervalSeconds - firstGatherSeconds) / pullIntervalSeconds
 )
@@ -1270,7 +1271,7 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 	var wg sync.WaitGroup
 	for _, wf := range walFiles {
 		wg.Add(1)
-		go func() {
+		go func(wf WalFile) {
 			defer wg.Done()
 			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 			newWals, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
@@ -1309,7 +1310,7 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 					}()
 				}
 			}
-		}()
+		}(wf)
 	}
 
 	// Prevent another pull being scheduled before this one is complete. The new wals will still be
@@ -1490,27 +1491,40 @@ func (r *DBListRepo) push(el []EventLog, wf WalFile, randomUUID string) error {
 	// and pull our own pushed wal)
 	r.setProcessedPartialWals(randomUUID)
 	if err := wf.Flush(b, randomUUID); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	return nil
 }
 
-func (r *DBListRepo) flushPartialWals(el []EventLog, sync bool) {
+func (r *DBListRepo) flushPartialWals(el []EventLog) error {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
+		var wg sync.WaitGroup
+		// For now (out of thoroughness/laziness) fail the full push if any walFile fails.
+		errChan := make(chan error, len(r.allWalFiles))
 		for _, wf := range r.allWalFiles {
-			if sync {
-				// TODO Use waitgroups
-				r.push(el, wf, randomUUID)
-			} else {
-				go func(wf WalFile) { r.push(el, wf, randomUUID) }(wf)
+			wg.Add(1)
+			go func(wf WalFile) {
+				defer wg.Done()
+				if err := r.push(el, wf, randomUUID); err != nil {
+					errChan <- errors.New("Push failed")
+				} else {
+					errChan <- nil
+				}
+			}(wf)
+		}
+		wg.Wait()
+		for i := 0; i < len(r.allWalFiles); i++ {
+			if err := <-errChan; err != nil {
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 func (r *DBListRepo) emitRemoteUpdate() {
@@ -1548,8 +1562,10 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	// Create mutex to protect against dropped websocket events when refreshing web connections
 	webRefreshMut := sync.RWMutex{}
 
-	syncTriggerChan := make(chan time.Time, 1)
-	pushTriggerChan := make(chan time.Time, 1)
+	syncTriggerChan := make(chan struct{}, 1)
+	pushTriggerChan := make(chan struct{}, 1)
+	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
+	pushAggregateWindowChan := make(chan struct{}, 1)
 
 	// Schedule push to all non-local walFiles
 	// This is required for flushing new files that have been manually dropped into local root, and to cover other off cases.
@@ -1585,18 +1601,29 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	}
 
 	// We want to trigger a web sync as soon as the web connection has been established
-	scheduleSync := func() {
+	scheduleSync := func(afterSeconds int) {
 		// Attempt to put onto the channel, else pass
+		if afterSeconds > 0 {
+			time.Sleep(time.Second * time.Duration(afterSeconds))
+		}
 		select {
-		case syncTriggerChan <- time.Time{}:
+		case syncTriggerChan <- struct{}{}:
 		default:
 		}
 		triggerInitialSync()
 	}
 	schedulePush := func() {
-		// Unlike schedule above (which can be called from numerous locations), we want to block
-		// when attempting to put a time on the channel
-		pushTriggerChan <- time.Time{}
+		select {
+		// Only schedule a post-interval push if there isn't already one pending. pushAggregateWindowChan
+		// is responsible for holding pending pushes.
+		case pushAggregateWindowChan <- struct{}{}:
+			go func() {
+				time.Sleep(time.Second * pushIntervalSeconds)
+				pushTriggerChan <- struct{}{}
+				<-pushAggregateWindowChan
+			}()
+		default:
+		}
 	}
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
@@ -1619,7 +1646,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 						os.Exit(0)
 					}
 					// Trigger web walfile sync (mostly relevant on initial start)
-					scheduleSync()
+					scheduleSync(0)
 				}()
 
 				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
@@ -1689,14 +1716,9 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		// This `else` just covers the case where web is not active and therefore no sync is scheduled
 		// in the case above
 		go func() {
-			scheduleSync()
+			scheduleSync(0)
 		}()
 	}
-
-	// Start the cycle for pushes
-	go func() {
-		schedulePush()
-	}()
 
 	// Run an initial load from the local walfile
 	if err := r.pull([]WalFile{r.LocalWalFile}, walChan); err != nil {
@@ -1710,42 +1732,39 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			// Every fourth iteration is a `gather`
 			select {
 			case <-syncTriggerChan:
-				func() {
-					r.syncWalFileMut.RLock()
-					defer r.syncWalFileMut.RUnlock()
-					syncWalFiles := []WalFile{}
-					for _, wf := range r.syncWalFiles {
-						syncWalFiles = append(syncWalFiles, wf)
+				syncWalFiles := []WalFile{}
+				r.syncWalFileMut.RLock()
+				for _, wf := range r.syncWalFiles {
+					syncWalFiles = append(syncWalFiles, wf)
+				}
+				r.syncWalFileMut.RUnlock()
+				if i < gatherOnIncrement {
+					if err := r.pull(syncWalFiles, walChan); err != nil {
+						log.Fatal(err)
 					}
-					if i < gatherOnIncrement {
-						if err := r.pull(syncWalFiles, walChan); err != nil {
-							log.Fatal(err)
-						}
-						i++
+					i++
+				} else {
+					// TODO pass walChan to gather
+					if el, err := r.gather(syncWalFiles, false); err != nil {
+						log.Fatal(err)
 					} else {
-						// TODO pass walChan to gather
-						if el, err := r.gather(syncWalFiles, false); err != nil {
-							log.Fatal(err)
-						} else {
-							// Currently even empty event logs will trigger a client refresh which is very wasteful, so only publish to
-							// the channel if not empty
-							if len(el) > 0 {
-								go func() {
-									walChan <- el
-								}()
-							}
+						// Currently even empty event logs will trigger a client refresh which is very wasteful, so only publish to
+						// the channel if not empty
+						if len(el) > 0 {
+							go func() {
+								walChan <- el
+							}()
 						}
-						i = 0
 					}
-				}()
+					i = 0
+				}
 			}
 			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
 			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
 			// program with it's CPU constantly tied up, which leads to performance degradation.
 			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
 			// onto the syncTriggerChan
-			time.Sleep(time.Second * pullIntervalSeconds)
-			scheduleSync()
+			scheduleSync(pullIntervalSeconds)
 		}
 	}()
 
@@ -1790,17 +1809,17 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				}
 				// Add to an ephemeral log
 				el = append(el, e)
+				// Trigger an aggregated push (if not already pending)
+				schedulePush()
 			case <-pushTriggerChan:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				r.flushPartialWals(el, false)
-				el = []EventLog{}
-				go func() {
-					time.Sleep(time.Second * 30)
-					schedulePush()
-				}()
+				if err := r.flushPartialWals(el); err == nil {
+					// Only reset the ephemeral log if we successfully push
+					el = []EventLog{}
+				}
 			case <-r.stop:
-				r.flushPartialWals(el, true)
+				r.flushPartialWals(el)
 				r.stop <- struct{}{}
 			}
 		}
