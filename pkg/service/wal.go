@@ -1276,14 +1276,17 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 				log.Fatal(err)
 			}
 			newWalMutex.Lock()
+			defer newWalMutex.Unlock()
 			newWalMap[wf] = newWals
-			newWalMutex.Unlock()
 		}(wf)
 	}
 	wg.Wait()
 
 	// We then run CPU bound ops in a single thread to mitigate excessive CPU usage (particularly as an N WalFiles
 	// is unbounded)
+	// We merge all wals before publishing to the walchan as each time the main app event loop consumes from walchan,
+	// it blocks user input and creates a poor user experience.
+	mergedWal := []EventLog{}
 	for wf, newWals := range newWalMap {
 		for _, newWal := range newWals {
 			if !r.isPartialWalProcessed(newWal) {
@@ -1304,16 +1307,19 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 					continue
 				}
 
-				if len(newWfWal) > 0 {
-					go func() {
-						walChan <- newWfWal
-						// Add to the processed cache after we've successfully pulled it
-						// TODO strictly we should only set processed once it's successfull merged and displayed to client
-						r.setProcessedPartialWals(newWal)
-					}()
-				}
+				mergedWal = merge(mergedWal, newWfWal)
+
+				// Add to the processed cache after we've successfully pulled it
+				// TODO strictly we should only set processed once it's successfull merged and displayed to client
+				r.setProcessedPartialWals(newWal)
 			}
 		}
+	}
+
+	if len(mergedWal) > 0 {
+		go func() {
+			walChan <- mergedWal
+		}()
 	}
 
 	return nil
