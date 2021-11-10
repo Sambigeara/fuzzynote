@@ -1508,30 +1508,18 @@ func (r *DBListRepo) push(el []EventLog, wf WalFile, randomUUID string) error {
 	return nil
 }
 
-func (r *DBListRepo) flushPartialWals(el []EventLog) error {
+func (r *DBListRepo) flushPartialWals(el []EventLog) {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
-		var wg sync.WaitGroup
-		// For now (out of thoroughness/laziness) fail the full push if any walFile fails.
-		errChan := make(chan error, len(r.allWalFiles))
 		for _, wf := range r.allWalFiles {
-			wg.Add(1)
 			go func(wf WalFile) {
-				defer wg.Done()
-				errChan <- r.push(el, wf, randomUUID)
+				r.push(el, wf, randomUUID)
 			}(wf)
 		}
-		wg.Wait()
-		for i := 0; i < len(r.allWalFiles); i++ {
-			if err := <-errChan; err != nil {
-				return err
-			}
-		}
 	}
-	return nil
 }
 
 func (r *DBListRepo) emitRemoteUpdate() {
@@ -1774,7 +1762,9 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			// program with it's CPU constantly tied up, which leads to performance degradation.
 			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
 			// onto the syncTriggerChan
-			scheduleSync(pullIntervalSeconds)
+			go func() {
+				scheduleSync(pullIntervalSeconds)
+			}()
 		}
 	}()
 
@@ -1824,10 +1814,8 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			case <-pushTriggerChan:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				if err := r.flushPartialWals(el); err == nil {
-					// Only reset the ephemeral log if we successfully push
-					el = []EventLog{}
-				}
+				r.flushPartialWals(el)
+				el = []EventLog{}
 			case <-r.stop:
 				r.flushPartialWals(el)
 				r.stop <- struct{}{}
