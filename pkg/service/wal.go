@@ -549,23 +549,6 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		return nil
 	}
 
-	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
-	for _, e := range partialWal {
-		key, _ := e.getKeys()
-		if len(e.Line) > 0 {
-			r.friendsUpdateLock.RLock()
-			for f := range r.getFriendsFromLine(e.Line) {
-				if _, isFriend := r.friends[f]; isFriend {
-					r.allWalFileMut.RLock()
-					wf, _ := r.allWalFiles[f]
-					r.allWalFileMut.RUnlock()
-					wf.SetProcessedEvent(key)
-				}
-			}
-			r.friendsUpdateLock.RUnlock()
-		}
-	}
-
 	fullMerge := true
 	// Establish whether or not the oldest event of the partialWal is newer than the most
 	// recent of the existing (and therefore already processed) wal.
@@ -597,6 +580,25 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
 		root, _, _ = r.CallFunctionForEventLog(root, e)
+	}
+
+	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
+	// NOTE: this needs to occur after CallFunctionForEventLog, as that is where the r.friends cache is populated
+	// on initial Replay.
+	for _, e := range partialWal {
+		key, _ := e.getKeys()
+		if len(e.Line) > 0 {
+			r.friendsUpdateLock.RLock()
+			for f := range r.getFriendsFromLine(e.Line) {
+				if _, isFriend := r.friends[f]; isFriend {
+					r.allWalFileMut.RLock()
+					wf, _ := r.allWalFiles[f]
+					r.allWalFileMut.RUnlock()
+					wf.SetProcessedEvent(key)
+				}
+			}
+			r.friendsUpdateLock.RUnlock()
+		}
 	}
 
 	r.Root = root
@@ -1810,24 +1812,21 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 						r.webWalFileMut.RLock()
 						defer r.webWalFileMut.RUnlock()
 						for _, wf := range r.webWalFiles {
-							// TODO uuid is a hack to work around the GetUUID stubs I have in place atm:
-							if wf.GetUUID() != "" {
-								matchedEventLog := r.getMatchedWal([]EventLog{e}, wf)
-								if len(matchedEventLog) > 0 {
-									// There are only single events, so get the zero index
-									b := buildByteWal([]EventLog{matchedEventLog[0]})
-									b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-									m := websocketMessage{
-										Action: "wal",
-										UUID:   wf.GetUUID(),
-										Wal:    b64Wal,
-									}
-									func() {
-										webRefreshMut.RLock()
-										defer webRefreshMut.RUnlock()
-										r.web.pushWebsocket(m)
-									}()
+							matchedEventLog := r.getMatchedWal([]EventLog{e}, wf)
+							if len(matchedEventLog) > 0 {
+								// There are only single events, so get the zero index
+								b := buildByteWal([]EventLog{matchedEventLog[0]})
+								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
+								m := websocketMessage{
+									Action: "wal",
+									UUID:   wf.GetUUID(),
+									Wal:    b64Wal,
 								}
+								func() {
+									webRefreshMut.RLock()
+									defer webRefreshMut.RUnlock()
+									r.web.pushWebsocket(m)
+								}()
 							}
 						}
 					}()
