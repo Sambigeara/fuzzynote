@@ -1325,13 +1325,18 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 	return nil
 }
 
-// gather up all WALs in the WalFile matching the local UUID into a single new Wal, and attempt
-// to delete the old ones
-func (r *DBListRepo) gather(walFiles []WalFile, walChan chan []EventLog) error {
+func (r *DBListRepo) gather(walChan chan []EventLog) error {
 	//log.Print("Gathering...")
-	// TODO separate IO/CPU bound ops to optimise
+	// Create a new list so we don't have to keep the lock on the mutex for too long
+	syncWalFiles := []WalFile{}
+	r.syncWalFileMut.RLock()
+	for _, wf := range r.syncWalFiles {
+		syncWalFiles = append(syncWalFiles, wf)
+	}
+	r.syncWalFileMut.RUnlock()
+
 	fullMergedWal := []EventLog{}
-	for _, wf := range walFiles {
+	for _, wf := range syncWalFiles {
 		// Handle ALL wals
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
@@ -1404,6 +1409,30 @@ func (r *DBListRepo) gather(walFiles []WalFile, walChan chan []EventLog) error {
 		go func() {
 			walChan <- fullMergedWal
 		}()
+
+		// If a push to a non-owned walFile fails, the events will never reach said walFile, as it's the responsible
+		// of the owner's client to gather and merge their own walFiles.
+		// Therefore, on each gather, we push the aggregated log to all non-owned walFiles (filtered for each).
+		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
+
+		r.allWalFileMut.RLock()
+		r.syncWalFileMut.RLock()
+
+		nonOwnedWalFiles := []WalFile{}
+		for name, wf := range r.allWalFiles {
+			if _, exists := r.syncWalFiles[name]; !exists {
+				nonOwnedWalFiles = append(nonOwnedWalFiles, wf)
+			}
+		}
+
+		r.allWalFileMut.RUnlock()
+		r.syncWalFileMut.RUnlock()
+
+		for _, wf := range nonOwnedWalFiles {
+			go func(wf WalFile) {
+				r.push(fullMergedWal, wf, randomUUID)
+			}(wf)
+		}
 	}
 
 	return nil
@@ -1739,20 +1768,19 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	// Main sync event loop
 	go func() {
 		for {
-			syncWalFiles := []WalFile{}
-			r.syncWalFileMut.RLock()
-			for _, wf := range r.syncWalFiles {
-				syncWalFiles = append(syncWalFiles, wf)
-			}
-			r.syncWalFileMut.RUnlock()
-
 			select {
 			case <-syncTriggerChan:
+				syncWalFiles := []WalFile{}
+				r.syncWalFileMut.RLock()
+				for _, wf := range r.syncWalFiles {
+					syncWalFiles = append(syncWalFiles, wf)
+				}
+				r.syncWalFileMut.RUnlock()
 				if err := r.pull(syncWalFiles, walChan); err != nil {
 					log.Fatal(err)
 				}
 			case <-gatherTriggerTimer.C:
-				if err := r.gather(syncWalFiles, walChan); err != nil {
+				if err := r.gather(walChan); err != nil {
 					log.Fatal(err)
 				}
 			}
