@@ -1263,6 +1263,8 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 
 func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
+	newWalMutex := sync.Mutex{}
+	newWalMap := make(map[WalFile][]string)
 	var wg sync.WaitGroup
 	for _, wf := range walFiles {
 		wg.Add(1)
@@ -1273,44 +1275,46 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 			if err != nil {
 				log.Fatal(err)
 			}
+			newWalMutex.Lock()
+			newWalMap[wf] = newWals
+			newWalMutex.Unlock()
+		}(wf)
+	}
+	wg.Wait()
 
-			// Pull every new wal asynchronously, publishing to walChan as they complete
-			for _, newWal := range newWals {
-				if !r.isPartialWalProcessed(newWal) {
+	// We then run CPU bound ops in a single thread to mitigate excessive CPU usage (particularly as an N WalFiles
+	// is unbounded)
+	for wf, newWals := range newWalMap {
+		for _, newWal := range newWals {
+			if !r.isPartialWalProcessed(newWal) {
+				pr, pw := io.Pipe()
+				go func() {
+					defer pw.Close()
+					if err := wf.GetWalBytes(pw, newWal); err != nil {
+						// TODO handle
+						//log.Fatal(err)
+					}
+				}()
+
+				// TODO rename buildFromFile
+				// Build new wals
+				newWfWal, err := buildFromFile(pr)
+				if err != nil {
+					// Ignore incompatible files
+					continue
+				}
+
+				if len(newWfWal) > 0 {
 					go func() {
-						pr, pw := io.Pipe()
-						go func() {
-							defer pw.Close()
-							if err := wf.GetWalBytes(pw, newWal); err != nil {
-								// TODO handle
-								//log.Fatal(err)
-							}
-						}()
-
-						// TODO rename buildFromFile
-						// Build new wals
-						newWfWal, err := buildFromFile(pr)
-						if err != nil {
-							// Ignore incompatible files
-							return
-						}
-
-						if len(newWfWal) > 0 {
-							walChan <- newWfWal
-						}
-
+						walChan <- newWfWal
 						// Add to the processed cache after we've successfully pulled it
 						// TODO strictly we should only set processed once it's successfull merged and displayed to client
 						r.setProcessedPartialWals(newWal)
 					}()
 				}
 			}
-		}(wf)
+		}
 	}
-
-	// Prevent another pull being scheduled before this one is complete. The new wals will still be
-	// published/consumed in real time for each separate walFile however
-	wg.Wait()
 
 	return nil
 }
