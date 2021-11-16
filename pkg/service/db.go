@@ -86,8 +86,7 @@ func (r *DBListRepo) Start(client Client) error {
 					<-refreshChan
 				}
 				if !cont {
-					err := r.Stop()
-					if err != nil {
+					if err := r.finish(); err != nil {
 						errChan <- err
 					}
 					errChan <- nil
@@ -107,21 +106,6 @@ func (r *DBListRepo) Start(client Client) error {
 	}
 
 	//return nil
-}
-
-// Stop is called on app shutdown. It flushes all state changes in memory to disk
-func (r *DBListRepo) Stop() error {
-	err := r.LocalWalFile.Stop(uint32(r.uuid))
-	if err != nil {
-		return err
-	}
-
-	err = r.finish()
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (r *DBListRepo) registerWeb() error {

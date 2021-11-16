@@ -108,9 +108,6 @@ type WalFile interface {
 }
 
 type LocalWalFile interface {
-	Load() (uint32, error)
-	Stop(uint32) error
-	SetBaseUUID(uint32) error
 	Purge()
 
 	WalFile
@@ -128,88 +125,6 @@ func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
 		processedEventLock: &sync.Mutex{},
 		processedEventMap:  make(map[string]struct{}),
 	}
-}
-
-func (wf *LocalFileWalFile) flushPrimary(f *os.File, uuid uuid) error {
-	// Truncate and move to start of file just in case
-	f.Truncate(0)
-	f.Seek(0, io.SeekStart)
-
-	// Write the file header to the start of the file
-	fileHeader := fileHeader{
-		SchemaID: latestFileSchemaID,
-		UUID:     uuid,
-	}
-	err := binary.Write(f, binary.LittleEndian, &fileHeader)
-	if err != nil {
-		fmt.Println("binary.Write failed when writing fileHeader:", err)
-		log.Fatal(err)
-		return err
-	}
-	return nil
-}
-
-// Load retrieves UUID, instantiates the app and flushes to disk if required
-func (wf *LocalFileWalFile) Load() (uint32, error) {
-	rootPath := path.Join(wf.rootDir, rootFileName)
-	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatal(err)
-		return 0, err
-	}
-	defer f.Close()
-
-	fileHeader := fileHeader{}
-	err = binary.Read(f, binary.LittleEndian, &fileHeader)
-	uuid := generateUUID()
-	if err != nil {
-		// For initial load cases (first time an app is run) to beat an edge case race condition
-		// (loading two apps in a fresh root without saves) we need to flush state to the primary.db
-		// file. This prevents initial apps getting confused and generating different WAL UUIDs (thus
-		// ultimately leading to data loss)
-		if err == io.EOF {
-			wf.flushPrimary(f, uuid)
-		} else {
-			log.Fatal(err)
-			return 0, err
-		}
-	}
-
-	// We can now override uuid as it's been read from the file
-	if fileHeader.UUID != 0 {
-		uuid = fileHeader.UUID
-	}
-
-	return uint32(uuid), nil
-}
-
-func (wf *LocalFileWalFile) Stop(uid uint32) error {
-	rootPath := path.Join(wf.rootDir, rootFileName)
-	f, err := os.Create(rootPath)
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-	defer f.Close()
-
-	err = wf.flushPrimary(f, uuid(uid))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (wf *LocalFileWalFile) SetBaseUUID(uid uint32) error {
-	// TODO dedup
-	rootPath := path.Join(wf.rootDir, rootFileName)
-	f, err := os.OpenFile(rootPath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return wf.flushPrimary(f, uuid(uid))
 }
 
 func (wf *LocalFileWalFile) Purge() {

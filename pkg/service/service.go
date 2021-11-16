@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"sync"
 	"time"
@@ -15,12 +14,9 @@ type (
 )
 
 const (
-	rootFileName      = "primary.db"
 	walFilePattern    = "wal_%v.db"
 	viewFilePattern   = "view_%v"
 	exportFilePattern = "export_%v.txt"
-
-	latestFileSchemaID = fileSchemaID(3)
 )
 
 type bits uint32
@@ -98,17 +94,12 @@ type DBListRepo struct {
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
 func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncFrequency uint32, gatherFrequency uint32) *DBListRepo {
-	baseUUID, err := localWalFile.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
-		uuid:              uuid(baseUUID),
+		uuid:              generateUUID(),
 		log:               []EventLog{},
 		latestWalSchemaID: latestWalSchemaID,
 		listItemTracker:   make(map[string]*ListItem),
