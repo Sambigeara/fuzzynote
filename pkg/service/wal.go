@@ -1506,7 +1506,7 @@ func (r *DBListRepo) emitRemoteUpdate() {
 func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	//log.Print("Now with merged wal...")
 
-	syncTriggerChan := make(chan struct{})
+	syncTriggerChan := make(chan struct{}, 1) // Without the buffered slot, the initial sync on non-web usage is not triggered
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	pushAggregateWindowChan := make(chan struct{}, 1)
 	pushTriggerChan := make(chan struct{})
