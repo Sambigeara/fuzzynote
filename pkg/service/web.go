@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -20,12 +21,13 @@ import (
 )
 
 const (
-	// TODO envvars
 	websocketURL = "wss://ws.fuzzynote.co.uk/v1"
 	apiURL       = "https://api.fuzzynote.co.uk/v1"
 
 	walSyncAuthorizationHeader = "Authorization"
-	webRefreshInterval         = time.Minute * 10
+
+	webPingInterval    = time.Second * 30       // lower ping intervals (5s has been tested) cause performance degradation in the wasm app
+	webRefreshInterval = time.Second * (2 << 6) // 128 seconds ~= 2 minutes, because we use exponential backoffs
 )
 
 type WebWalFile struct {
@@ -40,15 +42,13 @@ type WebWalFile struct {
 func (w *Web) establishWebSocketConnection() error {
 	// TODO close off previous connection gracefully if present??
 
-	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response, error) {
+	dialFunc := func(token string) (*websocket.Conn, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
 		u, _ := url.Parse(websocketURL)
 		q, _ := url.ParseQuery(u.RawQuery)
-		q.Add("auth", accessToken)
-		escapedUUID := url.QueryEscape(w.uuid)
-		q.Add("uuid", escapedUUID)
+		q.Add("auth", token)
 		u.RawQuery = q.Encode()
 
 		return websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
@@ -60,13 +60,18 @@ func (w *Web) establishWebSocketConnection() error {
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
 	if err != nil || resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		defer w.tokens.Flush()
+		w.tokens.SetIDToken("")
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
 		err = Authenticate(w.tokens, body)
 		if err != nil {
-			return err
+			w.tokens.SetRefreshToken("")
+			w.tokens.Flush()
+			os.Exit(0)
+			//return err
 		}
 		w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
 		// need to return within this nested block otherwise the outside err still holds
@@ -95,18 +100,18 @@ type cursorMoveEvent struct {
 	unixNanoTime int64
 }
 
-func (w *Web) pushWebsocket(m websocketMessage) {
+func (w *Web) pushWebsocket(m websocketMessage) error {
 	marshalData, err := json.Marshal(m)
 	if err != nil {
 		//log.Fatal("Json marshal: malformed WAL data on websocket push")
 		// TODO proper handling
-		return
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	return w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	//if err != nil {
 	//    // Re-establish websocket connection on error
 	//    // TODO currently attempting to re-establish connection on ANY error - do better at
@@ -222,13 +227,13 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 		return nil, nil
 	}
 
-	strUUIDs, err := ioutil.ReadAll(resp.Body)
+	byteUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, nil
 	}
 
 	var uuids []string
-	err = json.Unmarshal([]byte(strUUIDs), &uuids)
+	err = json.Unmarshal(byteUUIDs, &uuids)
 	if err != nil {
 		return nil, err
 	}

@@ -8,11 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -408,7 +411,6 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		return root, item, nil
 	}
 
-	// TODO actually think about where this should go
 	if r.web != nil {
 		r.generateFriendChangeEvents(e, item)
 	}
@@ -1275,7 +1277,8 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 			newWals, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 			if err != nil {
-				log.Fatal(err)
+				//log.Fatal(err)
+				return
 			}
 			newWalMutex.Lock()
 			defer newWalMutex.Unlock()
@@ -1343,7 +1346,8 @@ func (r *DBListRepo) gather(walChan chan []EventLog) error {
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
 		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
 		if err != nil {
-			log.Fatal(err)
+			continue
+			//log.Fatal(err)
 		}
 
 		// If there's only 1 file, there's no point gathering them, so skip
@@ -1554,7 +1558,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog) {
 }
 
 func (r *DBListRepo) emitRemoteUpdate() {
-	if r.web != nil {
+	if r.web != nil && r.web.isActive {
 		// We need to wrap the friendsMostRecentChangeDT comparison check, as the friend map update
 		// and subsequent friendsMostRecentChangeDT update needs to be an atomic operation
 		r.friendsUpdateLock.RLock()
@@ -1575,8 +1579,8 @@ func (r *DBListRepo) emitRemoteUpdate() {
 
 			go func() {
 				if err := r.web.PostRemote(&remote, u); err != nil {
-					fmt.Println(err)
-					os.Exit(0)
+					//fmt.Println(err)
+					//os.Exit(0)
 				}
 			}()
 			r.friendsLastPushDT = r.friendsMostRecentChangeDT
@@ -1585,16 +1589,22 @@ func (r *DBListRepo) emitRemoteUpdate() {
 }
 
 func (r *DBListRepo) startSync(walChan chan []EventLog) error {
-	// Create mutex to protect against dropped websocket events when refreshing web connections
-	webRefreshMut := sync.RWMutex{}
+	//log.Print("Now with merged wal...")
 
-	syncTriggerChan := make(chan struct{}, 1)
+	syncTriggerChan := make(chan struct{})
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	pushAggregateWindowChan := make(chan struct{}, 1)
-	pushTriggerChan := make(chan struct{}, 1)
+	pushTriggerChan := make(chan struct{})
 	gatherTriggerTimer := time.NewTimer(time.Second * 0)
 	// Drain the initial timer, we want to wait for initial user input
 	<-gatherTriggerTimer.C
+
+	webPingTicker := time.NewTicker(webPingInterval)
+	webRefreshTicker := time.NewTicker(webRefreshInterval)
+	// We set the interval to 0 because we want the initial connection establish attempt to occur ASAP
+	webRefreshTicker.Reset(0)
+
+	websocketPushEvents := make(chan websocketMessage)
 
 	// Schedule push to all non-local walFiles
 	// This is required for flushing new files that have been manually dropped into local root, and to cover other off cases.
@@ -1669,13 +1679,57 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	}
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
+	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
+	// TODO only start this goroutine if there is actually a configured web
 	if r.web != nil {
-		// Create a loop responsible for periodic refreshing of web connections and web walfiles.
 		go func() {
+			expBackoffInterval := time.Second * 1
+			var waitInterval time.Duration
+			var ctx context.Context
+			var cancel context.CancelFunc
 			for {
-				func() {
-					webRefreshMut.Lock()
-					defer webRefreshMut.Unlock()
+				select {
+				case <-webPingTicker.C:
+					// is !isActive, we've already entered the exponential retry backoff below
+					if r.web.isActive {
+						u, _ := url.Parse(apiURL)
+						u.Path = path.Join(u.Path, "ping")
+
+						retryFn := func() {
+							r.web.isActive = false
+							webRefreshTicker.Reset(0)
+						}
+
+						resp, err := http.Get(u.String())
+						if err != nil {
+							retryFn()
+							continue
+						}
+						defer resp.Body.Close()
+
+						if resp.StatusCode != http.StatusOK {
+							retryFn()
+							continue
+						}
+						respBytes, err := ioutil.ReadAll(resp.Body)
+						if err != nil {
+							retryFn()
+							continue
+						}
+						var pong struct{ Response string }
+						if err := json.Unmarshal(respBytes, &pong); err != nil || pong.Response != "pong" {
+							retryFn()
+							continue
+						}
+					}
+				case m := <-websocketPushEvents:
+					if r.web.isActive {
+						r.web.pushWebsocket(m)
+					}
+				case <-webRefreshTicker.C:
+					if cancel != nil {
+						cancel()
+					}
 					// Close off old websocket connection
 					// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
 					if r.web.wsConn != nil {
@@ -1684,41 +1738,40 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 					// Start new one
 					err := r.registerWeb()
 					if err != nil {
-						log.Print(err)
-						os.Exit(0)
+						r.web.isActive = false
+						waitInterval = expBackoffInterval
+						if expBackoffInterval < webRefreshInterval {
+							expBackoffInterval *= 2
+						}
+					} else {
+						r.web.isActive = true
+						expBackoffInterval = time.Second * 1
+						waitInterval = webRefreshInterval
 					}
 					// Trigger web walfile sync (mostly relevant on initial start)
 					scheduleSync(0)
-				}()
 
-				// To avoid deadlocks between the web refresh and blocking consumeWebsocket reads, we explicitly
-				// define the context which is manually cancelled on each timed iteration of the web refresh
-				ctx, cancel := context.WithCancel(context.Background())
+					ctx, cancel = context.WithCancel(context.Background())
 
-				go func() {
-					for {
-						if r.web.wsConn == nil {
-							// Return to wait on blocking web refresh, to prevent infinite loop
-							return
-						}
-						err := func() error {
-							//webRefreshMut.RLock()
-							//defer webRefreshMut.RUnlock()
-							err := r.consumeWebsocket(ctx, walChan)
-							if err != nil {
-								return err
+					if r.web.isActive {
+						go func() {
+							for {
+								err := func() error {
+									err := r.consumeWebsocket(ctx, walChan)
+									if err != nil {
+										return err
+									}
+									return nil
+								}()
+								if err != nil {
+									return
+								}
 							}
-							return nil
 						}()
-						if err != nil {
-							return
-						}
 					}
-				}()
 
-				// The `Sleep` has to be at the end to allow an initial iteration to occur immediately on startup
-				time.Sleep(webRefreshInterval)
-				cancel()
+					webRefreshTicker.Reset(waitInterval)
+				}
 			}
 		}()
 
@@ -1726,37 +1779,23 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		go func() {
 			for {
 				e := <-r.localCursorMoveChan
-				if r.web.wsConn != nil {
-					func() {
-						r.webWalFileMut.RLock()
-						defer r.webWalFileMut.RUnlock()
-						for _, wf := range r.webWalFiles {
-							if wf.GetUUID() != "" {
-								func() {
-									m := websocketMessage{
-										Action:       "position",
-										UUID:         wf.GetUUID(),
-										Key:          e.listItemKey,
-										UnixNanoTime: e.unixNanoTime,
-									}
-									webRefreshMut.RLock()
-									defer webRefreshMut.RUnlock()
-									r.web.pushWebsocket(m)
-								}()
+				func() {
+					r.webWalFileMut.RLock()
+					defer r.webWalFileMut.RUnlock()
+					for _, wf := range r.webWalFiles {
+						go func(wf WalFile) {
+							websocketPushEvents <- websocketMessage{
+								Action:       "position",
+								UUID:         wf.GetUUID(),
+								Key:          e.listItemKey,
+								UnixNanoTime: e.unixNanoTime,
 							}
-						}
-					}()
-				} else {
-					time.Sleep(5 * time.Second)
-				}
+						}(wf)
+					}
+				}()
 			}
 		}()
 	} else {
-		// We want to wait for the web connection to be established before triggering an intial sync,
-		// otherwise we end up waiting the full interval (after local sync) before it pulls down any
-		//remote changes.
-		// This `else` just covers the case where web is not active and therefore no sync is scheduled
-		// in the case above
 		go func() {
 			scheduleSync(0)
 		}()
@@ -1817,16 +1856,13 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 								// There are only single events, so get the zero index
 								b := buildByteWal([]EventLog{matchedEventLog[0]})
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-								m := websocketMessage{
-									Action: "wal",
-									UUID:   wf.GetUUID(),
-									Wal:    b64Wal,
-								}
-								func() {
-									webRefreshMut.RLock()
-									defer webRefreshMut.RUnlock()
-									r.web.pushWebsocket(m)
-								}()
+								go func(wf WalFile) {
+									websocketPushEvents <- websocketMessage{
+										Action: "wal",
+										UUID:   wf.GetUUID(),
+										Wal:    b64Wal,
+									}
+								}(wf)
 							}
 						}
 					}()

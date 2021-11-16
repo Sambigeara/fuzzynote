@@ -139,18 +139,14 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 
 	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
-	if webTokenStore.RefreshToken() != "" {
-		web := NewWeb(webTokenStore)
-		//web.uuid = listRepo.uuid // TODO does web need to store uuid??
-		web.uuid = listRepo.email // TODO does web need to store uuid??
-
+	if webTokenStore.IDToken() != "" || webTokenStore.RefreshToken() != "" {
 		listRepo.email = webTokenStore.Email()
 		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^@%s fzn_cfg:friend +(%s) *$", regexp.QuoteMeta(listRepo.email), EmailRegex))
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
 		// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
-		listRepo.web = web
+		listRepo.web = NewWeb(webTokenStore)
 
 		// Establish the chan used to track and display collaborator cursor positions
 		listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent)  // incoming events
@@ -177,14 +173,6 @@ type ListItem struct {
 
 func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
-}
-
-// IsWebConnected returns whether or not the DBListRepo successfully connected to the web remote
-func (r *DBListRepo) IsWebConnected() bool {
-	if r.web != nil {
-		return true
-	}
-	return false
 }
 
 func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
@@ -458,7 +446,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	// 2. process it, trigger a client refresh
 	// 3. which calls this function, which then emits an event
 	// 4. trigger stage 1 on remote...
-	if curKey != r.previousListItemKey && r.web != nil && r.web.wsConn != nil {
+	if curKey != r.previousListItemKey && r.web != nil && r.web.isActive && r.web.wsConn != nil {
 		r.localCursorMoveChan <- cursorMoveEvent{
 			listItemKey:  curKey,
 			unixNanoTime: time.Now().UnixNano(),

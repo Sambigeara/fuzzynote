@@ -21,11 +21,9 @@ const (
 
 type WebTokenStore interface {
 	SetEmail(string)
-	SetAccessToken(string)
 	SetRefreshToken(string)
 	SetIDToken(string)
 	Email() string
-	AccessToken() string
 	RefreshToken() string
 	IDToken() string
 	Flush()
@@ -34,7 +32,6 @@ type WebTokenStore interface {
 type FileWebTokenStore struct {
 	root    string
 	User    string `yaml:"user"`
-	Access  string `yaml:"accessToken"`
 	Refresh string `yaml:"refreshToken"`
 	ID      string `yaml:"idToken"`
 }
@@ -60,11 +57,9 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 
 // TODO reconsider this interface...
 func (wt *FileWebTokenStore) SetEmail(s string)        { wt.User = s }
-func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
 func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
 func (wt *FileWebTokenStore) Email() string            { return wt.User }
-func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
 func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
 func (wt *FileWebTokenStore) Flush() {
@@ -113,9 +108,6 @@ func Authenticate(wt WebTokenStore, args map[string]string) error {
 	if email, ok := args["user"]; ok {
 		wt.SetEmail(email)
 	}
-	if authResult.AccessToken != nil {
-		wt.SetAccessToken(*authResult.AccessToken)
-	}
 	if authResult.RefreshToken != nil {
 		wt.SetRefreshToken(*authResult.RefreshToken)
 	}
@@ -127,7 +119,7 @@ func Authenticate(wt WebTokenStore, args map[string]string) error {
 }
 
 // CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
-// expired AccessToken, will reauth, and then retry the original function.
+// expired IDToken, will reauth, and then retry the original function.
 func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 	f := func(req *http.Request) (*http.Response, error) {
 		return http.DefaultClient.Do(req)
@@ -137,12 +129,17 @@ func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
+		defer w.tokens.Flush()
+		w.tokens.SetIDToken("")
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
 		err = Authenticate(w.tokens, body)
 		if err != nil {
-			return nil, err
+			w.tokens.SetRefreshToken("")
+			w.tokens.Flush()
+			os.Exit(0)
+			//return nil, err
 		}
 		req.Header.Set(walSyncAuthorizationHeader, w.tokens.IDToken())
 		resp, err = f(req)

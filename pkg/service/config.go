@@ -19,9 +19,9 @@ const (
 )
 
 type Web struct {
-	wsConn *websocket.Conn
-	tokens WebTokenStore
-	uuid   string
+	wsConn   *websocket.Conn
+	tokens   WebTokenStore
+	isActive bool
 }
 
 func NewWeb(webTokens WebTokenStore) *Web {
