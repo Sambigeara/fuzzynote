@@ -320,7 +320,7 @@ func (t *Terminal) AwaitEvent() interface{} {
 	return t.S.PollEvent()
 }
 
-func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
+func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 	interactionEvent := service.InteractionEvent{}
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
@@ -329,7 +329,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 			interactionEvent.T = service.KeyEscape
 			if t.previousKey == tcell.KeyEscape {
 				t.S.Fini()
-				return false, nil
+				return false, false, nil
 			}
 		case tcell.KeyEnter:
 			interactionEvent.T = service.KeyEnter
@@ -401,13 +401,13 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 
 	matches, cont, err := t.c.HandleInteraction(interactionEvent, 0)
 	if err != nil {
-		return cont, err
+		return cont, false, err
 	}
 	if !cont {
-		return false, nil
+		return false, false, nil
 	}
 
 	t.paint(matches, false)
 
-	return true, nil
+	return true, false, nil
 }

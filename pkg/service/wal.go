@@ -1804,7 +1804,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	return nil
 }
 
-func (r *DBListRepo) finish() error {
+func (r *DBListRepo) finish(purge bool) error {
 	// Flush all unpushed changes to non-local walfiles
 	// TODO handle this more gracefully
 	r.stop <- struct{}{}
@@ -1815,16 +1815,21 @@ func (r *DBListRepo) finish() error {
 	// the local walfile. We can remove any other files to avoid overuse of local storage.
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
-	localFiles, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-	filesToDelete := []string{}
-	// Ensure we've actually processed the files before we delete them...
-	for _, fileName := range localFiles {
-		if r.isPartialWalProcessed(fileName) {
-			filesToDelete = append(filesToDelete, fileName)
+	if !purge {
+		localFiles, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		filesToDelete := []string{}
+		// Ensure we've actually processed the files before we delete them...
+		for _, fileName := range localFiles {
+			if r.isPartialWalProcessed(fileName) {
+				filesToDelete = append(filesToDelete, fileName)
+			}
 		}
+		r.push(r.log, r.LocalWalFile, "")
+		r.LocalWalFile.RemoveWals(filesToDelete)
+	} else {
+		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
+		r.LocalWalFile.Purge()
 	}
-	r.push(r.log, r.LocalWalFile, "")
-	r.LocalWalFile.RemoveWals(filesToDelete)
 
 	if r.web != nil && r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")

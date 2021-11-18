@@ -56,12 +56,19 @@ func (r *DBListRepo) Start(client Client) error {
 		}()
 	}
 
+	// TODO SL 2021-11-18: wasm browser loading fresh (len(wal) == 0) db will not load the client as
+	// no `refresh` is triggered to refresh DOM state. This should be handled in the browser client code,
+	// but this is so cheap and easy, I'm doing it here for now.
+	go func() {
+		scheduleRefresh()
+	}()
+
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
 	// that differs from when the user intended due to async updates).
 	// Therefore, we consume client events into a channel, and consume from it in the same loop
 	// as the pull/replay loop.
-	errChan := make(chan error, 1)
+	errChan := make(chan error)
 	go func() {
 		for {
 			select {
@@ -77,7 +84,7 @@ func (r *DBListRepo) Start(client Client) error {
 					scheduleRefresh()
 				}
 			case ev := <-inputEvtsChan:
-				cont, err := client.HandleEvent(ev)
+				cont, purge, err := client.HandleEvent(ev)
 				if err != nil {
 					errChan <- err
 				}
@@ -86,10 +93,7 @@ func (r *DBListRepo) Start(client Client) error {
 					<-refreshChan
 				}
 				if !cont {
-					if err := r.finish(); err != nil {
-						errChan <- err
-					}
-					errChan <- nil
+					errChan <- r.finish(purge)
 				}
 			}
 		}
@@ -97,15 +101,22 @@ func (r *DBListRepo) Start(client Client) error {
 
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
-	for {
-		select {
-		case inputEvtsChan <- client.AwaitEvent():
-		case err := <-errChan:
-			return err
+	// TODO SL 2021-11-17: This is handled in a separate goroutine solely for the wasm web app -
+	// at present, without this operating in a separate loop, the app behaves oddly when trying
+	// to exit gracefully. Running in a separate goroutine solves this apparently.
+	go func() {
+		for {
+			inputEvtsChan <- client.AwaitEvent()
 		}
-	}
-
-	//return nil
+	}()
+	//for {
+	//    select {
+	//    case inputEvtsChan <- client.AwaitEvent():
+	//    case err := <-errChan:
+	//        return err
+	//    }
+	//}
+	return <-errChan
 }
 
 func (r *DBListRepo) registerWeb() error {

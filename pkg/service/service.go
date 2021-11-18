@@ -31,7 +31,7 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 type Client interface {
-	HandleEvent(interface{}) (bool, error)
+	HandleEvent(interface{}) (bool, bool, error)
 	AwaitEvent() interface{}
 }
 
