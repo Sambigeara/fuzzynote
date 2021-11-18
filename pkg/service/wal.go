@@ -8,14 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -1181,6 +1178,7 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 }
 
 func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
+	//log.Print("Pulling...")
 	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
 	newWalMutex := sync.Mutex{}
 	newWalMap := make(map[WalFile][]string)
@@ -1607,33 +1605,9 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				case <-webPingTicker.C:
 					// is !isActive, we've already entered the exponential retry backoff below
 					if r.web.isActive {
-						u, _ := url.Parse(apiURL)
-						u.Path = path.Join(u.Path, "ping")
-
-						retryFn := func() {
+						if _, err := r.web.ping(); err != nil {
 							r.web.isActive = false
 							webRefreshTicker.Reset(0)
-						}
-
-						resp, err := http.Get(u.String())
-						if err != nil {
-							retryFn()
-							continue
-						}
-						defer resp.Body.Close()
-
-						if resp.StatusCode != http.StatusOK {
-							retryFn()
-							continue
-						}
-						respBytes, err := ioutil.ReadAll(resp.Body)
-						if err != nil {
-							retryFn()
-							continue
-						}
-						var pong struct{ Response string }
-						if err := json.Unmarshal(respBytes, &pong); err != nil || pong.Response != "pong" {
-							retryFn()
 							continue
 						}
 					}

@@ -124,6 +124,14 @@ func (r *DBListRepo) registerWeb() error {
 		return err
 	}
 
+	if r.email == "" {
+		if pong, err := r.web.ping(); err == nil {
+			r.email = pong.User
+			r.web.tokens.SetEmail(pong.User)
+			r.web.tokens.Flush()
+		}
+	}
+
 	r.DeleteWalFile(string(r.email))
 	r.AddWalFile(
 		&WebWalFile{

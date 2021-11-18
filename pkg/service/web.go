@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -79,6 +80,43 @@ func (w *Web) establishWebSocketConnection() error {
 		return err
 	}
 	return err
+}
+
+type pong struct {
+	Response string
+	User     string
+}
+
+func (w *Web) ping() (pong, error) {
+	p := pong{}
+	u, _ := url.Parse(apiURL)
+	u.Path = path.Join(u.Path, "ping")
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return p, err
+	}
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+
+	resp, err := w.CallWithReAuth(req)
+	if err != nil {
+		return p, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return p, errors.New("ping did not return 201")
+	}
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(respBytes, &p); err != nil {
+		return p, err
+	}
+	if p.Response != "pong" {
+		return p, errors.New("ping did not return a pong")
+	}
+	return p, nil
 }
 
 type websocketMessage struct {
