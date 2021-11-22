@@ -310,7 +310,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
 	item := r.listItemTracker[key]
 	targetItem := r.listItemTracker[targetKey]
@@ -361,7 +361,7 @@ func (r *DBListRepo) CallFunctionForEventLog(root *ListItem, e EventLog) (*ListI
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
-			root, item, err = r.CallFunctionForEventLog(root, addEl)
+			root, item, err = r.processEventLog(root, addEl)
 		}
 	case DeleteEvent:
 		root, err = r.del(root, item)
@@ -493,11 +493,11 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
-		root, _, _ = r.CallFunctionForEventLog(root, e)
+		root, _, _ = r.processEventLog(root, e)
 	}
 
 	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
-	// NOTE: this needs to occur after CallFunctionForEventLog, as that is where the r.friends cache is populated
+	// NOTE: this needs to occur after processEventLog, as that is where the r.friends cache is populated
 	// on initial Replay.
 	for _, e := range partialWal {
 		key, _ := e.getKeys()

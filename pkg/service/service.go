@@ -175,7 +175,7 @@ func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
+func (r *DBListRepo) addEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
 		EventType:                  e,
 		UUID:                       originUUID,
@@ -189,7 +189,7 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
 	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
 	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
-	// updated on the original event which we pass to CallFunctionForEventLog. This is still the case
+	// updated on the original event which we pass to processEventLog. This is still the case
 	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
 	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
 	// copy for the websocket event.
@@ -203,7 +203,7 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 	r.log = append(r.log, el)
 	var err error
 	var item *ListItem
-	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
+	r.Root, item, err = r.processEventLog(r.Root, el)
 	return item, err
 }
 
@@ -225,10 +225,10 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 		childUUID = childItem.originUUID
 	}
 	// TODO ideally we'd use the same unixtime for log creation and the listItem creation time for Add()
-	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
+	// We can't for now because other invocations of addEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
+	newItem, _ := r.addEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
 	r.addUndoLog(AddEvent, now, childCreationTime, r.uuid, childUUID, line, note, line, note)
 	return newItem.Key(), nil
 }
@@ -249,7 +249,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
 	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.rawLine, listItem.Note, line, note)
-	r.processEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
+	r.addEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
 	return nil
 }
 
@@ -267,7 +267,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		targetCreationTime = listItem.child.creationTime
 		targetUUID = listItem.child.originUUID
 	}
-	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.addEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.rawLine, listItem.Note, listItem.rawLine, listItem.Note)
 	key := ""
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
@@ -305,7 +305,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 		//    targetUUID = listItem.child.originUUID
 	}
 
-	r.processEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.addEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
 		r.addUndoLog(MoveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
@@ -332,7 +332,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 		//    targetUUID = listItem.parent.originUUID
 	}
 
-	r.processEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.addEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
 		r.addUndoLog(MoveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
@@ -365,7 +365,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 			itemKey = listItem.matchChild.Key()
 		}
 	}
-	r.processEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.addEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	return itemKey, nil
 }
 
@@ -386,7 +386,7 @@ func (r *DBListRepo) Undo() (string, error) {
 			r.eventLogger.log[r.eventLogger.curIdx] = uel
 		}
 
-		listItem, err := r.processEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.addEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx--
 		return listItem.Key(), err
 	}
@@ -409,7 +409,7 @@ func (r *DBListRepo) Redo() (string, error) {
 			r.eventLogger.log[r.eventLogger.curIdx+1] = uel
 		}
 
-		listItem, err := r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.addEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx++
 		return listItem.Key(), err
 	}
