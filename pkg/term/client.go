@@ -225,7 +225,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			style = style.Dim(true)
 		}
 
-		line := t.c.TrimPrefix(r.Line)
+		line := t.c.TrimPrefix(r.Line())
 
 		// Account for horizontal offset if on curItem
 		if i == t.c.CurY-reservedTopLines {
@@ -359,7 +359,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 		case tcell.KeyCtrlR:
 			interactionEvent.T = service.KeyRedo
 		case tcell.KeyCtrlC:
-			if url := service.MatchFirstURL(t.c.CurItem.Line); url != "" {
+			if url := service.MatchFirstURL(t.c.CurItem.Line()); url != "" {
 				clipboard.WriteAll(url)
 			}
 			interactionEvent.T = service.KeyCopy

@@ -239,7 +239,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 
 	var existingLine string
 	if item != nil {
-		existingLine = item.Line
+		existingLine = item.rawLine
 	}
 
 	before := r.getFriendFromConfigLine(existingLine)
@@ -388,7 +388,7 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, note *
 		originUUID:   uuid,
 		creationTime: creationTime,
 		child:        childItem,
-		Line:         line,
+		rawLine:      line,
 		Note:         note,
 	}
 
@@ -419,7 +419,7 @@ func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*Lis
 	if note != nil {
 		listItem.Note = note
 	} else {
-		listItem.Line = line
+		listItem.rawLine = line
 	}
 	return listItem, nil
 }
@@ -443,7 +443,7 @@ func (r *DBListRepo) move(root *ListItem, item *ListItem, childItem *ListItem) (
 	var err error
 	root, err = r.del(root, item)
 	isHidden := item.IsHidden
-	root, item, err = r.add(root, item.creationTime, item.Line, item.Note, childItem, item.originUUID)
+	root, item, err = r.add(root, item.creationTime, item.rawLine, item.Note, childItem, item.originUUID)
 	if isHidden {
 		r.setVisibility(item, false)
 	}
@@ -747,7 +747,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	if a.Line != b.Line ||
+	if a.rawLine != b.rawLine ||
 		a.Note != b.Note ||
 		a.IsHidden != b.IsHidden ||
 		a.originUUID != b.originUUID ||
@@ -936,7 +936,7 @@ func recoverWal(wal []EventLog, matches []*ListItem) []EventLog {
 		case UpdateEvent:
 			if !exists {
 				item = &ListItem{
-					Line:         e.Line,
+					rawLine:      e.Line,
 					Note:         e.Note,
 					originUUID:   e.UUID,
 					creationTime: e.ListItemCreationTime,
@@ -946,14 +946,14 @@ func recoverWal(wal []EventLog, matches []*ListItem) []EventLog {
 				}
 			} else {
 				if e.EventType == AddEvent {
-					item.Line = e.Line
+					item.rawLine = e.Line
 					item.Note = e.Note
 				} else {
 					// Updates handle Line and Note mutations separately
 					if e.Note != nil {
 						item.Note = e.Note
 					} else {
-						item.Line = e.Line
+						item.rawLine = e.Line
 					}
 				}
 			}
@@ -983,7 +983,7 @@ func recoverWal(wal []EventLog, matches []*ListItem) []EventLog {
 			UUID:                 item.originUUID,
 			UnixNanoTime:         item.creationTime, // Use original creation time
 			ListItemCreationTime: item.creationTime,
-			Line:                 item.Line,
+			Line:                 item.rawLine,
 			Note:                 item.Note,
 		}
 		newWal = append(newWal, el)
@@ -1119,7 +1119,7 @@ func generatePlainTextFile(matchItems []ListItem) error {
 	}
 	defer f.Close()
 	for _, i := range matchItems {
-		if _, err := f.Write([]byte(fmt.Sprintf("%s\n", i.Line))); err != nil {
+		if _, err := f.Write([]byte(fmt.Sprintf("%s\n", i.rawLine))); err != nil {
 			return err
 		}
 	}
@@ -1142,7 +1142,7 @@ func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 			TargetListItemCreationTime: 0,
 			UnixNanoTime:               now,
 			EventType:                  AddEvent,
-			Line:                       item.Line,
+			Line:                       item.rawLine,
 			Note:                       item.Note,
 		}
 		wal = append(wal, el)

@@ -151,7 +151,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	// TODO these can all be private now
-	Line         string
+	//Line         string
+	rawLine      string
 	Note         *[]byte
 	IsHidden     bool
 	originUUID   uuid
@@ -161,6 +162,14 @@ type ListItem struct {
 	matchChild   *ListItem
 	matchParent  *ListItem
 }
+
+// Line returns a post-processed rawLine, with any matched collaborators omitted
+func (i *ListItem) Line() string {
+	return i.rawLine
+}
+
+//func (i *ListItem) Friends() string {
+//}
 
 func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
@@ -239,7 +248,7 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 	}
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
-	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
+	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.rawLine, listItem.Note, line, note)
 	r.processEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
 	return nil
 }
@@ -259,7 +268,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		targetUUID = listItem.child.originUUID
 	}
 	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
-	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
+	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.rawLine, listItem.Note, listItem.rawLine, listItem.Note)
 	key := ""
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
@@ -460,12 +469,12 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 			for _, group := range keys {
 				// Match the currently selected item.
 				// Also, match any items with empty Lines (this accounts for lines added when search is active)
-				if cur.Key() == curKey || len(cur.Line) == 0 {
+				if cur.Key() == curKey || len(cur.rawLine) == 0 {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
 				pattern, nChars := GetMatchPattern(group)
-				if !isMatch(group[nChars:], cur.Line, pattern) {
+				if !isMatch(group[nChars:], cur.rawLine, pattern) {
 					matched = false
 					break
 				}

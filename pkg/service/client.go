@@ -301,7 +301,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	offsetX := t.HorizOffset + t.CurX
 	lenHiddenMatchPrefix := 0
 	if t.CurItem != nil {
-		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line, t.HiddenMatchPrefix)
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line(), t.HiddenMatchPrefix)
 		offsetX += lenHiddenMatchPrefix
 	}
 	var err error
@@ -399,7 +399,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			t.CurX = t.getLenSearchBox()
 		} else {
 			// TODO
-			t.CurX = len([]rune(t.CurItem.Line))
+			t.CurX = len([]rune(t.CurItem.Line()))
 		}
 		t.HorizOffset = t.CurX - t.W
 	case KeyVisibility:
@@ -437,7 +437,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 	case KeyOpenURL:
 		if relativeY != reservedTopLines-1 {
-			if url := MatchFirstURL(t.CurItem.Line); url != "" {
+			if url := MatchFirstURL(t.CurItem.Line()); url != "" {
 				openURL(url)
 			}
 		}
@@ -446,7 +446,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyPaste:
 		// Paste functionality
 		if t.copiedItem != nil {
-			itemKey, err = t.db.Add(t.copiedItem.Line, nil, relativeY)
+			itemKey, err = t.db.Add(t.copiedItem.Line(), nil, relativeY)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -458,7 +458,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			if _, ok := t.SelectedItems[relativeY-reservedTopLines]; ok {
 				delete(t.SelectedItems, relativeY-reservedTopLines)
 			} else {
-				t.SelectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines].Line
+				t.SelectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines].Line()
 			}
 		}
 	case KeyAddSearchGroup:
@@ -503,7 +503,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line)
+			newLine := []rune(t.CurItem.Line())
 			if t.HorizOffset+t.CurX > 0 && len(newLine) > 0 {
 				newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
@@ -548,7 +548,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line)
+			newLine := []rune(t.CurItem.Line())
 			if len(newLine) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(newLine) {
 				newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
@@ -615,7 +615,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				t.Search = append(t.Search, newTerm)
 			}
 		} else {
-			newLine := []rune(t.CurItem.Line)
+			newLine := []rune(t.CurItem.Line())
 			// Insert characters at position
 			if len(newLine) == 0 || len(newLine) == offsetX {
 				newLine = append(newLine, ev.R...)
@@ -697,15 +697,15 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			}
 			t.CurX = 0 // Prevent index < 0
 		} else {
-			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.CurItem.Line) {
+			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.CurItem.Line()) {
 				t.HorizOffset++
 			}
 			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
 			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
 			// before the cursor sets to the end of the line and we're at risk of an index error).
-			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line, t.HiddenMatchPrefix)
-			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
-			t.CurX = Min(newXIdx, t.W-1)                                                           // Prevent going out of range of the page
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line(), t.HiddenMatchPrefix)
+			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line()))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
+			t.CurX = Min(newXIdx, t.W-1)                                                             // Prevent going out of range of the page
 		}
 	}
 
