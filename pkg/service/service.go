@@ -177,8 +177,9 @@ func (i *ListItem) Line() string {
 	return i.rawLine
 }
 
-//func (i *ListItem) Friends() string {
-//}
+func (i *ListItem) Friends() []string {
+	return i.friends.emails
+}
 
 func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)

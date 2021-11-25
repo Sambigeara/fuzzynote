@@ -281,10 +281,20 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	// Closure around static e.Line
 	genFriendsData := func(friends []string) lineFriends {
 		friendsString := fmt.Sprintf(" %s", strings.Join(friends, " "))
+		// We need to include `self` in the raw Line, as this will be distributed across all clients who also
+		// need to collaborate back to the local client. However, we do _not_ want to include this email in
+		// lineFriends.emails, as it's not relevant to the client's Friends() call
+		ownerOmitted := []string{}
+		for _, f := range friends {
+			f = strings.TrimPrefix(f, "@")
+			if f != r.email {
+				ownerOmitted = append(ownerOmitted, f)
+			}
+		}
 		return lineFriends{
 			isProcessed: true,
 			offset:      len([]rune(e.Line)) - len([]rune(friendsString)),
-			emails:      friends,
+			emails:      ownerOmitted,
 		}
 	}
 

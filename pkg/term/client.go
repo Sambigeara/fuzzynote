@@ -259,8 +259,11 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	}
 
 	//if t.footerMessage != "" {
-	//    t.buildFooter(t.S, t.footerMessage)
-	//}
+	if t.c.CurItem != nil {
+		if friends := t.c.CurItem.Friends(); len(friends) > 0 {
+			t.buildFooter(t.S, strings.Join(friends, " "))
+		}
+	}
 
 	t.S.ShowCursor(t.c.CurX, t.c.CurY)
 	t.S.Show()
