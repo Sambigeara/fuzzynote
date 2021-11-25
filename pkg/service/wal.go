@@ -18,6 +18,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,12 @@ const (
 	DeleteEvent
 )
 
+type lineFriends struct {
+	isProcessed bool
+	offset      int
+	emails      []string
+}
+
 type EventLog struct {
 	UUID                       uuid
 	TargetUUID                 uuid
@@ -80,8 +87,12 @@ type EventLog struct {
 	TargetListItemCreationTime int64
 	UnixNanoTime               int64
 	EventType                  EventType
-	Line                       string
+	Line                       string // TODO This represents the raw (un-friends-processed) line
 	Note                       *[]byte
+	//RawLine                    string // TODO This should eventually replace `Line`
+	// These fields aren't serialized, but are populated once on initial wal replay
+	//line    string
+	friends lineFriends
 }
 
 func (e *EventLog) getKeys() (string, string) {
@@ -203,19 +214,34 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 	return exists
 }
 
-var lineFriendRegex = regexp.MustCompile("@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)")
+// https://go.dev/play/p/iCQeCtOEibl
+// enforces existence of surrounding boundary character
+var lineFriendRegex = regexp.MustCompile("(?:^|\\s)@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)(?:$|\\s)")
 
 func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
-	friends := map[string]struct{}{
-		r.email: struct{}{},
-	}
+	// (golang?) regex does return overlapping results, which we need in order to ensure space
+	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
+	// email with (pre|app)ending spaces with a single space
+
+	friends := map[string]struct{}{}
+
 	if len(line) == 0 {
 		return friends
 	}
-	friendMatches := lineFriendRegex.FindAllStringSubmatch(line, -1)
-	for _, match := range friendMatches {
-		friends[match[1]] = struct{}{}
+
+	replacedLine := line
+	oldReplacedLine := ""
+	for replacedLine != oldReplacedLine {
+		oldReplacedLine = replacedLine
+		match := lineFriendRegex.FindStringSubmatch(replacedLine)
+		// TODO consider using FindStringIndex
+		if match != nil {
+			email := match[1] // email is in the first matching group
+			friends[email] = struct{}{}
+			replacedLine = strings.Replace(replacedLine, email, " ", 1)
+		}
 	}
+
 	return friends
 }
 
@@ -229,6 +255,100 @@ func (r *DBListRepo) getFriendFromConfigLine(line string) string {
 		return match[1]
 	}
 	return ""
+}
+
+func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
+	// TODO
+	// TODO
+	// TODO
+	// TODO
+	// TODO WRITE TESTS!!!
+
+	// Empty lines would only be present if the user is not logged in (it shouldn't reach this code path in that
+	// circumstance either way, but JIC...)
+	if len(e.Line) == 0 {
+		return
+	}
+
+	if e.friends.isProcessed {
+		return
+	}
+
+	// If any matched friends are within the current friends cache, cut from the Line and store in a slice
+	r.friendsUpdateLock.RLock()
+	defer r.friendsUpdateLock.RUnlock()
+
+	// Closure around static e.Line
+	genFriendsData := func(friends []string) lineFriends {
+		friendsString := fmt.Sprintf(" %s", strings.Join(friends, " "))
+		return lineFriends{
+			isProcessed: true,
+			offset:      len([]rune(e.Line)) - len([]rune(friendsString)),
+			emails:      friends,
+		}
+	}
+
+	// Traverse over each word in the string, matching each word against the email regex, whilst simultaneously
+	// checking against the friends cache. If there are any non-matching/non-friends emails after a match, or if the
+	// emails are not in order, the line needs to be processed, so continue with the method call
+	words := strings.Fields(e.Line)
+	processedFriends := []string{}
+	for i, w := range words {
+		if match := lineFriendRegex.FindStringSubmatch(w); match != nil {
+			w = match[1]
+			if _, isFriend := r.friends[w]; isFriend {
+				processedFriends = append(processedFriends, fmt.Sprintf("@%s", w))
+				if !sort.StringsAreSorted(processedFriends) {
+					break
+				}
+				// If we've reached the final word, set the friends metadata and return
+				if i == len(words)-1 {
+					e.friends = genFriendsData(processedFriends)
+					return
+				}
+			}
+		} else if len(processedFriends) > 0 {
+			break
+		}
+	}
+
+	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
+	var friends map[string]struct{}
+	if r.cfgFriendRegex.MatchString(e.Line) {
+		friends = map[string]struct{}{
+			r.email: struct{}{},
+		}
+	} else {
+		friends = r.getFriendsFromLine(e.Line)
+		if len(friends) == 0 {
+			return
+		}
+	}
+
+	friendsToReposition := []string{}
+	newLine := e.Line
+	for f := range friends {
+		if _, isFriend := r.friends[f]; isFriend {
+			friendsToReposition = append(friendsToReposition, fmt.Sprintf("@%s", f))
+			// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
+			newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
+			newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(newLine)
+
+	// Sort the emails, and then append a space separated string to the end of the Line
+	// TODO this string gen is currently duplicated (within genFriendsData), dedup at some point
+	sort.Strings(friendsToReposition)
+	for _, f := range friendsToReposition {
+		sb.WriteString(" ")
+		sb.WriteString(f)
+	}
+
+	e.Line = sb.String()
+	e.friends = genFriendsData(friendsToReposition)
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
@@ -310,7 +430,11 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *ListItem, error) {
+	if e == nil {
+		return root, nil, nil
+	}
+
 	key, targetKey := e.getKeys()
 	item := r.listItemTracker[key]
 	targetItem := r.listItemTracker[targetKey]
@@ -323,8 +447,19 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 		return root, item, nil
 	}
 
+	// At this point, if `web` is active, we inspect the Line in the event log (relevant for `Add` and `Update`)
+	// for `@friends`, and if they're present and currently enabled (e.g. in the friends cache), cut them from any
+	// central location in the line and append to the end. This is required for later public client APIs (e.g. we only
+	// return a slice of the rawLine to clients via the Line() API).
+	// This occurs here next to the generateFriendChangeEvents call, as the Line mutations need to act on the "current"
+	// state of the friends cache, where "current" can indeed be historical, but current WRT the event log being processed.
+	// This means that even if there are inconsistencies in events being transmitted to other clients, due to out-of-date
+	// friends caches, distributed state will always be eventually consistent.
+	// NOTE: ordering of generateFriendChangeEvents vs repositionActiveFriends is irrelevant, because we will never need to
+	// extract friends from the config lines used to generate change events.
 	if r.web != nil {
-		r.generateFriendChangeEvents(e, item)
+		r.repositionActiveFriends(e)
+		r.generateFriendChangeEvents(*e, item)
 	}
 
 	var err error
@@ -338,11 +473,11 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 			// Note and Line updates are individual operations.
 			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
 			if e.Note != nil {
-				item, err = r.update(e.Line, e.Note, item)
+				item, err = r.update(e.Line, e.friends, e.Note, item)
 			}
-			item, err = r.update(e.Line, nil, item)
+			item, err = r.update(e.Line, e.friends, nil, item)
 		} else {
-			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Note, targetItem, e.UUID)
+			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.friends, e.Note, targetItem, e.UUID)
 			r.listItemTracker[key] = item
 		}
 	case UpdateEvent:
@@ -357,7 +492,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.Line, e.Note, item)
+			item, err = r.update(e.Line, e.friends, e.Note, item)
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
@@ -383,13 +518,14 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 	return root, item, err
 }
 
-func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends lineFriends, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
 		child:        childItem,
 		rawLine:      line,
 		Note:         note,
+		friends:      friends,
 	}
 
 	// If `child` is nil, it's the first item in the list so set as root and return
@@ -412,7 +548,7 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, note *
 	return root, newItem, nil
 }
 
-func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) update(line string, friends lineFriends, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	// We currently separate Line and Note updates even though they use the same interface
 	// This is to reduce wal size and also solves some race conditions for long held open
 	// notes, etc
@@ -420,6 +556,7 @@ func (r *DBListRepo) update(line string, note *[]byte, listItem *ListItem) (*Lis
 		listItem.Note = note
 	} else {
 		listItem.rawLine = line
+		listItem.friends = friends
 	}
 	return listItem, nil
 }
@@ -443,7 +580,7 @@ func (r *DBListRepo) move(root *ListItem, item *ListItem, childItem *ListItem) (
 	var err error
 	root, err = r.del(root, item)
 	isHidden := item.IsHidden
-	root, item, err = r.add(root, item.creationTime, item.rawLine, item.Note, childItem, item.originUUID)
+	root, item, err = r.add(root, item.creationTime, item.rawLine, item.friends, item.Note, childItem, item.originUUID)
 	if isHidden {
 		r.setVisibility(item, false)
 	}
@@ -493,7 +630,7 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
-		root, _, _ = r.processEventLog(root, e)
+		root, _, _ = r.processEventLog(root, &e)
 	}
 
 	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
@@ -504,7 +641,8 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		if len(e.Line) > 0 {
 			r.friendsUpdateLock.RLock()
 			for f := range r.getFriendsFromLine(e.Line) {
-				if _, isFriend := r.friends[f]; isFriend {
+				// TODO figure out why this no work when f == r.email
+				if _, isFriend := r.friends[f]; isFriend && f != r.email {
 					r.allWalFileMut.RLock()
 					wf, _ := r.allWalFiles[f]
 					r.allWalFileMut.RUnlock()
@@ -601,7 +739,6 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		errChan <- nil
 	}()
 
-	// This decoder is only relevant for wals with the most recent schema version (4 presently)
 	if walSchemaVersionID <= 3 {
 		for {
 			select {
@@ -628,6 +765,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				el = append(el, *e)
 			}
 		}
+		// This decoder is only relevant for wals with the most recent schema version (4 presently)
 	} else if walSchemaVersionID == 4 {
 		dec := gob.NewDecoder(r)
 		if err := dec.Decode(&el); err != nil {
@@ -1411,6 +1549,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			// Event owner is added to e.Friends by default
 			friends := r.getFriendsFromLine(e.Line)
 			_, isFriend = friends[walOwnerEmail]
+			isFriend = isFriend || walOwnerEmail == r.email
 		}
 		if !isWebRemote || isFriend {
 			k, _ := e.getKeys()

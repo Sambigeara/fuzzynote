@@ -131,8 +131,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.IDToken() != "" || webTokenStore.RefreshToken() != "" {
-		listRepo.email = webTokenStore.Email()
-		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^@%s fzn_cfg:friend +(%s) *$", regexp.QuoteMeta(listRepo.email), EmailRegex))
+		listRepo.setEmail(webTokenStore.Email())
+		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend +(%s) +@%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
@@ -148,6 +148,11 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	return listRepo
 }
 
+func (r *DBListRepo) setEmail(email string) {
+	r.email = email
+	r.friends[email] = make(map[string]int64)
+}
+
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	// TODO these can all be private now
@@ -161,10 +166,14 @@ type ListItem struct {
 	parent       *ListItem
 	matchChild   *ListItem
 	matchParent  *ListItem
+	friends      lineFriends
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
 func (i *ListItem) Line() string {
+	if i.friends.isProcessed {
+		return i.rawLine[:i.friends.offset]
+	}
 	return i.rawLine
 }
 
@@ -199,11 +208,16 @@ func (r *DBListRepo) addEventLog(e EventType, creationTime int64, targetCreation
 		elCopy.Note = &newNote
 	}
 
-	r.eventsChan <- elCopy
-	r.log = append(r.log, el)
 	var err error
 	var item *ListItem
-	r.Root, item, err = r.processEventLog(r.Root, el)
+	r.Root, item, err = r.processEventLog(r.Root, &el)
+
+	// We pass a pointer to the new event log to the processing function, and publish to the eventsChan and
+	// r.log after, as there is a chance of post-processing being applied within the processEventLog step.
+	// We want these mutations to be applied prior to flushing to local state or to remotes.
+	r.eventsChan <- elCopy
+	r.log = append(r.log, el)
+
 	return item, err
 }
 

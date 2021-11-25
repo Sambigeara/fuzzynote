@@ -18,7 +18,7 @@ const (
 	emptySearchLinePrompt                 = "Search here..."
 	searchGroupPrompt                     = "TAB: Create new search group"
 	newLinePrompt                         = "Enter: Create new line"
-	collabEmailPattern                    = "@%s "
+	collabEmailPattern                    = " @%s"
 )
 
 // ClientBase ...
@@ -88,28 +88,17 @@ const (
 )
 
 // TODO duplicated in getHiddenLinePrefix function, figure out how to unify
-func getLenHiddenMatchPrefix(owner string, line string, hiddenMatchPrefix string) int {
+func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	l := 0
-	if owner != "" {
-		ownerPattern := fmt.Sprintf(collabEmailPattern, owner)
-		if strings.HasPrefix(strings.ToLower(line), ownerPattern) {
-			l += len([]byte(ownerPattern))
-			line = strings.TrimPrefix(line, ownerPattern)
-		}
-	}
 	if strings.HasPrefix(strings.ToLower(line), hiddenMatchPrefix) {
 		l += len([]byte(hiddenMatchPrefix))
 	}
 	return l
 }
 
-func getCommonSearchPrefix(owner string, selectedItems map[int]string) [][]rune {
+func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
 	var lines []string
 	for _, line := range selectedItems {
-		// Omit any prepended `@{owner_email}` from each line
-		if owner != "" {
-			line = strings.TrimPrefix(line, fmt.Sprintf(collabEmailPattern, owner))
-		}
 		lines = append(lines, strings.TrimSpace(line))
 	}
 	prefix := strings.TrimSpace(longestCommonPrefix(lines))
@@ -264,21 +253,17 @@ func (t *ClientBase) TrimPrefix(line string) string {
 	// ignoring search operators
 	// Op needs to be case-insensitive, but must not mutate underlying line
 
-	// If `t.db.owner` is a non-empty string and prepends the line, we separately trim that first.
-	if t.db.email != "" {
-		ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
-		// We explicitly avoid using `strings.TrimPrefix(...)` here because the lines are case-sensitive
-		if strings.HasPrefix(strings.ToLower(line), ownerPattern) {
-			line = string([]rune(line)[len([]byte(ownerPattern)):])
-		}
+	if t.HiddenMatchPrefix == "" {
+		return line
 	}
 
 	// We explicitly avoid using `strings.TrimPrefix(...)` here because the lines are case-sensitive
 	if strings.HasPrefix(strings.ToLower(line), t.HiddenMatchPrefix) {
 		line = string([]rune(line)[len([]byte(t.HiddenMatchPrefix)):])
+		// If we strip the match prefix, and there is a space remaining, trim that too
+		return strings.TrimPrefix(line, " ")
 	}
-	// If we strip the match prefix, and there is a space remaining, trim that too
-	return strings.TrimPrefix(line, " ")
+	return line
 }
 
 // TODO rename "t"
@@ -301,7 +286,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	offsetX := t.HorizOffset + t.CurX
 	lenHiddenMatchPrefix := 0
 	if t.CurItem != nil {
-		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line(), t.HiddenMatchPrefix)
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line(), t.HiddenMatchPrefix)
 		offsetX += lenHiddenMatchPrefix
 	}
 	var err error
@@ -316,7 +301,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyEnter:
 		if len(t.SelectedItems) > 0 {
 			// Add common search prefix to search groups
-			t.Search = getCommonSearchPrefix(t.db.email, t.SelectedItems)
+			t.Search = getCommonSearchPrefix(t.SelectedItems)
 			t.SelectedItems = make(map[int]string)
 			t.CurY = 0
 			if len(t.Search) > 0 {
@@ -338,7 +323,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			if t.db.email != "" {
 				ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
 				if !strings.Contains(newString, ownerPattern) {
-					newString = fmt.Sprintf("%s%s", ownerPattern, newString)
+					newString = fmt.Sprintf("%s%s", newString, ownerPattern)
 					//posDiff[0] += len([]byte(ownerPattern))
 				}
 			}
@@ -503,15 +488,15 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line())
-			if t.HorizOffset+t.CurX > 0 && len(newLine) > 0 {
+			newLine := []rune(t.CurItem.rawLine)
+			if t.HorizOffset+t.CurX > 0 && len(t.CurItem.Line()) > 0 {
 				newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
 				posDiff[0]--
-			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
+			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(t.CurItem.Line())-lenHiddenMatchPrefix) == 0 {
 				itemKey, err = t.db.Delete(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
@@ -548,14 +533,14 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line())
-			if len(newLine) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(newLine) {
+			newLine := []rune(t.CurItem.rawLine)
+			if len(t.CurItem.Line()) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(t.CurItem.Line()) {
 				newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
 				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
 				if err != nil {
 					log.Fatal(err)
 				}
-			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
+			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(t.CurItem.Line())-lenHiddenMatchPrefix) == 0 {
 				itemKey, err = t.db.Delete(relativeY - 1)
 				if err != nil {
 					log.Fatal(err)
@@ -615,20 +600,20 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				t.Search = append(t.Search, newTerm)
 			}
 		} else {
-			newLine := []rune(t.CurItem.Line())
+			newLine := []rune(t.CurItem.rawLine)
 			// Insert characters at position
-			if len(newLine) == 0 || len(newLine) == offsetX {
+			if len(newLine) == 0 {
 				newLine = append(newLine, ev.R...)
 			} else {
 				newLine = insertCharInPlace(newLine, offsetX, ev.R)
 			}
-			oldLen := len(newLine)
+			oldLen := len([]rune(t.CurItem.Line()))
 			parsedNewLine := parseOperatorGroups(string(newLine))
 			err = t.db.Update(parsedNewLine, nil, relativeY-reservedTopLines)
 			if err != nil {
 				log.Fatal(err)
 			}
-			posDiff[0] += len([]rune(parsedNewLine)) - oldLen
+			posDiff[0] += len([]rune(t.CurItem.Line())) - oldLen
 		}
 		posDiff[0] += len(ev.R)
 		t.footerMessage = ""
@@ -703,7 +688,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
 			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
 			// before the cursor sets to the end of the line and we're at risk of an index error).
-			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.db.email, t.CurItem.Line(), t.HiddenMatchPrefix)
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line(), t.HiddenMatchPrefix)
 			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line()))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
 			t.CurX = Min(newXIdx, t.W-1)                                                             // Prevent going out of range of the page
 		}
