@@ -214,9 +214,12 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 	return exists
 }
 
-// https://go.dev/play/p/iCQeCtOEibl
+// https://go.dev/play/p/1kbFF8FR-V7
 // enforces existence of surrounding boundary character
-var lineFriendRegex = regexp.MustCompile("(?:^|\\s)@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)(?:$|\\s)")
+// match[0] = full match (inc boundaries)
+// match[1] = `@email`
+// match[2] = `email`
+var lineFriendRegex = regexp.MustCompile("(?:^|\\s)(@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*))(?:$|\\s)")
 
 func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
@@ -233,12 +236,11 @@ func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	oldReplacedLine := ""
 	for replacedLine != oldReplacedLine {
 		oldReplacedLine = replacedLine
-		match := lineFriendRegex.FindStringSubmatch(replacedLine)
-		// TODO consider using FindStringIndex
-		if match != nil {
-			email := match[1] // email is in the first matching group
-			friends[email] = struct{}{}
-			replacedLine = strings.Replace(replacedLine, email, " ", 1)
+		if match := lineFriendRegex.FindStringSubmatch(replacedLine); match != nil {
+			// If we want to check against the friends cache, we use the email only matching group
+			s := match[2]
+			friends[s] = struct{}{}
+			replacedLine = strings.Replace(replacedLine, s, " ", 1)
 		}
 	}
 
@@ -278,50 +280,6 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	r.friendsUpdateLock.RLock()
 	defer r.friendsUpdateLock.RUnlock()
 
-	// Closure around static e.Line
-	genFriendsData := func(friends []string) lineFriends {
-		friendsString := fmt.Sprintf(" %s", strings.Join(friends, " "))
-		// We need to include `self` in the raw Line, as this will be distributed across all clients who also
-		// need to collaborate back to the local client. However, we do _not_ want to include this email in
-		// lineFriends.emails, as it's not relevant to the client's Friends() call
-		ownerOmitted := []string{}
-		for _, f := range friends {
-			f = strings.TrimPrefix(f, "@")
-			if f != r.email {
-				ownerOmitted = append(ownerOmitted, f)
-			}
-		}
-		return lineFriends{
-			isProcessed: true,
-			offset:      len([]rune(e.Line)) - len([]rune(friendsString)),
-			emails:      ownerOmitted,
-		}
-	}
-
-	// Traverse over each word in the string, matching each word against the email regex, whilst simultaneously
-	// checking against the friends cache. If there are any non-matching/non-friends emails after a match, or if the
-	// emails are not in order, the line needs to be processed, so continue with the method call
-	words := strings.Fields(e.Line)
-	processedFriends := []string{}
-	for i, w := range words {
-		if match := lineFriendRegex.FindStringSubmatch(w); match != nil {
-			w = match[1]
-			if _, isFriend := r.friends[w]; isFriend {
-				processedFriends = append(processedFriends, fmt.Sprintf("@%s", w))
-				if !sort.StringsAreSorted(processedFriends) {
-					break
-				}
-				// If we've reached the final word, set the friends metadata and return
-				if i == len(words)-1 {
-					e.friends = genFriendsData(processedFriends)
-					return
-				}
-			}
-		} else if len(processedFriends) > 0 {
-			break
-		}
-	}
-
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
 	var friends map[string]struct{}
 	if r.cfgFriendRegex.MatchString(e.Line) {
@@ -350,7 +308,6 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	sb.WriteString(newLine)
 
 	// Sort the emails, and then append a space separated string to the end of the Line
-	// TODO this string gen is currently duplicated (within genFriendsData), dedup at some point
 	sort.Strings(friendsToReposition)
 	for _, f := range friendsToReposition {
 		sb.WriteString(" ")
@@ -358,7 +315,22 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	}
 
 	e.Line = sb.String()
-	e.friends = genFriendsData(friendsToReposition)
+
+	friendsString := fmt.Sprintf(" %s", strings.Join(friendsToReposition, " "))
+	// We need to include `self` in the raw Line, as this will be distributed across all clients who also
+	// need to collaborate back to the local client. However, we do _not_ want to include this email in
+	// lineFriends.emails, as it's not relevant to the client's Friends() call
+	ownerOmitted := []string{}
+	for _, f := range friendsToReposition {
+		if strings.TrimPrefix(f, "@") != r.email {
+			ownerOmitted = append(ownerOmitted, f)
+		}
+	}
+	e.friends = lineFriends{
+		isProcessed: true,
+		offset:      len([]rune(e.Line)) - len([]rune(friendsString)),
+		emails:      ownerOmitted,
+	}
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
