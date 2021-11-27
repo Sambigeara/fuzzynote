@@ -1611,7 +1611,9 @@ func (r *DBListRepo) emitRemoteUpdate() {
 
 			emails := []string{}
 			for e := range r.friends {
-				emails = append(emails, e)
+				if e != r.email {
+					emails = append(emails, e)
+				}
 			}
 
 			remote := WebRemote{

@@ -443,7 +443,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyPaste:
 		// Paste functionality
 		if t.copiedItem != nil {
-			itemKey, err = t.db.Add(t.copiedItem.Line(), nil, relativeY)
+			itemKey, err = t.db.Add(t.copiedItem.rawLine, nil, relativeY)
 			if err != nil {
 				log.Fatal(err)
 			}
