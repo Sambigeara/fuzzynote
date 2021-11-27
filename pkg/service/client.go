@@ -13,7 +13,7 @@ import (
 
 const (
 	dateFormat                            = "Mon, Jan 02, 2006"
-	reservedTopLines, reservedBottomLines = 1, 1
+	reservedTopLines, reservedBottomLines = 1, 2
 	reservedEndChars                      = 1
 	emptySearchLinePrompt                 = "Search here..."
 	searchGroupPrompt                     = "TAB: Create new search group"
@@ -33,11 +33,11 @@ type ClientBase struct {
 	VertOffset        int // The index of the first displayed item in the match set
 	HorizOffset       int // The index of the first displayed char in the curItem
 	ShowHidden        bool
-	SelectedItems     map[int]string // struct{} is more space efficient than bool
+	SelectedItems     map[int]ListItem
 	copiedItem        *ListItem
 	HiddenMatchPrefix string // The common string that we want to truncate from each line
 	//previousKey       InteractionEventType // Keep track of the previous keypress
-	footerMessage string // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
+	//footerMessage string // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
 }
 
 // NewClientBase ...
@@ -46,7 +46,7 @@ func NewClientBase(db *DBListRepo, maxWidth int, maxHeight int) *ClientBase {
 		db:            db,
 		W:             maxWidth,
 		H:             maxHeight,
-		SelectedItems: make(map[int]string),
+		SelectedItems: make(map[int]ListItem),
 	}
 }
 
@@ -96,16 +96,28 @@ func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	return l
 }
 
-func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
+func getCommonSearchPrefixAndFriends(selectedItems map[int]ListItem) [][]rune {
 	var lines []string
-	for _, line := range selectedItems {
-		lines = append(lines, strings.TrimSpace(line))
+	friends := make(map[string]struct{})
+	for _, item := range selectedItems {
+		lines = append(lines, strings.TrimSpace(item.Line()))
+		for _, f := range item.Friends() {
+			friends[f] = struct{}{}
+		}
 	}
+
 	prefix := strings.TrimSpace(longestCommonPrefix(lines))
-	if len(prefix) == 0 {
-		return [][]rune{[]rune{}}
+	searchGroups := [][]rune{}
+
+	if len(prefix) > 0 {
+		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", prefix)))
 	}
-	return [][]rune{[]rune(fmt.Sprintf("=%s", prefix))}
+
+	for f := range friends {
+		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", f)))
+	}
+
+	return searchGroups
 }
 
 func longestCommonPrefix(strs []string) string {
@@ -293,7 +305,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	switch ev.T {
 	case KeyEscape:
 		if len(t.SelectedItems) > 0 {
-			t.SelectedItems = make(map[int]string)
+			t.SelectedItems = make(map[int]ListItem)
 		} else {
 			t.VertOffset = 0
 			relativeY = 0
@@ -301,8 +313,8 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyEnter:
 		if len(t.SelectedItems) > 0 {
 			// Add common search prefix to search groups
-			t.Search = getCommonSearchPrefix(t.SelectedItems)
-			t.SelectedItems = make(map[int]string)
+			t.Search = getCommonSearchPrefixAndFriends(t.SelectedItems)
+			t.SelectedItems = make(map[int]ListItem)
 			t.CurY = 0
 			if len(t.Search) > 0 {
 				posDiff[0] += len(t.Search[0])
@@ -443,7 +455,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			if _, ok := t.SelectedItems[relativeY-reservedTopLines]; ok {
 				delete(t.SelectedItems, relativeY-reservedTopLines)
 			} else {
-				t.SelectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines].Line()
+				t.SelectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines]
 			}
 		}
 	case KeyAddSearchGroup:
@@ -616,7 +628,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			posDiff[0] += len([]rune(t.CurItem.Line())) - oldLen
 		}
 		posDiff[0] += len(ev.R)
-		t.footerMessage = ""
+		//t.footerMessage = ""
 	}
 	//t.previousKey = ev.T
 

@@ -138,11 +138,23 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	emitStr(s, 0, t.c.H-1+reservedBottomLines, footer, text)
 }
 
-func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style]string) {
-	x := 0
-	for style, collabStr := range collaborators {
-		emitStr(s, x, t.c.H-1+reservedBottomLines, style, collabStr)
-		x += len(collabStr)
+func (t *Terminal) buildSingleStyleCollabDisplay(s tcell.Screen, style tcell.Style, collaborators []string, xOffset int, yOffset int) {
+	friendStyles := map[tcell.Style][]string{
+		style: []string{},
+	}
+	for _, c := range collaborators {
+		friendStyles[style] = append(friendStyles[style], c)
+	}
+	t.buildCollabDisplay(t.S, friendStyles, xOffset, yOffset)
+}
+
+func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style][]string, xOffset int, yOffset int) {
+	x := xOffset
+	for style, collabStrSlice := range collaborators {
+		for _, collabStr := range collabStrSlice {
+			emitStr(s, x, yOffset, style, collabStr)
+			x += len(collabStr) + 1
+		}
 	}
 }
 
@@ -188,7 +200,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	t.buildSearchBox(t.S)
 
 	// Store comma separated strings of collaborator emails against the style
-	collaborators := make(map[tcell.Style]string)
+	collaborators := make(map[tcell.Style][]string)
 
 	// Randomise the starting colour index for bants
 	collabStyleInc := collabStyleIncStart
@@ -213,7 +225,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		} else if len(lineCollabers) > 0 {
 			// If collaborators are on line
 			style = collabStyleCombos[collabStyleInc%len(collabStyleCombos)]
-			collaborators[style] = strings.Join(lineCollabers, ",")
+			collaborators[style] = []string{strings.Join(lineCollabers, ",")}
 			collabStyleInc++
 		}
 
@@ -237,6 +249,32 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		// Emit line
 		emitStr(t.S, 0, offset, style, line)
 
+		// If the line is shared with anyone, paint the collaborators after the line
+		if friends := r.Friends(); len(friends) > 0 {
+			// TODO optimise
+			// Don't bother displaying friends that are currently being searched for
+			removedSearchFriends := []string{}
+			for _, f := range friends {
+				isInSearch := false
+				for _, s := range t.c.Search {
+					if pattern, nChars := service.GetMatchPattern(s); pattern == service.FullMatchPattern {
+						s = s[nChars:]
+					} else if pattern == service.InverseMatchPattern {
+						break
+					}
+					if f == string(s) {
+						isInSearch = true
+						break
+					}
+				}
+				if !isInSearch {
+					removedSearchFriends = append(removedSearchFriends, f)
+				}
+			}
+			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Dim(true)
+			t.buildSingleStyleCollabDisplay(t.S, s, removedSearchFriends, len([]rune(line))+1, offset)
+		}
+
 		if offset == t.c.H {
 			break
 		}
@@ -255,13 +293,14 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 
 	// Show active collaborators
 	if len(collaborators) > 0 {
-		t.buildCollabDisplay(t.S, collaborators)
+		t.buildCollabDisplay(t.S, collaborators, 0, t.c.H-2+reservedBottomLines)
 	}
 
-	//if t.footerMessage != "" {
 	if t.c.CurItem != nil {
 		if friends := t.c.CurItem.Friends(); len(friends) > 0 {
-			t.buildFooter(t.S, strings.Join(friends, " "))
+			friends := append([]string{"Shared with:"}, friends...) // Add a prompt as the initial string
+			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow)
+			t.buildSingleStyleCollabDisplay(t.S, s, friends, 0, t.c.H-1+reservedBottomLines)
 		}
 	}
 
