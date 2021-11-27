@@ -77,7 +77,7 @@ const (
 type lineFriends struct {
 	isProcessed bool
 	offset      int
-	emails      []string
+	emails      map[string]struct{}
 }
 
 type EventLog struct {
@@ -320,10 +320,10 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	// We need to include `self` in the raw Line, as this will be distributed across all clients who also
 	// need to collaborate back to the local client. However, we do _not_ want to include this email in
 	// lineFriends.emails, as it's not relevant to the client's Friends() call
-	ownerOmitted := []string{}
+	ownerOmitted := make(map[string]struct{})
 	for _, f := range friendsToReposition {
 		if strings.TrimPrefix(f, "@") != r.email {
-			ownerOmitted = append(ownerOmitted, f)
+			ownerOmitted[f] = struct{}{}
 		}
 	}
 	e.friends = lineFriends{
@@ -538,7 +538,18 @@ func (r *DBListRepo) update(line string, friends lineFriends, note *[]byte, list
 		listItem.Note = note
 	} else {
 		listItem.rawLine = line
-		listItem.friends = friends
+		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
+		// not remove any, due to the processedEventMap mechanism elsewhere)
+		mergedEmailMap := make(map[string]struct{})
+		for e := range listItem.friends.emails {
+			mergedEmailMap[e] = struct{}{}
+		}
+		for e := range friends.emails {
+			mergedEmailMap[e] = struct{}{}
+		}
+		listItem.friends.isProcessed = friends.isProcessed
+		listItem.friends.offset = friends.offset
+		listItem.friends.emails = mergedEmailMap
 	}
 	return listItem, nil
 }

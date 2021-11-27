@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"sync"
 	"time"
 )
@@ -178,7 +179,15 @@ func (i *ListItem) Line() string {
 }
 
 func (i *ListItem) Friends() []string {
-	return i.friends.emails
+	// The emails are stored as a map of strings. We need to generate an sorted slice to return
+	// to the client
+	// TODO cache for optimisation??
+	sortedEmails := []string{}
+	for e := range i.friends.emails {
+		sortedEmails = append(sortedEmails, e)
+	}
+	sort.Strings(sortedEmails)
+	return sortedEmails
 }
 
 func (i *ListItem) Key() string {
