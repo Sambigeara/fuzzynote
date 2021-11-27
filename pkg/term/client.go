@@ -18,11 +18,10 @@ import (
 )
 
 const (
-	reservedTopLines, reservedBottomLines = 1, 1
-	reservedEndChars                      = 1
-	emptySearchLinePrompt                 = "Search here..."
-	searchGroupPrompt                     = "TAB: Create new search group"
-	newLinePrompt                         = "Enter: Create new line"
+	reservedEndChars      = 1
+	emptySearchLinePrompt = "Search here..."
+	searchGroupPrompt     = "TAB: Create new search group"
+	newLinePrompt         = "Enter: Create new line"
 )
 
 type Terminal struct {
@@ -133,9 +132,9 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	// Pad out remaining line with spaces to ensure whole bar is filled
 	lenStr := len([]rune(text))
 	text += string(make([]rune, t.c.W-lenStr))
-	// reservedBottomLines is subtracted from t.c.H globally, and we want to print on the bottom line
+	// ReservedBottomLines is subtracted from t.c.H globally, and we want to print on the bottom line
 	// so add it back in here
-	emitStr(s, 0, t.c.H-1+reservedBottomLines, footer, text)
+	emitStr(s, 0, t.c.H-1+t.c.ReservedBottomLines, footer, text)
 }
 
 func (t *Terminal) buildSingleStyleCollabDisplay(s tcell.Screen, style tcell.Style, collaborators []string, xOffset int, yOffset int) {
@@ -161,7 +160,7 @@ func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.St
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
 	t.c.W = w - reservedEndChars
-	t.c.H = h - reservedBottomLines
+	t.c.H = h - t.c.ReservedBottomLines
 }
 
 // A selection of colour combos to apply to collaborators
@@ -205,9 +204,9 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// Randomise the starting colour index for bants
 	collabStyleInc := collabStyleIncStart
 	offset := 0
-	for i, r := range matches[t.c.VertOffset:service.Min(len(matches), t.c.VertOffset+t.c.H-reservedTopLines)] {
+	for i, r := range matches[t.c.VertOffset:service.Min(len(matches), t.c.VertOffset+t.c.H-t.c.ReservedTopLines)] {
 		style := t.style
-		offset = i + reservedTopLines
+		offset = i + t.c.ReservedTopLines
 
 		// Get current collaborators on item, if any
 		lineCollabers := collabMap[r.Key()]
@@ -240,7 +239,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		line := t.c.TrimPrefix(r.Line())
 
 		// Account for horizontal offset if on curItem
-		if i == t.c.CurY-reservedTopLines {
+		if i == t.c.CurY-t.c.ReservedTopLines {
 			if len(line) > 0 {
 				line = line[t.c.HorizOffset:]
 			}
@@ -285,22 +284,22 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	if len(matches) == 0 {
 		if len(t.c.Search) > 0 && len(t.c.Search[0]) > 0 {
 			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.c.Search))
-			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
+			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
 		} else {
-			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrompt)
+			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrompt)
 		}
 	}
 
 	// Show active collaborators
 	if len(collaborators) > 0 {
-		t.buildCollabDisplay(t.S, collaborators, 0, t.c.H-2+reservedBottomLines)
+		t.buildCollabDisplay(t.S, collaborators, 0, t.c.H-2+t.c.ReservedBottomLines)
 	}
 
 	if t.c.CurItem != nil {
 		if friends := t.c.CurItem.Friends(); len(friends) > 0 {
 			friends := append([]string{"Shared with:"}, friends...) // Add a prompt as the initial string
 			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow)
-			t.buildSingleStyleCollabDisplay(t.S, s, friends, 0, t.c.H-1+reservedBottomLines)
+			t.buildSingleStyleCollabDisplay(t.S, s, friends, 0, t.c.H-1+t.c.ReservedBottomLines)
 		}
 	}
 
@@ -346,7 +345,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", &newDat, t.c.CurY-reservedTopLines)
+	err = t.db.Update("", &newDat, t.c.CurY-t.c.ReservedTopLines)
 	if err != nil {
 		log.Fatal(err)
 	}
