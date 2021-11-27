@@ -89,10 +89,7 @@ type EventLog struct {
 	EventType                  EventType
 	Line                       string // TODO This represents the raw (un-friends-processed) line
 	Note                       *[]byte
-	//RawLine                    string // TODO This should eventually replace `Line`
-	// These fields aren't serialized, but are populated once on initial wal replay
-	//line    string
-	friends lineFriends
+	friends                    lineFriends
 }
 
 func (e *EventLog) getKeys() (string, string) {
