@@ -126,7 +126,7 @@ func (r *DBListRepo) registerWeb() error {
 
 	if r.email == "" {
 		if pong, err := r.web.ping(); err == nil {
-			r.email = pong.User
+			r.setEmail(pong.User)
 			r.web.tokens.SetEmail(pong.User)
 			r.web.tokens.Flush()
 		}

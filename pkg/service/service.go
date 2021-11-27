@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"sync"
 	"time"
 )
@@ -131,8 +132,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	// Tokens are generated on `login`
 	// Theoretically only need refresh token to have a go at authentication
 	if webTokenStore.IDToken() != "" || webTokenStore.RefreshToken() != "" {
-		listRepo.email = webTokenStore.Email()
-		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^@%s fzn_cfg:friend +(%s) *$", regexp.QuoteMeta(listRepo.email), EmailRegex))
+		listRepo.setEmail(webTokenStore.Email())
+		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend +(%s) +@%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
 
 		// registerWeb also deals with the retrieval and instantiation of the web remotes
 		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
@@ -148,10 +149,16 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	return listRepo
 }
 
+func (r *DBListRepo) setEmail(email string) {
+	r.email = email
+	r.friends[email] = make(map[string]int64)
+}
+
 // ListItem represents a single item in the returned list, based on the Match() input
 type ListItem struct {
 	// TODO these can all be private now
-	Line         string
+	//Line         string
+	rawLine      string
 	Note         *[]byte
 	IsHidden     bool
 	originUUID   uuid
@@ -160,13 +167,34 @@ type ListItem struct {
 	parent       *ListItem
 	matchChild   *ListItem
 	matchParent  *ListItem
+	friends      lineFriends
+}
+
+// Line returns a post-processed rawLine, with any matched collaborators omitted
+func (i *ListItem) Line() string {
+	if i.friends.isProcessed {
+		return i.rawLine[:i.friends.offset]
+	}
+	return i.rawLine
+}
+
+func (i *ListItem) Friends() []string {
+	// The emails are stored as a map of strings. We need to generate an sorted slice to return
+	// to the client
+	// TODO cache for optimisation??
+	sortedEmails := []string{}
+	for e := range i.friends.emails {
+		sortedEmails = append(sortedEmails, e)
+	}
+	sort.Strings(sortedEmails)
+	return sortedEmails
 }
 
 func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
+func (r *DBListRepo) addEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
 	el := EventLog{
 		EventType:                  e,
 		UUID:                       originUUID,
@@ -180,7 +208,7 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
 	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
 	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
-	// updated on the original event which we pass to CallFunctionForEventLog. This is still the case
+	// updated on the original event which we pass to processEventLog. This is still the case
 	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
 	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
 	// copy for the websocket event.
@@ -190,11 +218,16 @@ func (r *DBListRepo) processEventLog(e EventType, creationTime int64, targetCrea
 		elCopy.Note = &newNote
 	}
 
-	r.eventsChan <- elCopy
-	r.log = append(r.log, el)
 	var err error
 	var item *ListItem
-	r.Root, item, err = r.CallFunctionForEventLog(r.Root, el)
+	r.Root, item, err = r.processEventLog(r.Root, &el)
+
+	// We pass a pointer to the new event log to the processing function, and publish to the eventsChan and
+	// r.log after, as there is a chance of post-processing being applied within the processEventLog step.
+	// We want these mutations to be applied prior to flushing to local state or to remotes.
+	r.eventsChan <- elCopy
+	r.log = append(r.log, el)
+
 	return item, err
 }
 
@@ -216,10 +249,10 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 		childUUID = childItem.originUUID
 	}
 	// TODO ideally we'd use the same unixtime for log creation and the listItem creation time for Add()
-	// We can't for now because other invocations of processEventLog rely on the passed in (pre-existing)
+	// We can't for now because other invocations of addEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.processEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
+	newItem, _ := r.addEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
 	r.addUndoLog(AddEvent, now, childCreationTime, r.uuid, childUUID, line, note, line, note)
 	return newItem.Key(), nil
 }
@@ -239,8 +272,8 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 	}
 
 	// Add the UndoLog here to allow us to access existing Line/Note state
-	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.Line, listItem.Note, line, note)
-	r.processEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
+	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.rawLine, listItem.Note, line, note)
+	r.addEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
 	return nil
 }
 
@@ -258,8 +291,8 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		targetCreationTime = listItem.child.creationTime
 		targetUUID = listItem.child.originUUID
 	}
-	r.processEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
-	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.Line, listItem.Note, listItem.Line, listItem.Note)
+	r.addEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.rawLine, listItem.Note, listItem.rawLine, listItem.Note)
 	key := ""
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
@@ -296,7 +329,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 		//    targetUUID = listItem.child.originUUID
 	}
 
-	r.processEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.addEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
 		r.addUndoLog(MoveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
@@ -323,7 +356,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 		//    targetUUID = listItem.parent.originUUID
 	}
 
-	r.processEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
+	r.addEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
 	// There's no point in moving if there's nothing to move to
 	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
 		r.addUndoLog(MoveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
@@ -356,7 +389,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 			itemKey = listItem.matchChild.Key()
 		}
 	}
-	r.processEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	r.addEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
 	return itemKey, nil
 }
 
@@ -377,7 +410,7 @@ func (r *DBListRepo) Undo() (string, error) {
 			r.eventLogger.log[r.eventLogger.curIdx] = uel
 		}
 
-		listItem, err := r.processEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.addEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx--
 		return listItem.Key(), err
 	}
@@ -400,7 +433,7 @@ func (r *DBListRepo) Redo() (string, error) {
 			r.eventLogger.log[r.eventLogger.curIdx+1] = uel
 		}
 
-		listItem, err := r.processEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
+		listItem, err := r.addEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
 		r.eventLogger.curIdx++
 		return listItem.Key(), err
 	}
@@ -460,12 +493,12 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 			for _, group := range keys {
 				// Match the currently selected item.
 				// Also, match any items with empty Lines (this accounts for lines added when search is active)
-				if cur.Key() == curKey || len(cur.Line) == 0 {
+				if cur.Key() == curKey || len(cur.rawLine) == 0 {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
 				pattern, nChars := GetMatchPattern(group)
-				if !isMatch(group[nChars:], cur.Line, pattern) {
+				if !isMatch(group[nChars:], cur.rawLine, pattern) {
 					matched = false
 					break
 				}
