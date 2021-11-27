@@ -328,7 +328,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	}
 	e.friends = lineFriends{
 		isProcessed: true,
-		offset:      len([]rune(e.Line)) - len([]rune(friendsString)),
+		offset:      len(e.Line) - len(friendsString),
 		emails:      ownerOmitted,
 	}
 }
