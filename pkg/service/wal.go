@@ -1306,7 +1306,7 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
+func (r *DBListRepo) pull(walFiles []WalFile) ([]EventLog, error) {
 	//log.Print("Pulling...")
 	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
 	newWalMutex := sync.Mutex{}
@@ -1363,16 +1363,10 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 		}
 	}
 
-	if len(mergedWal) > 0 {
-		go func() {
-			walChan <- mergedWal
-		}()
-	}
-
-	return nil
+	return mergedWal, nil
 }
 
-func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
+func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	syncWalFiles := []WalFile{}
@@ -1420,6 +1414,8 @@ func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
 				continue
 			}
 
+			// We track if there are any unprocessed wals that we gather, as there's no point replaying a full log
+			// (which is costly) if we already have the events locally
 			if !r.isPartialWalProcessed(fileName) {
 				localReplayWal = merge(localReplayWal, wal)
 			}
@@ -1442,7 +1438,7 @@ func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
 					// broken log will just be merged back in. We want to remove it entirely.
 					r.log = []EventLog{}
 				} else {
-					return err
+					return localReplayWal, err
 				}
 			}
 			mergedWal = compactedWal
@@ -1461,14 +1457,6 @@ func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
 	}
 
 	if len(fullMergedWal) > 0 {
-		// We track if there are any unprocessed wals that we gather, as there's no point replaying a full log
-		// (which is costly) if we already have the events locally
-		if len(localReplayWal) > 0 {
-			go func() {
-				walChan <- fullMergedWal
-			}()
-		}
-
 		// If a push to a non-owned walFile fails, the events will never reach said walFile, as it's the responsible
 		// of the owner's client to gather and merge their own walFiles.
 		// Therefore, on each gather, we push the aggregated log to all non-owned walFiles (filtered for each).
@@ -1494,7 +1482,7 @@ func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
 		}
 	}
 
-	return nil
+	return localReplayWal, nil
 }
 
 func buildByteWal(el []EventLog) *bytes.Buffer {
@@ -1645,9 +1633,7 @@ func (r *DBListRepo) emitRemoteUpdate() {
 }
 
 func (r *DBListRepo) startSync(walChan chan []EventLog) error {
-	//log.Print("Now with merged wal...")
-
-	syncTriggerChan := make(chan struct{}, 1) // Without the buffered slot, the initial sync on non-web usage is not triggered
+	syncTriggerChan := make(chan struct{})
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	pushAggregateWindowChan := make(chan struct{}, 1)
 	pushTriggerChan := make(chan struct{})
@@ -1695,7 +1681,6 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		r.emitRemoteUpdate()
 	}
 
-	// We want to trigger a web sync as soon as the web connection has been established
 	scheduleSync := func(afterSeconds int) {
 		// Attempt to put onto the channel, else pass
 		if afterSeconds > 0 {
@@ -1733,6 +1718,54 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		//}
 		gatherTriggerTimer.Reset(gatherWaitDuration)
 	}
+
+	// Run an initial load from the local walfile
+	localEl, err := r.pull([]WalFile{r.LocalWalFile})
+	if err != nil {
+		return err
+	}
+	walChan <- localEl
+
+	// Main sync event loop
+	go func() {
+		compactInc := 0
+		for {
+			var el []EventLog
+			var err error
+			select {
+			case <-syncTriggerChan:
+				syncWalFiles := []WalFile{}
+				r.syncWalFileMut.RLock()
+				for _, wf := range r.syncWalFiles {
+					syncWalFiles = append(syncWalFiles, wf)
+				}
+				r.syncWalFileMut.RUnlock()
+				if el, err = r.pull(syncWalFiles); err != nil {
+					log.Fatal(err)
+				}
+			case <-gatherTriggerTimer.C:
+				// Runs compaction every Nth gather
+				runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
+				if el, err = r.gather(runCompaction); err != nil {
+					log.Fatal(err)
+				}
+				compactInc++
+			}
+
+			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
+			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
+			// program with it's CPU constantly tied up, which leads to performance degradation.
+			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
+			// onto the syncTriggerChan
+			go func() {
+				// we block on walChan publish so it only schedules again after a Replay begins
+				if len(el) > 0 {
+					walChan <- el
+				}
+				scheduleSync(pullIntervalSeconds)
+			}()
+		}
+	}()
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
@@ -1832,46 +1865,6 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			scheduleSync(0)
 		}()
 	}
-
-	// Run an initial load from the local walfile
-	if err := r.pull([]WalFile{r.LocalWalFile}, walChan); err != nil {
-		return err
-	}
-
-	// Main sync event loop
-	go func() {
-		compactInc := 0
-		for {
-			select {
-			case <-syncTriggerChan:
-				syncWalFiles := []WalFile{}
-				r.syncWalFileMut.RLock()
-				for _, wf := range r.syncWalFiles {
-					syncWalFiles = append(syncWalFiles, wf)
-				}
-				r.syncWalFileMut.RUnlock()
-				if err := r.pull(syncWalFiles, walChan); err != nil {
-					log.Fatal(err)
-				}
-			case <-gatherTriggerTimer.C:
-				// Runs compaction every Nth gather
-				runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
-				if err := r.gather(walChan, runCompaction); err != nil {
-					log.Fatal(err)
-				}
-				compactInc++
-			}
-
-			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
-			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
-			// program with it's CPU constantly tied up, which leads to performance degradation.
-			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
-			// onto the syncTriggerChan
-			go func() {
-				scheduleSync(pullIntervalSeconds)
-			}()
-		}
-	}()
 
 	// Push to all WalFiles
 	go func() {

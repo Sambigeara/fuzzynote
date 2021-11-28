@@ -24,15 +24,6 @@ func (r *DBListRepo) Start(client Client) error {
 	//inputEvtsChan := make(chan tcell.Event)
 	inputEvtsChan := make(chan interface{})
 
-	walChan := make(chan []EventLog)
-
-	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
-	// loop, and only add to channel for processing if there's any changes that need syncing
-	err := r.startSync(walChan)
-	if err != nil {
-		return err
-	}
-
 	// In the case of wal merges and receiving remote cursor positions below, we emit generic
 	// null events which are handled in the main loop to refresh the client/UI state.
 	// There is no need to schedule a refresh if there is already one waiting - in fact, this can
@@ -58,6 +49,8 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		scheduleRefresh()
 	}()
+
+	walChan := make(chan []EventLog)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
@@ -94,6 +87,14 @@ func (r *DBListRepo) Start(client Client) error {
 			}
 		}
 	}()
+
+	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
+	// loop, and only add to channel for processing if there's any changes that need syncing
+	// This is run after the goroutine above is triggered to ensure a thread is consuming from walChan
+	err := r.startSync(walChan)
+	if err != nil {
+		return err
+	}
 
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
