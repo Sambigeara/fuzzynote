@@ -166,16 +166,17 @@ func (w *Web) pushWebsocket(m websocketMessage) error {
 	//}
 }
 
-func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan []EventLog) error {
+func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
+	var el []EventLog
 	_, body, err := r.web.wsConn.Read(ctx)
 	if err != nil {
-		return err
+		return el, err
 	}
 
 	var m websocketMessage
 	err = json.Unmarshal(body, &m)
 	if err != nil {
-		return nil
+		return el, nil
 	}
 
 	switch m.Action {
@@ -183,13 +184,12 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan []EventL
 		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
 		if err != nil {
 			// TODO proper handling
-			return nil
+			return el, nil
 		}
 
 		buf := bytes.NewBuffer([]byte(strWal))
-		el, err := buildFromFile(buf)
-		if err == nil && len(el) > 0 {
-			walChan <- el
+		if el, err = buildFromFile(buf); err != nil {
+			return el, err
 		}
 	case "position":
 		r.remoteCursorMoveChan <- cursorMoveEvent{
@@ -200,7 +200,7 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context, walChan chan []EventL
 	}
 
 	// TODO proper handling
-	return nil
+	return el, nil
 }
 
 func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {

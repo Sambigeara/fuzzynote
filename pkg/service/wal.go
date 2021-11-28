@@ -1820,16 +1820,25 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 
 					if r.web.isActive {
 						go func() {
+							var aggr []EventLog
 							for {
-								err := func() error {
-									err := r.consumeWebsocket(ctx, walChan)
-									if err != nil {
-										return err
+								wsEl, _ := r.consumeWebsocket(ctx)
+								// Rather than clogging up numerous goroutines waiting to publish
+								// single item event logs to walChan, we attempt to publish to it,
+								// but if there's already a wal pending, we fail back and write to
+								// an aggregated log, which will then be attempted again on the next
+								// incoming event
+								// TODO if we get a failed publish and then no more incoming websocket
+								// events, the aggregated log will never be published to walChan
+								// use a secondary ticker that will wait a given period and flush if
+								// needed????
+								if len(wsEl) > 0 {
+									aggr = merge(aggr, wsEl)
+									select {
+									case walChan <- aggr:
+										aggr = []EventLog{}
+									default:
 									}
-									return nil
-								}()
-								if err != nil {
-									return
 								}
 							}
 						}()
