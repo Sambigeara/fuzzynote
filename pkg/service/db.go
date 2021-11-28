@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"sync"
 )
 
@@ -44,14 +43,11 @@ func (r *DBListRepo) Start(client Client) error {
 	type refreshKey struct{}
 	refreshChan := make(chan refreshKey, 1)
 	scheduleRefresh := func() {
-		// TODO pointless error return
-		go func() error {
+		go func() {
 			select {
 			case refreshChan <- refreshKey{}:
 				inputEvtsChan <- refreshKey{}
-				return nil
 			default:
-				return errors.New("Refresh channel already full")
 			}
 		}()
 	}

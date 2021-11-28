@@ -1382,6 +1382,7 @@ func (r *DBListRepo) gather(walChan chan []EventLog) error {
 	r.syncWalFileMut.RUnlock()
 
 	fullMergedWal := []EventLog{}
+	localReplayWal := []EventLog{}
 	for _, wf := range syncWalFiles {
 		// Handle ALL wals
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
@@ -1416,6 +1417,10 @@ func (r *DBListRepo) gather(walChan chan []EventLog) error {
 			if err != nil {
 				// Ignore incompatible files
 				continue
+			}
+
+			if !r.isPartialWalProcessed(fileName) {
+				localReplayWal = merge(localReplayWal, wal)
 			}
 
 			// Only delete files which were successfully pulled
@@ -1453,9 +1458,13 @@ func (r *DBListRepo) gather(walChan chan []EventLog) error {
 	}
 
 	if len(fullMergedWal) > 0 {
-		go func() {
-			walChan <- fullMergedWal
-		}()
+		// We track if there are any unprocessed wals that we gather, as there's no point replaying a full log
+		// (which is costly) if we already have the events locally
+		if len(localReplayWal) > 0 {
+			go func() {
+				walChan <- fullMergedWal
+			}()
+		}
 
 		// If a push to a non-owned walFile fails, the events will never reach said walFile, as it's the responsible
 		// of the owner's client to gather and merge their own walFiles.
