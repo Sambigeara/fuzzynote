@@ -34,9 +34,10 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	pullIntervalSeconds = 5
-	pushIntervalSeconds = 5
-	gatherWaitDuration  = time.Second * time.Duration(15)
+	pullIntervalSeconds      = 5
+	pushIntervalSeconds      = 5
+	gatherWaitDuration       = time.Second * time.Duration(15)
+	compactionGatherMultiple = 4
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -1371,7 +1372,7 @@ func (r *DBListRepo) pull(walFiles []WalFile, walChan chan []EventLog) error {
 	return nil
 }
 
-func (r *DBListRepo) gather(walChan chan []EventLog) error {
+func (r *DBListRepo) gather(walChan chan []EventLog, runCompaction bool) error {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	syncWalFiles := []WalFile{}
@@ -1432,18 +1433,20 @@ func (r *DBListRepo) gather(walChan chan []EventLog) error {
 		mergedWal = merge(mergedWal, r.log)
 
 		// Compact
-		compactedWal, err := compact(mergedWal)
-		if err != nil {
-			if err == errWalIntregrity {
-				// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
-				// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
-				// broken log will just be merged back in. We want to remove it entirely.
-				r.log = []EventLog{}
-			} else {
-				return err
+		if runCompaction {
+			compactedWal, err := compact(mergedWal)
+			if err != nil {
+				if err == errWalIntregrity {
+					// This isn't nice, but saves a larger refactor for what might be entirely unused emergency
+					// logic: we need to purge the log on the listRepo, otherwise on `gather` -> `Replay`, the
+					// broken log will just be merged back in. We want to remove it entirely.
+					r.log = []EventLog{}
+				} else {
+					return err
+				}
 			}
+			mergedWal = compactedWal
 		}
-		mergedWal = compactedWal
 
 		// Flush the gathered Wal
 		if err := r.push(mergedWal, wf, ""); err != nil {
@@ -1837,6 +1840,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 
 	// Main sync event loop
 	go func() {
+		compactInc := 0
 		for {
 			select {
 			case <-syncTriggerChan:
@@ -1850,9 +1854,12 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 					log.Fatal(err)
 				}
 			case <-gatherTriggerTimer.C:
-				if err := r.gather(walChan); err != nil {
+				// Runs compaction every Nth gather
+				runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
+				if err := r.gather(walChan, runCompaction); err != nil {
 					log.Fatal(err)
 				}
+				compactInc++
 			}
 
 			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
