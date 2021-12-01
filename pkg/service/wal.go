@@ -1826,12 +1826,16 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 					scheduleSync(0)
 
 					ctx, cancel = context.WithCancel(context.Background())
-
 					if r.web.isActive {
 						go func() {
 							var aggr []EventLog
 							for {
-								wsEl, _ := r.consumeWebsocket(ctx)
+								wsEl, err := r.consumeWebsocket(ctx)
+								if err != nil {
+									// cancel() triggers error which we need to handle and return
+									// to avoid haywire goroutines with infinite loops and CPU destruction
+									return
+								}
 								// Rather than clogging up numerous goroutines waiting to publish
 								// single item event logs to walChan, we attempt to publish to it,
 								// but if there's already a wal pending, we fail back and write to
