@@ -34,8 +34,9 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	pullIntervalSeconds      = 5
-	pushIntervalSeconds      = 5
+	pullIntervalSeconds = 5
+	//pushIntervalSeconds      = 5
+	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(30)
 	compactionGatherMultiple = 2
 )
@@ -1648,10 +1649,12 @@ func (r *DBListRepo) emitRemoteUpdate() {
 func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
-	pushAggregateWindowChan := make(chan struct{}, 1)
-	pushTriggerChan := make(chan struct{})
+	//pushAggregateWindowChan := make(chan struct{}, 1)
+	//pushTriggerChan := make(chan struct{})
+	pushTriggerTimer := time.NewTimer(time.Second * 0)
 	gatherTriggerTimer := time.NewTimer(time.Second * 0)
-	// Drain the initial timer, we want to wait for initial user input
+	// Drain the initial timers, we want to wait for initial user input
+	<-pushTriggerTimer.C
 	<-gatherTriggerTimer.C
 
 	webPingTicker := time.NewTicker(webPingInterval)
@@ -1662,7 +1665,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	websocketPushEvents := make(chan websocketMessage)
 
 	// Schedule push to all non-local walFiles
-	// This is required for flushing new files that have been manually dropped into local root, and to cover other off cases.
+	// This is required for flushing new files that have been manually dropped into local root, and to cover other odd cases.
 	// We block until the web connection is established (or skipped) on initial start, to ensure logs are propagated to all
 	// required remotes.
 	hasRunInitialSync := false
@@ -1687,8 +1690,8 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 					}
 				}
 			}()
-			hasRunInitialSync = true
 		}
+		hasRunInitialSync = true
 
 		// Do an initial remote update to ensure any offline changes are immediately synced to the cloud
 		r.emitRemoteUpdate()
@@ -1706,17 +1709,18 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		triggerInitialSync()
 	}
 	schedulePush := func() {
-		select {
-		// Only schedule a post-interval push if there isn't already one pending. pushAggregateWindowChan
-		// is responsible for holding pending pushes.
-		case pushAggregateWindowChan <- struct{}{}:
-			go func() {
-				time.Sleep(time.Second * pushIntervalSeconds)
-				pushTriggerChan <- struct{}{}
-				<-pushAggregateWindowChan
-			}()
-		default:
-		}
+		//select {
+		//// Only schedule a post-interval push if there isn't already one pending. pushAggregateWindowChan
+		//// is responsible for holding pending pushes.
+		//case pushAggregateWindowChan <- struct{}{}:
+		//    go func() {
+		//        time.Sleep(time.Second * pushIntervalSeconds)
+		//        pushTriggerChan <- struct{}{}
+		//        <-pushAggregateWindowChan
+		//    }()
+		//default:
+		//}
+		pushTriggerTimer.Reset(pushWaitDuration)
 
 		// Each time a push is scheduled, successful or not (e.g. on a keypress), we reset the timer for
 		// the next gather trigger (up to the maximum window)
@@ -1929,7 +1933,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				el = append(el, e)
 				// Trigger an aggregated push (if not already pending)
 				schedulePush()
-			case <-pushTriggerChan:
+			case <-pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				r.flushPartialWals(el)
