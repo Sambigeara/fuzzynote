@@ -681,13 +681,13 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			} else {
 				newLine = insertCharInPlace(newLine, offsetX, ev.R)
 			}
-			oldLen := len([]rune(t.CurItem.Line()))
+			oldLen := len(newLine)
 			parsedNewLine := parseOperatorGroups(string(newLine))
 			err = t.db.Update(parsedNewLine, nil, relativeY-t.ReservedTopLines)
 			if err != nil {
 				log.Fatal(err)
 			}
-			posDiff[0] += len([]rune(t.CurItem.Line())) - oldLen
+			posDiff[0] += len([]rune(parsedNewLine)) - oldLen
 		}
 		posDiff[0] += len(ev.R)
 		//t.footerMessage = ""
