@@ -34,11 +34,11 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	pullIntervalSeconds = 5
-	//pushIntervalSeconds      = 5
-	pushWaitDuration         = time.Second * time.Duration(5)
+	pullIntervalSeconds      = 10
+	pushWaitDuration         = time.Second * time.Duration(10)
 	gatherWaitDuration       = time.Second * time.Duration(30)
-	compactionGatherMultiple = 2
+	compactionGatherMultiple = 3
+	//pushIntervalSeconds      = 5
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
