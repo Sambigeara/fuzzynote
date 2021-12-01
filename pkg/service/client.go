@@ -401,7 +401,15 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 	case KeyDeleteItem:
 		if relativeY == t.ReservedTopLines-1 {
-			t.Search = [][]rune{[]rune{}}
+			// Only remove the current search group
+			grpIdx, _ := t.GetSearchGroupIdxAndOffset()
+			if len(t.Search) == 1 {
+				t.Search = [][]rune{[]rune{}}
+			} else if grpIdx == 0 {
+				t.Search = t.Search[1:]
+			} else {
+				t.Search = append(t.Search[:grpIdx], t.Search[grpIdx+1:]...)
+			}
 		} else {
 			// Copy into buffer in case we're moving it elsewhere
 			t.copiedItem = t.CurItem
