@@ -612,6 +612,15 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		// clear it here because both the CRUD ops and these Replays run in the same loop,
 		// so we won't get any contention.
 		r.listItemTracker = make(map[string]*ListItem)
+
+		// The same goes for the `friends` cache.
+		// The cache is populated by traversing through the list of events sequentially, so the state
+		// of the cache at any point is representative of the intent at _that_ point. Therefore, we reset
+		// it on full replays to ensure that events are only triggered for the intended state at the time.
+		r.friendsUpdateLock.Lock()
+		r.friends = make(map[string]map[string]int64)
+		r.friendsUpdateLock.Unlock()
+
 		replayLog = r.log
 	} else {
 		replayLog = partialWal
