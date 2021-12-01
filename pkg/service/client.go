@@ -367,7 +367,9 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyEnter:
 		if len(t.SelectedItems) > 0 {
 			// Add common search prefix to search groups
-			t.Search = getCommonSearchPrefixAndFriends(t.SelectedItems)
+			if newSearch := getCommonSearchPrefixAndFriends(t.SelectedItems); len(newSearch) > 0 {
+				t.Search = newSearch
+			}
 			t.SelectedItems = make(map[int]ListItem)
 			t.CurY = 0
 			if len(t.Search) > 0 {
