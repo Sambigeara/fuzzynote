@@ -97,18 +97,45 @@ func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	return l
 }
 
+func getMapIntersection(a map[string]struct{}, b map[string]struct{}) map[string]struct{} {
+	intersect := make(map[string]struct{})
+	for i := range a {
+		if _, exists := b[i]; exists {
+			intersect[i] = struct{}{}
+		}
+	}
+	return intersect
+}
+
 func getCommonSearchPrefixAndFriends(selectedItems map[int]ListItem) [][]rune {
+	searchGroups := [][]rune{}
+	if len(selectedItems) == 0 {
+		return searchGroups
+	}
+
 	var lines []string
+
+	// We need to do a set intersection on the friends, as we only want to display
+	// commonly shared emails
+	// Therefore, we set the friends map to that of the first line, and then iterate
+	// over the subsequent lines, taking the intersect of the resultant map as we go
 	friends := make(map[string]struct{})
 	for _, item := range selectedItems {
-		lines = append(lines, strings.TrimSpace(item.Line()))
 		for _, f := range item.Friends() {
 			friends[f] = struct{}{}
 		}
+		break // We only need one item from the iterable map to instantiate the set
+	}
+	for _, item := range selectedItems {
+		lines = append(lines, strings.TrimSpace(item.Line()))
+		lineFriends := make(map[string]struct{})
+		for _, f := range item.Friends() {
+			lineFriends[f] = struct{}{}
+		}
+		friends = getMapIntersection(friends, lineFriends)
 	}
 
 	prefix := strings.TrimSpace(longestCommonPrefix(lines))
-	searchGroups := [][]rune{}
 
 	if len(prefix) > 0 {
 		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", prefix)))
