@@ -279,6 +279,28 @@ func (t *ClientBase) TrimPrefix(line string) string {
 	return line
 }
 
+func (t *ClientBase) GetUnsearchedFriends(friends []string) []string {
+	removedSearchFriends := []string{}
+	for _, f := range friends {
+		isInSearch := false
+		for _, s := range t.Search {
+			if pattern, nChars := GetMatchPattern(s); pattern == FullMatchPattern {
+				s = s[nChars:]
+			} else if pattern == InverseMatchPattern {
+				break
+			}
+			if f == string(s) {
+				isInSearch = true
+				break
+			}
+		}
+		if !isInSearch {
+			removedSearchFriends = append(removedSearchFriends, f)
+		}
+	}
+	return removedSearchFriends
+}
+
 // TODO rename "t"
 func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListItem, bool, error) {
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations

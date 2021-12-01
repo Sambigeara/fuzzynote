@@ -252,24 +252,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		if friends := r.Friends(); len(friends) > 0 {
 			// TODO optimise
 			// Don't bother displaying friends that are currently being searched for
-			removedSearchFriends := []string{}
-			for _, f := range friends {
-				isInSearch := false
-				for _, s := range t.c.Search {
-					if pattern, nChars := service.GetMatchPattern(s); pattern == service.FullMatchPattern {
-						s = s[nChars:]
-					} else if pattern == service.InverseMatchPattern {
-						break
-					}
-					if f == string(s) {
-						isInSearch = true
-						break
-					}
-				}
-				if !isInSearch {
-					removedSearchFriends = append(removedSearchFriends, f)
-				}
-			}
+			removedSearchFriends := t.c.GetUnsearchedFriends(friends)
 			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Dim(true)
 			t.buildSingleStyleCollabDisplay(t.S, s, removedSearchFriends, len([]rune(line))+1, offset)
 		}
