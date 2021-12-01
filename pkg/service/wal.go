@@ -617,9 +617,13 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		// The cache is populated by traversing through the list of events sequentially, so the state
 		// of the cache at any point is representative of the intent at _that_ point. Therefore, we reset
 		// it on full replays to ensure that events are only triggered for the intended state at the time.
-		//r.friendsUpdateLock.Lock()
-		//r.friends = make(map[string]map[string]int64)
-		//r.friendsUpdateLock.Unlock()
+		r.friendsUpdateLock.Lock()
+		r.friends = make(map[string]map[string]int64)
+		// TODO dedup
+		if r.email != "" {
+			r.friends[r.email] = make(map[string]int64)
+		}
+		r.friendsUpdateLock.Unlock()
 
 		replayLog = r.log
 	} else {
