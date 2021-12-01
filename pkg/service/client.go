@@ -135,7 +135,11 @@ func getCommonSearchPrefixAndFriends(selectedItems map[int]ListItem) [][]rune {
 		friends = getMapIntersection(friends, lineFriends)
 	}
 
-	prefix := strings.TrimSpace(longestCommonPrefix(lines))
+	var prefix string
+	// Only take longest common prefix on line if there's more than one line
+	if len(lines) > 1 {
+		prefix = strings.TrimSpace(longestCommonPrefix(lines))
+	}
 
 	if len(prefix) > 0 {
 		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", prefix)))
