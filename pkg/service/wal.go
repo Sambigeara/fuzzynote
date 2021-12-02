@@ -438,8 +438,10 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	// friends caches, distributed state will always be eventually consistent.
 	// NOTE: ordering of generateFriendChangeEvents vs repositionActiveFriends is irrelevant, because we will never need to
 	// extract friends from the config lines used to generate change events.
-	if r.web != nil {
+	if r.email != "" {
 		r.repositionActiveFriends(e)
+	}
+	if r.web.isActive {
 		r.generateFriendChangeEvents(*e, item)
 	}
 
@@ -1614,7 +1616,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog) {
 }
 
 func (r *DBListRepo) emitRemoteUpdate() {
-	if r.web != nil && r.web.isActive {
+	if r.web.isActive {
 		// We need to wrap the friendsMostRecentChangeDT comparison check, as the friend map update
 		// and subsequent friendsMostRecentChangeDT update needs to be an atomic operation
 		r.friendsUpdateLock.RLock()
@@ -1787,114 +1789,114 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
 	// TODO only start this goroutine if there is actually a configured web
-	if r.web != nil {
-		go func() {
-			expBackoffInterval := time.Second * 1
-			var waitInterval time.Duration
-			var ctx context.Context
-			var cancel context.CancelFunc
-			for {
-				select {
-				case <-webPingTicker.C:
-					// is !isActive, we've already entered the exponential retry backoff below
-					if r.web.isActive {
-						if _, err := r.web.ping(); err != nil {
-							r.web.isActive = false
-							webRefreshTicker.Reset(0)
-							continue
-						}
-					}
-				case m := <-websocketPushEvents:
-					if r.web.isActive {
-						r.web.pushWebsocket(m)
-					}
-				case <-webRefreshTicker.C:
-					if cancel != nil {
-						cancel()
-					}
-					// Close off old websocket connection
-					// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
-					if r.web.wsConn != nil {
-						r.web.wsConn.Close(websocket.StatusNormalClosure, "")
-					}
-					// Start new one
-					err := r.registerWeb()
-					if err != nil {
+	go func() {
+		expBackoffInterval := time.Second * 1
+		var waitInterval time.Duration
+		var ctx context.Context
+		var cancel context.CancelFunc
+		for {
+			select {
+			case <-webPingTicker.C:
+				// is !isActive, we've already entered the exponential retry backoff below
+				if r.web.isActive {
+					if _, err := r.web.ping(); err != nil {
 						r.web.isActive = false
+						webRefreshTicker.Reset(0)
+						continue
+					}
+				}
+			case m := <-websocketPushEvents:
+				if r.web.isActive {
+					r.web.pushWebsocket(m)
+				}
+			case <-webRefreshTicker.C:
+				if cancel != nil {
+					cancel()
+				}
+				// Close off old websocket connection
+				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
+				if r.web.wsConn != nil {
+					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				}
+				// Start new one
+				err := r.registerWeb()
+				if err != nil {
+					r.web.isActive = false
+					switch err.(type) {
+					case authFailureError:
+						scheduleSync(0) // trigger initial (local) sync cycle before returning
+						return          // authFailureError signifies incorrect login details, disable web and run local only mode
+					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
 							expBackoffInterval *= 2
 						}
-					} else {
-						r.web.isActive = true
-						expBackoffInterval = time.Second * 1
-						waitInterval = webRefreshInterval
 					}
-					// Trigger web walfile sync (mostly relevant on initial start)
-					scheduleSync(0)
-
-					ctx, cancel = context.WithCancel(context.Background())
-					if r.web.isActive {
-						go func() {
-							var aggr []EventLog
-							for {
-								wsEl, err := r.consumeWebsocket(ctx)
-								if err != nil {
-									// cancel() triggers error which we need to handle and return
-									// to avoid haywire goroutines with infinite loops and CPU destruction
-									return
-								}
-								// Rather than clogging up numerous goroutines waiting to publish
-								// single item event logs to walChan, we attempt to publish to it,
-								// but if there's already a wal pending, we fail back and write to
-								// an aggregated log, which will then be attempted again on the next
-								// incoming event
-								// TODO if we get a failed publish and then no more incoming websocket
-								// events, the aggregated log will never be published to walChan
-								// use a secondary ticker that will wait a given period and flush if
-								// needed????
-								if len(wsEl) > 0 {
-									aggr = merge(aggr, wsEl)
-									select {
-									case walChan <- aggr:
-										aggr = []EventLog{}
-									default:
-									}
-								}
-							}
-						}()
-					}
-
-					webRefreshTicker.Reset(waitInterval)
+				} else {
+					r.web.isActive = true
+					expBackoffInterval = time.Second * 1
+					waitInterval = webRefreshInterval
 				}
-			}
-		}()
+				// Trigger web walfile sync (mostly relevant on initial start)
+				scheduleSync(0)
 
-		// Create a loop to deal with any collaborator cursor move events
-		go func() {
-			for {
-				e := <-r.localCursorMoveChan
-				func() {
-					r.webWalFileMut.RLock()
-					defer r.webWalFileMut.RUnlock()
-					for _, wf := range r.webWalFiles {
-						go func(wf WalFile) {
-							websocketPushEvents <- websocketMessage{
-								Action:       "position",
-								UUID:         wf.GetUUID(),
-								Key:          e.listItemKey,
-								UnixNanoTime: e.unixNanoTime,
+				ctx, cancel = context.WithCancel(context.Background())
+				if r.web.isActive {
+					go func() {
+						var aggr []EventLog
+						for {
+							wsEl, err := r.consumeWebsocket(ctx)
+							if err != nil {
+								// cancel() triggers error which we need to handle and return
+								// to avoid haywire goroutines with infinite loops and CPU destruction
+								return
 							}
-						}(wf)
-					}
-				}()
+							// Rather than clogging up numerous goroutines waiting to publish
+							// single item event logs to walChan, we attempt to publish to it,
+							// but if there's already a wal pending, we fail back and write to
+							// an aggregated log, which will then be attempted again on the next
+							// incoming event
+							// TODO if we get a failed publish and then no more incoming websocket
+							// events, the aggregated log will never be published to walChan
+							// use a secondary ticker that will wait a given period and flush if
+							// needed????
+							if len(wsEl) > 0 {
+								aggr = merge(aggr, wsEl)
+								select {
+								case walChan <- aggr:
+									aggr = []EventLog{}
+								default:
+								}
+							}
+						}
+					}()
+				}
+
+				webRefreshTicker.Reset(waitInterval)
 			}
-		}()
-	} else {
-		go func() {
-			scheduleSync(0)
-		}()
-	}
+		}
+	}()
+
+	// Create a loop to deal with any collaborator cursor move events
+	go func() {
+		for {
+			e := <-r.localCursorMoveChan
+			func() {
+				r.webWalFileMut.RLock()
+				defer r.webWalFileMut.RUnlock()
+				for _, wf := range r.webWalFiles {
+					go func(wf WalFile) {
+						websocketPushEvents <- websocketMessage{
+							Action:       "position",
+							UUID:         wf.GetUUID(),
+							Key:          e.listItemKey,
+							UnixNanoTime: e.unixNanoTime,
+						}
+					}(wf)
+				}
+			}()
+		}
+	}()
 
 	// Push to all WalFiles
 	go func() {
@@ -1905,7 +1907,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			select {
 			case e := <-r.eventsChan:
 				// Write in real time to the websocket, if present
-				if r.web != nil {
+				if r.web.isActive {
 					func() {
 						r.webWalFileMut.RLock()
 						defer r.webWalFileMut.RUnlock()
@@ -1975,7 +1977,7 @@ func (r *DBListRepo) finish(purge bool) error {
 		r.LocalWalFile.Purge()
 	}
 
-	if r.web != nil && r.web.wsConn != nil {
+	if r.web.wsConn != nil {
 		r.web.wsConn.Close(websocket.StatusNormalClosure, "")
 	}
 	return nil

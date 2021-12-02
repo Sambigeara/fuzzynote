@@ -129,22 +129,20 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	// it as we call all walfiles in the next line.
 	listRepo.AddWalFile(localWalFile, true)
 
-	// Tokens are generated on `login`
-	// Theoretically only need refresh token to have a go at authentication
-	if webTokenStore.IDToken() != "" || webTokenStore.RefreshToken() != "" {
+	if webTokenStore.Email() != "" {
 		listRepo.setEmail(webTokenStore.Email())
 		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend +(%s) +@%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
-
-		// registerWeb also deals with the retrieval and instantiation of the web remotes
-		// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
-		// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
-		listRepo.web = NewWeb(webTokenStore)
-
-		// Establish the chan used to track and display collaborator cursor positions
-		listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent)  // incoming events
-		listRepo.localCursorMoveChan = make(chan cursorMoveEvent)   // outgoing events
-		listRepo.collabPositions = make(map[string]cursorMoveEvent) // map[collaboratorEmail]currentKey
 	}
+
+	// Tokens are generated on `login`
+	// Keeping the web assignment outside of registerWeb, as we use registerWeb to reinstantiate
+	// the web walfiles and connections periodically during runtime, and this makes it easier... (for now)
+	listRepo.web = NewWeb(webTokenStore)
+
+	// Establish the chan used to track and display collaborator cursor positions
+	listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent)  // incoming events
+	listRepo.localCursorMoveChan = make(chan cursorMoveEvent)   // outgoing events
+	listRepo.collabPositions = make(map[string]cursorMoveEvent) // map[collaboratorEmail]currentKey
 
 	return listRepo
 }
@@ -470,7 +468,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	// 2. process it, trigger a client refresh
 	// 3. which calls this function, which then emits an event
 	// 4. trigger stage 1 on remote...
-	if curKey != r.previousListItemKey && r.web != nil && r.web.isActive && r.web.wsConn != nil {
+	if curKey != r.previousListItemKey && r.web.isActive && r.web.wsConn != nil {
 		r.localCursorMoveChan <- cursorMoveEvent{
 			listItemKey:  curKey,
 			unixNanoTime: time.Now().UnixNano(),

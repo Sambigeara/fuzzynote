@@ -12,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"sync"
@@ -69,10 +68,11 @@ func (w *Web) establishWebSocketConnection() error {
 		}
 		err = Authenticate(w.tokens, body)
 		if err != nil {
-			w.tokens.SetRefreshToken("")
-			w.tokens.Flush()
-			os.Exit(0)
-			//return err
+			if _, ok := err.(authFailureError); ok {
+				w.tokens.SetRefreshToken("")
+				w.tokens.Flush()
+			}
+			return err
 		}
 		w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
 		// need to return within this nested block otherwise the outside err still holds

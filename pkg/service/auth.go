@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -55,6 +54,12 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 	return wt
 }
 
+type authFailureError struct{}
+
+func (e authFailureError) Error() string {
+	return "Authentication unsuccessful, please try logging in"
+}
+
 // TODO reconsider this interface...
 func (wt *FileWebTokenStore) SetEmail(s string)        { wt.User = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
@@ -92,7 +97,7 @@ func Authenticate(wt WebTokenStore, args map[string]string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("Authentication unsuccessful, please try logging in")
+		return authFailureError{}
 	}
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
@@ -136,10 +141,11 @@ func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 		}
 		err = Authenticate(w.tokens, body)
 		if err != nil {
-			w.tokens.SetRefreshToken("")
-			w.tokens.Flush()
-			os.Exit(0)
-			//return nil, err
+			if _, ok := err.(authFailureError); ok {
+				w.tokens.SetRefreshToken("")
+				w.tokens.Flush()
+			}
+			return nil, err
 		}
 		req.Header.Set(walSyncAuthorizationHeader, w.tokens.IDToken())
 		resp, err = f(req)
