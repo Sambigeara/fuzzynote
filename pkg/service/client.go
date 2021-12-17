@@ -86,6 +86,8 @@ const (
 	KeyCursorRight
 	KeyCursorLeft
 	KeyRune
+
+	SetText
 )
 
 // TODO duplicated in getHiddenLinePrefix function, figure out how to unify
@@ -693,6 +695,27 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 		posDiff[0] += len(ev.R)
 		//t.footerMessage = ""
+	case SetText:
+		if relativeY == t.ReservedTopLines-1 {
+			if len(t.Search) > 0 {
+				grpIdx, _ := t.GetSearchGroupIdxAndOffset()
+				oldLen := len(string(t.Search[grpIdx]))
+				parsedGroup := parseOperatorGroups(string(ev.R))
+				t.Search[grpIdx] = []rune(parsedGroup)
+				posDiff[0] += len(parsedGroup) - oldLen
+			} else {
+				t.Search = append(t.Search, ev.R)
+			}
+		} else {
+			oldLen := len([]rune(t.CurItem.rawLine))
+			// Add in the hidden match prefix
+			parsedNewLine := parseOperatorGroups(fmt.Sprintf("%s%s", t.HiddenMatchPrefix, string(ev.R)))
+			err = t.db.Update(parsedNewLine, nil, relativeY-t.ReservedTopLines)
+			if err != nil {
+				log.Fatal(err)
+			}
+			posDiff[0] += len([]rune(parsedNewLine)) - oldLen
+		}
 	}
 	//t.previousKey = ev.T
 
