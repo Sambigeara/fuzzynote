@@ -193,7 +193,7 @@ func (t *ClientBase) getLenSearchBox() int {
 	return lenSearchBox
 }
 
-func MatchFirstURL(line string) string {
+func MatchFirstURL(line string, ensureScheme bool) string {
 	// Attempt to match any urls in the line.
 	// Try "Strict" match first. This only matches if scheme is included.
 	rxStrict := xurls.Strict()
@@ -205,7 +205,9 @@ func MatchFirstURL(line string) string {
 		// `http://` to see if that works.
 		rxRelaxed := xurls.Relaxed()
 		if match = rxRelaxed.FindString(line); match != "" {
-			match = fmt.Sprintf("http://%s", match)
+			if ensureScheme {
+				match = fmt.Sprintf("http://%s", match)
+			}
 		}
 	}
 	return match
@@ -505,7 +507,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 	case KeyOpenURL:
 		if relativeY != t.ReservedTopLines-1 {
-			if url := MatchFirstURL(curItem.Line()); url != "" {
+			if url := MatchFirstURL(curItem.Line(), true); url != "" {
 				openURL(url)
 			}
 		}

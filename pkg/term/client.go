@@ -383,7 +383,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 		case tcell.KeyCtrlR:
 			interactionEvent.T = service.KeyRedo
 		case tcell.KeyCtrlC:
-			if url := service.MatchFirstURL(t.c.CurItem.Line()); url != "" {
+			if url := service.MatchFirstURL(t.c.CurItem.Line(), true); url != "" {
 				clipboard.WriteAll(url)
 			}
 			interactionEvent.T = service.KeyCopy
