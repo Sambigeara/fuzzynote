@@ -192,17 +192,7 @@ func (i *ListItem) Key() string {
 	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
 }
 
-func (r *DBListRepo) addEventLog(e EventType, creationTime int64, targetCreationTime int64, newLine string, newNote *[]byte, originUUID uuid, targetUUID uuid) (*ListItem, error) {
-	el := EventLog{
-		EventType:                  e,
-		UUID:                       originUUID,
-		TargetUUID:                 targetUUID,
-		UnixNanoTime:               time.Now().UnixNano(),
-		ListItemCreationTime:       creationTime,
-		TargetListItemCreationTime: targetCreationTime,
-		Line:                       newLine,
-		Note:                       newNote,
-	}
+func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
 	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
 	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
@@ -250,8 +240,23 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 	// We can't for now because other invocations of addEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
 	now := time.Now().UnixNano()
-	newItem, _ := r.addEventLog(AddEvent, now, childCreationTime, line, note, r.uuid, childUUID)
-	r.addUndoLog(AddEvent, now, childCreationTime, r.uuid, childUUID, line, note, line, note)
+	el := EventLog{
+		EventType:                  AddEvent,
+		UUID:                       r.uuid,
+		TargetUUID:                 childUUID,
+		UnixNanoTime:               time.Now().UnixNano(),
+		ListItemCreationTime:       now,
+		TargetListItemCreationTime: childCreationTime,
+		Line:                       line,
+		Note:                       note,
+	}
+	newItem, _ := r.addEventLog(el)
+	undoEl := EventLog{
+		EventType:            DeleteEvent,
+		UUID:                 r.uuid,
+		ListItemCreationTime: now,
+	}
+	r.addUndoLog(undoEl, el)
 	return newItem.Key(), nil
 }
 
@@ -269,9 +274,30 @@ func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
 		childUUID = listItem.child.originUUID
 	}
 
-	// Add the UndoLog here to allow us to access existing Line/Note state
-	r.addUndoLog(UpdateEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, listItem.rawLine, listItem.Note, line, note)
-	r.addEventLog(UpdateEvent, listItem.creationTime, childCreationTime, line, note, listItem.originUUID, childUUID)
+	el := EventLog{
+		EventType:                  UpdateEvent,
+		UUID:                       listItem.originUUID,
+		TargetUUID:                 childUUID,
+		UnixNanoTime:               time.Now().UnixNano(),
+		ListItemCreationTime:       listItem.creationTime,
+		TargetListItemCreationTime: childCreationTime,
+		Line:                       line,
+		Note:                       note,
+	}
+
+	// Undo event created from pre event processing state
+	undoEl := EventLog{
+		EventType:                  UpdateEvent,
+		UUID:                       listItem.originUUID,
+		TargetUUID:                 childUUID,
+		ListItemCreationTime:       listItem.creationTime,
+		TargetListItemCreationTime: childCreationTime,
+		Line:                       listItem.rawLine,
+		Note:                       listItem.Note,
+	}
+
+	r.addEventLog(el)
+	r.addUndoLog(undoEl, el)
 	return nil
 }
 
@@ -289,8 +315,25 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		targetCreationTime = listItem.child.creationTime
 		targetUUID = listItem.child.originUUID
 	}
-	r.addEventLog(DeleteEvent, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
-	r.addUndoLog(DeleteEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, listItem.rawLine, listItem.Note, listItem.rawLine, listItem.Note)
+	el := EventLog{
+		EventType:            DeleteEvent,
+		UUID:                 listItem.originUUID,
+		UnixNanoTime:         time.Now().UnixNano(),
+		ListItemCreationTime: listItem.creationTime,
+	}
+
+	r.addEventLog(el)
+	undoEl := EventLog{
+		EventType:                  AddEvent,
+		UUID:                       r.uuid,
+		TargetUUID:                 targetUUID,
+		ListItemCreationTime:       listItem.creationTime,
+		TargetListItemCreationTime: targetCreationTime,
+		Line:                       listItem.rawLine,
+		Note:                       listItem.Note,
+	}
+	r.addUndoLog(undoEl, el)
+
 	key := ""
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
@@ -319,18 +362,27 @@ func (r *DBListRepo) MoveUp(idx int) error {
 			targetCreationTime = listItem.matchChild.child.creationTime
 			targetUUID = listItem.matchChild.child.originUUID
 		}
-		//} else if listItem.child != nil {
-		//    // Cover nil child case (e.g. attempting to move top of list up)
-		//    // matchChild will only be null in this context on initial startup with loading
-		//    // from the WAL
-		//    targetCreationTime = listItem.child.creationTime
-		//    targetUUID = listItem.child.originUUID
 	}
 
-	r.addEventLog(MoveUpEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
-	// There's no point in moving if there's nothing to move to
 	if listItem.matchChild != nil && listItem.matchChild.creationTime != 0 {
-		r.addUndoLog(MoveUpEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		el := EventLog{
+			EventType:                  MoveUpEvent,
+			UUID:                       listItem.originUUID,
+			TargetUUID:                 targetUUID,
+			UnixNanoTime:               time.Now().UnixNano(),
+			ListItemCreationTime:       listItem.creationTime,
+			TargetListItemCreationTime: targetCreationTime,
+		}
+		r.addEventLog(el)
+
+		undoEl := EventLog{
+			EventType:                  MoveDownEvent,
+			UUID:                       listItem.originUUID,
+			TargetUUID:                 listItem.matchChild.originUUID,
+			ListItemCreationTime:       listItem.creationTime,
+			TargetListItemCreationTime: listItem.matchChild.creationTime,
+		}
+		r.addUndoLog(undoEl, el)
 	}
 	return nil
 }
@@ -349,15 +401,33 @@ func (r *DBListRepo) MoveDown(idx int) error {
 	if listItem.matchParent != nil {
 		targetCreationTime = listItem.matchParent.creationTime
 		targetUUID = listItem.matchParent.originUUID
-		//} else if listItem.parent != nil {
-		//    targetCreationTime = listItem.parent.creationTime
-		//    targetUUID = listItem.parent.originUUID
 	}
 
-	r.addEventLog(MoveDownEvent, listItem.creationTime, targetCreationTime, "", nil, listItem.originUUID, targetUUID)
-	// There's no point in moving if there's nothing to move to
 	if listItem.matchParent != nil && listItem.matchParent.creationTime != 0 {
-		r.addUndoLog(MoveDownEvent, listItem.creationTime, targetCreationTime, listItem.originUUID, targetUUID, "", nil, "", nil)
+		el := EventLog{
+			EventType:                  MoveDownEvent,
+			UUID:                       listItem.originUUID,
+			TargetUUID:                 targetUUID,
+			UnixNanoTime:               time.Now().UnixNano(),
+			ListItemCreationTime:       listItem.creationTime,
+			TargetListItemCreationTime: targetCreationTime,
+		}
+		r.addEventLog(el)
+
+		var targetUUID uuid
+		var targetCreationTime int64
+		if listItem.matchChild != nil {
+			targetUUID = listItem.matchChild.originUUID
+			targetCreationTime = listItem.matchChild.creationTime
+		}
+		undoEl := EventLog{
+			EventType:                  MoveUpEvent,
+			UUID:                       listItem.originUUID,
+			TargetUUID:                 targetUUID,
+			ListItemCreationTime:       listItem.creationTime,
+			TargetListItemCreationTime: targetCreationTime,
+		}
+		r.addUndoLog(undoEl, el)
 	}
 	return nil
 }
@@ -370,16 +440,16 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 
 	listItem := r.matchListItems[idx]
 
-	var evType EventType
+	var evType, oppEvType EventType
 	var itemKey string
 	if listItem.IsHidden {
 		evType = ShowEvent
-		r.addUndoLog(ShowEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		oppEvType = HideEvent
 		// Cursor should remain on newly visible key
 		itemKey = listItem.Key()
 	} else {
 		evType = HideEvent
-		r.addUndoLog(HideEvent, listItem.creationTime, 0, listItem.originUUID, listItem.originUUID, "", nil, "", nil)
+		oppEvType = ShowEvent
 		// Set itemKey to parent if available, else child (e.g. bottom of list)
 		if listItem.matchParent != nil {
 			itemKey = listItem.matchParent.Key()
@@ -387,28 +457,30 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 			itemKey = listItem.matchChild.Key()
 		}
 	}
-	r.addEventLog(evType, listItem.creationTime, 0, "", nil, listItem.originUUID, uuid(0))
+	el := EventLog{
+		EventType:            evType,
+		UUID:                 listItem.originUUID,
+		UnixNanoTime:         time.Now().UnixNano(),
+		ListItemCreationTime: listItem.creationTime,
+	}
+	r.addEventLog(el)
+
+	undoEl := EventLog{
+		EventType:            oppEvType,
+		UUID:                 listItem.originUUID,
+		ListItemCreationTime: listItem.creationTime,
+	}
+	r.addUndoLog(undoEl, el)
+
 	return itemKey, nil
 }
 
 func (r *DBListRepo) Undo() (string, error) {
 	if r.eventLogger.curIdx > 0 {
-		// undo event log
 		uel := r.eventLogger.log[r.eventLogger.curIdx]
-
-		// To keep the "append only" nature of the logs consistent and predictable, if an Undo/Redo results in an `Add`,
-		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
-		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
-		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
-		// We need to update the corresponding event in the log too to ensure that the listItemTracker is kept consistent
-		// (given that it uses the `uuid:creationTime` key)
-		evType := oppositeEvent[uel.eventType]
-		if evType == AddEvent {
-			uel.listItemCreationTime = time.Now().UnixNano()
-			r.eventLogger.log[r.eventLogger.curIdx] = uel
-		}
-
-		listItem, err := r.addEventLog(evType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.undoLine, uel.undoNote, uel.uuid, uel.targetUUID)
+		el := uel.oppEvent
+		el.UnixNanoTime = time.Now().UnixNano()
+		listItem, err := r.addEventLog(el)
 		r.eventLogger.curIdx--
 		return listItem.Key(), err
 	}
@@ -419,19 +491,9 @@ func (r *DBListRepo) Redo() (string, error) {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		uel := r.eventLogger.log[r.eventLogger.curIdx+1]
-
-		// To keep the "append only" nature of the logs consistent and predictable, if an Undo/Redo results in an `Add`,
-		// (e.g. the opposite of a `Delete`), we update the creationTime to ensure a unique and new event. This covers
-		// distributed race conditions whereby an Undo/Redo event is received before the original remote event (e.g. an
-		// `Undo` on a `Delete` which results on an Add for a ListItem that already exists)
-		// We need to update the corresponding event in the log too to ensure that the listItemTracker is kept consistent
-		// (given that it uses the `uuid:creationTime` key)
-		if uel.eventType == AddEvent {
-			uel.listItemCreationTime = time.Now().UnixNano()
-			r.eventLogger.log[r.eventLogger.curIdx+1] = uel
-		}
-
-		listItem, err := r.addEventLog(uel.eventType, uel.listItemCreationTime, uel.targetListItemCreationTime, uel.redoLine, uel.redoNote, uel.uuid, uel.targetUUID)
+		el := uel.event
+		el.UnixNanoTime = time.Now().UnixNano()
+		listItem, err := r.addEventLog(el)
 		r.eventLogger.curIdx++
 		return listItem.Key(), err
 	}

@@ -31,42 +31,42 @@ type undoEventLog struct {
 	redoNote                   *[]byte
 }
 
+type undoLog struct {
+	oppEvent EventLog // The event required to undo the corresponding original event
+	event    EventLog // The original event that was triggered on the client interface call (Add/Update/etc)
+}
+
 // DbEventLogger is used for in-mem undo/redo mechanism
 type DbEventLogger struct {
 	curIdx int // Last index is latest/most recent in history (appends on new events)
-	log    []undoEventLog
+	log    []undoLog
 }
 
 // NewDbEventLogger Returns a new instance of DbEventLogger
 func NewDbEventLogger() *DbEventLogger {
-	el := undoEventLog{
-		eventType: NullEvent,
-		undoLine:  "",
-		undoNote:  nil,
-		redoLine:  "",
-		redoNote:  nil,
+	return &DbEventLogger{
+		log: []undoLog{undoLog{
+			oppEvent: EventLog{
+				EventType: NullEvent,
+			},
+			event: EventLog{
+				EventType: NullEvent,
+			},
+		}},
 	}
-	return &DbEventLogger{0, []undoEventLog{el}}
 }
 
-func (r *DBListRepo) addUndoLog(e EventType, creationTime int64, targetCreationTime int64, originUUID uuid, targetUUID uuid, oldLine string, oldNote *[]byte, newLine string, newNote *[]byte) error {
-	ev := undoEventLog{
-		uuid:                       originUUID,
-		targetUUID:                 targetUUID,
-		eventType:                  e,
-		listItemCreationTime:       creationTime,
-		targetListItemCreationTime: targetCreationTime,
-		undoLine:                   oldLine,
-		undoNote:                   oldNote,
-		redoLine:                   newLine,
-		redoNote:                   newNote,
+func (r *DBListRepo) addUndoLog(oppEvent EventLog, originalEvent EventLog) error {
+	ul := undoLog{
+		oppEvent: oppEvent,
+		event:    originalEvent,
 	}
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten
 	r.eventLogger.log = r.eventLogger.log[:r.eventLogger.curIdx+1]
 
 	// Append to log
-	r.eventLogger.log = append(r.eventLogger.log, ev)
+	r.eventLogger.log = append(r.eventLogger.log, ul)
 
 	r.eventLogger.curIdx++
 
