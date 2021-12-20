@@ -297,9 +297,14 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	for f := range friends {
 		if _, isFriend := r.friends[f]; isFriend {
 			friendsToReposition = append(friendsToReposition, fmt.Sprintf("@%s", f))
-			// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
-			newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
-			newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
+			// Cover edge case whereby email is typed first and constitutes entire string
+			if fmt.Sprintf("@%s", f) == newLine {
+				newLine = ""
+			} else {
+				// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
+				newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
+				newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
+			}
 		}
 	}
 
