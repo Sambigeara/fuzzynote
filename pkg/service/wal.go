@@ -441,8 +441,6 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	// extract friends from the config lines used to generate change events.
 	if r.email != "" {
 		r.repositionActiveFriends(e)
-	}
-	if r.web.isActive {
 		r.generateFriendChangeEvents(*e, item)
 	}
 
@@ -1960,7 +1958,6 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 
 	return nil
 }
-
 
 func (r *DBListRepo) finish(purge bool) error {
 	// When we pull wals from remotes, we merge into our in-mem logs, but will only flush to local walfile
