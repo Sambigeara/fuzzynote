@@ -393,7 +393,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 			}
 		}
 		//for email := range friendsToRemove {
-		if friendToRemove != "" {
+		if friendToRemove != "" && friendToRemove != r.email {
 			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
 			if friendItems, friendExists := r.friends[friendToRemove]; friendExists {
