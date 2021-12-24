@@ -302,19 +302,21 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString(newLine)
+	var newLineBuilder strings.Builder
+	var friendString strings.Builder
+
+	newLineBuilder.WriteString(newLine)
 
 	// Sort the emails, and then append a space separated string to the end of the Line
 	sort.Strings(friendsToReposition)
 	for _, f := range friendsToReposition {
-		sb.WriteString(" ")
-		sb.WriteString(f)
+		friendString.WriteString(" ")
+		friendString.WriteString(f)
 	}
 
-	e.Line = sb.String()
+	newLineBuilder.WriteString(friendString.String())
+	e.Line = newLineBuilder.String()
 
-	friendsString := fmt.Sprintf(" %s", strings.Join(friendsToReposition, " "))
 	// We need to include `self` in the raw Line, as this will be distributed across all clients who also
 	// need to collaborate back to the local client. However, we do _not_ want to include this email in
 	// lineFriends.emails, as it's not relevant to the client's Friends() call
@@ -326,7 +328,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	}
 	e.friends = lineFriends{
 		isProcessed: true,
-		offset:      len(e.Line) - len(friendsString),
+		offset:      newLineBuilder.Len() - friendString.Len(),
 		emails:      ownerOmitted,
 	}
 }
