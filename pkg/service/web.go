@@ -203,7 +203,7 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 	return el, nil
 }
 
-func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {
+func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, originUUID string, uuid string, method string) (string, error) {
 	u, _ := url.Parse(apiURL)
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
@@ -217,6 +217,8 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	if err != nil {
 		return "", err
 	}
+
+	req = req.WithContext(ctx)
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
@@ -243,7 +245,7 @@ func (wf *WebWalFile) GetUUID() string {
 
 func (wf *WebWalFile) GetRoot() string { return "" }
 
-func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
+func (wf *WebWalFile) GetMatchingWals(ctx context.Context, pattern string) ([]string, error) {
 	u, _ := url.Parse(apiURL)
 	// we now pass emails as `wf.uuid`, so escape it here
 	escapedEmail := url.PathEscape(wf.uuid)
@@ -253,6 +255,8 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	if err != nil {
 		log.Fatalf("Error creating wal list request: %v", err)
 	}
+
+	req = req.WithContext(ctx)
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
@@ -279,14 +283,17 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
-	presignedURL, err := wf.getPresignedURLForWal(wf.GetUUID(), fileName, "get")
+func (wf *WebWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName string) error {
+	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), fileName, "get")
 	if err != nil {
 		//log.Printf("Error retrieving wal %s: %s", fileName, err)
 		return err
 	}
 
-	s3Resp, err := http.Get(presignedURL)
+	req, err := http.NewRequest("GET", presignedURL, nil)
+	req = req.WithContext(ctx)
+
+	s3Resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
 		return err
@@ -300,7 +307,7 @@ func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	return nil
 }
 
-func (wf *WebWalFile) RemoveWals(fileNames []string) error {
+func (wf *WebWalFile) RemoveWals(ctx context.Context, fileNames []string) error {
 	var uuids []string
 	for _, f := range fileNames {
 		uuids = append(uuids, f)
@@ -320,6 +327,8 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 		return err
 	}
 
+	req = req.WithContext(ctx)
+
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
@@ -329,11 +338,11 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
+func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, tempUUID string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
 	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
-	presignedURL, err := wf.getPresignedURLForWal(wf.GetUUID(), tempUUID, "put")
+	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), tempUUID, "put")
 	if err != nil || presignedURL == "" {
 		return nil
 	}
@@ -344,6 +353,8 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, tempUUID string) error {
 	if err != nil {
 		return err
 	}
+
+	req = req.WithContext(ctx)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

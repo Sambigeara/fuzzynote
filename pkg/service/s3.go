@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -66,7 +67,7 @@ func (wf *s3WalFile) GetRoot() string {
 	return wf.prefix
 }
 
-func (wf *s3WalFile) GetMatchingWals(matchPattern string) ([]string, error) {
+func (wf *s3WalFile) GetMatchingWals(ctx context.Context, matchPattern string) ([]string, error) {
 	fileNames := []string{}
 	// TODO matchPattern isn't actually doing anything atm
 	resp, err := wf.svc.ListObjectsV2(&s3.ListObjectsV2Input{
@@ -84,7 +85,7 @@ func (wf *s3WalFile) GetMatchingWals(matchPattern string) ([]string, error) {
 	return fileNames, nil
 }
 
-func (wf *s3WalFile) GetWalBytes(w io.Writer, fileName string) error {
+func (wf *s3WalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName string) error {
 	// TODO implement streaming
 
 	// Read into bytes rather than file
@@ -118,7 +119,7 @@ func (wf *s3WalFile) GetWalBytes(w io.Writer, fileName string) error {
 	return nil
 }
 
-func (wf *s3WalFile) RemoveWals(fileNames []string) error {
+func (wf *s3WalFile) RemoveWals(ctx context.Context, fileNames []string) error {
 	// Delete the item
 	objects := []*s3.ObjectIdentifier{}
 	for _, f := range fileNames {
@@ -162,7 +163,7 @@ func (wf *s3WalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *s3WalFile) Flush(b *bytes.Buffer, randomUUID string) error {
+func (wf *s3WalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUUID string) error {
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),

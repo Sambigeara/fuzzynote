@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -123,7 +124,7 @@ func main() {
 			}
 			defer f.Close()
 
-			if err := service.BuildWalFromPlainText(localWalFile, f, hideItems); err != nil {
+			if err := service.BuildWalFromPlainText(context.Background(), localWalFile, f, hideItems); err != nil {
 				fmt.Println("failed to generate wal file from plain text file")
 				os.Exit(1)
 			}

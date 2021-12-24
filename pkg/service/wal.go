@@ -104,10 +104,10 @@ func (e *EventLog) getKeys() (string, string) {
 type WalFile interface {
 	GetUUID() string
 	GetRoot() string
-	GetMatchingWals(string) ([]string, error)
-	GetWalBytes(io.Writer, string) error
-	RemoveWals([]string) error
-	Flush(*bytes.Buffer, string) error
+	GetMatchingWals(context.Context, string) ([]string, error)
+	GetWalBytes(context.Context, io.Writer, string) error
+	RemoveWals(context.Context, []string) error
+	Flush(context.Context, *bytes.Buffer, string) error
 
 	// TODO these probably don't need to be interface functions
 	SetProcessedEvent(string)
@@ -149,7 +149,7 @@ func (wf *LocalFileWalFile) GetRoot() string {
 	return wf.rootDir
 }
 
-func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, error) {
+func (wf *LocalFileWalFile) GetMatchingWals(ctx context.Context, matchPattern string) ([]string, error) {
 	pullPaths, err := filepath.Glob(matchPattern)
 	if err != nil {
 		return []string{}, err
@@ -163,7 +163,7 @@ func (wf *LocalFileWalFile) GetMatchingWals(matchPattern string) ([]string, erro
 	return uuids, nil
 }
 
-func (wf *LocalFileWalFile) GetWalBytes(w io.Writer, fileName string) error {
+func (wf *LocalFileWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName string) error {
 	//var b []byte
 	fileName = fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), fileName)
 	f, err := os.Open(fileName)
@@ -180,14 +180,14 @@ func (wf *LocalFileWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	return nil
 }
 
-func (wf *LocalFileWalFile) RemoveWals(fileNames []string) error {
+func (wf *LocalFileWalFile) RemoveWals(ctx context.Context, fileNames []string) error {
 	for _, f := range fileNames {
 		os.Remove(fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), f))
 	}
 	return nil
 }
 
-func (wf *LocalFileWalFile) Flush(b *bytes.Buffer, randomUUID string) error {
+func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUUID string) error {
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	f, err := os.Create(fileName)
 	if err != nil {
@@ -1277,7 +1277,7 @@ func generatePlainTextFile(matchItems []ListItem) error {
 }
 
 // This function is currently unused
-func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
+func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListItem) error {
 	wal := []EventLog{}
 	//now := time.Now().AddDate(-1, 0, 0).UnixNano()
 	now := int64(1) // TODO remove this - it's to ensure consistency to enable file diffs
@@ -1309,7 +1309,7 @@ func (r *DBListRepo) generatePartialView(matchItems []ListItem) error {
 	b := buildByteWal(wal)
 	//viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
 	viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
-	r.LocalWalFile.Flush(b, viewName)
+	r.LocalWalFile.Flush(ctx, b, viewName)
 	log.Fatalf("N list generated events: %d", len(wal))
 	return nil
 }
@@ -1327,7 +1327,7 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(walFiles []WalFile) ([]EventLog, error) {
+func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, error) {
 	//log.Print("Pulling...")
 	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
 	newWalMutex := sync.Mutex{}
@@ -1338,7 +1338,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) ([]EventLog, error) {
 		go func(wf WalFile) {
 			defer wg.Done()
 			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
-			newWals, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+			newWals, err := wf.GetMatchingWals(ctx, fmt.Sprintf(filePathPattern, "*"))
 			if err != nil {
 				//log.Fatal(err)
 				return
@@ -1361,7 +1361,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) ([]EventLog, error) {
 				pr, pw := io.Pipe()
 				go func() {
 					defer pw.Close()
-					if err := wf.GetWalBytes(pw, newWal); err != nil {
+					if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
 						// TODO handle
 						//log.Fatal(err)
 					}
@@ -1387,7 +1387,7 @@ func (r *DBListRepo) pull(walFiles []WalFile) ([]EventLog, error) {
 	return mergedWal, nil
 }
 
-func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
+func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog, error) {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	syncWalFiles := []WalFile{}
@@ -1402,7 +1402,7 @@ func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 	for _, wf := range syncWalFiles {
 		// Handle ALL wals
 		filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
-		originFiles, err := wf.GetMatchingWals(fmt.Sprintf(filePathPattern, "*"))
+		originFiles, err := wf.GetMatchingWals(ctx, fmt.Sprintf(filePathPattern, "*"))
 		if err != nil {
 			continue
 			//log.Fatal(err)
@@ -1422,7 +1422,7 @@ func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 			pr, pw := io.Pipe()
 			go func() {
 				defer pw.Close()
-				if err := wf.GetWalBytes(pw, fileName); err != nil {
+				if err := wf.GetWalBytes(ctx, pw, fileName); err != nil {
 					// TODO handle
 					//log.Fatal(err)
 				}
@@ -1466,7 +1466,7 @@ func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 		}
 
 		// Flush the gathered Wal
-		if err := r.push(mergedWal, wf, ""); err != nil {
+		if err := r.push(ctx, mergedWal, wf, ""); err != nil {
 			log.Fatal(err)
 		}
 
@@ -1474,7 +1474,7 @@ func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 		fullMergedWal = merge(fullMergedWal, mergedWal)
 
 		// Schedule a delete on the files
-		wf.RemoveWals(filesToDelete)
+		wf.RemoveWals(ctx, filesToDelete)
 	}
 
 	if len(fullMergedWal) > 0 {
@@ -1498,7 +1498,7 @@ func (r *DBListRepo) gather(runCompaction bool) ([]EventLog, error) {
 
 		for _, wf := range nonOwnedWalFiles {
 			go func(wf WalFile) {
-				r.push(fullMergedWal, wf, randomUUID)
+				r.push(ctx, fullMergedWal, wf, randomUUID)
 			}(wf)
 		}
 	}
@@ -1580,7 +1580,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	return filteredWal
 }
 
-func (r *DBListRepo) push(el []EventLog, wf WalFile, randomUUID string) error {
+func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, randomUUID string) error {
 	// Apply any filtering based on Push match configuration
 	el = r.getMatchedWal(el, wf)
 
@@ -1599,14 +1599,14 @@ func (r *DBListRepo) push(el []EventLog, wf WalFile, randomUUID string) error {
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
 	r.setProcessedPartialWals(randomUUID)
-	if err := wf.Flush(b, randomUUID); err != nil {
+	if err := wf.Flush(ctx, b, randomUUID); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (r *DBListRepo) flushPartialWals(el []EventLog) {
+func (r *DBListRepo) flushPartialWals(ctx context.Context, el []EventLog) {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
 		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
@@ -1614,7 +1614,7 @@ func (r *DBListRepo) flushPartialWals(el []EventLog) {
 		defer r.allWalFileMut.RUnlock()
 		for _, wf := range r.allWalFiles {
 			go func(wf WalFile) {
-				r.push(el, wf, randomUUID)
+				r.push(ctx, el, wf, randomUUID)
 			}(wf)
 		}
 	}
@@ -1653,7 +1653,7 @@ func (r *DBListRepo) emitRemoteUpdate() {
 	}
 }
 
-func (r *DBListRepo) startSync(walChan chan []EventLog) error {
+func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	//pushAggregateWindowChan := make(chan struct{}, 1)
@@ -1683,7 +1683,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 		// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
 		// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
 		// heading into edge cases of edge cases so won't worry about it for now
-		localFileNames, err := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		localFileNames, err := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -1693,7 +1693,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				defer r.allWalFileMut.RUnlock()
 				for _, wf := range r.allWalFiles {
 					if wf != r.LocalWalFile {
-						go func(wf WalFile) { r.push(r.log, wf, "") }(wf)
+						go func(wf WalFile) { r.push(ctx, r.log, wf, "") }(wf)
 					}
 				}
 			}()
@@ -1744,7 +1744,7 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	}
 
 	// Run an initial load from the local walfile
-	localEl, err := r.pull([]WalFile{r.LocalWalFile})
+	localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
 	if err != nil {
 		return err
 	}
@@ -1754,40 +1754,45 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	go func() {
 		compactInc := 0
 		for {
-			var el []EventLog
-			var err error
 			select {
-			case <-syncTriggerChan:
-				syncWalFiles := []WalFile{}
-				r.syncWalFileMut.RLock()
-				for _, wf := range r.syncWalFiles {
-					syncWalFiles = append(syncWalFiles, wf)
+			case <-ctx.Done():
+				return
+			default:
+				var el []EventLog
+				var err error
+				select {
+				case <-syncTriggerChan:
+					syncWalFiles := []WalFile{}
+					r.syncWalFileMut.RLock()
+					for _, wf := range r.syncWalFiles {
+						syncWalFiles = append(syncWalFiles, wf)
+					}
+					r.syncWalFileMut.RUnlock()
+					if el, err = r.pull(ctx, syncWalFiles); err != nil {
+						log.Fatal(err)
+					}
+				case <-gatherTriggerTimer.C:
+					// Runs compaction every Nth gather
+					runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
+					if el, err = r.gather(ctx, runCompaction); err != nil {
+						log.Fatal(err)
+					}
+					compactInc++
 				}
-				r.syncWalFileMut.RUnlock()
-				if el, err = r.pull(syncWalFiles); err != nil {
-					log.Fatal(err)
-				}
-			case <-gatherTriggerTimer.C:
-				// Runs compaction every Nth gather
-				runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
-				if el, err = r.gather(runCompaction); err != nil {
-					log.Fatal(err)
-				}
-				compactInc++
-			}
 
-			// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
-			// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
-			// program with it's CPU constantly tied up, which leads to performance degradation.
-			// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
-			// onto the syncTriggerChan
-			go func() {
-				// we block on walChan publish so it only schedules again after a Replay begins
-				if len(el) > 0 {
-					walChan <- el
-				}
-				scheduleSync(pullIntervalSeconds)
-			}()
+				// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
+				// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
+				// program with it's CPU constantly tied up, which leads to performance degradation.
+				// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
+				// onto the syncTriggerChan
+				go func() {
+					// we block on walChan publish so it only schedules again after a Replay begins
+					if len(el) > 0 {
+						walChan <- el
+					}
+					scheduleSync(pullIntervalSeconds)
+				}()
+			}
 		}
 	}()
 
@@ -1797,8 +1802,8 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	go func() {
 		expBackoffInterval := time.Second * 1
 		var waitInterval time.Duration
-		var ctx context.Context
-		var cancel context.CancelFunc
+		var webCtx context.Context
+		var webCancel context.CancelFunc
 		for {
 			select {
 			case <-webPingTicker.C:
@@ -1815,8 +1820,8 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 					r.web.pushWebsocket(m)
 				}
 			case <-webRefreshTicker.C:
-				if cancel != nil {
-					cancel()
+				if webCancel != nil {
+					webCancel()
 				}
 				// Close off old websocket connection
 				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
@@ -1845,14 +1850,14 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				// Trigger web walfile sync (mostly relevant on initial start)
 				scheduleSync(0)
 
-				ctx, cancel = context.WithCancel(context.Background())
+				webCtx, webCancel = context.WithCancel(ctx)
 				if r.web.isActive {
 					go func() {
 						var aggr []EventLog
 						for {
-							wsEl, err := r.consumeWebsocket(ctx)
+							wsEl, err := r.consumeWebsocket(webCtx)
 							if err != nil {
-								// cancel() triggers error which we need to handle and return
+								// webCancel() triggers error which we need to handle and return
 								// to avoid haywire goroutines with infinite loops and CPU destruction
 								return
 							}
@@ -1878,6 +1883,8 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 				}
 
 				webRefreshTicker.Reset(waitInterval)
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
@@ -1885,21 +1892,26 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	// Create a loop to deal with any collaborator cursor move events
 	go func() {
 		for {
-			e := <-r.localCursorMoveChan
-			func() {
-				r.webWalFileMut.RLock()
-				defer r.webWalFileMut.RUnlock()
-				for _, wf := range r.webWalFiles {
-					go func(wf WalFile) {
-						websocketPushEvents <- websocketMessage{
-							Action:       "position",
-							UUID:         wf.GetUUID(),
-							Key:          e.listItemKey,
-							UnixNanoTime: e.unixNanoTime,
-						}
-					}(wf)
-				}
-			}()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				e := <-r.localCursorMoveChan
+				func() {
+					r.webWalFileMut.RLock()
+					defer r.webWalFileMut.RUnlock()
+					for _, wf := range r.webWalFiles {
+						go func(wf WalFile) {
+							websocketPushEvents <- websocketMessage{
+								Action:       "position",
+								UUID:         wf.GetUUID(),
+								Key:          e.listItemKey,
+								UnixNanoTime: e.unixNanoTime,
+							}
+						}(wf)
+					}
+				}()
+			}
 		}
 	}()
 
@@ -1943,11 +1955,14 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 			case <-pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				r.flushPartialWals(el)
+				r.flushPartialWals(ctx, el)
 				el = []EventLog{}
-			case <-r.stop:
-				r.flushPartialWals(el)
-				r.stop <- struct{}{}
+			case <-ctx.Done():
+				// TODO create a separate timeout here? This is the only case where we don't want the parent
+				// context cancellation to cancel the inflight flush
+				// TODO ensure completion of this operation before completing?? maybe bring back in the stop chan
+				r.flushPartialWals(context.Background(), el)
+				return
 			}
 		}
 	}()
@@ -1955,19 +1970,16 @@ func (r *DBListRepo) startSync(walChan chan []EventLog) error {
 	return nil
 }
 
-func (r *DBListRepo) finish(purge bool) error {
-	// Flush all unpushed changes to non-local walfiles
-	// TODO handle this more gracefully
-	r.stop <- struct{}{}
-	<-r.stop
 
+func (r *DBListRepo) finish(purge bool) error {
 	// When we pull wals from remotes, we merge into our in-mem logs, but will only flush to local walfile
 	// on gather. To ensure we store all logs locally, for now, we can just push the entire in-mem log to
 	// the local walfile. We can remove any other files to avoid overuse of local storage.
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
+	ctx := context.Background()
 	if !purge {
-		localFiles, _ := r.LocalWalFile.GetMatchingWals(fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
 		filesToDelete := []string{}
 		// Ensure we've actually processed the files before we delete them...
 		for _, fileName := range localFiles {
@@ -1975,8 +1987,8 @@ func (r *DBListRepo) finish(purge bool) error {
 				filesToDelete = append(filesToDelete, fileName)
 			}
 		}
-		r.push(r.log, r.LocalWalFile, "")
-		r.LocalWalFile.RemoveWals(filesToDelete)
+		r.push(ctx, r.log, r.LocalWalFile, "")
+		r.LocalWalFile.RemoveWals(ctx, filesToDelete)
 	} else {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
@@ -1990,7 +2002,7 @@ func (r *DBListRepo) finish(purge bool) error {
 
 // BuildWalFromPlainText accepts an io.Reader with line separated plain text, and generates a wal db file
 // which is dumped in fzn root directory.
-func BuildWalFromPlainText(wf WalFile, r io.Reader, isHidden bool) error {
+func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidden bool) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
 	el := []EventLog{}
@@ -2036,7 +2048,7 @@ func BuildWalFromPlainText(wf WalFile, r io.Reader, isHidden bool) error {
 	}
 
 	b := buildByteWal(el)
-	wf.Flush(b, fmt.Sprintf("%d", uuid))
+	wf.Flush(ctx, b, fmt.Sprintf("%d", uuid))
 
 	return nil
 }

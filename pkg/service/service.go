@@ -64,7 +64,6 @@ type DBListRepo struct {
 	latestWalSchemaID uint16
 	listItemTracker   map[string]*ListItem
 	eventsChan        chan EventLog
-	stop              chan struct{}
 	web               *Web
 
 	remoteCursorMoveChan chan cursorMoveEvent
@@ -106,7 +105,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		listItemTracker:   make(map[string]*ListItem),
 		LocalWalFile:      localWalFile,
 		eventsChan:        make(chan EventLog),
-		stop:              make(chan struct{}, 1),
 
 		collabMapLock: &sync.Mutex{},
 

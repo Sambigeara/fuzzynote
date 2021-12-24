@@ -1,54 +1,31 @@
 package service
 
 import (
+	"context"
 	"sync"
 )
 
-type fileHeader struct {
-	SchemaID fileSchemaID
-	UUID     uuid
-	// TODO introduce migration to remove this legacy ID
-	NextListItemID uint64
-}
-
-type listItemSchema1 struct {
-	PageID     uint32
-	Metadata   bits
-	LineLength uint64
-	NoteLength uint64
-}
+type refreshKey struct{}
 
 // Start begins push/pull for all WalFiles
 func (r *DBListRepo) Start(client Client) error {
-	// TODO stricter control around event type
-	//inputEvtsChan := make(chan tcell.Event)
 	inputEvtsChan := make(chan interface{})
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// In the case of wal merges and receiving remote cursor positions below, we emit generic
 	// null events which are handled in the main loop to refresh the client/UI state.
-	// There is no need to schedule a refresh if there is already one waiting - in fact, this can
-	// lead to a large backlog of unnecessary work.
-	// Therefore, we create a channel buffered to 1 slot, and check this when scheduling a refresh.
-	// If the slot is already taken, we skip, otherwise we schedule. The main loop consumer below
-	// is responsible for clearing the slot once it's handled the refresh event.
-	type refreshKey struct{}
-	refreshChan := make(chan refreshKey, 1)
+	// Only schedule a refresh if there is not one currently pending.
 	scheduleRefresh := func() {
 		go func() {
 			select {
-			case refreshChan <- refreshKey{}:
-				inputEvtsChan <- refreshKey{}
+			case inputEvtsChan <- refreshKey{}:
+			case <-ctx.Done():
+				return
 			default:
 			}
 		}()
 	}
-
-	// TODO SL 2021-11-18: wasm browser loading fresh (len(wal) == 0) db will not load the client as
-	// no `refresh` is triggered to refresh DOM state. This should be handled in the browser client code,
-	// but this is so cheap and easy, I'm doing it here for now.
-	go func() {
-		scheduleRefresh()
-	}()
 
 	walChan := make(chan []EventLog)
 
@@ -64,6 +41,7 @@ func (r *DBListRepo) Start(client Client) error {
 			case partialWal := <-walChan:
 				if err := r.Replay(partialWal); err != nil {
 					errChan <- err
+					return
 				}
 				scheduleRefresh()
 			case ev := <-r.remoteCursorMoveChan:
@@ -76,13 +54,12 @@ func (r *DBListRepo) Start(client Client) error {
 				cont, purge, err := client.HandleEvent(ev)
 				if err != nil {
 					errChan <- err
-				}
-				// Clear refreshChan if the event is of type refreshKey
-				if _, isRefreshKey := ev.(refreshKey); isRefreshKey {
-					<-refreshChan
+					return
 				}
 				if !cont {
+					cancel()
 					errChan <- r.finish(purge)
+					return
 				}
 			}
 		}
@@ -91,28 +68,26 @@ func (r *DBListRepo) Start(client Client) error {
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	// This is run after the goroutine above is triggered to ensure a thread is consuming from walChan
-	err := r.startSync(walChan)
+	err := r.startSync(ctx, walChan)
 	if err != nil {
 		return err
 	}
 
 	// This is the main loop of operation in the app.
 	// We consume all term events into our own channel (handled above).
-	// TODO SL 2021-11-17: This is handled in a separate goroutine solely for the wasm web app -
-	// at present, without this operating in a separate loop, the app behaves oddly when trying
-	// to exit gracefully. Running in a separate goroutine solves this apparently.
+	// This is handled in a separate goroutine due to pontential contention in the loop above, whereby we consume
+	// from inputEvtsChan and publish to the errChan (rather than a single select with two options in the main thread),
+	// e.g.
+	// select {
+	// case inputEvtsChan <- client.AwaitEvent():
+	// case err <- errchan:
+	//     ...
+	// }
 	go func() {
 		for {
 			inputEvtsChan <- client.AwaitEvent()
 		}
 	}()
-	//for {
-	//    select {
-	//    case inputEvtsChan <- client.AwaitEvent():
-	//    case err := <-errChan:
-	//        return err
-	//    }
-	//}
 	return <-errChan
 }
 
