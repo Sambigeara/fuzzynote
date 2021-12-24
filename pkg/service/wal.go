@@ -1847,7 +1847,6 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 				webCtx, webCancel = context.WithCancel(ctx)
 				if r.web.isActive {
 					go func() {
-						var aggr []EventLog
 						for {
 							wsEl, err := r.consumeWebsocket(webCtx)
 							if err != nil {
@@ -1865,12 +1864,9 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 							// use a secondary ticker that will wait a given period and flush if
 							// needed????
 							if len(wsEl) > 0 {
-								aggr = merge(aggr, wsEl)
-								select {
-								case walChan <- aggr:
-									aggr = []EventLog{}
-								default:
-								}
+								go func() {
+									walChan <- wsEl
+								}()
 							}
 						}
 					}()
