@@ -1901,14 +1901,14 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 					r.webWalFileMut.RLock()
 					defer r.webWalFileMut.RUnlock()
 					for _, wf := range r.webWalFiles {
-						go func(wf WalFile) {
+						go func(uuid string) {
 							websocketPushEvents <- websocketMessage{
 								Action:       "position",
-								UUID:         wf.GetUUID(),
+								UUID:         uuid,
 								Key:          e.listItemKey,
 								UnixNanoTime: e.unixNanoTime,
 							}
-						}(wf)
+						}(wf.GetUUID())
 					}
 				}()
 			}
@@ -1929,18 +1929,17 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 						r.webWalFileMut.RLock()
 						defer r.webWalFileMut.RUnlock()
 						for _, wf := range r.webWalFiles {
-							matchedEventLog := r.getMatchedWal([]EventLog{e}, wf)
-							if len(matchedEventLog) > 0 {
+							if matchedEventLog := r.getMatchedWal([]EventLog{e}, wf); len(matchedEventLog) > 0 {
 								// There are only single events, so get the zero index
-								b := buildByteWal([]EventLog{matchedEventLog[0]})
+								b := buildByteWal(matchedEventLog)
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-								go func(wf WalFile) {
+								go func(uuid string) {
 									websocketPushEvents <- websocketMessage{
 										Action: "wal",
-										UUID:   wf.GetUUID(),
+										UUID:   uuid,
 										Wal:    b64Wal,
 									}
-								}(wf)
+								}(wf.GetUUID())
 							}
 						}
 					}()
