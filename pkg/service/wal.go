@@ -259,12 +259,6 @@ func (r *DBListRepo) getFriendFromConfigLine(line string) string {
 }
 
 func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
-	// TODO
-	// TODO
-	// TODO
-	// TODO
-	// TODO WRITE TESTS!!!
-
 	// Empty lines would only be present if the user is not logged in (it shouldn't reach this code path in that
 	// circumstance either way, but JIC...)
 	if len(e.Line) == 0 {

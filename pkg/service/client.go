@@ -394,15 +394,12 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				}
 			}
 			newString := GetNewLinePrefix(t.Search)
-			// If the user is logged in, we automatically prepend the client email to each line (this is used
-			// for collaboration purposes), UNLESS the email is already present in the new line prefix
+			// If the user is logged in, we automatically append the client email to each line (this is used
+			// for collaboration purposes)
 			// TODO do the email-in check better
 			if t.db.email != "" {
 				ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
-				if !strings.Contains(newString, ownerPattern) {
-					newString = fmt.Sprintf("%s%s", newString, ownerPattern)
-					//posDiff[0] += len([]byte(ownerPattern))
-				}
+				newString = fmt.Sprintf("%s%s", newString, ownerPattern)
 			}
 			itemKey, err = t.db.Add(newString, nil, relativeY)
 			if err != nil {
