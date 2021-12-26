@@ -1552,9 +1552,22 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 		var isFriend bool
 		if len(e.Line) > 0 {
 			// Event owner is added to e.Friends by default
-			friends := r.getFriendsFromLine(e.Line)
-			_, isFriend = friends[walOwnerEmail]
-			isFriend = isFriend || walOwnerEmail == r.email
+			if isFriend = walOwnerEmail == r.email; !isFriend {
+				//friends := r.getFriendsFromLine(e.Line)
+				//_, isFriend = friends[walOwnerEmail]
+
+				// This is significantly more efficient than the regex based retrieve-all ops commented out above
+				isFriend = e.Line == fmt.Sprintf("@%s", walOwnerEmail)
+				if !isFriend {
+					isFriend = strings.HasPrefix(e.Line, fmt.Sprintf("@%s ", walOwnerEmail))
+				}
+				if !isFriend {
+					isFriend = strings.HasSuffix(e.Line, fmt.Sprintf(" @%s", walOwnerEmail))
+				}
+				if !isFriend {
+					isFriend = strings.Contains(e.Line, fmt.Sprintf(" @%s ", walOwnerEmail))
+				}
+			}
 		}
 		if !isWebRemote || isFriend {
 			k, _ := e.getKeys()
