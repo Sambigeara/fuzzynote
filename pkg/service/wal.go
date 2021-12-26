@@ -218,44 +218,68 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 // match[0] = full match (inc boundaries)
 // match[1] = `@email`
 // match[2] = `email`
-var lineFriendRegex = regexp.MustCompile("(?:^|\\s)(@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*))(?:$|\\s)")
+//var lineFriendRegex = regexp.MustCompile("(?:^|\\s)(@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*))(?:$|\\s)")
 
 func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
 	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
 	// email with (pre|app)ending spaces with a single space
 
+	//friends := map[string]struct{}{}
+
+	//if len(line) == 0 {
+	//    return friends
+	//}
+
+	//replacedLine := line
+	//oldReplacedLine := ""
+	//for replacedLine != oldReplacedLine {
+	//    oldReplacedLine = replacedLine
+	//    if match := lineFriendRegex.FindStringSubmatch(replacedLine); match != nil {
+	//        // If we want to check against the friends cache, we use the email only matching group
+	//        s := match[2]
+	//        friends[s] = struct{}{}
+	//        replacedLine = strings.Replace(replacedLine, s, " ", 1)
+	//    }
+	//}
+
+	//return friends
+
+	// Regex ops above (although far more accurate in terms of email matching) are _ridiculously_ expensive,
+	// therefore we're going to (for now) default to basic matching of any words starting with "@"
+	r.friendsUpdateLock.RLock()
+	defer r.friendsUpdateLock.RUnlock()
+
 	friends := map[string]struct{}{}
-
-	if len(line) == 0 {
-		return friends
-	}
-
-	replacedLine := line
-	oldReplacedLine := ""
-	for replacedLine != oldReplacedLine {
-		oldReplacedLine = replacedLine
-		if match := lineFriendRegex.FindStringSubmatch(replacedLine); match != nil {
-			// If we want to check against the friends cache, we use the email only matching group
-			s := match[2]
-			friends[s] = struct{}{}
-			replacedLine = strings.Replace(replacedLine, s, " ", 1)
+	for _, w := range strings.Fields(line) {
+		if strings.HasPrefix(w, "@") {
+			if s := strings.TrimPrefix(w, "@"); len(s) > 0 {
+				if _, isFriend := r.friends[s]; isFriend {
+					friends[s] = struct{}{}
+				}
+			}
 		}
 	}
-
 	return friends
 }
 
-func (r *DBListRepo) getFriendFromConfigLine(line string) string {
-	if len(line) == 0 {
-		return ""
+func (r *DBListRepo) getEmailFromConfigLine(line string) string {
+	//if len(line) == 0 {
+	//    return ""
+	//}
+	//match := r.cfgFriendRegex.FindStringSubmatch(line)
+	//// First submatch is the email regex
+	//if len(match) > 1 {
+	//    return match[1]
+	//}
+	//return ""
+
+	// Avoiding expensive regex based ops for now
+	var f string
+	if words := strings.Split(line, " "); len(words) == 3 && words[0] == "fzn_cfg:friend" && words[2] == "@"+r.email {
+		f = words[1]
 	}
-	match := r.cfgFriendRegex.FindStringSubmatch(line)
-	// First submatch is the email regex
-	if len(match) > 1 {
-		return match[1]
-	}
-	return ""
+	return f
 }
 
 func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
@@ -269,13 +293,10 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		return
 	}
 
-	// If any matched friends are within the current friends cache, cut from the Line and store in a slice
-	r.friendsUpdateLock.RLock()
-	defer r.friendsUpdateLock.RUnlock()
-
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
 	var friends map[string]struct{}
-	if r.cfgFriendRegex.MatchString(e.Line) {
+	//if r.cfgFriendRegex.MatchString(e.Line) {
+	if r.getEmailFromConfigLine(e.Line) != "" {
 		friends = map[string]struct{}{
 			r.email: struct{}{},
 		}
@@ -289,16 +310,14 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	friendsToReposition := []string{}
 	newLine := e.Line
 	for f := range friends {
-		if _, isFriend := r.friends[f]; isFriend {
-			friendsToReposition = append(friendsToReposition, fmt.Sprintf("@%s", f))
-			// Cover edge case whereby email is typed first and constitutes entire string
-			if fmt.Sprintf("@%s", f) == newLine {
-				newLine = ""
-			} else {
-				// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
-				newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
-				newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
-			}
+		friendsToReposition = append(friendsToReposition, fmt.Sprintf("@%s", f))
+		// Cover edge case whereby email is typed first and constitutes entire string
+		if fmt.Sprintf("@%s", f) == newLine {
+			newLine = ""
+		} else {
+			// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
+			newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
+			newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
 		}
 	}
 
@@ -344,12 +363,10 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		existingLine = item.rawLine
 	}
 
-	before := r.getFriendFromConfigLine(existingLine)
+	before := r.getEmailFromConfigLine(existingLine)
 	switch e.EventType {
-	case AddEvent:
-		fallthrough
-	case UpdateEvent:
-		after := r.getFriendFromConfigLine(e.Line)
+	case AddEvent, UpdateEvent:
+		after := r.getEmailFromConfigLine(e.Line)
 		// If before != after, we know that we need to remove the previous entry, and add the new one.
 		if before != after {
 			friendToRemove = before
@@ -645,17 +662,15 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range partialWal {
 		key, _ := e.getKeys()
 		if len(e.Line) > 0 {
-			r.friendsUpdateLock.RLock()
 			for f := range r.getFriendsFromLine(e.Line) {
 				// TODO figure out why this no work when f == r.email
-				if _, isFriend := r.friends[f]; isFriend && f != r.email {
+				if f != r.email {
 					r.allWalFileMut.RLock()
 					wf, _ := r.allWalFiles[f]
 					r.allWalFileMut.RUnlock()
 					wf.SetProcessedEvent(key)
 				}
 			}
-			r.friendsUpdateLock.RUnlock()
 		}
 	}
 
@@ -1322,7 +1337,6 @@ func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
 }
 
 func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, error) {
-	//log.Print("Pulling...")
 	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
 	newWalMutex := sync.Mutex{}
 	newWalMap := make(map[WalFile][]string)

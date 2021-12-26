@@ -3,7 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
-	"regexp"
+	//"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -72,8 +72,8 @@ type DBListRepo struct {
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
 
-	email                     string
-	cfgFriendRegex            *regexp.Regexp
+	email string
+	//cfgFriendRegex            *regexp.Regexp
 	friends                   map[string]map[string]int64
 	friendsUpdateLock         *sync.RWMutex
 	friendsMostRecentChangeDT int64
@@ -130,7 +130,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	if webTokenStore.Email() != "" {
 		listRepo.setEmail(webTokenStore.Email())
 		//listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend +(%s) +@%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
-		listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend (%s) @%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
+		//listRepo.cfgFriendRegex = regexp.MustCompile(fmt.Sprintf("^fzn_cfg:friend (%s) @%s$", EmailRegex, regexp.QuoteMeta(listRepo.email)))
 	}
 
 	// Tokens are generated on `login`
