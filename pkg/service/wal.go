@@ -115,10 +115,6 @@ type WalFile interface {
 	GetWalBytes(context.Context, io.Writer, string) error
 	RemoveWals(context.Context, []string) error
 	Flush(context.Context, *bytes.Buffer, string) error
-
-	// TODO these probably don't need to be interface functions
-	SetProcessedEvent(string)
-	IsEventProcessed(string) bool
 }
 
 type LocalWalFile interface {
@@ -128,16 +124,12 @@ type LocalWalFile interface {
 }
 
 type LocalFileWalFile struct {
-	rootDir            string
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]struct{}
+	rootDir string
 }
 
 func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
 	return &LocalFileWalFile{
-		rootDir:            rootDir,
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]struct{}),
+		rootDir: rootDir,
 	}
 }
 
@@ -203,21 +195,6 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 	defer f.Close()
 	f.Write(b.Bytes())
 	return nil
-}
-
-func (wf *LocalFileWalFile) SetProcessedEvent(fileName string) {
-	// TODO these are currently duplicated across walfiles, think of a more graceful
-	// boundary for reuse
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	wf.processedEventMap[fileName] = struct{}{}
-}
-
-func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	_, exists := wf.processedEventMap[fileName]
-	return exists
 }
 
 // https://go.dev/play/p/1kbFF8FR-V7
@@ -309,6 +286,8 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		return
 	}
 
+	eventKey, _ := e.getKeys()
+
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
 	var friends map[string]struct{}
 	//if r.cfgFriendRegex.MatchString(e.Line) {
@@ -335,15 +314,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			e.friends.isProcessed = true
 			e.friends.offset = len(e.Line) - lenFriendString
 			e.friends.emails = ownerOmitted
-			// TODO dedup
-			r.allWalFileMut.RLock()
-			defer r.allWalFileMut.RUnlock()
-			for f := range friends {
-				if wf, exists := r.allWalFiles[f]; exists {
-					key, _ := e.getKeys()
-					wf.SetProcessedEvent(key)
-				}
-			}
+			r.setEventWalFileMap(eventKey, friends)
 			return
 		} else if len(friends) == 0 {
 			e.friends.isProcessed = true
@@ -391,15 +362,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	e.friends.isProcessed = true
 	e.friends.offset = len(newLine) - len(friendString)
 	e.friends.emails = ownerOmitted
-	// TODO dedup setProcessedEvent step
-	r.allWalFileMut.RLock()
-	defer r.allWalFileMut.RUnlock()
-	for _, f := range friendsToReposition {
-		if wf, exists := r.allWalFiles[f]; exists {
-			key, _ := e.getKeys()
-			wf.SetProcessedEvent(key)
-		}
-	}
+	r.setEventWalFileMap(eventKey, friends)
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
@@ -455,10 +418,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 				r.AddWalFile(
 					&WebWalFile{
-						uuid:               friendToAdd,
-						processedEventLock: &sync.Mutex{},
-						processedEventMap:  make(map[string]struct{}),
-						web:                r.web,
+						uuid: friendToAdd,
+						web:  r.web,
 					},
 					false,
 				)
@@ -1596,6 +1557,7 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 
 func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	_, isWebRemote := wf.(*WebWalFile)
+	walFileOwnerEmail := wf.GetUUID()
 
 	// Only include those events which are/have been shared (this is handled via the event processed
 	// cache elsewhere)
@@ -1607,7 +1569,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			continue
 		}
 		k, _ := e.getKeys()
-		if wf.IsEventProcessed(k) {
+		if r.isEventInWalFile(k, walFileOwnerEmail) {
 			filteredWal = append(filteredWal, e)
 		}
 	}

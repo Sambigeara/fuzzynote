@@ -178,19 +178,6 @@ func (wf *s3WalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUUID stri
 	return nil
 }
 
-func (wf *s3WalFile) SetProcessedEvent(fileName string) {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	wf.processedEventMap[fileName] = struct{}{}
-}
-
-func (wf *s3WalFile) IsEventProcessed(fileName string) bool {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	_, exists := wf.processedEventMap[fileName]
-	return exists
-}
-
 func exitErrorf(msg string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, msg+"\n", args...)
 	os.Exit(1)

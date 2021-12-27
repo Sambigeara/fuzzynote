@@ -363,16 +363,3 @@ func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, tempUUID strin
 	resp.Body.Close()
 	return nil
 }
-
-func (wf *WebWalFile) SetProcessedEvent(key string) {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	wf.processedEventMap[key] = struct{}{}
-}
-
-func (wf *WebWalFile) IsEventProcessed(key string) bool {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	_, exists := wf.processedEventMap[key]
-	return exists
-}
