@@ -256,11 +256,16 @@ func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool)
 	hasFoundFriend := false
 	isOrdered := true
 	friends := map[string]struct{}{}
-	for _, w := range strings.Fields(line) {
+	for _, w := range strings.Split(line, " ") {
 		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
+			// If there are duplicates, the line has not been processed
+			if _, exists := friends[w[1:]]; exists {
+				isOrdered = false
+			}
 			friends[w[1:]] = struct{}{}
 			hasFoundFriend = true
 		} else if hasFoundFriend {
+			// If we reach here, the current word is _not_ a friend, but we have previously processed one
 			isOrdered = false
 		}
 	}
