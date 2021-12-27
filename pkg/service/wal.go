@@ -220,7 +220,10 @@ func (wf *LocalFileWalFile) IsEventProcessed(fileName string) bool {
 // match[2] = `email`
 //var lineFriendRegex = regexp.MustCompile("(?:^|\\s)(@([a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*))(?:$|\\s)")
 
-func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
+// getFriendsFromLine returns a map of @friends in the line, that currently exist in the friends cache, and a
+// boolean representing whether or not the line is already correctly ordered (e.g. the friends are all appended
+// to the end of the line, separated by single whitespace chars)
+func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool) {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
 	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
 	// email with (pre|app)ending spaces with a single space
@@ -250,17 +253,18 @@ func (r *DBListRepo) getFriendsFromLine(line string) map[string]struct{} {
 	r.friendsUpdateLock.RLock()
 	defer r.friendsUpdateLock.RUnlock()
 
+	hasFoundFriend := false
+	isOrdered := true
 	friends := map[string]struct{}{}
 	for _, w := range strings.Fields(line) {
-		if strings.HasPrefix(w, "@") {
-			if s := strings.TrimPrefix(w, "@"); len(s) > 0 {
-				if _, isFriend := r.friends[s]; isFriend {
-					friends[s] = struct{}{}
-				}
-			}
+		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
+			friends[w[1:]] = struct{}{}
+			hasFoundFriend = true
+		} else if hasFoundFriend {
+			isOrdered = false
 		}
 	}
-	return friends
+	return friends, isOrdered
 }
 
 func (r *DBListRepo) getEmailFromConfigLine(line string) string {
@@ -276,7 +280,7 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 
 	// Avoiding expensive regex based ops for now
 	var f string
-	if words := strings.Split(line, " "); len(words) == 3 && words[0] == "fzn_cfg:friend" && words[2] == "@"+r.email {
+	if words := strings.Split(line, " "); len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
 		f = words[1]
 	}
 	return f
@@ -301,8 +305,28 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			r.email: struct{}{},
 		}
 	} else {
-		friends = r.getFriendsFromLine(e.Line)
-		if len(friends) == 0 {
+		// Check to see if the line is already correctly ordered. If they are, we can set the lineFriends data and
+		// return early, avoiding expensive string building ops
+		var isProcessed bool
+		if friends, isProcessed = r.getFriendsFromLine(e.Line); len(friends) > 0 && isProcessed {
+			// account for:
+			// - single preceding space between friend string + single space separation (== len(N))
+			// - missing `@` char before each word (== len(N))
+			lenFriendString := len(friends) * 2
+			ownerOmitted := make(map[string]struct{})
+			for f := range friends {
+				lenFriendString += len(f)
+				if f != r.email {
+					ownerOmitted["@"+f] = struct{}{}
+				}
+			}
+			e.friends.isProcessed = true
+			e.friends.offset = len(e.Line) - lenFriendString
+			e.friends.emails = ownerOmitted
+			return
+		} else if len(friends) == 0 {
+			e.friends.isProcessed = true
+			e.friends.offset = len(e.Line)
 			return
 		}
 	}
@@ -321,20 +345,17 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		}
 	}
 
-	var newLineBuilder strings.Builder
-	var friendString strings.Builder
-
-	newLineBuilder.WriteString(newLine)
+	friendString := ""
 
 	// Sort the emails, and then append a space separated string to the end of the Line
 	sort.Strings(friendsToReposition)
 	for _, f := range friendsToReposition {
-		friendString.WriteString(" ")
-		friendString.WriteString(f)
+		friendString += " "
+		friendString += f
 	}
 
-	newLineBuilder.WriteString(friendString.String())
-	e.Line = newLineBuilder.String()
+	newLine += friendString
+	e.Line = newLine
 
 	// We need to include `self` in the raw Line, as this will be distributed across all clients who also
 	// need to collaborate back to the local client. However, we do _not_ want to include this email in
@@ -345,11 +366,9 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			ownerOmitted[f] = struct{}{}
 		}
 	}
-	e.friends = lineFriends{
-		isProcessed: true,
-		offset:      newLineBuilder.Len() - friendString.Len(),
-		emails:      ownerOmitted,
-	}
+	e.friends.isProcessed = true
+	e.friends.offset = len(newLine) - len(friendString)
+	e.friends.emails = ownerOmitted
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
@@ -662,7 +681,8 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range partialWal {
 		key, _ := e.getKeys()
 		if len(e.Line) > 0 {
-			for f := range r.getFriendsFromLine(e.Line) {
+			friends, _ := r.getFriendsFromLine(e.Line)
+			for f := range friends {
 				// TODO figure out why this no work when f == r.email
 				if f != r.email {
 					r.allWalFileMut.RLock()
