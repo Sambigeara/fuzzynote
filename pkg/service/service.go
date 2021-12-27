@@ -5,6 +5,7 @@ import (
 	"fmt"
 	//"regexp"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -165,6 +166,7 @@ type ListItem struct {
 	matchChild   *ListItem
 	matchParent  *ListItem
 	friends      lineFriends
+	key          string
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
@@ -188,7 +190,10 @@ func (i *ListItem) Friends() []string {
 }
 
 func (i *ListItem) Key() string {
-	return fmt.Sprintf("%d:%d", i.originUUID, i.creationTime)
+	if i.key == "" {
+		i.key = strconv.Itoa(int(i.originUUID)) + ":" + strconv.Itoa(int(i.creationTime))
+	}
+	return i.key
 }
 
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -92,12 +93,18 @@ type EventLog struct {
 	Line                       string // TODO This represents the raw (un-friends-processed) line
 	Note                       *[]byte
 	friends                    lineFriends
+	key                        string
+	targetKey                  string
 }
 
 func (e *EventLog) getKeys() (string, string) {
-	key := fmt.Sprintf("%d:%d", e.UUID, e.ListItemCreationTime)
-	targetKey := fmt.Sprintf("%d:%d", e.TargetUUID, e.TargetListItemCreationTime)
-	return key, targetKey
+	if e.key == "" {
+		e.key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
+	}
+	if e.targetKey == "" {
+		e.targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
+	}
+	return e.key, e.targetKey
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -328,6 +335,15 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			e.friends.isProcessed = true
 			e.friends.offset = len(e.Line) - lenFriendString
 			e.friends.emails = ownerOmitted
+			// TODO dedup
+			r.allWalFileMut.RLock()
+			defer r.allWalFileMut.RUnlock()
+			for f := range friends {
+				if wf, exists := r.allWalFiles[f]; exists {
+					key, _ := e.getKeys()
+					wf.SetProcessedEvent(key)
+				}
+			}
 			return
 		} else if len(friends) == 0 {
 			e.friends.isProcessed = true
@@ -339,14 +355,15 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	friendsToReposition := []string{}
 	newLine := e.Line
 	for f := range friends {
-		friendsToReposition = append(friendsToReposition, fmt.Sprintf("@%s", f))
+		friendsToReposition = append(friendsToReposition, f)
+		atFriend := "@" + f
 		// Cover edge case whereby email is typed first and constitutes entire string
-		if fmt.Sprintf("@%s", f) == newLine {
+		if atFriend == newLine {
 			newLine = ""
 		} else {
 			// Each cut email address needs also remove (up to) one (pre|suf)fixed space, not more.
-			newLine = strings.ReplaceAll(newLine, fmt.Sprintf(" @%s", f), "")
-			newLine = strings.ReplaceAll(newLine, fmt.Sprintf("@%s ", f), "")
+			newLine = strings.ReplaceAll(newLine, " "+atFriend, "")
+			newLine = strings.ReplaceAll(newLine, atFriend+" ", "")
 		}
 	}
 
@@ -355,7 +372,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	// Sort the emails, and then append a space separated string to the end of the Line
 	sort.Strings(friendsToReposition)
 	for _, f := range friendsToReposition {
-		friendString += " "
+		friendString += " @"
 		friendString += f
 	}
 
@@ -367,20 +384,28 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	// lineFriends.emails, as it's not relevant to the client's Friends() call
 	ownerOmitted := make(map[string]struct{})
 	for _, f := range friendsToReposition {
-		if strings.TrimPrefix(f, "@") != r.email {
-			ownerOmitted[f] = struct{}{}
+		if f != r.email {
+			ownerOmitted["@"+f] = struct{}{}
 		}
 	}
 	e.friends.isProcessed = true
 	e.friends.offset = len(newLine) - len(friendString)
 	e.friends.emails = ownerOmitted
+	// TODO dedup setProcessedEvent step
+	r.allWalFileMut.RLock()
+	defer r.allWalFileMut.RUnlock()
+	for _, f := range friendsToReposition {
+		if wf, exists := r.allWalFiles[f]; exists {
+			key, _ := e.getKeys()
+			wf.SetProcessedEvent(key)
+		}
+	}
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	// This method is responsible for detecting changes to the "friends" configuration in order to update
 	// local state, and to emit events to the cloud API.
-	friendToAdd := ""
-	friendToRemove := ""
+	var friendToAdd, friendToRemove string
 
 	var existingLine string
 	if item != nil {
@@ -399,6 +424,10 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	case DeleteEvent:
 		friendToRemove = before
 	default:
+		return
+	}
+
+	if friendToRemove == "" && friendToAdd == "" {
 		return
 	}
 
@@ -680,25 +709,6 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
 		root, _, _ = r.processEventLog(root, &e)
-	}
-
-	// Update processed wal event caches for all local walfiles, plus those based on the friends in each event
-	// NOTE: this needs to occur after processEventLog, as that is where the r.friends cache is populated
-	// on initial Replay.
-	for _, e := range partialWal {
-		key, _ := e.getKeys()
-		if len(e.Line) > 0 {
-			friends, _ := r.getFriendsFromLine(e.Line)
-			for f := range friends {
-				// TODO figure out why this no work when f == r.email
-				if f != r.email {
-					r.allWalFileMut.RLock()
-					wf, _ := r.allWalFiles[f]
-					r.allWalFileMut.RUnlock()
-					wf.SetProcessedEvent(key)
-				}
-			}
-		}
 	}
 
 	r.Root = root
@@ -1586,40 +1596,16 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 
 func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	_, isWebRemote := wf.(*WebWalFile)
-	walOwnerEmail := wf.GetUUID()
-
-	// Iterate over the entire Wal. If a Line fulfils the Match rules, log the key in a map
-	for _, e := range el {
-		var isFriend bool
-		if len(e.Line) > 0 {
-			// Event owner is added to e.Friends by default
-			if isFriend = walOwnerEmail == r.email; !isFriend {
-				//friends := r.getFriendsFromLine(e.Line)
-				//_, isFriend = friends[walOwnerEmail]
-
-				// This is significantly more efficient than the regex based retrieve-all ops commented out above
-				isFriend = e.Line == fmt.Sprintf("@%s", walOwnerEmail)
-				if !isFriend {
-					isFriend = strings.HasPrefix(e.Line, fmt.Sprintf("@%s ", walOwnerEmail))
-				}
-				if !isFriend {
-					isFriend = strings.HasSuffix(e.Line, fmt.Sprintf(" @%s", walOwnerEmail))
-				}
-				if !isFriend {
-					isFriend = strings.Contains(e.Line, fmt.Sprintf(" @%s ", walOwnerEmail))
-				}
-			}
-		}
-		if !isWebRemote || isFriend {
-			k, _ := e.getKeys()
-			wf.SetProcessedEvent(k)
-		}
-	}
 
 	// Only include those events which are/have been shared (this is handled via the event processed
 	// cache elsewhere)
 	filteredWal := []EventLog{}
 	for _, e := range el {
+		// Separate conditional here to prevent the need for e.getKeys lookup if not necessary
+		if !isWebRemote {
+			filteredWal = append(filteredWal, e)
+			continue
+		}
 		k, _ := e.getKeys()
 		if wf.IsEventProcessed(k) {
 			filteredWal = append(filteredWal, e)
