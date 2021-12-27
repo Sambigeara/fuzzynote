@@ -393,6 +393,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		}
 	case DeleteEvent:
 		friendToRemove = before
+	default:
+		return
 	}
 
 	key, _ := e.getKeys()
