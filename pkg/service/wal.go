@@ -35,10 +35,12 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	pullIntervalSeconds      = 10
-	pushWaitDuration         = time.Second * time.Duration(10)
-	gatherWaitDuration       = time.Second * time.Duration(30)
-	compactionGatherMultiple = 3
+	//pullIntervalSeconds      = 10
+	//pushWaitDuration         = time.Second * time.Duration(10)
+	pullIntervalSeconds      = 5
+	pushWaitDuration         = time.Second * time.Duration(5)
+	gatherWaitDuration       = time.Second * time.Duration(15)
+	compactionGatherMultiple = 2
 	//pushIntervalSeconds      = 5
 )
 
@@ -1740,11 +1742,11 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 	}
 
 	// Run an initial load from the local walfile
-	localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
-	if err != nil {
-		return err
-	}
-	walChan <- localEl
+	//localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
+	//if err != nil {
+	//    return err
+	//}
+	//walChan <- localEl
 
 	// Main sync event loop
 	go func() {
