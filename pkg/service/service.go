@@ -351,7 +351,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 	r.addEventLog(el)
 	undoEl := EventLog{
 		EventType:                  AddEvent,
-		UUID:                       r.uuid,
+		UUID:                       listItem.originUUID,
 		TargetUUID:                 targetUUID,
 		ListItemCreationTime:       listItem.creationTime,
 		TargetListItemCreationTime: targetCreationTime,
@@ -521,7 +521,13 @@ func (r *DBListRepo) Redo() (string, error) {
 		el.UnixNanoTime = time.Now().UnixNano()
 		listItem, err := r.addEventLog(el)
 		r.eventLogger.curIdx++
-		return listItem.Key(), err
+		var key string
+		if c := listItem.matchChild; el.EventType == DeleteEvent && c != nil {
+			key = c.Key()
+		} else {
+			key = listItem.Key()
+		}
+		return key, err
 	}
 	return "", nil
 }
