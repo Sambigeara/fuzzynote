@@ -1558,15 +1558,16 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 }
 
 func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
-	_, isWebRemote := wf.(*WebWalFile)
 	walFileOwnerEmail := wf.GetUUID()
+	_, isWebRemote := wf.(*WebWalFile)
+	isWalFileOwner := !isWebRemote || (r.email != "" && r.email == walFileOwnerEmail)
 
 	// Only include those events which are/have been shared (this is handled via the event processed
 	// cache elsewhere)
 	filteredWal := []EventLog{}
 	for _, e := range el {
 		// Separate conditional here to prevent the need for e.getKeys lookup if not necessary
-		if !isWebRemote {
+		if isWalFileOwner {
 			filteredWal = append(filteredWal, e)
 			continue
 		}
