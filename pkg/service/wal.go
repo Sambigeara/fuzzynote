@@ -79,10 +79,10 @@ const (
 	DeleteEvent
 )
 
-type lineFriends struct {
-	isProcessed bool
-	offset      int
-	emails      map[string]struct{}
+type LineFriends struct {
+	IsProcessed bool
+	Offset      int
+	Emails      map[string]struct{}
 }
 
 type EventLog struct {
@@ -94,7 +94,7 @@ type EventLog struct {
 	EventType                  EventType
 	Line                       string // TODO This represents the raw (un-friends-processed) line
 	Note                       *[]byte
-	friends                    lineFriends
+	Friends                    LineFriends
 	key                        string
 	targetKey                  string
 }
@@ -284,7 +284,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		return
 	}
 
-	if e.friends.isProcessed {
+	if e.Friends.IsProcessed {
 		return
 	}
 
@@ -313,14 +313,14 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 					ownerOmitted["@"+f] = struct{}{}
 				}
 			}
-			e.friends.isProcessed = true
-			e.friends.offset = len(e.Line) - lenFriendString
-			e.friends.emails = ownerOmitted
+			e.Friends.IsProcessed = true
+			e.Friends.Offset = len(e.Line) - lenFriendString
+			e.Friends.Emails = ownerOmitted
 			r.setEventWalFileMap(eventKey, friends)
 			return
 		} else if len(friends) == 0 {
-			e.friends.isProcessed = true
-			e.friends.offset = len(e.Line)
+			e.Friends.IsProcessed = true
+			e.Friends.Offset = len(e.Line)
 			return
 		}
 	}
@@ -361,9 +361,9 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			ownerOmitted["@"+f] = struct{}{}
 		}
 	}
-	e.friends.isProcessed = true
-	e.friends.offset = len(newLine) - len(friendString)
-	e.friends.emails = ownerOmitted
+	e.Friends.IsProcessed = true
+	e.Friends.Offset = len(newLine) - len(friendString)
+	e.Friends.Emails = ownerOmitted
 	r.setEventWalFileMap(eventKey, friends)
 }
 
@@ -490,11 +490,11 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 			// Note and Line updates are individual operations.
 			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
 			if e.Note != nil {
-				item, err = r.update(e.Line, e.friends, e.Note, item)
+				item, err = r.update(e.Line, e.Friends, e.Note, item)
 			}
-			item, err = r.update(e.Line, e.friends, nil, item)
+			item, err = r.update(e.Line, e.Friends, nil, item)
 		} else {
-			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.friends, e.Note, targetItem, e.UUID)
+			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Friends, e.Note, targetItem, e.UUID)
 			r.listItemTracker[key] = item
 		}
 	case UpdateEvent:
@@ -509,7 +509,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.Line, e.friends, e.Note, item)
+			item, err = r.update(e.Line, e.Friends, e.Note, item)
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
@@ -535,7 +535,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	return root, item, err
 }
 
-func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends lineFriends, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -565,7 +565,7 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 	return root, newItem, nil
 }
 
-func (r *DBListRepo) update(line string, friends lineFriends, note *[]byte, listItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) update(line string, friends LineFriends, note *[]byte, listItem *ListItem) (*ListItem, error) {
 	// We currently separate Line and Note updates even though they use the same interface
 	// This is to reduce wal size and also solves some race conditions for long held open
 	// notes, etc
@@ -576,15 +576,15 @@ func (r *DBListRepo) update(line string, friends lineFriends, note *[]byte, list
 		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
 		// not remove any, due to the processedEventMap mechanism elsewhere)
 		mergedEmailMap := make(map[string]struct{})
-		for e := range listItem.friends.emails {
+		for e := range listItem.friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
-		for e := range friends.emails {
+		for e := range friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
-		listItem.friends.isProcessed = friends.isProcessed
-		listItem.friends.offset = friends.offset
-		listItem.friends.emails = mergedEmailMap
+		listItem.friends.IsProcessed = friends.IsProcessed
+		listItem.friends.Offset = friends.Offset
+		listItem.friends.Emails = mergedEmailMap
 	}
 	return listItem, nil
 }

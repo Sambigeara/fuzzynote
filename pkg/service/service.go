@@ -171,14 +171,14 @@ type ListItem struct {
 	parent       *ListItem
 	matchChild   *ListItem
 	matchParent  *ListItem
-	friends      lineFriends
+	friends      LineFriends
 	key          string
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
 func (i *ListItem) Line() string {
-	if i.friends.isProcessed {
-		return i.rawLine[:i.friends.offset]
+	if i.friends.IsProcessed {
+		return i.rawLine[:i.friends.Offset]
 	}
 	return i.rawLine
 }
@@ -188,7 +188,7 @@ func (i *ListItem) Friends() []string {
 	// to the client
 	// TODO cache for optimisation??
 	sortedEmails := []string{}
-	for e := range i.friends.emails {
+	for e := range i.friends.Emails {
 		sortedEmails = append(sortedEmails, e)
 	}
 	sort.Strings(sortedEmails)
