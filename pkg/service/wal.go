@@ -282,8 +282,6 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 		return
 	}
 
-	eventKey, _ := e.getKeys()
-
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
 	var friends map[string]struct{}
 	//if r.cfgFriendRegex.MatchString(e.Line) {
@@ -330,7 +328,6 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	e.Friends.IsProcessed = true
 	e.Friends.Offset = len(newLine) - len(friendString)
 	e.Friends.Emails = friends
-	r.setEventWalFileMap(eventKey, friends)
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {

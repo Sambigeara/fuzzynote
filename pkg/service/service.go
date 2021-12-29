@@ -59,9 +59,6 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems []*ListItem
 
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]map[string]struct{}
-
 	// Wal stuff
 	uuid              uuid
 	log               []EventLog // log represents a fresh set of events (unique from the historical log below)
@@ -101,9 +98,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
-
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]map[string]struct{}),
 
 		// Wal stuff
 		uuid:              generateUUID(),
@@ -200,22 +194,6 @@ func (i *ListItem) Key() string {
 		i.key = strconv.Itoa(int(i.originUUID)) + ":" + strconv.Itoa(int(i.creationTime))
 	}
 	return i.key
-}
-
-func (r *DBListRepo) setEventWalFileMap(eventKey string, walFileMap map[string]struct{}) {
-	r.processedEventLock.Lock()
-	defer r.processedEventLock.Unlock()
-	r.processedEventMap[eventKey] = walFileMap
-}
-
-func (r *DBListRepo) isEventInWalFile(eventKey, walFileKey string) bool {
-	r.processedEventLock.Lock()
-	defer r.processedEventLock.Unlock()
-	var isProcessed bool
-	if walFileMap, eventExists := r.processedEventMap[eventKey]; eventExists {
-		_, isProcessed = walFileMap[walFileKey]
-	}
-	return isProcessed
 }
 
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
