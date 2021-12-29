@@ -292,25 +292,8 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			r.email: struct{}{},
 		}
 	} else {
-		// Check to see if the line is already correctly ordered. If they are, we can set the lineFriends data and
-		// return early, avoiding expensive string building ops
-		var isProcessed bool
-		if friends, isProcessed = r.getFriendsFromLine(e.Line); len(friends) > 0 && isProcessed {
-			// account for:
-			// - single preceding space between friend string + single space separation (== len(N))
-			// - missing `@` char before each word (== len(N))
-			// - length of each word
-			lenFriendString := 0
-			for f := range friends {
-				lenFriendString += 2
-				lenFriendString += len(f)
-			}
-			e.Friends.IsProcessed = true
-			e.Friends.Offset = len(e.Line) - lenFriendString
-			e.Friends.Emails = friends
-			r.setEventWalFileMap(eventKey, friends)
-			return
-		} else if len(friends) == 0 {
+		// If there are no friends, return early
+		if friends, _ = r.getFriendsFromLine(e.Line); len(friends) == 0 {
 			e.Friends.IsProcessed = true
 			e.Friends.Offset = len(e.Line)
 			return
