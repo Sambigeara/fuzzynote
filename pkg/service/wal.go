@@ -305,17 +305,15 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 			// account for:
 			// - single preceding space between friend string + single space separation (== len(N))
 			// - missing `@` char before each word (== len(N))
-			lenFriendString := len(friends) * 2
-			ownerOmitted := make(map[string]struct{})
+			// - length of each word
+			lenFriendString := 0
 			for f := range friends {
+				lenFriendString += 2
 				lenFriendString += len(f)
-				if f != r.email {
-					ownerOmitted["@"+f] = struct{}{}
-				}
 			}
 			e.Friends.IsProcessed = true
 			e.Friends.Offset = len(e.Line) - lenFriendString
-			e.Friends.Emails = ownerOmitted
+			e.Friends.Emails = friends
 			r.setEventWalFileMap(eventKey, friends)
 			return
 		} else if len(friends) == 0 {
@@ -352,18 +350,9 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	newLine += friendString
 	e.Line = newLine
 
-	// We need to include `self` in the raw Line, as this will be distributed across all clients who also
-	// need to collaborate back to the local client. However, we do _not_ want to include this email in
-	// lineFriends.emails, as it's not relevant to the client's Friends() call
-	ownerOmitted := make(map[string]struct{})
-	for _, f := range friendsToReposition {
-		if f != r.email {
-			ownerOmitted["@"+f] = struct{}{}
-		}
-	}
 	e.Friends.IsProcessed = true
 	e.Friends.Offset = len(newLine) - len(friendString)
-	e.Friends.Emails = ownerOmitted
+	e.Friends.Emails = friends
 	r.setEventWalFileMap(eventKey, friends)
 }
 
@@ -479,6 +468,13 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		r.generateFriendChangeEvents(*e, item)
 	}
 
+	// We want to omit the local email from e.Friends.Emails, so we create a copy and delete the key prior to passing to the
+	// listItem mutation functions below
+	// TODO place somewhere cleaner/more appropriate
+	// TODO should e.Friends.Emails have "@" prepended emails??
+	friends := e.Friends
+	delete(e.Friends.Emails, r.email)
+
 	var err error
 	switch e.EventType {
 	case AddEvent:
@@ -490,11 +486,11 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 			// Note and Line updates are individual operations.
 			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
 			if e.Note != nil {
-				item, err = r.update(e.Line, e.Friends, e.Note, item)
+				item, err = r.update(e.Line, friends, e.Note, item)
 			}
-			item, err = r.update(e.Line, e.Friends, nil, item)
+			item, err = r.update(e.Line, friends, nil, item)
 		} else {
-			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Friends, e.Note, targetItem, e.UUID)
+			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, friends, e.Note, targetItem, e.UUID)
 			r.listItemTracker[key] = item
 		}
 	case UpdateEvent:
@@ -509,7 +505,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.Line, e.Friends, e.Note, item)
+			item, err = r.update(e.Line, friends, e.Note, item)
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
