@@ -219,29 +219,11 @@ func (r *DBListRepo) isEventInWalFile(eventKey, walFileKey string) bool {
 }
 
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
-	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
-	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
-	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
-	// updated on the original event which we pass to processEventLog. This is still the case
-	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
-	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
-	// copy for the websocket event.
-	elCopy := el
-	if el.Note != nil {
-		newNote := *el.Note
-		elCopy.Note = &newNote
-	}
-
 	var err error
 	var item *ListItem
 	r.Root, item, err = r.processEventLog(r.Root, &el)
-
-	// We pass a pointer to the new event log to the processing function, and publish to the eventsChan and
-	// r.log after, as there is a chance of post-processing being applied within the processEventLog step.
-	// We want these mutations to be applied prior to flushing to local state or to remotes.
-	r.eventsChan <- elCopy
+	r.eventsChan <- el
 	r.log = append(r.log, el)
-
 	return item, err
 }
 
@@ -281,6 +263,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 		EventType:            DeleteEvent,
 		UUID:                 r.uuid,
 		ListItemCreationTime: now,
+		Line:                 line, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addUndoLog(undoEl, el)
 	return newItem.Key(), nil
@@ -346,6 +329,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		UUID:                 listItem.originUUID,
 		UnixNanoTime:         time.Now().UnixNano(),
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 
 	r.addEventLog(el)
@@ -398,6 +382,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 			UnixNanoTime:               time.Now().UnixNano(),
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addEventLog(el)
 
@@ -407,6 +392,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 			TargetUUID:                 listItem.matchChild.originUUID,
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: listItem.matchChild.creationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addUndoLog(undoEl, el)
 	}
@@ -437,6 +423,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 			UnixNanoTime:               time.Now().UnixNano(),
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addEventLog(el)
 
@@ -452,6 +439,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 			TargetUUID:                 targetUUID,
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addUndoLog(undoEl, el)
 	}
@@ -488,6 +476,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 		UUID:                 listItem.originUUID,
 		UnixNanoTime:         time.Now().UnixNano(),
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addEventLog(el)
 
@@ -495,6 +484,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 		EventType:            oppEvType,
 		UUID:                 listItem.originUUID,
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addUndoLog(undoEl, el)
 

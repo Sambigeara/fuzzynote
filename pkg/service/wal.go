@@ -278,12 +278,6 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 }
 
 func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
-	// Empty lines would only be present if the user is not logged in (it shouldn't reach this code path in that
-	// circumstance either way, but JIC...)
-	if len(e.Line) == 0 {
-		return
-	}
-
 	if e.Friends.IsProcessed {
 		return
 	}
@@ -473,7 +467,13 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	// TODO place somewhere cleaner/more appropriate
 	// TODO should e.Friends.Emails have "@" prepended emails??
 	friends := e.Friends
-	delete(e.Friends.Emails, r.email)
+	emails := make(map[string]struct{})
+	for e := range e.Friends.Emails {
+		if e != r.email {
+			emails[e] = struct{}{}
+		}
+	}
+	friends.Emails = emails
 
 	var err error
 	switch e.EventType {
@@ -1567,8 +1567,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			filteredWal = append(filteredWal, e)
 			continue
 		}
-		k, _ := e.getKeys()
-		if r.isEventInWalFile(k, walFileOwnerEmail) {
+		if _, exists := e.Friends.Emails[walFileOwnerEmail]; exists {
 			filteredWal = append(filteredWal, e)
 		}
 	}
