@@ -448,19 +448,6 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		r.generateFriendChangeEvents(*e, item)
 	}
 
-	// We want to omit the local email from e.Friends.Emails, so we create a copy and delete the key prior to passing to the
-	// listItem mutation functions below
-	// TODO place somewhere cleaner/more appropriate
-	// TODO should e.Friends.Emails have "@" prepended emails??
-	friends := e.Friends
-	emails := make(map[string]struct{})
-	for e := range e.Friends.Emails {
-		if e != r.email {
-			emails[e] = struct{}{}
-		}
-	}
-	friends.Emails = emails
-
 	var err error
 	switch e.EventType {
 	case AddEvent:
@@ -472,11 +459,11 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 			// Note and Line updates are individual operations.
 			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
 			if e.Note != nil {
-				item, err = r.update(e.Line, friends, e.Note, item)
+				item, err = r.update(e.Line, e.Friends, e.Note, item)
 			}
-			item, err = r.update(e.Line, friends, nil, item)
+			item, err = r.update(e.Line, e.Friends, nil, item)
 		} else {
-			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, friends, e.Note, targetItem, e.UUID)
+			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Friends, e.Note, targetItem, e.UUID)
 			r.listItemTracker[key] = item
 		}
 	case UpdateEvent:
@@ -491,7 +478,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.Line, friends, e.Note, item)
+			item, err = r.update(e.Line, e.Friends, e.Note, item)
 		} else {
 			addEl := e
 			addEl.EventType = AddEvent
@@ -525,6 +512,7 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 		rawLine:      line,
 		Note:         note,
 		friends:      friends,
+		localEmail:   r.email,
 	}
 
 	// If `child` is nil, it's the first item in the list so set as root and return

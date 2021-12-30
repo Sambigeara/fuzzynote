@@ -166,6 +166,7 @@ type ListItem struct {
 	matchChild   *ListItem
 	matchParent  *ListItem
 	friends      LineFriends
+	localEmail   string // set at creation time and used to exclude from Friends() method
 	key          string
 }
 
@@ -178,12 +179,14 @@ func (i *ListItem) Line() string {
 }
 
 func (i *ListItem) Friends() []string {
-	// The emails are stored as a map of strings. We need to generate an sorted slice to return
+	// The emails are stored as a map of strings. We need to generate a sorted slice to return
 	// to the client
-	// TODO cache for optimisation??
+	// TODO cache for optimisation?? need to cover updates
 	sortedEmails := []string{}
 	for e := range i.friends.Emails {
-		sortedEmails = append(sortedEmails, e)
+		if e != i.localEmail {
+			sortedEmails = append(sortedEmails, e)
+		}
 	}
 	sort.Strings(sortedEmails)
 	return sortedEmails
