@@ -278,6 +278,12 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 }
 
 func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
+	// SL 2021-12-30: Recent changes mean that _all_ event logs will now store the current state of the line, so this
+	// check is only relevant to bypass earlier logs which have nothing to process.
+	if len(e.Line) == 0 {
+		return
+	}
+
 	if e.Friends.IsProcessed {
 		return
 	}
@@ -647,6 +653,8 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
+		// NOTE: because range over slice passes copies of the events, at this point, mutations to the
+		// event will not be reflected in replayLog
 		root, _, _ = r.processEventLog(root, &e)
 	}
 
