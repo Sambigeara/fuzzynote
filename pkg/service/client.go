@@ -144,11 +144,11 @@ func GetCommonSearchPrefixAndFriends(selectedItems map[int]ListItem) [][]rune {
 	}
 
 	if len(prefix) > 0 {
-		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", prefix)))
+		searchGroups = append(searchGroups, []rune("="+prefix))
 	}
 
 	for f := range friends {
-		searchGroups = append(searchGroups, []rune(fmt.Sprintf("=%s", f)))
+		searchGroups = append(searchGroups, []rune("=@"+f))
 	}
 
 	return searchGroups
@@ -317,6 +317,7 @@ func (t *ClientBase) TrimPrefix(line string) string {
 func (t *ClientBase) GetUnsearchedFriends(friends []string) []string {
 	removedSearchFriends := []string{}
 	for _, f := range friends {
+		f = "@" + f
 		isInSearch := false
 		for _, s := range t.Search {
 			if pattern, nChars := GetMatchPattern(s); pattern == FullMatchPattern {

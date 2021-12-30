@@ -59,9 +59,6 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems []*ListItem
 
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]map[string]struct{}
-
 	// Wal stuff
 	uuid              uuid
 	log               []EventLog // log represents a fresh set of events (unique from the historical log below)
@@ -101,9 +98,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
-
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]map[string]struct{}),
 
 		// Wal stuff
 		uuid:              generateUUID(),
@@ -171,25 +165,28 @@ type ListItem struct {
 	parent       *ListItem
 	matchChild   *ListItem
 	matchParent  *ListItem
-	friends      lineFriends
+	friends      LineFriends
+	localEmail   string // set at creation time and used to exclude from Friends() method
 	key          string
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
 func (i *ListItem) Line() string {
-	if i.friends.isProcessed {
-		return i.rawLine[:i.friends.offset]
+	if i.friends.IsProcessed {
+		return i.rawLine[:i.friends.Offset]
 	}
 	return i.rawLine
 }
 
 func (i *ListItem) Friends() []string {
-	// The emails are stored as a map of strings. We need to generate an sorted slice to return
+	// The emails are stored as a map of strings. We need to generate a sorted slice to return
 	// to the client
-	// TODO cache for optimisation??
+	// TODO cache for optimisation?? need to cover updates
 	sortedEmails := []string{}
-	for e := range i.friends.emails {
-		sortedEmails = append(sortedEmails, e)
+	for e := range i.friends.Emails {
+		if e != i.localEmail {
+			sortedEmails = append(sortedEmails, e)
+		}
 	}
 	sort.Strings(sortedEmails)
 	return sortedEmails
@@ -202,46 +199,12 @@ func (i *ListItem) Key() string {
 	return i.key
 }
 
-func (r *DBListRepo) setEventWalFileMap(eventKey string, walFileMap map[string]struct{}) {
-	r.processedEventLock.Lock()
-	defer r.processedEventLock.Unlock()
-	r.processedEventMap[eventKey] = walFileMap
-}
-
-func (r *DBListRepo) isEventInWalFile(eventKey, walFileKey string) bool {
-	r.processedEventLock.Lock()
-	defer r.processedEventLock.Unlock()
-	var isProcessed bool
-	if walFileMap, eventExists := r.processedEventMap[eventKey]; eventExists {
-		_, isProcessed = walFileMap[walFileKey]
-	}
-	return isProcessed
-}
-
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
-	// If an event is an Update which is setting a previously set note to an empty note (e.g. a deletion),
-	// we mutate the empty note by adding a null byte. This occurs in the thread which consumes from
-	// eventsChan. Because `el.Note` is a ptr to a note, when we update it in that thread, it's also
-	// updated on the original event which we pass to processEventLog. This is still the case
-	// even if we copy the struct type (as we pass the ptr address in the copy). Therefore, we need to
-	// do this rather nasty copy operation to copy the note and and set the new ptr address. We use this
-	// copy for the websocket event.
-	elCopy := el
-	if el.Note != nil {
-		newNote := *el.Note
-		elCopy.Note = &newNote
-	}
-
 	var err error
 	var item *ListItem
 	r.Root, item, err = r.processEventLog(r.Root, &el)
-
-	// We pass a pointer to the new event log to the processing function, and publish to the eventsChan and
-	// r.log after, as there is a chance of post-processing being applied within the processEventLog step.
-	// We want these mutations to be applied prior to flushing to local state or to remotes.
-	r.eventsChan <- elCopy
+	r.eventsChan <- el
 	r.log = append(r.log, el)
-
 	return item, err
 }
 
@@ -281,6 +244,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 		EventType:            DeleteEvent,
 		UUID:                 r.uuid,
 		ListItemCreationTime: now,
+		Line:                 line, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addUndoLog(undoEl, el)
 	return newItem.Key(), nil
@@ -346,6 +310,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 		UUID:                 listItem.originUUID,
 		UnixNanoTime:         time.Now().UnixNano(),
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 
 	r.addEventLog(el)
@@ -398,6 +363,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 			UnixNanoTime:               time.Now().UnixNano(),
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addEventLog(el)
 
@@ -407,6 +373,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 			TargetUUID:                 listItem.matchChild.originUUID,
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: listItem.matchChild.creationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addUndoLog(undoEl, el)
 	}
@@ -437,6 +404,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 			UnixNanoTime:               time.Now().UnixNano(),
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addEventLog(el)
 
@@ -452,6 +420,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 			TargetUUID:                 targetUUID,
 			ListItemCreationTime:       listItem.creationTime,
 			TargetListItemCreationTime: targetCreationTime,
+			Line:                       listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 		}
 		r.addUndoLog(undoEl, el)
 	}
@@ -488,6 +457,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 		UUID:                 listItem.originUUID,
 		UnixNanoTime:         time.Now().UnixNano(),
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addEventLog(el)
 
@@ -495,6 +465,7 @@ func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
 		EventType:            oppEvType,
 		UUID:                 listItem.originUUID,
 		ListItemCreationTime: listItem.creationTime,
+		Line:                 listItem.rawLine, // needed for Friends generation in repositionActiveFriends
 	}
 	r.addUndoLog(undoEl, el)
 
