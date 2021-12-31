@@ -20,18 +20,16 @@ import (
 )
 
 type s3WalFile struct {
-	svc                      *s3.S3
-	downloader               *s3manager.Downloader
-	uploader                 *s3manager.Uploader
-	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock *sync.Mutex
-	localRootDir             string
-	key                      string
-	secret                   string
-	bucket                   string
-	prefix                   string
-	processedEventMap        map[string]struct{}
-	processedEventLock       *sync.Mutex
+	svc                *s3.S3
+	downloader         *s3manager.Downloader
+	uploader           *s3manager.Uploader
+	localRootDir       string
+	key                string
+	secret             string
+	bucket             string
+	prefix             string
+	processedEventMap  map[string]struct{}
+	processedEventLock *sync.Mutex
 }
 
 func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
@@ -44,18 +42,16 @@ func NewS3WalFile(cfg S3Remote, root string) *s3WalFile {
 	}
 
 	return &s3WalFile{
-		svc:                      s3.New(sess),
-		downloader:               s3manager.NewDownloader(sess),
-		uploader:                 s3manager.NewUploader(sess),
-		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: &sync.Mutex{},
-		localRootDir:             root,
-		key:                      cfg.Key,
-		secret:                   cfg.Secret,
-		bucket:                   cfg.Bucket,
-		prefix:                   cfg.Prefix,
-		processedEventMap:        make(map[string]struct{}),
-		processedEventLock:       &sync.Mutex{},
+		svc:                s3.New(sess),
+		downloader:         s3manager.NewDownloader(sess),
+		uploader:           s3manager.NewUploader(sess),
+		localRootDir:       root,
+		key:                cfg.Key,
+		secret:             cfg.Secret,
+		bucket:             cfg.Bucket,
+		prefix:             cfg.Prefix,
+		processedEventMap:  make(map[string]struct{}),
+		processedEventLock: &sync.Mutex{},
 	}
 }
 

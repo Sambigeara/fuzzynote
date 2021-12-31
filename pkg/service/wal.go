@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
@@ -633,6 +634,19 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		r.friendsUpdateLock.Unlock()
 
 		replayLog = r.log
+
+		// If doing a full merge, we generate checksum and check against the processedWalChecksums cache - if
+		// the wal has already been processed, there's no need to replay the events, so we can return early to
+		// avoid unnecessary work
+		var elBuf bytes.Buffer
+		enc := gob.NewEncoder(&elBuf)
+		if err := enc.Encode(replayLog); err == nil {
+			checksum := md5.Sum(elBuf.Bytes())
+			if r.isWalChecksumProcessed(checksum) {
+				return nil
+			}
+			r.setProcessedWalChecksum(checksum)
+		}
 	} else {
 		replayLog = partialWal
 		root = r.Root
@@ -698,34 +712,30 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 func buildFromFile(raw io.Reader) ([]EventLog, error) {
 	var el []EventLog
 	var walSchemaVersionID uint16
-	err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID)
-	if err != nil {
+	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
 		if err == io.EOF {
 			return el, nil
 		}
 		return el, err
 	}
 
-	// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
-	// prior to passing it to the loop below
-	r, w := io.Pipe()
+	pr, pw := io.Pipe()
 	errChan := make(chan error, 1)
 	go func() {
-		defer w.Close()
-		switch walSchemaVersionID {
-		case 3:
-			fallthrough
-		case 4:
+		defer pw.Close()
+		if walSchemaVersionID < 3 {
+			if _, err := io.Copy(pw, raw); err != nil {
+				errChan <- err
+			}
+		} else {
+			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+			// prior to passing it to the loop below
 			zr, err := gzip.NewReader(raw)
 			if err != nil {
 				errChan <- err
 			}
 			defer zr.Close()
-			if _, err := io.Copy(w, zr); err != nil {
-				errChan <- err
-			}
-		default:
-			if _, err := io.Copy(w, raw); err != nil {
+			if _, err := io.Copy(pw, zr); err != nil {
 				errChan <- err
 			}
 		}
@@ -740,7 +750,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 					return el, err
 				}
 			default:
-				e, err := getNextEventLogFromWalFile(r, walSchemaVersionID)
+				e, err := getNextEventLogFromWalFile(pr, walSchemaVersionID)
 				if err != nil {
 					switch err {
 					case io.EOF:
@@ -758,9 +768,8 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				el = append(el, *e)
 			}
 		}
-		// This decoder is only relevant for wals with the most recent schema version (4 presently)
-	} else if walSchemaVersionID == 4 {
-		dec := gob.NewDecoder(r)
+	} else {
+		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
 		}
@@ -776,7 +785,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		}
 	}
 
-	return el, err
+	return el, nil
 }
 
 const (
@@ -1295,16 +1304,29 @@ func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListI
 	return nil
 }
 
-func (r *DBListRepo) setProcessedPartialWals(fileName string) {
-	r.processedPartialWalsLock.Lock()
-	defer r.processedPartialWalsLock.Unlock()
-	r.processedPartialWals[fileName] = struct{}{}
+func (r *DBListRepo) setProcessedWalName(fileName string) {
+	r.processedWalNameLock.Lock()
+	defer r.processedWalNameLock.Unlock()
+	r.processedWalNames[fileName] = struct{}{}
 }
 
-func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
-	r.processedPartialWalsLock.Lock()
-	defer r.processedPartialWalsLock.Unlock()
-	_, exists := r.processedPartialWals[fileName]
+func (r *DBListRepo) isWalNameProcessed(fileName string) bool {
+	r.processedWalNameLock.Lock()
+	defer r.processedWalNameLock.Unlock()
+	_, exists := r.processedWalNames[fileName]
+	return exists
+}
+
+func (r *DBListRepo) setProcessedWalChecksum(checksum [16]byte) {
+	r.processedWalChecksumLock.Lock()
+	defer r.processedWalChecksumLock.Unlock()
+	r.processedWalChecksums[checksum] = struct{}{}
+}
+
+func (r *DBListRepo) isWalChecksumProcessed(checksum [16]byte) bool {
+	r.processedWalChecksumLock.Lock()
+	defer r.processedWalChecksumLock.Unlock()
+	_, exists := r.processedWalChecksums[checksum]
 	return exists
 }
 
@@ -1337,7 +1359,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 	mergedWal := []EventLog{}
 	for wf, newWals := range newWalMap {
 		for _, newWal := range newWals {
-			if !r.isPartialWalProcessed(newWal) {
+			if !r.isWalNameProcessed(newWal) {
 				pr, pw := io.Pipe()
 				go func() {
 					defer pw.Close()
@@ -1347,7 +1369,6 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 					}
 				}()
 
-				// TODO rename buildFromFile
 				// Build new wals
 				newWfWal, err := buildFromFile(pr)
 				if err != nil {
@@ -1359,7 +1380,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 
 				// Add to the processed cache after we've successfully pulled it
 				// TODO strictly we should only set processed once it's successfull merged and displayed to client
-				r.setProcessedPartialWals(newWal)
+				r.setProcessedWalName(newWal)
 			}
 		}
 	}
@@ -1415,9 +1436,8 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 				continue
 			}
 
-			// We track if there are any unprocessed wals that we gather, as there's no point replaying a full log
-			// (which is costly) if we already have the events locally
-			if !r.isPartialWalProcessed(fileName) {
+			// There's no point replaying a full log (which is costly) if we already have the events locally
+			if !r.isWalNameProcessed(fileName) {
 				localReplayWal = merge(localReplayWal, wal)
 			}
 
@@ -1487,17 +1507,12 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 }
 
 func buildByteWal(el []EventLog) *bytes.Buffer {
-	var compressedBuf bytes.Buffer
+	var outputBuf bytes.Buffer
 
 	// Write the schema ID
-	err := binary.Write(&compressedBuf, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
+	if err := binary.Write(&outputBuf, binary.LittleEndian, latestWalSchemaID); err != nil {
 		log.Fatal(err)
 	}
-
-	//pr, pw := io.Pipe()
-	var buf bytes.Buffer
-	//enc := gob.NewEncoder(pw)
 
 	// If we have empty/non-null notes, we need to explicitly set them to our empty note
 	// pattern, otherwise gob will treat a ptr to an empty byte array as null when decoding
@@ -1507,18 +1522,19 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 		}
 	}
 
-	enc := gob.NewEncoder(&buf)
+	// In walSchemaVersionID == 5, we introduced checksum generation. The checksum of the event log
+	// is generated and stored immediately after the walSchemaVersionID, and before the compressed event log.
+
+	// We need to encode the eventLog separately in order to generate a checksum
+	var elBuf bytes.Buffer
+	enc := gob.NewEncoder(&elBuf)
 	if err := enc.Encode(el); err != nil {
 		log.Fatal(err) // TODO
 	}
 
 	// Then write in the compressed bytes
-	zw := gzip.NewWriter(&compressedBuf)
-	//if _, err := io.Copy(zw, pr); err != nil {
-	//    log.Fatal(err) // TODO
-	//}
-	_, err = zw.Write(buf.Bytes())
-	if err != nil {
+	zw := gzip.NewWriter(&outputBuf)
+	if _, err := zw.Write(elBuf.Bytes()); err != nil {
 		log.Fatal(err)
 	}
 
@@ -1568,7 +1584,7 @@ func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, random
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
-	r.setProcessedPartialWals(randomUUID)
+	r.setProcessedWalName(randomUUID)
 	if err := wf.Flush(ctx, b, randomUUID); err != nil {
 		return err
 	}
@@ -1714,11 +1730,11 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 	}
 
 	// Run an initial load from the local walfile
-	//localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
-	//if err != nil {
-	//    return err
-	//}
-	//walChan <- localEl
+	localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
+	if err != nil {
+		return err
+	}
+	walChan <- localEl
 
 	// Main sync event loop
 	go func() {
@@ -1947,7 +1963,7 @@ func (r *DBListRepo) finish(purge bool) error {
 		filesToDelete := []string{}
 		// Ensure we've actually processed the files before we delete them...
 		for _, fileName := range localFiles {
-			if r.isPartialWalProcessed(fileName) {
+			if r.isWalNameProcessed(fileName) {
 				filesToDelete = append(filesToDelete, fileName)
 			}
 		}
