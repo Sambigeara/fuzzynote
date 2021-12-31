@@ -162,7 +162,7 @@ type ListItem struct {
 	// TODO these can all be private now
 	//Line         string
 	rawLine      string
-	Note         *[]byte
+	Note         []byte
 	IsHidden     bool
 	originUUID   uuid
 	creationTime int64
@@ -215,7 +215,7 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
+func (r *DBListRepo) Add(line string, note []byte, idx int) (string, error) {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
 		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
@@ -256,7 +256,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Update(line string, note []byte, idx int) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
 		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}

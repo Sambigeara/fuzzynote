@@ -36,13 +36,10 @@ const latestWalSchemaID uint16 = 4
 
 // sync intervals
 const (
-	//pullIntervalSeconds      = 10
-	//pushWaitDuration         = time.Second * time.Duration(10)
 	pullIntervalSeconds      = 5
 	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(15)
 	compactionGatherMultiple = 2
-	//pushIntervalSeconds      = 5
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -94,7 +91,7 @@ type EventLog struct {
 	UnixNanoTime               int64
 	EventType                  EventType
 	Line                       string // TODO This represents the raw (un-friends-processed) line
-	Note                       *[]byte
+	Note                       []byte
 	Friends                    LineFriends
 	key                        string
 	targetKey                  string
@@ -505,7 +502,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	return root, item, err
 }
 
-func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note []byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -536,13 +533,8 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 	return root, newItem, nil
 }
 
-func (r *DBListRepo) update(line string, friends LineFriends, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	// We currently separate Line and Note updates even though they use the same interface
-	// This is to reduce wal size and also solves some race conditions for long held open
-	// notes, etc
-	if note != nil {
-		listItem.Note = note
-	} else {
+func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listItem *ListItem) (*ListItem, error) {
+	if len(line) > 0 {
 		listItem.rawLine = line
 		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
 		// not remove any, due to the processedEventMap mechanism elsewhere)
@@ -556,6 +548,8 @@ func (r *DBListRepo) update(line string, friends LineFriends, note *[]byte, list
 		listItem.friends.IsProcessed = friends.IsProcessed
 		listItem.friends.Offset = friends.Offset
 		listItem.friends.Emails = mergedEmailMap
+	} else {
+		listItem.Note = note
 	}
 	return listItem, nil
 }
@@ -689,7 +683,7 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 		el.Line = string(line)
 
 		if item.NoteExists {
-			el.Note = &[]byte{}
+			el.Note = []byte{}
 		}
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -697,12 +691,8 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 			if err != nil {
 				return nil, err
 			}
-			el.Note = &note
+			el.Note = note
 		}
-	//case 4:
-	//    if err := dec.Decode(&el); err != nil {
-	//        return &el, err
-	//    }
 	default:
 		return nil, errors.New("unrecognised wal schema version")
 	}
@@ -775,13 +765,6 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		}
 		if err := <-errChan; err != nil {
 			return el, err
-		}
-
-		// Instantiate any explicitly empty notes
-		for _, e := range el {
-			if e.Note != nil && uint8((*e.Note)[0]) == uint8(0) {
-				*e.Note = []byte{}
-			}
 		}
 	}
 
@@ -888,7 +871,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 		return false
 	}
 	if a.rawLine != b.rawLine ||
-		a.Note != b.Note ||
+		string(a.Note) != string(b.Note) ||
 		a.IsHidden != b.IsHidden ||
 		a.originUUID != b.originUUID ||
 		a.creationTime != b.creationTime {
@@ -1512,14 +1495,6 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 	// Write the schema ID
 	if err := binary.Write(&outputBuf, binary.LittleEndian, latestWalSchemaID); err != nil {
 		log.Fatal(err)
-	}
-
-	// If we have empty/non-null notes, we need to explicitly set them to our empty note
-	// pattern, otherwise gob will treat a ptr to an empty byte array as null when decoding
-	for _, e := range el {
-		if e.Note != nil && len(*e.Note) == 0 {
-			*e.Note = []byte{0}
-		}
 	}
 
 	// In walSchemaVersionID == 5, we introduced checksum generation. The checksum of the event log
