@@ -188,7 +188,7 @@ func (i *ListItem) Friends() []string {
 	// to the client
 	// TODO cache for optimisation?? need to cover updates
 	sortedEmails := []string{}
-	for e := range i.friends.Emails {
+	for _, e := range i.friends.Emails {
 		if e != i.localEmail {
 			sortedEmails = append(sortedEmails, e)
 		}
@@ -207,7 +207,14 @@ func (i *ListItem) Key() string {
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	var err error
 	var item *ListItem
-	r.Root, item, err = r.processEventLog(r.Root, &el)
+
+	// At this point we inspect the Line in the event log for `@friends`, and if they're present and currently
+	// enabled (e.g. in the friends cache), cut them from any central location in the line and append to the end.
+	// This is required for later public client APIs (e.g. we only return a slice of the rawLine to clients via
+	// the Line() API).
+	el = r.repositionActiveFriends(el)
+
+	r.Root, item, err = r.processEventLog(r.Root, el)
 	r.eventsChan <- el
 	r.log = append(r.log, el)
 	return item, err

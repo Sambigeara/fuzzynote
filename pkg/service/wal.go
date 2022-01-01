@@ -32,7 +32,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 4
+const latestWalSchemaID uint16 = 5
 
 // sync intervals
 const (
@@ -64,6 +64,8 @@ var (
 	errWalIntregrity = errors.New("the wal was forcefully recovered, r.log needs to be purged")
 )
 
+type EventType uint16
+
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
 // (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
@@ -80,7 +82,8 @@ const (
 type LineFriends struct {
 	IsProcessed bool
 	Offset      int
-	Emails      map[string]struct{}
+	Emails      []string
+	emailsMap   map[string]struct{}
 }
 
 type EventLog struct {
@@ -97,6 +100,26 @@ type EventLog struct {
 	targetKey                  string
 }
 
+type LineFriendsSchema4 struct {
+	IsProcessed bool
+	Offset      int
+	Emails      map[string]struct{}
+}
+
+type EventLogSchema4 struct {
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	UnixNanoTime               int64
+	EventType                  EventType
+	Line                       string // TODO This represents the raw (un-friends-processed) line
+	Note                       []byte
+	Friends                    LineFriendsSchema4
+	key                        string
+	targetKey                  string
+}
+
 func (e *EventLog) getKeys() (string, string) {
 	if e.key == "" {
 		e.key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
@@ -105,6 +128,17 @@ func (e *EventLog) getKeys() (string, string) {
 		e.targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
 	}
 	return e.key, e.targetKey
+}
+
+func (e *EventLog) emailHasAccess(email string) bool {
+	if e.Friends.emailsMap == nil {
+		e.Friends.emailsMap = make(map[string]struct{})
+		for _, f := range e.Friends.Emails {
+			e.Friends.emailsMap[f] = struct{}{}
+		}
+	}
+	_, exists := e.Friends.emailsMap[email]
+	return exists
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -207,7 +241,7 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 // getFriendsFromLine returns a map of @friends in the line, that currently exist in the friends cache, and a
 // boolean representing whether or not the line is already correctly ordered (e.g. the friends are all appended
 // to the end of the line, separated by single whitespace chars)
-func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool) {
+func (r *DBListRepo) getFriendsFromLine(line string) ([]string, bool) {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
 	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
 	// email with (pre|app)ending spaces with a single space
@@ -239,19 +273,23 @@ func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool)
 
 	hasFoundFriend := false
 	isOrdered := true
-	friends := map[string]struct{}{}
+	friendsMap := map[string]struct{}{}
 	for _, w := range strings.Split(line, " ") {
 		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
 			// If there are duplicates, the line has not been processed
-			if _, exists := friends[w[1:]]; exists {
+			if _, exists := friendsMap[w[1:]]; exists {
 				isOrdered = false
 			}
-			friends[w[1:]] = struct{}{}
+			friendsMap[w[1:]] = struct{}{}
 			hasFoundFriend = true
 		} else if hasFoundFriend {
 			// If we reach here, the current word is _not_ a friend, but we have previously processed one
 			isOrdered = false
 		}
+	}
+	friends := []string{}
+	for f := range friendsMap {
+		friends = append(friends, f)
 	}
 	return friends, isOrdered
 }
@@ -275,37 +313,33 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 	return f
 }
 
-func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
+func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 	// SL 2021-12-30: Recent changes mean that _all_ event logs will now store the current state of the line, so this
 	// check is only relevant to bypass earlier logs which have nothing to process.
 	if len(e.Line) == 0 {
-		return
+		return e
 	}
 
 	if e.Friends.IsProcessed {
-		return
+		return e
 	}
 
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
-	var friends map[string]struct{}
+	var friends []string
 	//if r.cfgFriendRegex.MatchString(e.Line) {
 	if r.getEmailFromConfigLine(e.Line) != "" {
-		friends = map[string]struct{}{
-			r.email: struct{}{},
-		}
+		friends = append(friends, r.email)
 	} else {
 		// If there are no friends, return early
 		if friends, _ = r.getFriendsFromLine(e.Line); len(friends) == 0 {
 			e.Friends.IsProcessed = true
 			e.Friends.Offset = len(e.Line)
-			return
+			return e
 		}
 	}
 
-	friendsToReposition := []string{}
 	newLine := e.Line
-	for f := range friends {
-		friendsToReposition = append(friendsToReposition, f)
+	for _, f := range friends {
 		atFriend := "@" + f
 		// Cover edge case whereby email is typed first and constitutes entire string
 		if atFriend == newLine {
@@ -320,8 +354,8 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	friendString := ""
 
 	// Sort the emails, and then append a space separated string to the end of the Line
-	sort.Strings(friendsToReposition)
-	for _, f := range friendsToReposition {
+	sort.Strings(friends)
+	for _, f := range friends {
 		friendString += " @"
 		friendString += f
 	}
@@ -332,6 +366,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	e.Friends.IsProcessed = true
 	e.Friends.Offset = len(newLine) - len(friendString)
 	e.Friends.Emails = friends
+	return e
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
@@ -414,11 +449,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *ListItem, error) {
-	if e == nil {
-		return root, nil, nil
-	}
-
+func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
 	item := r.listItemTracker[key]
 	targetItem := r.listItemTracker[targetKey]
@@ -431,20 +462,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		return root, item, nil
 	}
 
-	// At this point, if `web` is active, we inspect the Line in the event log (relevant for `Add` and `Update`)
-	// for `@friends`, and if they're present and currently enabled (e.g. in the friends cache), cut them from any
-	// central location in the line and append to the end. This is required for later public client APIs (e.g. we only
-	// return a slice of the rawLine to clients via the Line() API).
-	// This occurs here next to the generateFriendChangeEvents call, as the Line mutations need to act on the "current"
-	// state of the friends cache, where "current" can indeed be historical, but current WRT the event log being processed.
-	// This means that even if there are inconsistencies in events being transmitted to other clients, due to out-of-date
-	// friends caches, distributed state will always be eventually consistent.
-	// NOTE: ordering of generateFriendChangeEvents vs repositionActiveFriends is irrelevant, because we will never need to
-	// extract friends from the config lines used to generate change events.
-	if r.email != "" {
-		r.repositionActiveFriends(e)
-		r.generateFriendChangeEvents(*e, item)
-	}
+	r.generateFriendChangeEvents(e, item)
 
 	var err error
 	switch e.EventType {
@@ -539,15 +557,22 @@ func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listI
 		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
 		// not remove any, due to the processedEventMap mechanism elsewhere)
 		mergedEmailMap := make(map[string]struct{})
-		for e := range listItem.friends.Emails {
+		for _, e := range listItem.friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
-		for e := range friends.Emails {
+		for _, e := range friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
 		listItem.friends.IsProcessed = friends.IsProcessed
 		listItem.friends.Offset = friends.Offset
-		listItem.friends.Emails = mergedEmailMap
+		emails := []string{}
+		for e := range mergedEmailMap {
+			if e != r.email {
+				emails = append(emails, e)
+			}
+		}
+		sort.Strings(emails)
+		listItem.friends.Emails = emails
 	} else {
 		listItem.Note = note
 	}
@@ -609,6 +634,22 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	var replayLog []EventLog
 	var root *ListItem
 	if fullMerge {
+		replayLog = r.log
+
+		// If doing a full merge, we generate checksum and check against the processedWalChecksums cache - if
+		// the wal has already been processed, there's no need to replay the events, so we can return early to
+		// avoid unnecessary work
+		var buf bytes.Buffer
+		enc := gob.NewEncoder(&buf)
+		if err := enc.Encode(replayLog); err != nil {
+			log.Fatal("Boom")
+		}
+		checksum := md5.Sum(buf.Bytes())
+		if r.isWalChecksumProcessed(checksum) {
+			return nil
+		}
+		r.setProcessedWalChecksum(checksum)
+
 		// Clear the listItemTracker for all full Replays
 		// This map is also used by the main service interface CRUD endpoints, but we can
 		// clear it here because both the CRUD ops and these Replays run in the same loop,
@@ -626,21 +667,6 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 			r.friends[r.email] = make(map[string]int64)
 		}
 		r.friendsUpdateLock.Unlock()
-
-		replayLog = r.log
-
-		// If doing a full merge, we generate checksum and check against the processedWalChecksums cache - if
-		// the wal has already been processed, there's no need to replay the events, so we can return early to
-		// avoid unnecessary work
-		var elBuf bytes.Buffer
-		enc := gob.NewEncoder(&elBuf)
-		if err := enc.Encode(replayLog); err == nil {
-			checksum := md5.Sum(elBuf.Bytes())
-			if r.isWalChecksumProcessed(checksum) {
-				return nil
-			}
-			r.setProcessedWalChecksum(checksum)
-		}
 	} else {
 		replayLog = partialWal
 		root = r.Root
@@ -649,9 +675,7 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
-		// NOTE: because range over slice passes copies of the events, at this point, mutations to the
-		// event will not be reflected in replayLog
-		root, _, _ = r.processEventLog(root, &e)
+		root, _, _ = r.processEventLog(root, e)
 	}
 
 	r.Root = root
@@ -758,6 +782,37 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				el = append(el, *e)
 			}
 		}
+	} else if walSchemaVersionID == 4 {
+		var oel []EventLogSchema4
+		dec := gob.NewDecoder(pr)
+		if err := dec.Decode(&oel); err != nil {
+			return el, err
+		}
+		if err := <-errChan; err != nil {
+			return el, err
+		}
+		for _, oe := range oel {
+			e := EventLog{
+				UUID:                       oe.UUID,
+				TargetUUID:                 oe.TargetUUID,
+				ListItemCreationTime:       oe.ListItemCreationTime,
+				TargetListItemCreationTime: oe.TargetListItemCreationTime,
+				UnixNanoTime:               oe.UnixNanoTime,
+				EventType:                  oe.EventType,
+				Line:                       oe.Line,
+				Note:                       oe.Note,
+				Friends: LineFriends{
+					IsProcessed: oe.Friends.IsProcessed,
+					Offset:      oe.Friends.Offset,
+					emailsMap:   oe.Friends.Emails,
+				},
+			}
+			for f := range oe.Friends.Emails {
+				e.Friends.Emails = append(e.Friends.Emails, f)
+			}
+			sort.Strings(e.Friends.Emails)
+			el = append(el, e)
+		}
 	} else {
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
@@ -828,13 +883,13 @@ func merge(wal1 []EventLog, wal2 []EventLog) []EventLog {
 		if i == len(wal1) {
 			// Ignore duplicates (compare with current head of the array
 			if len(mergedEl) == 0 || checkEquality(wal2[j], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, (wal2)[j])
+				mergedEl = append(mergedEl, wal2[j])
 			}
 			j++
 		} else if j == len(wal2) {
 			// Ignore duplicates (compare with current head of the array
 			if len(mergedEl) == 0 || checkEquality(wal1[i], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, (wal1)[i])
+				mergedEl = append(mergedEl, wal1[i])
 			}
 			i++
 		} else {
@@ -1419,6 +1474,11 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 				continue
 			}
 
+			// TODO put this in a less frequented code path, or remove when we're very confident in the merge algo
+			sort.Slice(wal, func(i, j int) bool {
+				return checkEquality(wal[i], wal[j]) == leftEventOlder
+			})
+
 			// There's no point replaying a full log (which is costly) if we already have the events locally
 			if !r.isWalNameProcessed(fileName) {
 				localReplayWal = merge(localReplayWal, wal)
@@ -1497,9 +1557,6 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 		log.Fatal(err)
 	}
 
-	// In walSchemaVersionID == 5, we introduced checksum generation. The checksum of the event log
-	// is generated and stored immediately after the walSchemaVersionID, and before the compressed event log.
-
 	// We need to encode the eventLog separately in order to generate a checksum
 	var elBuf bytes.Buffer
 	enc := gob.NewEncoder(&elBuf)
@@ -1517,7 +1574,7 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 		log.Fatal(err) // TODO
 	}
 
-	return &compressedBuf
+	return &outputBuf
 }
 
 func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
@@ -1534,7 +1591,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			filteredWal = append(filteredWal, e)
 			continue
 		}
-		if _, exists := e.Friends.Emails[walFileOwnerEmail]; exists {
+		if e.emailHasAccess(walFileOwnerEmail) {
 			filteredWal = append(filteredWal, e)
 		}
 	}
