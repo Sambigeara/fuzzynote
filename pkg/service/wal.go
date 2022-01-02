@@ -1445,7 +1445,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 
 		// Gather origin files
 		mergedWal := []EventLog{}
-		filesToDelete := []string{}
+		filesToDeleteMap := make(map[string]struct{})
 		for _, fileName := range originFiles {
 			pr, pw := io.Pipe()
 			go func() {
@@ -1474,7 +1474,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 			}
 
 			// Only delete files which were successfully pulled
-			filesToDelete = append(filesToDelete, fileName)
+			filesToDeleteMap[fileName] = struct{}{}
 			mergedWal = merge(mergedWal, wal)
 		}
 
@@ -1498,13 +1498,20 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 		}
 
 		// Flush the gathered Wal
-		if err := r.push(ctx, mergedWal, wf); err != nil {
+		checksum, err := r.push(ctx, mergedWal, wf)
+		if err != nil {
 			log.Fatal(err)
 		}
 
 		// Merge into the full wal (which will be returned at the end of the function)
 		fullMergedWal = merge(fullMergedWal, mergedWal)
 
+		delete(filesToDeleteMap, checksum)
+
+		filesToDelete := make([]string, len(filesToDeleteMap))
+		for f := range filesToDeleteMap {
+			filesToDelete = append(filesToDelete, f)
+		}
 		// Schedule a delete on the files
 		wf.RemoveWals(ctx, filesToDelete)
 	}
@@ -1585,13 +1592,13 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	return filteredWal
 }
 
-func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile) error {
+func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile) (string, error) {
 	// Apply any filtering based on Push match configuration
 	el = r.getMatchedWal(el, wf)
 
 	// Return for empty wals
 	if len(el) == 0 {
-		return nil
+		return "", nil
 	}
 
 	b := buildByteWal(el)
@@ -1604,10 +1611,10 @@ func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile) error 
 	// and pull our own pushed wal)
 	r.setProcessedWalChecksum(checksum)
 	if err := wf.Flush(ctx, b, checksum); err != nil {
-		return err
+		return checksum, err
 	}
 
-	return nil
+	return checksum, nil
 }
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, el []EventLog) {
@@ -1975,27 +1982,24 @@ func (r *DBListRepo) finish(purge bool) error {
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
 	if !purge {
-		func() {
-			if el := r.getMatchedWal(r.log, r.LocalWalFile); len(el) != 0 {
-				b := buildByteWal(el)
-				checksum := fmt.Sprintf("%x", md5.Sum(b.Bytes()))
-				ctx := context.Background()
-				localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-				filesToDelete := []string{}
-				// Ensure we've actually processed the files before we delete them...
-				for _, fileName := range localFiles {
-					if fileName == checksum {
-						return
-					} else if r.isWalChecksumProcessed(fileName) {
-						filesToDelete = append(filesToDelete, fileName)
-					}
-				}
-				if err := r.push(ctx, r.log, r.LocalWalFile); err == nil {
-					// Only delete files on successful push
-					r.LocalWalFile.RemoveWals(ctx, filesToDelete)
-				}
+		ctx := context.Background()
+		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		filesToDeleteMap := make(map[string]struct{})
+		// Ensure we've actually processed the files before we delete them...
+		for _, fileName := range localFiles {
+			if r.isWalChecksumProcessed(fileName) {
+				filesToDeleteMap[fileName] = struct{}{}
 			}
-		}()
+		}
+		if checksum, err := r.push(ctx, r.log, r.LocalWalFile); err == nil {
+			delete(filesToDeleteMap, checksum)
+			// Only delete files on successful push
+			filesToDelete := make([]string, len(filesToDeleteMap))
+			for f := range filesToDeleteMap {
+				filesToDelete = append(filesToDelete, f)
+			}
+			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		}
 	} else {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
