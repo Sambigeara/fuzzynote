@@ -730,7 +730,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Start(newTestClient(), generateProcessingWalChan(), make(chan interface{}))
 
 		localWalFile = NewLocalFileWalFile(rootDir)
-		repo.processedPartialWals = make(map[string]struct{})
+		repo.processedWalNames = make(map[string]struct{})
 		eventLog, _ = repo.pull([]WalFile{localWalFile})
 		repo.Replay(eventLog)
 

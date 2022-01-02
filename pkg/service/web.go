@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -32,11 +31,9 @@ const (
 
 type WebWalFile struct {
 	// TODO rename uuid to email
-	uuid               string
-	web                *Web
-	mode               string
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]struct{}
+	uuid string
+	web  *Web
+	mode string
 }
 
 func (w *Web) establishWebSocketConnection() error {

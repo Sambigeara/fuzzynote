@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"sync"
 )
 
 type refreshKey struct{}
@@ -107,10 +106,8 @@ func (r *DBListRepo) registerWeb() error {
 	r.DeleteWalFile(string(r.email))
 	r.AddWalFile(
 		&WebWalFile{
-			uuid:               string(r.email),
-			processedEventLock: &sync.Mutex{},
-			processedEventMap:  make(map[string]struct{}),
-			web:                r.web,
+			uuid: string(r.email),
+			web:  r.web,
 		},
 		true,
 	)

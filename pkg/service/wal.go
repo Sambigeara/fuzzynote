@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
@@ -31,17 +32,14 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 4
+const latestWalSchemaID uint16 = 5
 
 // sync intervals
 const (
-	//pullIntervalSeconds      = 10
-	//pushWaitDuration         = time.Second * time.Duration(10)
 	pullIntervalSeconds      = 5
 	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(15)
 	compactionGatherMultiple = 2
-	//pushIntervalSeconds      = 5
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -66,6 +64,8 @@ var (
 	errWalIntregrity = errors.New("the wal was forcefully recovered, r.log needs to be purged")
 )
 
+type EventType uint16
+
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
 // (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
@@ -82,7 +82,8 @@ const (
 type LineFriends struct {
 	IsProcessed bool
 	Offset      int
-	Emails      map[string]struct{}
+	Emails      []string
+	emailsMap   map[string]struct{}
 }
 
 type EventLog struct {
@@ -93,8 +94,28 @@ type EventLog struct {
 	UnixNanoTime               int64
 	EventType                  EventType
 	Line                       string // TODO This represents the raw (un-friends-processed) line
-	Note                       *[]byte
+	Note                       []byte
 	Friends                    LineFriends
+	key                        string
+	targetKey                  string
+}
+
+type LineFriendsSchema4 struct {
+	IsProcessed bool
+	Offset      int
+	Emails      map[string]struct{}
+}
+
+type EventLogSchema4 struct {
+	UUID                       uuid
+	TargetUUID                 uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	UnixNanoTime               int64
+	EventType                  EventType
+	Line                       string // TODO This represents the raw (un-friends-processed) line
+	Note                       []byte
+	Friends                    LineFriendsSchema4
 	key                        string
 	targetKey                  string
 }
@@ -107,6 +128,17 @@ func (e *EventLog) getKeys() (string, string) {
 		e.targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
 	}
 	return e.key, e.targetKey
+}
+
+func (e *EventLog) emailHasAccess(email string) bool {
+	if e.Friends.emailsMap == nil {
+		e.Friends.emailsMap = make(map[string]struct{})
+		for _, f := range e.Friends.Emails {
+			e.Friends.emailsMap[f] = struct{}{}
+		}
+	}
+	_, exists := e.Friends.emailsMap[email]
+	return exists
 }
 
 // WalFile offers a generic interface into local or remote filesystems
@@ -192,10 +224,12 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	f, err := os.Create(fileName)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer f.Close()
-	f.Write(b.Bytes())
+	if _, err := f.Write(b.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -209,7 +243,7 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 // getFriendsFromLine returns a map of @friends in the line, that currently exist in the friends cache, and a
 // boolean representing whether or not the line is already correctly ordered (e.g. the friends are all appended
 // to the end of the line, separated by single whitespace chars)
-func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool) {
+func (r *DBListRepo) getFriendsFromLine(line string) ([]string, bool) {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
 	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
 	// email with (pre|app)ending spaces with a single space
@@ -241,19 +275,23 @@ func (r *DBListRepo) getFriendsFromLine(line string) (map[string]struct{}, bool)
 
 	hasFoundFriend := false
 	isOrdered := true
-	friends := map[string]struct{}{}
+	friendsMap := map[string]struct{}{}
 	for _, w := range strings.Split(line, " ") {
 		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
 			// If there are duplicates, the line has not been processed
-			if _, exists := friends[w[1:]]; exists {
+			if _, exists := friendsMap[w[1:]]; exists {
 				isOrdered = false
 			}
-			friends[w[1:]] = struct{}{}
+			friendsMap[w[1:]] = struct{}{}
 			hasFoundFriend = true
 		} else if hasFoundFriend {
 			// If we reach here, the current word is _not_ a friend, but we have previously processed one
 			isOrdered = false
 		}
+	}
+	friends := []string{}
+	for f := range friendsMap {
+		friends = append(friends, f)
 	}
 	return friends, isOrdered
 }
@@ -277,37 +315,33 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 	return f
 }
 
-func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
+func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 	// SL 2021-12-30: Recent changes mean that _all_ event logs will now store the current state of the line, so this
 	// check is only relevant to bypass earlier logs which have nothing to process.
 	if len(e.Line) == 0 {
-		return
+		return e
 	}
 
 	if e.Friends.IsProcessed {
-		return
+		return e
 	}
 
 	// If this is a config line, we only want to hide the owner email, therefore manually set a single key friends map
-	var friends map[string]struct{}
+	var friends []string
 	//if r.cfgFriendRegex.MatchString(e.Line) {
 	if r.getEmailFromConfigLine(e.Line) != "" {
-		friends = map[string]struct{}{
-			r.email: struct{}{},
-		}
+		friends = append(friends, r.email)
 	} else {
 		// If there are no friends, return early
 		if friends, _ = r.getFriendsFromLine(e.Line); len(friends) == 0 {
 			e.Friends.IsProcessed = true
 			e.Friends.Offset = len(e.Line)
-			return
+			return e
 		}
 	}
 
-	friendsToReposition := []string{}
 	newLine := e.Line
-	for f := range friends {
-		friendsToReposition = append(friendsToReposition, f)
+	for _, f := range friends {
 		atFriend := "@" + f
 		// Cover edge case whereby email is typed first and constitutes entire string
 		if atFriend == newLine {
@@ -322,8 +356,8 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	friendString := ""
 
 	// Sort the emails, and then append a space separated string to the end of the Line
-	sort.Strings(friendsToReposition)
-	for _, f := range friendsToReposition {
+	sort.Strings(friends)
+	for _, f := range friends {
 		friendString += " @"
 		friendString += f
 	}
@@ -334,6 +368,7 @@ func (r *DBListRepo) repositionActiveFriends(e *EventLog) {
 	e.Friends.IsProcessed = true
 	e.Friends.Offset = len(newLine) - len(friendString)
 	e.Friends.Emails = friends
+	return e
 }
 
 func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
@@ -416,11 +451,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *ListItem, error) {
-	if e == nil {
-		return root, nil, nil
-	}
-
+func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
 	key, targetKey := e.getKeys()
 	item := r.listItemTracker[key]
 	targetItem := r.listItemTracker[targetKey]
@@ -433,20 +464,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 		return root, item, nil
 	}
 
-	// At this point, if `web` is active, we inspect the Line in the event log (relevant for `Add` and `Update`)
-	// for `@friends`, and if they're present and currently enabled (e.g. in the friends cache), cut them from any
-	// central location in the line and append to the end. This is required for later public client APIs (e.g. we only
-	// return a slice of the rawLine to clients via the Line() API).
-	// This occurs here next to the generateFriendChangeEvents call, as the Line mutations need to act on the "current"
-	// state of the friends cache, where "current" can indeed be historical, but current WRT the event log being processed.
-	// This means that even if there are inconsistencies in events being transmitted to other clients, due to out-of-date
-	// friends caches, distributed state will always be eventually consistent.
-	// NOTE: ordering of generateFriendChangeEvents vs repositionActiveFriends is irrelevant, because we will never need to
-	// extract friends from the config lines used to generate change events.
-	if r.email != "" {
-		r.repositionActiveFriends(e)
-		r.generateFriendChangeEvents(*e, item)
-	}
+	r.generateFriendChangeEvents(e, item)
 
 	var err error
 	switch e.EventType {
@@ -504,7 +522,7 @@ func (r *DBListRepo) processEventLog(root *ListItem, e *EventLog) (*ListItem, *L
 	return root, item, err
 }
 
-func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note *[]byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note []byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
 	newItem := &ListItem{
 		originUUID:   uuid,
 		creationTime: creationTime,
@@ -535,26 +553,29 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 	return root, newItem, nil
 }
 
-func (r *DBListRepo) update(line string, friends LineFriends, note *[]byte, listItem *ListItem) (*ListItem, error) {
-	// We currently separate Line and Note updates even though they use the same interface
-	// This is to reduce wal size and also solves some race conditions for long held open
-	// notes, etc
-	if note != nil {
-		listItem.Note = note
-	} else {
+func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listItem *ListItem) (*ListItem, error) {
+	if len(line) > 0 {
 		listItem.rawLine = line
-		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
-		// not remove any, due to the processedEventMap mechanism elsewhere)
+		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate
 		mergedEmailMap := make(map[string]struct{})
-		for e := range listItem.friends.Emails {
+		for _, e := range listItem.friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
-		for e := range friends.Emails {
+		for _, e := range friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
 		listItem.friends.IsProcessed = friends.IsProcessed
 		listItem.friends.Offset = friends.Offset
-		listItem.friends.Emails = mergedEmailMap
+		emails := []string{}
+		for e := range mergedEmailMap {
+			if e != r.email {
+				emails = append(emails, e)
+			}
+		}
+		sort.Strings(emails)
+		listItem.friends.Emails = emails
+	} else {
+		listItem.Note = note
 	}
 	return listItem, nil
 }
@@ -614,6 +635,22 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	var replayLog []EventLog
 	var root *ListItem
 	if fullMerge {
+		replayLog = r.log
+
+		// If doing a full merge, we generate checksum and check against the processedWalChecksums cache - if
+		// the wal has already been processed, there's no need to replay the events, so we can return early to
+		// avoid unnecessary work
+		var buf bytes.Buffer
+		enc := gob.NewEncoder(&buf)
+		if err := enc.Encode(replayLog); err != nil {
+			log.Fatal("Boom")
+		}
+		checksum := fmt.Sprintf("%x", md5.Sum(buf.Bytes()))
+		if r.isWalChecksumProcessed(checksum) {
+			return nil
+		}
+		r.setProcessedWalChecksum(checksum)
+
 		// Clear the listItemTracker for all full Replays
 		// This map is also used by the main service interface CRUD endpoints, but we can
 		// clear it here because both the CRUD ops and these Replays run in the same loop,
@@ -631,8 +668,6 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 			r.friends[r.email] = make(map[string]int64)
 		}
 		r.friendsUpdateLock.Unlock()
-
-		replayLog = r.log
 	} else {
 		replayLog = partialWal
 		root = r.Root
@@ -641,9 +676,7 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	for _, e := range replayLog {
 		// We need to pass a fresh null root and leave the old r.Root intact for the function
 		// caller logic
-		// NOTE: because range over slice passes copies of the events, at this point, mutations to the
-		// event will not be reflected in replayLog
-		root, _, _ = r.processEventLog(root, &e)
+		root, _, _ = r.processEventLog(root, e)
 	}
 
 	r.Root = root
@@ -675,7 +708,7 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 		el.Line = string(line)
 
 		if item.NoteExists {
-			el.Note = &[]byte{}
+			el.Note = []byte{}
 		}
 		if item.NoteLength > 0 {
 			note := make([]byte, item.NoteLength)
@@ -683,12 +716,8 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 			if err != nil {
 				return nil, err
 			}
-			el.Note = &note
+			el.Note = note
 		}
-	//case 4:
-	//    if err := dec.Decode(&el); err != nil {
-	//        return &el, err
-	//    }
 	default:
 		return nil, errors.New("unrecognised wal schema version")
 	}
@@ -698,34 +727,30 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 func buildFromFile(raw io.Reader) ([]EventLog, error) {
 	var el []EventLog
 	var walSchemaVersionID uint16
-	err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID)
-	if err != nil {
+	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
 		if err == io.EOF {
 			return el, nil
 		}
 		return el, err
 	}
 
-	// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
-	// prior to passing it to the loop below
-	r, w := io.Pipe()
+	pr, pw := io.Pipe()
 	errChan := make(chan error, 1)
 	go func() {
-		defer w.Close()
-		switch walSchemaVersionID {
-		case 3:
-			fallthrough
-		case 4:
+		defer pw.Close()
+		if walSchemaVersionID < 3 {
+			if _, err := io.Copy(pw, raw); err != nil {
+				errChan <- err
+			}
+		} else {
+			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+			// prior to passing it to the loop below
 			zr, err := gzip.NewReader(raw)
 			if err != nil {
 				errChan <- err
 			}
 			defer zr.Close()
-			if _, err := io.Copy(w, zr); err != nil {
-				errChan <- err
-			}
-		default:
-			if _, err := io.Copy(w, raw); err != nil {
+			if _, err := io.Copy(pw, zr); err != nil {
 				errChan <- err
 			}
 		}
@@ -740,7 +765,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 					return el, err
 				}
 			default:
-				e, err := getNextEventLogFromWalFile(r, walSchemaVersionID)
+				e, err := getNextEventLogFromWalFile(pr, walSchemaVersionID)
 				if err != nil {
 					switch err {
 					case io.EOF:
@@ -758,25 +783,48 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				el = append(el, *e)
 			}
 		}
-		// This decoder is only relevant for wals with the most recent schema version (4 presently)
 	} else if walSchemaVersionID == 4 {
-		dec := gob.NewDecoder(r)
+		var oel []EventLogSchema4
+		dec := gob.NewDecoder(pr)
+		if err := dec.Decode(&oel); err != nil {
+			return el, err
+		}
+		if err := <-errChan; err != nil {
+			return el, err
+		}
+		for _, oe := range oel {
+			e := EventLog{
+				UUID:                       oe.UUID,
+				TargetUUID:                 oe.TargetUUID,
+				ListItemCreationTime:       oe.ListItemCreationTime,
+				TargetListItemCreationTime: oe.TargetListItemCreationTime,
+				UnixNanoTime:               oe.UnixNanoTime,
+				EventType:                  oe.EventType,
+				Line:                       oe.Line,
+				Note:                       oe.Note,
+				Friends: LineFriends{
+					IsProcessed: oe.Friends.IsProcessed,
+					Offset:      oe.Friends.Offset,
+					emailsMap:   oe.Friends.Emails,
+				},
+			}
+			for f := range oe.Friends.Emails {
+				e.Friends.Emails = append(e.Friends.Emails, f)
+			}
+			sort.Strings(e.Friends.Emails)
+			el = append(el, e)
+		}
+	} else {
+		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
 		}
 		if err := <-errChan; err != nil {
 			return el, err
 		}
-
-		// Instantiate any explicitly empty notes
-		for _, e := range el {
-			if e.Note != nil && uint8((*e.Note)[0]) == uint8(0) {
-				*e.Note = []byte{}
-			}
-		}
 	}
 
-	return el, err
+	return el, nil
 }
 
 const (
@@ -836,13 +884,13 @@ func merge(wal1 []EventLog, wal2 []EventLog) []EventLog {
 		if i == len(wal1) {
 			// Ignore duplicates (compare with current head of the array
 			if len(mergedEl) == 0 || checkEquality(wal2[j], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, (wal2)[j])
+				mergedEl = append(mergedEl, wal2[j])
 			}
 			j++
 		} else if j == len(wal2) {
 			// Ignore duplicates (compare with current head of the array
 			if len(mergedEl) == 0 || checkEquality(wal1[i], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, (wal1)[i])
+				mergedEl = append(mergedEl, wal1[i])
 			}
 			i++
 		} else {
@@ -879,7 +927,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 		return false
 	}
 	if a.rawLine != b.rawLine ||
-		a.Note != b.Note ||
+		string(a.Note) != string(b.Note) ||
 		a.IsHidden != b.IsHidden ||
 		a.originUUID != b.originUUID ||
 		a.creationTime != b.creationTime {
@@ -1006,6 +1054,9 @@ func checkWalIntegrity(wal []EventLog) (*ListItem, []*ListItem, error) {
 
 		friends:           make(map[string]map[string]int64),
 		friendsUpdateLock: &sync.RWMutex{},
+
+		processedWalChecksums:    make(map[string]struct{}),
+		processedWalChecksumLock: &sync.Mutex{},
 	}
 
 	// Use the Replay function to generate the linked lists
@@ -1295,16 +1346,16 @@ func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListI
 	return nil
 }
 
-func (r *DBListRepo) setProcessedPartialWals(fileName string) {
-	r.processedPartialWalsLock.Lock()
-	defer r.processedPartialWalsLock.Unlock()
-	r.processedPartialWals[fileName] = struct{}{}
+func (r *DBListRepo) setProcessedWalChecksum(checksum string) {
+	r.processedWalChecksumLock.Lock()
+	defer r.processedWalChecksumLock.Unlock()
+	r.processedWalChecksums[checksum] = struct{}{}
 }
 
-func (r *DBListRepo) isPartialWalProcessed(fileName string) bool {
-	r.processedPartialWalsLock.Lock()
-	defer r.processedPartialWalsLock.Unlock()
-	_, exists := r.processedPartialWals[fileName]
+func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
+	r.processedWalChecksumLock.Lock()
+	defer r.processedWalChecksumLock.Unlock()
+	_, exists := r.processedWalChecksums[checksum]
 	return exists
 }
 
@@ -1337,7 +1388,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 	mergedWal := []EventLog{}
 	for wf, newWals := range newWalMap {
 		for _, newWal := range newWals {
-			if !r.isPartialWalProcessed(newWal) {
+			if !r.isWalChecksumProcessed(newWal) {
 				pr, pw := io.Pipe()
 				go func() {
 					defer pw.Close()
@@ -1347,7 +1398,6 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 					}
 				}()
 
-				// TODO rename buildFromFile
 				// Build new wals
 				newWfWal, err := buildFromFile(pr)
 				if err != nil {
@@ -1359,7 +1409,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 
 				// Add to the processed cache after we've successfully pulled it
 				// TODO strictly we should only set processed once it's successfull merged and displayed to client
-				r.setProcessedPartialWals(newWal)
+				r.setProcessedWalChecksum(newWal)
 			}
 		}
 	}
@@ -1397,7 +1447,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 
 		// Gather origin files
 		mergedWal := []EventLog{}
-		filesToDelete := []string{}
+		filesToDeleteMap := make(map[string]struct{})
 		for _, fileName := range originFiles {
 			pr, pw := io.Pipe()
 			go func() {
@@ -1415,14 +1465,18 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 				continue
 			}
 
-			// We track if there are any unprocessed wals that we gather, as there's no point replaying a full log
-			// (which is costly) if we already have the events locally
-			if !r.isPartialWalProcessed(fileName) {
+			// TODO put this in a less frequented code path, or remove when we're very confident in the merge algo
+			sort.Slice(wal, func(i, j int) bool {
+				return checkEquality(wal[i], wal[j]) == leftEventOlder
+			})
+
+			// There's no point replaying a full log (which is costly) if we already have the events locally
+			if !r.isWalChecksumProcessed(fileName) {
 				localReplayWal = merge(localReplayWal, wal)
 			}
 
 			// Only delete files which were successfully pulled
-			filesToDelete = append(filesToDelete, fileName)
+			filesToDeleteMap[fileName] = struct{}{}
 			mergedWal = merge(mergedWal, wal)
 		}
 
@@ -1446,13 +1500,20 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 		}
 
 		// Flush the gathered Wal
-		if err := r.push(ctx, mergedWal, wf, ""); err != nil {
+		checksum, err := r.push(ctx, mergedWal, wf)
+		if err != nil {
 			log.Fatal(err)
 		}
 
 		// Merge into the full wal (which will be returned at the end of the function)
 		fullMergedWal = merge(fullMergedWal, mergedWal)
 
+		delete(filesToDeleteMap, checksum)
+
+		filesToDelete := make([]string, len(filesToDeleteMap))
+		for f := range filesToDeleteMap {
+			filesToDelete = append(filesToDelete, f)
+		}
 		// Schedule a delete on the files
 		wf.RemoveWals(ctx, filesToDelete)
 	}
@@ -1461,8 +1522,6 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 		// If a push to a non-owned walFile fails, the events will never reach said walFile, as it's the responsible
 		// of the owner's client to gather and merge their own walFiles.
 		// Therefore, on each gather, we push the aggregated log to all non-owned walFiles (filtered for each).
-		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
-
 		r.allWalFileMut.RLock()
 		r.syncWalFileMut.RLock()
 
@@ -1478,7 +1537,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 
 		for _, wf := range nonOwnedWalFiles {
 			go func(wf WalFile) {
-				r.push(ctx, fullMergedWal, wf, randomUUID)
+				r.push(ctx, fullMergedWal, wf)
 			}(wf)
 		}
 	}
@@ -1487,38 +1546,23 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 }
 
 func buildByteWal(el []EventLog) *bytes.Buffer {
-	var compressedBuf bytes.Buffer
+	var outputBuf bytes.Buffer
 
 	// Write the schema ID
-	err := binary.Write(&compressedBuf, binary.LittleEndian, latestWalSchemaID)
-	if err != nil {
+	if err := binary.Write(&outputBuf, binary.LittleEndian, latestWalSchemaID); err != nil {
 		log.Fatal(err)
 	}
 
-	//pr, pw := io.Pipe()
-	var buf bytes.Buffer
-	//enc := gob.NewEncoder(pw)
-
-	// If we have empty/non-null notes, we need to explicitly set them to our empty note
-	// pattern, otherwise gob will treat a ptr to an empty byte array as null when decoding
-	for _, e := range el {
-		if e.Note != nil && len(*e.Note) == 0 {
-			*e.Note = []byte{0}
-		}
-	}
-
-	enc := gob.NewEncoder(&buf)
+	// We need to encode the eventLog separately in order to generate a checksum
+	var elBuf bytes.Buffer
+	enc := gob.NewEncoder(&elBuf)
 	if err := enc.Encode(el); err != nil {
 		log.Fatal(err) // TODO
 	}
 
 	// Then write in the compressed bytes
-	zw := gzip.NewWriter(&compressedBuf)
-	//if _, err := io.Copy(zw, pr); err != nil {
-	//    log.Fatal(err) // TODO
-	//}
-	_, err = zw.Write(buf.Bytes())
-	if err != nil {
+	zw := gzip.NewWriter(&outputBuf)
+	if _, err := zw.Write(elBuf.Bytes()); err != nil {
 		log.Fatal(err)
 	}
 
@@ -1526,7 +1570,7 @@ func buildByteWal(el []EventLog) *bytes.Buffer {
 		log.Fatal(err) // TODO
 	}
 
-	return &compressedBuf
+	return &outputBuf
 }
 
 func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
@@ -1543,48 +1587,46 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			filteredWal = append(filteredWal, e)
 			continue
 		}
-		if _, exists := e.Friends.Emails[walFileOwnerEmail]; exists {
+		if e.emailHasAccess(walFileOwnerEmail) {
 			filteredWal = append(filteredWal, e)
 		}
 	}
 	return filteredWal
 }
 
-func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, randomUUID string) error {
+func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile) (string, error) {
 	// Apply any filtering based on Push match configuration
 	el = r.getMatchedWal(el, wf)
 
 	// Return for empty wals
 	if len(el) == 0 {
-		return nil
+		return "", nil
 	}
 
 	b := buildByteWal(el)
 
-	if randomUUID == "" {
-		randomUUID = fmt.Sprintf("%v%v", r.uuid, generateUUID())
-	}
+	checksum := fmt.Sprintf("%x", md5.Sum(b.Bytes()))
+
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
-	r.setProcessedPartialWals(randomUUID)
-	if err := wf.Flush(ctx, b, randomUUID); err != nil {
-		return err
+	r.setProcessedWalChecksum(checksum)
+	if err := wf.Flush(ctx, b, checksum); err != nil {
+		return checksum, err
 	}
 
-	return nil
+	return checksum, nil
 }
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, el []EventLog) {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
-		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
 		for _, wf := range r.allWalFiles {
 			go func(wf WalFile) {
-				r.push(ctx, el, wf, randomUUID)
+				r.push(ctx, el, wf)
 			}(wf)
 		}
 	}
@@ -1663,7 +1705,7 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 				defer r.allWalFileMut.RUnlock()
 				for _, wf := range r.allWalFiles {
 					if wf != r.LocalWalFile {
-						go func(wf WalFile) { r.push(ctx, r.log, wf, "") }(wf)
+						go func(wf WalFile) { r.push(ctx, r.log, wf) }(wf)
 					}
 				}
 			}()
@@ -1714,11 +1756,11 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 	}
 
 	// Run an initial load from the local walfile
-	//localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
-	//if err != nil {
-	//    return err
-	//}
-	//walChan <- localEl
+	localEl, err := r.pull(ctx, []WalFile{r.LocalWalFile})
+	if err != nil {
+		return err
+	}
+	walChan <- localEl
 
 	// Main sync event loop
 	go func() {
@@ -1941,18 +1983,25 @@ func (r *DBListRepo) finish(purge bool) error {
 	// the local walfile. We can remove any other files to avoid overuse of local storage.
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
-	ctx := context.Background()
 	if !purge {
+		ctx := context.Background()
 		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		filesToDelete := []string{}
+		filesToDeleteMap := make(map[string]struct{})
 		// Ensure we've actually processed the files before we delete them...
 		for _, fileName := range localFiles {
-			if r.isPartialWalProcessed(fileName) {
-				filesToDelete = append(filesToDelete, fileName)
+			if r.isWalChecksumProcessed(fileName) {
+				filesToDeleteMap[fileName] = struct{}{}
 			}
 		}
-		r.push(ctx, r.log, r.LocalWalFile, "")
-		r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		if checksum, err := r.push(ctx, r.log, r.LocalWalFile); err == nil {
+			delete(filesToDeleteMap, checksum)
+			// Only delete files on successful push
+			filesToDelete := make([]string, len(filesToDeleteMap))
+			for f := range filesToDeleteMap {
+				filesToDelete = append(filesToDelete, f)
+			}
+			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		}
 	} else {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()

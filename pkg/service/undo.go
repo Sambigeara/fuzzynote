@@ -6,8 +6,6 @@ import (
 //"os"
 )
 
-type EventType uint16
-
 // oppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
 var oppositeEvent = map[EventType]EventType{
 	AddEvent:      DeleteEvent,

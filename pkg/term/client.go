@@ -228,7 +228,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			collabStyleInc++
 		}
 
-		if r.Note != nil && len(*r.Note) > 0 {
+		if len(r.Note) > 0 {
 			style = style.Underline(true).Bold(true)
 		}
 
@@ -301,11 +301,7 @@ func (t *Terminal) openEditorSession() error {
 
 	defer os.Remove(tmpfile.Name())
 
-	var note []byte
-	if t.c.CurItem.Note != nil {
-		note = *t.c.CurItem.Note
-	}
-	if _, err := tmpfile.Write(note); err != nil {
+	if _, err := tmpfile.Write(t.c.CurItem.Note); err != nil {
 		log.Fatal(err)
 		return err
 	}
@@ -328,7 +324,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", &newDat, t.c.CurY-t.c.ReservedTopLines)
+	err = t.db.Update("", newDat, t.c.CurY-t.c.ReservedTopLines)
 	if err != nil {
 		log.Fatal(err)
 	}

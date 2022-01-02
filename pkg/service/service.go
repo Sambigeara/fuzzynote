@@ -89,8 +89,8 @@ type DBListRepo struct {
 	allWalFileMut  *sync.RWMutex
 	syncWalFileMut *sync.RWMutex
 
-	processedPartialWals     map[string]struct{}
-	processedPartialWalsLock *sync.Mutex
+	processedWalChecksums    map[string]struct{}
+	processedWalChecksumLock *sync.Mutex
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -116,8 +116,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		allWalFileMut:  &sync.RWMutex{},
 		syncWalFileMut: &sync.RWMutex{},
 
-		processedPartialWals:     make(map[string]struct{}),
-		processedPartialWalsLock: &sync.Mutex{},
+		processedWalChecksums:    make(map[string]struct{}),
+		processedWalChecksumLock: &sync.Mutex{},
 
 		friends:           make(map[string]map[string]int64),
 		friendsUpdateLock: &sync.RWMutex{},
@@ -157,7 +157,7 @@ type ListItem struct {
 	// TODO these can all be private now
 	//Line         string
 	rawLine      string
-	Note         *[]byte
+	Note         []byte
 	IsHidden     bool
 	originUUID   uuid
 	creationTime int64
@@ -183,7 +183,7 @@ func (i *ListItem) Friends() []string {
 	// to the client
 	// TODO cache for optimisation?? need to cover updates
 	sortedEmails := []string{}
-	for e := range i.friends.Emails {
+	for _, e := range i.friends.Emails {
 		if e != i.localEmail {
 			sortedEmails = append(sortedEmails, e)
 		}
@@ -202,7 +202,14 @@ func (i *ListItem) Key() string {
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	var err error
 	var item *ListItem
-	r.Root, item, err = r.processEventLog(r.Root, &el)
+
+	// At this point we inspect the Line in the event log for `@friends`, and if they're present and currently
+	// enabled (e.g. in the friends cache), cut them from any central location in the line and append to the end.
+	// This is required for later public client APIs (e.g. we only return a slice of the rawLine to clients via
+	// the Line() API).
+	el = r.repositionActiveFriends(el)
+
+	r.Root, item, err = r.processEventLog(r.Root, el)
 	r.eventsChan <- el
 	r.log = append(r.log, el)
 	return item, err
@@ -210,7 +217,7 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
-func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
+func (r *DBListRepo) Add(line string, note []byte, idx int) (string, error) {
 	// TODO put idx check and retrieval into single helper function
 	if idx < 0 || idx > len(r.matchListItems) {
 		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
@@ -251,7 +258,7 @@ func (r *DBListRepo) Add(line string, note *[]byte, idx int) (string, error) {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note *[]byte, idx int) error {
+func (r *DBListRepo) Update(line string, note []byte, idx int) error {
 	if idx < 0 || idx >= len(r.matchListItems) {
 		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
 	}
