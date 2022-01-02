@@ -556,8 +556,7 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listItem *ListItem) (*ListItem, error) {
 	if len(line) > 0 {
 		listItem.rawLine = line
-		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate (we can only add new emails,
-		// not remove any, due to the processedEventMap mechanism elsewhere)
+		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate
 		mergedEmailMap := make(map[string]struct{})
 		for _, e := range listItem.friends.Emails {
 			mergedEmailMap[e] = struct{}{}
