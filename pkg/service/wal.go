@@ -224,10 +224,12 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
 	f, err := os.Create(fileName)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer f.Close()
-	f.Write(b.Bytes())
+	if _, err := f.Write(b.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -644,7 +646,7 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		if err := enc.Encode(replayLog); err != nil {
 			log.Fatal("Boom")
 		}
-		checksum := md5.Sum(buf.Bytes())
+		checksum := fmt.Sprintf("%x", md5.Sum(buf.Bytes()))
 		if r.isWalChecksumProcessed(checksum) {
 			return nil
 		}
@@ -1342,26 +1344,13 @@ func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListI
 	return nil
 }
 
-func (r *DBListRepo) setProcessedWalName(fileName string) {
-	r.processedWalNameLock.Lock()
-	defer r.processedWalNameLock.Unlock()
-	r.processedWalNames[fileName] = struct{}{}
-}
-
-func (r *DBListRepo) isWalNameProcessed(fileName string) bool {
-	r.processedWalNameLock.Lock()
-	defer r.processedWalNameLock.Unlock()
-	_, exists := r.processedWalNames[fileName]
-	return exists
-}
-
-func (r *DBListRepo) setProcessedWalChecksum(checksum [16]byte) {
+func (r *DBListRepo) setProcessedWalChecksum(checksum string) {
 	r.processedWalChecksumLock.Lock()
 	defer r.processedWalChecksumLock.Unlock()
 	r.processedWalChecksums[checksum] = struct{}{}
 }
 
-func (r *DBListRepo) isWalChecksumProcessed(checksum [16]byte) bool {
+func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
 	r.processedWalChecksumLock.Lock()
 	defer r.processedWalChecksumLock.Unlock()
 	_, exists := r.processedWalChecksums[checksum]
@@ -1397,7 +1386,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 	mergedWal := []EventLog{}
 	for wf, newWals := range newWalMap {
 		for _, newWal := range newWals {
-			if !r.isWalNameProcessed(newWal) {
+			if !r.isWalChecksumProcessed(newWal) {
 				pr, pw := io.Pipe()
 				go func() {
 					defer pw.Close()
@@ -1418,7 +1407,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 
 				// Add to the processed cache after we've successfully pulled it
 				// TODO strictly we should only set processed once it's successfull merged and displayed to client
-				r.setProcessedWalName(newWal)
+				r.setProcessedWalChecksum(newWal)
 			}
 		}
 	}
@@ -1480,7 +1469,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 			})
 
 			// There's no point replaying a full log (which is costly) if we already have the events locally
-			if !r.isWalNameProcessed(fileName) {
+			if !r.isWalChecksumProcessed(fileName) {
 				localReplayWal = merge(localReplayWal, wal)
 			}
 
@@ -1509,7 +1498,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 		}
 
 		// Flush the gathered Wal
-		if err := r.push(ctx, mergedWal, wf, ""); err != nil {
+		if err := r.push(ctx, mergedWal, wf); err != nil {
 			log.Fatal(err)
 		}
 
@@ -1524,8 +1513,6 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 		// If a push to a non-owned walFile fails, the events will never reach said walFile, as it's the responsible
 		// of the owner's client to gather and merge their own walFiles.
 		// Therefore, on each gather, we push the aggregated log to all non-owned walFiles (filtered for each).
-		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
-
 		r.allWalFileMut.RLock()
 		r.syncWalFileMut.RLock()
 
@@ -1541,7 +1528,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 
 		for _, wf := range nonOwnedWalFiles {
 			go func(wf WalFile) {
-				r.push(ctx, fullMergedWal, wf, randomUUID)
+				r.push(ctx, fullMergedWal, wf)
 			}(wf)
 		}
 	}
@@ -1598,7 +1585,7 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	return filteredWal
 }
 
-func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, randomUUID string) error {
+func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile) error {
 	// Apply any filtering based on Push match configuration
 	el = r.getMatchedWal(el, wf)
 
@@ -1609,15 +1596,14 @@ func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, random
 
 	b := buildByteWal(el)
 
-	if randomUUID == "" {
-		randomUUID = fmt.Sprintf("%v%v", r.uuid, generateUUID())
-	}
+	checksum := fmt.Sprintf("%x", md5.Sum(b.Bytes()))
+
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
-	r.setProcessedWalName(randomUUID)
-	if err := wf.Flush(ctx, b, randomUUID); err != nil {
+	r.setProcessedWalChecksum(checksum)
+	if err := wf.Flush(ctx, b, checksum); err != nil {
 		return err
 	}
 
@@ -1627,12 +1613,11 @@ func (r *DBListRepo) push(ctx context.Context, el []EventLog, wf WalFile, random
 func (r *DBListRepo) flushPartialWals(ctx context.Context, el []EventLog) {
 	//log.Print("Flushing...")
 	if len(el) > 0 {
-		randomUUID := fmt.Sprintf("%v%v", r.uuid, generateUUID())
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
 		for _, wf := range r.allWalFiles {
 			go func(wf WalFile) {
-				r.push(ctx, el, wf, randomUUID)
+				r.push(ctx, el, wf)
 			}(wf)
 		}
 	}
@@ -1711,7 +1696,7 @@ func (r *DBListRepo) startSync(ctx context.Context, walChan chan []EventLog) err
 				defer r.allWalFileMut.RUnlock()
 				for _, wf := range r.allWalFiles {
 					if wf != r.LocalWalFile {
-						go func(wf WalFile) { r.push(ctx, r.log, wf, "") }(wf)
+						go func(wf WalFile) { r.push(ctx, r.log, wf) }(wf)
 					}
 				}
 			}()
@@ -1989,18 +1974,28 @@ func (r *DBListRepo) finish(purge bool) error {
 	// the local walfile. We can remove any other files to avoid overuse of local storage.
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
-	ctx := context.Background()
 	if !purge {
-		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		filesToDelete := []string{}
-		// Ensure we've actually processed the files before we delete them...
-		for _, fileName := range localFiles {
-			if r.isWalNameProcessed(fileName) {
-				filesToDelete = append(filesToDelete, fileName)
+		func() {
+			if el := r.getMatchedWal(r.log, r.LocalWalFile); len(el) != 0 {
+				b := buildByteWal(el)
+				checksum := fmt.Sprintf("%x", md5.Sum(b.Bytes()))
+				ctx := context.Background()
+				localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+				filesToDelete := []string{}
+				// Ensure we've actually processed the files before we delete them...
+				for _, fileName := range localFiles {
+					if fileName == checksum {
+						return
+					} else if r.isWalChecksumProcessed(fileName) {
+						filesToDelete = append(filesToDelete, fileName)
+					}
+				}
+				if err := r.push(ctx, r.log, r.LocalWalFile); err == nil {
+					// Only delete files on successful push
+					r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+				}
 			}
-		}
-		r.push(ctx, r.log, r.LocalWalFile, "")
-		r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		}()
 	} else {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()

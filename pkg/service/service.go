@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	//"regexp"
-	"crypto/md5"
 	"sort"
 	"strconv"
 	"sync"
@@ -90,9 +89,7 @@ type DBListRepo struct {
 	allWalFileMut  *sync.RWMutex
 	syncWalFileMut *sync.RWMutex
 
-	processedWalNames        map[string]struct{}
-	processedWalNameLock     *sync.Mutex
-	processedWalChecksums    map[[md5.Size]byte]struct{}
+	processedWalChecksums    map[string]struct{}
 	processedWalChecksumLock *sync.Mutex
 }
 
@@ -119,9 +116,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 		allWalFileMut:  &sync.RWMutex{},
 		syncWalFileMut: &sync.RWMutex{},
 
-		processedWalNames:        make(map[string]struct{}),
-		processedWalNameLock:     &sync.Mutex{},
-		processedWalChecksums:    make(map[[md5.Size]byte]struct{}),
+		processedWalChecksums:    make(map[string]struct{}),
 		processedWalChecksumLock: &sync.Mutex{},
 
 		friends:           make(map[string]map[string]int64),
