@@ -26,7 +26,8 @@ func (r *DBListRepo) Start(client Client) error {
 		}()
 	}
 
-	walChan := make(chan []EventLog)
+	replayChan := make(chan []EventLog)
+	compactChan := make(chan []EventLog)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
@@ -37,8 +38,22 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			select {
-			case partialWal := <-walChan:
-				if err := r.Replay(partialWal); err != nil {
+			case wal := <-compactChan:
+				// merge in any events added between the wal being added to compactChan and now
+				wal = merge(wal, r.log)
+				wal, _ = compact(wal)
+				// r.log will contain the uncompressed log, and r.Replay attempts to merge the new
+				// wal with r.log (which will render the compaction pointless, as we just merge the
+				// full log back in), therefore set the eventlog to a new empty one.
+				// This is acceptable given that mutations to r.log only occur within this thread
+				r.log = []EventLog{}
+				if err := r.Replay(wal); err != nil {
+					errChan <- err
+					return
+				}
+				scheduleRefresh()
+			case wal := <-replayChan:
+				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
 				}
@@ -66,8 +81,8 @@ func (r *DBListRepo) Start(client Client) error {
 
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
-	// This is run after the goroutine above is triggered to ensure a thread is consuming from walChan
-	err := r.startSync(ctx, walChan)
+	// This is run after the goroutine above is triggered to ensure a thread is consuming from replayChan
+	err := r.startSync(ctx, replayChan, compactChan)
 	if err != nil {
 		return err
 	}

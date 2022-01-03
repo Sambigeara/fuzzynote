@@ -156,10 +156,17 @@ func (wf *s3WalFile) RemoveWals(ctx context.Context, fileNames []string) error {
 
 func (wf *s3WalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUUID string) error {
 	fileName := fmt.Sprintf(path.Join(wf.GetRoot(), walFilePattern), randomUUID)
+	// IMPORTANT we need to take a copy here, because passing the bytes.Buffer as the Body io.Reader in
+	// UploadInput means that the buffer is emptied on read.
+	// In `gather`, we pass a single Buffer pointer to numerous `push` calls for efficiency - if this
+	// s3 method is called before other walFile Flush calls, the buffer will be empty
+	// TODO think about a less risky implementation of this...
+	bCopy := *b
 	_, err := wf.uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(wf.bucket),
 		Key:    aws.String(fileName),
-		Body:   b,
+		//Body:   b,
+		Body: &bCopy,
 	})
 	if err != nil {
 		//exitErrorf("Unable to upload %q to %q, %v", fileName, wf.bucket, err)
