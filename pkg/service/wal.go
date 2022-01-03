@@ -1590,14 +1590,23 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 	return checksum, nil
 }
 
-func (r *DBListRepo) flushPartialWals(ctx context.Context, el []EventLog) {
+func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog) {
 	//log.Print("Flushing...")
-	if len(el) > 0 {
+	if len(wal) > 0 {
+		fullByteWal, err := buildByteWal(wal)
+		if err != nil {
+			return
+		}
+
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
 		for _, wf := range r.allWalFiles {
+			var byteWal *bytes.Buffer
+			if _, isOwned := r.syncWalFiles[wf.GetUUID()]; isOwned {
+				byteWal = fullByteWal
+			}
 			go func(wf WalFile) {
-				r.push(ctx, wf, el, nil)
+				r.push(ctx, wf, wal, byteWal)
 			}(wf)
 		}
 	}
@@ -1642,10 +1651,11 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 	//pushAggregateWindowChan := make(chan struct{}, 1)
 	//pushTriggerChan := make(chan struct{})
 	pushTriggerTimer := time.NewTimer(time.Second * 0)
-	gatherTriggerTimer := time.NewTimer(time.Second * 0)
-	// Drain the initial timers, we want to wait for initial user input
+	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
+	// Drain the initial push timer, we want to wait for initial user input
+	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
+	// dropped in to the root directory, etc) are flushed
 	<-pushTriggerTimer.C
-	<-gatherTriggerTimer.C
 
 	webPingTicker := time.NewTicker(webPingInterval)
 	webRefreshTicker := time.NewTicker(webRefreshInterval)
@@ -1653,40 +1663,6 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 	webRefreshTicker.Reset(0)
 
 	websocketPushEvents := make(chan websocketMessage)
-
-	// Schedule push to all non-local walFiles
-	// This is required for flushing new files that have been manually dropped into local root, and to cover other odd cases.
-	// We block until the web connection is established (or skipped) on initial start, to ensure logs are propagated to all
-	// required remotes.
-	hasRunInitialSync := false
-	triggerInitialSync := func() {
-		if hasRunInitialSync {
-			return
-		}
-		// Because we `gather` on close, for most scenarios, we only need to do this if there are > 1 wal files locally.
-		// NOTE: this obviously won't work when dropping a single wal file into a fresh root directory, but this is
-		// heading into edge cases of edge cases so won't worry about it for now
-		localFileNames, err := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		if err != nil {
-			log.Fatal(err)
-		}
-		if len(localFileNames) > 1 {
-			func() {
-				// TODO can optimise by generating and passive bytewal to owned/sync walfiles
-				r.allWalFileMut.RLock()
-				defer r.allWalFileMut.RUnlock()
-				for _, wf := range r.allWalFiles {
-					if wf != r.LocalWalFile {
-						go func(wf WalFile) { r.push(ctx, wf, r.log, nil) }(wf)
-					}
-				}
-			}()
-		}
-		hasRunInitialSync = true
-
-		// Do an initial remote update to ensure any offline changes are immediately synced to the cloud
-		r.emitRemoteUpdate()
-	}
 
 	scheduleSync := func(afterSeconds int) {
 		// Attempt to put onto the channel, else pass
@@ -1697,7 +1673,6 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 		case syncTriggerChan <- struct{}{}:
 		default:
 		}
-		triggerInitialSync()
 	}
 	schedulePush := func() {
 		//select {
