@@ -12,6 +12,7 @@ import (
 	"github.com/ardanlabs/conf"
 
 	"github.com/sambigeara/fuzzynote/pkg/prompt"
+	"github.com/sambigeara/fuzzynote/pkg/s3"
 	"github.com/sambigeara/fuzzynote/pkg/service"
 	"github.com/sambigeara/fuzzynote/pkg/term"
 )
@@ -146,11 +147,11 @@ func main() {
 		cfg.GatherFrequencyMs,
 	)
 
-	s3Remotes := service.GetS3Config(cfg.Root)
+	s3Remotes := s3.GetS3Config(cfg.Root)
 	for _, r := range s3Remotes {
 		// centralise this logic across different remote types when relevant
 		// TODO gracefully deal with missing config
-		s3FileWal := service.NewS3WalFile(r, cfg.Root)
+		s3FileWal := s3.NewS3WalFile(r, cfg.Root)
 		listRepo.AddWalFile(s3FileWal, true)
 	}
 
