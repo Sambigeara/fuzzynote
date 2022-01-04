@@ -6,16 +6,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"strings"
 
-	"gopkg.in/yaml.v2"
 	"nhooyr.io/websocket"
-)
-
-const (
-	configFileName = "config.yml"
 )
 
 type Web struct {
@@ -30,40 +23,9 @@ func NewWeb(webTokens WebTokenStore) *Web {
 	}
 }
 
-type S3Remote struct {
-	Key    string
-	Secret string
-	Bucket string
-	Prefix string
-}
-
 type WebRemote struct {
 	Emails       []string
 	DTLastChange int64
-}
-
-// Remotes represent a single remote Wal target (rather than a type), and the config lists
-// all within a single configuration (listed by category)
-type Remotes struct {
-	S3 []S3Remote
-}
-
-func GetS3Config(root string) []S3Remote {
-	cfgFile := path.Join(root, configFileName)
-	f, err := os.Open(cfgFile)
-
-	r := Remotes{}
-	if err == nil {
-		decoder := yaml.NewDecoder(f)
-		err = decoder.Decode(&r)
-		if err != nil {
-			//log.Fatalf("main : Parsing File Config : %v", err)
-			// TODO handle with appropriate error message
-			return r.S3
-		}
-		defer f.Close()
-	}
-	return r.S3
 }
 
 // PostRemote is responsible for both additions and deletions

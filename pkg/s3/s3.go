@@ -1,9 +1,10 @@
-package service
+package s3
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"io"
 	"log"
 	"os"
@@ -17,6 +18,40 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
+
+const (
+	configFileName = "config.yml"
+	walFilePattern = "wal_%v.db" // TODO dedup, as is in service package
+)
+
+type S3Remote struct {
+	Key    string
+	Secret string
+	Bucket string
+	Prefix string
+}
+
+type Remotes struct {
+	S3 []S3Remote
+}
+
+func GetS3Config(root string) []S3Remote {
+	cfgFile := path.Join(root, configFileName)
+	f, err := os.Open(cfgFile)
+
+	r := Remotes{}
+	if err == nil {
+		decoder := yaml.NewDecoder(f)
+		err = decoder.Decode(&r)
+		if err != nil {
+			//log.Fatalf("main : Parsing File Config : %v", err)
+			// TODO handle with appropriate error message
+			return r.S3
+		}
+		defer f.Close()
+	}
+	return r.S3
+}
 
 type s3WalFile struct {
 	svc          *s3.S3

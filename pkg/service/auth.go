@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 
-	cognito "github.com/aws/aws-sdk-go/service/cognitoidentityprovider"
 	"gopkg.in/yaml.v2"
 )
 
@@ -82,6 +81,11 @@ func (wt *FileWebTokenStore) Flush() {
 	f.Write(b)
 }
 
+type authenticationResultType struct {
+	IdToken      *string `type:"string" sensitive:"true"`
+	RefreshToken *string `type:"string" sensitive:"true"`
+}
+
 func Authenticate(wt WebTokenStore, args map[string]string) error {
 	body, err := json.Marshal(args)
 	if err != nil {
@@ -105,7 +109,7 @@ func Authenticate(wt WebTokenStore, args map[string]string) error {
 		return err
 	}
 
-	var authResult cognito.AuthenticationResultType
+	var authResult authenticationResultType
 	if err := json.Unmarshal(bodyBytes, &authResult); err != nil {
 		return err
 	}
