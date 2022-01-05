@@ -3,9 +3,9 @@ package service
 import (
 	"errors"
 	"fmt"
-	//"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -148,7 +148,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 }
 
 func (r *DBListRepo) setEmail(email string) {
-	r.email = email
+	r.email = strings.ToLower(email)
 	r.friends[email] = make(map[string]int64)
 }
 
