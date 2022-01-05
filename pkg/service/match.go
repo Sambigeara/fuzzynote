@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 )
@@ -61,7 +60,7 @@ func GetNewLinePrefix(search [][]rune) string {
 	}
 	newString := ""
 	if len(searchStrings) > 0 {
-		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+		newString = strings.Join(searchStrings, " ") + " "
 	}
 	return newString
 }

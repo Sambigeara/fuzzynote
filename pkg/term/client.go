@@ -266,7 +266,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.c.Search) > 0 && len(t.c.Search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.c.Search))
+			newLinePrefixPrompt := "Enter: Create new line with search prefix: \"" + service.GetNewLinePrefix(t.c.Search) + "\""
 			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
 		} else {
 			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrompt)
@@ -314,7 +314,7 @@ func (t *Terminal) openEditorSession() error {
 	if err != nil {
 		// For now, show a warning and return
 		// TODO make more robust
-		//t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
+		//t.footerMessage = "Unable to open Note using editor setting : \"" + t.Editor + "\""
 	}
 
 	// Read back from the temp file, and return to the write function

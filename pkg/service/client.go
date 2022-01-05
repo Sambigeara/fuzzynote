@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"log"
 	"os/exec"
 	"runtime"
@@ -16,7 +15,6 @@ const (
 	emptySearchLinePrompt = "Search here..."
 	searchGroupPrompt     = "TAB: Create new search group"
 	newLinePrompt         = "Enter: Create new line"
-	collabEmailPattern    = " @%s"
 )
 
 // ClientBase ...
@@ -206,7 +204,7 @@ func MatchFirstURL(line string, ensureScheme bool) string {
 		rxRelaxed := xurls.Relaxed()
 		if match = rxRelaxed.FindString(line); match != "" {
 			if ensureScheme {
-				match = fmt.Sprintf("http://%s", match)
+				match = "http://" + match
 			}
 		}
 	}
@@ -290,7 +288,7 @@ func getHiddenLinePrefix(keys [][]rune) string {
 	_, nChars := GetMatchPattern(key) // TODO can be private function now in same service
 	trimmedKey := string(key[nChars:])
 
-	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
+	shortenedPrefix := strings.TrimSpace(strings.ToLower(trimmedKey)) + " "
 
 	return shortenedPrefix
 }
@@ -399,8 +397,8 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			// for collaboration purposes)
 			// TODO do the email-in check better
 			if t.db.email != "" {
-				ownerPattern := fmt.Sprintf(collabEmailPattern, t.db.email)
-				newString = fmt.Sprintf("%s%s", newString, ownerPattern)
+				ownerPattern := " @" + t.db.email
+				newString = newString + ownerPattern
 			}
 			itemKey, err = t.db.Add(newString, nil, relativeY)
 			if err != nil {

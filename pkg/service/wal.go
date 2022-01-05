@@ -1322,7 +1322,7 @@ func generatePlainTextFile(matchItems []ListItem) error {
 	}
 	defer f.Close()
 	for _, i := range matchItems {
-		if _, err := f.Write([]byte(fmt.Sprintf("%s\n", i.rawLine))); err != nil {
+		if _, err := f.Write([]byte(i.rawLine + "\n")); err != nil {
 			return err
 		}
 	}
@@ -1360,7 +1360,6 @@ func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListI
 	}
 
 	b, _ := buildByteWal(wal)
-	//viewName := fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), viewFilePattern), time.Now().UnixNano())
 	viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
 	r.LocalWalFile.Flush(ctx, b, viewName)
 	log.Fatalf("N list generated events: %d", len(wal))
@@ -1389,8 +1388,8 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 		wg.Add(1)
 		go func(wf WalFile) {
 			defer wg.Done()
-			filePathPattern := path.Join(wf.GetRoot(), walFilePattern)
-			newWals, err := wf.GetMatchingWals(ctx, fmt.Sprintf(filePathPattern, "*"))
+			filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
+			newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
 			if err != nil {
 				//log.Fatal(err)
 				return
