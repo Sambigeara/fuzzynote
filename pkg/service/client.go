@@ -267,7 +267,7 @@ func insertCharInPlace(line []rune, offset int, newChars []rune) []rune {
 	return line
 }
 
-func parseOperatorGroups(sub string) string {
+func ParseOperatorGroups(sub string) string {
 	// Match the op against any known operator (e.g. date) and parse if applicable.
 	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
 	now := time.Now()
@@ -674,7 +674,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				// We want to insert a char into the current search group then update in place
 				newGroup = insertCharInPlace(newGroup, charOffset, ev.R)
 				oldLen := len(string(newGroup))
-				parsedGroup := parseOperatorGroups(string(newGroup))
+				parsedGroup := ParseOperatorGroups(string(newGroup))
 				t.Search[grpIdx] = []rune(parsedGroup)
 				posDiff[0] += len(parsedGroup) - oldLen
 			} else {
@@ -691,7 +691,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				newLine = insertCharInPlace(newLine, offsetX, ev.R)
 			}
 			oldLen := len(newLine)
-			parsedNewLine := parseOperatorGroups(string(newLine))
+			parsedNewLine := ParseOperatorGroups(string(newLine))
 			err = t.db.Update(parsedNewLine, nil, relativeY-t.ReservedTopLines)
 			if err != nil {
 				log.Fatal(err)
@@ -705,23 +705,17 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			if len(t.Search) > 0 {
 				grpIdx, _ := t.GetSearchGroupIdxAndOffset()
 				oldLen := len(string(t.Search[grpIdx]))
-				parsedGroup := parseOperatorGroups(string(ev.R))
-				t.Search[grpIdx] = []rune(parsedGroup)
-				posDiff[0] += len(parsedGroup) - oldLen
+				t.Search[grpIdx] = ev.R
+				posDiff[0] += len(ev.R) - oldLen
 			} else {
 				t.Search = append(t.Search, ev.R)
 			}
 		} else {
 			oldLen := len([]rune(curItem.rawLine))
-			// Add in the hidden match prefix
-			//parsedNewLine := parseOperatorGroups(string(ev.R))
-			parsedNewLine := parseOperatorGroups(string(ev.R)) + strings.TrimPrefix(curItem.rawLine, curItem.Line())
 			// The rune slice received will only have the line, and not the appended
 			// friends (the client has no knowledge of the collaborators being stored
-			// within the rawLine). Therefore, we need to append then back
-			//if friends := curItem.Friends(); len(friends) > 0 {
-			//    parsedNewLine += " " + strings.Join(friends, " ")
-			//}
+			// within the rawLine). These are appended in the TrimPrefix call below.
+			parsedNewLine := ParseOperatorGroups(string(ev.R)) + strings.TrimPrefix(curItem.rawLine, curItem.Line())
 			err = t.db.Update(parsedNewLine, nil, relativeY-t.ReservedTopLines)
 			if err != nil {
 				log.Fatal(err)
