@@ -727,8 +727,12 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 	// Adjust with any explicit moves
 	matchIdx = Min(matchIdx+posDiff[1], len(t.matches)-1)
 	// Set itemKey to the client's current curItem
-	if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
-		itemKey = t.matches[matchIdx].Key()
+	if !t.useClientSearch {
+		if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
+			itemKey = t.matches[matchIdx].Key()
+		}
+	} else if curItem != nil {
+		itemKey = curItem.Key()
 	}
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
