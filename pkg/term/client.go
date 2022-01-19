@@ -54,7 +54,7 @@ func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
 	w, h := s.Size()
 	t := Terminal{
 		db:     db,
-		c:      service.NewClientBase(db, w, h),
+		c:      service.NewClientBase(db, w, h, false),
 		S:      s,
 		style:  defStyle,
 		colour: colour,
@@ -324,7 +324,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", newDat, t.c.CurY-t.c.ReservedTopLines)
+	err = t.db.Update("", newDat, t.c.CurItem)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -417,6 +417,10 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 			//t.footerMessage = ""
 		}
 		t.previousKey = ev.Key()
+	}
+
+	if t.c.CurItem != nil {
+		interactionEvent.Key = t.c.CurItem.Key()
 	}
 
 	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, 0)

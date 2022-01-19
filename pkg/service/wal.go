@@ -943,7 +943,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	return true
 }
 
-func checkListItemPtrs(listItem *ListItem, matchItems []*ListItem) error {
+func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
 	if listItem == nil {
 		return nil
 	}
@@ -962,8 +962,7 @@ func checkListItemPtrs(listItem *ListItem, matchItems []*ListItem) error {
 			return fmt.Errorf("list integrity error: listItem %s child ptr does not point to the expected item", listItem.Key())
 		}
 
-		//if !areListItemsEqual(listItem, matchItems[i], false) {
-		if listItem != matchItems[i] {
+		if !areListItemsEqual(listItem, &matchItems[i], false) {
 			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.Key())
 		}
 
@@ -1037,7 +1036,7 @@ func writePlainWalToFile(wal []EventLog) {
 	}
 }
 
-func checkWalIntegrity(wal []EventLog) (*ListItem, []*ListItem, error) {
+func checkWalIntegrity(wal []EventLog) (*ListItem, []ListItem, error) {
 	// Generate a test repo and use it to generate a match set, then inspect the health
 	// of said match set.
 	testRepo := DBListRepo{
@@ -1071,7 +1070,7 @@ func checkWalIntegrity(wal []EventLog) (*ListItem, []*ListItem, error) {
 	// This isn't ideal as it's not completely consistent with what's returned to the client, but it's a reasonable check
 	// for now (and I intend on centralising the logic anyway so we don't maintain two versions of state).
 	// TODO, remove this comment when logic is centralised
-	_, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
+	matchListItems, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
 	if err != nil {
 		return nil, nil, errors.New("failed to generate match items for list integrity check")
 	}
@@ -1080,19 +1079,19 @@ func checkWalIntegrity(wal []EventLog) (*ListItem, []*ListItem, error) {
 	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
 	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
 	// This has since been fixed, but to catch other potential cases, we run this check.
-	if err := checkListItemPtrs(testRepo.Root, testRepo.matchListItems); err != nil {
-		return nil, testRepo.matchListItems, err
+	if err := checkListItemPtrs(testRepo.Root, matchListItems); err != nil {
+		return nil, matchListItems, err
 	}
 
-	return testRepo.Root, testRepo.matchListItems, nil
+	return testRepo.Root, matchListItems, nil
 }
 
 // recoverWal is responsible for recovering Wals that are very broken, in a variety of ways.
 // It collects as much metadata about each item as it can, from both the existing broken wal and the returned
 // match set, and then uses it to rebuild a fresh wal, maintaining as much of the original state as possible -
 // specifically with regards to DTs and ordering.
-func recoverWal(wal []EventLog, matches []*ListItem) []EventLog {
-	acknowledgedItems := make(map[string]*ListItem)
+func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
+	acknowledgedItems := make(map[string]ListItem)
 	listOrder := []string{}
 
 	// Iterate over the match items and add all to the map
@@ -1116,7 +1115,7 @@ func recoverWal(wal []EventLog, matches []*ListItem) []EventLog {
 			fallthrough
 		case UpdateEvent:
 			if !exists {
-				item = &ListItem{
+				item = ListItem{
 					rawLine:      e.Line,
 					Note:         e.Note,
 					originUUID:   e.UUID,

@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,9 +54,9 @@ type Client interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root           *ListItem
-	eventLogger    *DbEventLogger
-	matchListItems []*ListItem
+	Root        *ListItem
+	eventLogger *DbEventLogger
+	matchListItems map[string]*ListItem
 
 	// Wal stuff
 	uuid              uuid
@@ -217,21 +216,16 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
-func (r *DBListRepo) Add(line string, note []byte, idx int) (string, error) {
-	// TODO put idx check and retrieval into single helper function
-	if idx < 0 || idx > len(r.matchListItems) {
-		return "", fmt.Errorf("ListItem idx out of bounds: %v", idx)
-	}
-
-	childCreationTime := int64(0)
+func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
 	// In order to be able to resolve child node from the tracker mapping, we need UUIDs to be consistent
 	// Therefore, whenever we reference a child, we need to set the originUUID to be consistent
+	childCreationTime := int64(0)
 	childUUID := uuid(0)
-	if idx > 0 {
-		childItem := r.matchListItems[idx-1]
+	if childItem != nil {
 		childCreationTime = childItem.creationTime
 		childUUID = childItem.originUUID
 	}
+
 	// TODO ideally we'd use the same unixtime for log creation and the listItem creation time for Add()
 	// We can't for now because other invocations of addEventLog rely on the passed in (pre-existing)
 	// listItem.creationTime
@@ -258,12 +252,7 @@ func (r *DBListRepo) Add(line string, note []byte, idx int) (string, error) {
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note []byte, idx int) error {
-	if idx < 0 || idx >= len(r.matchListItems) {
-		return fmt.Errorf("ListItem idx out of bounds: %v", idx)
-	}
-
-	listItem := r.matchListItems[idx]
+func (r *DBListRepo) Update(line string, note []byte, listItem *ListItem) error {
 	childCreationTime := int64(0)
 	childUUID := uuid(0)
 	if listItem.child != nil {
@@ -299,13 +288,7 @@ func (r *DBListRepo) Update(line string, note []byte, idx int) error {
 }
 
 // Delete will remove an existing ListItem
-func (r *DBListRepo) Delete(idx int) (string, error) {
-	if idx < 0 || idx >= len(r.matchListItems) {
-		return "", errors.New("ListItem idx out of bounds")
-	}
-
-	listItem := r.matchListItems[idx]
-
+func (r *DBListRepo) Delete(listItem *ListItem) (string, error) {
 	var targetCreationTime int64
 	var targetUUID uuid
 	if listItem.child != nil {
@@ -344,13 +327,7 @@ func (r *DBListRepo) Delete(idx int) (string, error) {
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveUp(idx int) error {
-	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
-	}
-
-	listItem := r.matchListItems[idx]
-
+func (r *DBListRepo) MoveUp(listItem *ListItem) error {
 	var targetCreationTime int64
 	var targetUUID uuid
 	if listItem.matchChild != nil {
@@ -389,13 +366,7 @@ func (r *DBListRepo) MoveUp(idx int) error {
 
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
-func (r *DBListRepo) MoveDown(idx int) error {
-	if idx < 0 || idx >= len(r.matchListItems) {
-		return errors.New("ListItem idx out of bounds")
-	}
-
-	listItem := r.matchListItems[idx]
-
+func (r *DBListRepo) MoveDown(listItem *ListItem) error {
 	var targetCreationTime int64
 	var targetUUID uuid
 	if listItem.matchParent != nil {
@@ -435,13 +406,7 @@ func (r *DBListRepo) MoveDown(idx int) error {
 }
 
 // ToggleVisibility will toggle an item to be visible or invisible
-func (r *DBListRepo) ToggleVisibility(idx int) (string, error) {
-	if idx < 0 || idx >= len(r.matchListItems) {
-		return "", errors.New("ListItem idx out of bounds")
-	}
-
-	listItem := r.matchListItems[idx]
-
+func (r *DBListRepo) ToggleVisibility(listItem *ListItem) (string, error) {
 	var evType, oppEvType EventType
 	var itemKey string
 	if listItem.IsHidden {
@@ -525,7 +490,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	cur := r.Root
 	var lastCur *ListItem
 
-	r.matchListItems = []*ListItem{}
+	r.matchListItems = make(map[string]*ListItem)
 
 	newPos := -1
 	if cur == nil {
@@ -577,7 +542,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 				// Pagination: only add to results set if we've surpassed the min boundary of the page,
 				// otherwise only increment `idx`.
 				if idx >= offset {
-					r.matchListItems = append(r.matchListItems, cur)
+					r.matchListItems[cur.Key()] = cur
 
 					// ListItems stored in the `res` slice are copies, and therefore will not reflect the
 					// matchChild/matchParent setting below. This doesn't reflect normal function as we only
