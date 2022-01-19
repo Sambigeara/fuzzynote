@@ -336,7 +336,12 @@ func (t *ClientBase) GetUnsearchedFriends(friends []string) []string {
 }
 
 // TODO rename "t"
-func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListItem, bool, error) {
+func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, showHidden bool, limit int) ([]ListItem, bool, error) {
+	// the terminal client passes t.Search and t.ShowHidden as the search argument, so nothing changes, however other clients (who don't
+	// rely on backend search state) can override them on each iteration of HandleInteraction
+	t.Search = search
+	t.ShowHidden = showHidden
+
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
 	// itemKey represents the unique identifying key for the ListItem. We set it explicitly only

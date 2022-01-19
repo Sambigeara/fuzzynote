@@ -419,12 +419,9 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 		t.previousKey = ev.Key()
 	}
 
-	matches, cont, err := t.c.HandleInteraction(interactionEvent, 0)
+	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, 0)
 	if err != nil {
-		return cont, false, err
-	}
-	if !cont {
-		return false, false, nil
+		return false, false, err
 	}
 
 	t.paint(matches, false)
