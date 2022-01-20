@@ -571,6 +571,14 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	}
 }
 
+func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {
+	itemPtr, exists := r.listItemTracker[key]
+	if exists {
+		return *itemPtr, true
+	}
+	return ListItem{}, false
+}
+
 func (r *DBListRepo) EmitCursorMoveEvent(key string) {
 	r.localCursorMoveChan <- cursorMoveEvent{
 		listItemKey:  key,

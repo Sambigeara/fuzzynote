@@ -339,7 +339,7 @@ func (t *ClientBase) GetUnsearchedFriends(friends []string) []string {
 }
 
 // TODO rename "t"
-func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, showHidden bool, limit int) ([]ListItem, bool, error) {
+func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, showHidden bool, bypassRefresh bool, limit int) ([]ListItem, bool, error) {
 	// the terminal client passes t.Search and t.ShowHidden as the search argument, so nothing changes, however other clients (who don't
 	// rely on backend search state) can override them on each iteration of HandleInteraction
 	t.Search = search
@@ -721,7 +721,10 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 		}
 		posDiff[0] += len([]rune(parsedNewLine)) - oldLen
 	}
-	//t.previousKey = ev.T
+
+	if bypassRefresh {
+		return []ListItem{}, true, nil
+	}
 
 	t.HiddenMatchPrefix = getHiddenLinePrefix(t.Search)
 

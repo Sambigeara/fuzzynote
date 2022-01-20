@@ -423,7 +423,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 		interactionEvent.Key = t.c.CurItem.Key()
 	}
 
-	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, 0)
+	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, false, 0)
 	if err != nil {
 		return false, false, err
 	}
