@@ -506,10 +506,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	// 3. which calls this function, which then emits an event
 	// 4. trigger stage 1 on remote...
 	if curKey != r.previousListItemKey && r.web.isActive && r.web.wsConn != nil {
-		r.localCursorMoveChan <- cursorMoveEvent{
-			listItemKey:  curKey,
-			unixNanoTime: time.Now().UnixNano(),
-		}
+		r.EmitCursorMoveEvent(curKey)
 	}
 
 	r.previousListItemKey = curKey
@@ -574,12 +571,25 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	}
 }
 
+func (r *DBListRepo) EmitCursorMoveEvent(key string) {
+	r.localCursorMoveChan <- cursorMoveEvent{
+		listItemKey:  key,
+		unixNanoTime: time.Now().UnixNano(),
+	}
+}
+
 func (r *DBListRepo) GetListItemNote(key string) []byte {
 	var note []byte
 	if item, exists := r.matchListItems[key]; exists {
 		note = item.Note
 	}
 	return note
+}
+
+func (r *DBListRepo) SaveListItemNote(key string, note []byte) {
+	if item, exists := r.matchListItems[key]; exists {
+		item.Note = note
+	}
 }
 
 // GetCollabPositions returns a map of listItemKeys against all collaborators currently on that listItem
