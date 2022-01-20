@@ -54,8 +54,8 @@ type Client interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root        *ListItem
-	eventLogger *DbEventLogger
+	Root           *ListItem
+	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
 	// Wal stuff
@@ -572,6 +572,14 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		}
 		cur = cur.parent
 	}
+}
+
+func (r *DBListRepo) GetListItemNote(key string) []byte {
+	var note []byte
+	if item, exists := r.matchListItems[key]; exists {
+		note = item.Note
+	}
+	return note
 }
 
 // GetCollabPositions returns a map of listItemKeys against all collaborators currently on that listItem
