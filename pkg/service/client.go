@@ -645,7 +645,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			}
 		}
 	case KeyMoveItemUp:
-		if relativeY > t.ReservedTopLines-1 {
+		if t.useClientSearch || relativeY > t.ReservedTopLines-1 {
 			// Move the current item up and follow with cursor
 			if err = t.db.MoveUp(curItem); err != nil {
 				log.Fatal(err)
@@ -654,7 +654,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			itemKey = curItem.Key()
 		}
 	case KeyMoveItemDown:
-		if relativeY > t.ReservedTopLines-1 {
+		if t.useClientSearch || relativeY > t.ReservedTopLines-1 {
 			// Move the current item down and follow with cursor
 			if err = t.db.MoveDown(curItem); err != nil {
 				log.Fatal(err)
