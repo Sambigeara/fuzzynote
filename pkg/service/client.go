@@ -30,7 +30,7 @@ type ClientBase struct {
 	VertOffset                            int // The index of the first displayed item in the match set
 	HorizOffset                           int // The index of the first displayed char in the curItem
 	ShowHidden                            bool
-	SelectedItems                         map[int]ListItem
+	SelectedItems                         map[string]ListItem
 	copiedItem                            *ListItem
 	HiddenMatchPrefix                     string // The common string that we want to truncate from each line
 	useClientSearch                       bool
@@ -44,7 +44,7 @@ func NewClientBase(db *DBListRepo, maxWidth int, maxHeight int, useClientSearch 
 		db:                  db,
 		W:                   maxWidth,
 		H:                   maxHeight,
-		SelectedItems:       make(map[int]ListItem),
+		SelectedItems:       make(map[string]ListItem),
 		ReservedTopLines:    1,
 		ReservedBottomLines: 2,
 		useClientSearch:     useClientSearch,
@@ -110,7 +110,7 @@ func getMapIntersection(a map[string]struct{}, b map[string]struct{}) map[string
 	return intersect
 }
 
-func GetCommonSearchPrefixAndFriends(selectedItems map[int]ListItem) [][]rune {
+func GetCommonSearchPrefixAndFriends(selectedItems map[string]ListItem) [][]rune {
 	searchGroups := [][]rune{}
 	if len(selectedItems) == 0 {
 		return searchGroups
@@ -373,7 +373,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 	switch ev.T {
 	case KeyEscape:
 		if len(t.SelectedItems) > 0 {
-			t.SelectedItems = make(map[int]ListItem)
+			t.SelectedItems = make(map[string]ListItem)
 		} else {
 			t.VertOffset = 0
 			relativeY = 0
@@ -384,7 +384,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			if newSearch := GetCommonSearchPrefixAndFriends(t.SelectedItems); len(newSearch) > 0 {
 				t.Search = newSearch
 			}
-			t.SelectedItems = make(map[int]ListItem)
+			t.SelectedItems = make(map[string]ListItem)
 			t.CurY = 0
 			if len(t.Search) > 0 {
 				posDiff[0] += len(t.Search[0])
@@ -527,12 +527,14 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			posDiff[1]++
 		}
 	case KeySelect:
-		if relativeY != t.ReservedTopLines-1 {
+		if t.useClientSearch || relativeY != t.ReservedTopLines-1 {
 			// If exists, clear, otherwise set
-			if _, ok := t.SelectedItems[relativeY-t.ReservedTopLines]; ok {
-				delete(t.SelectedItems, relativeY-t.ReservedTopLines)
-			} else {
-				t.SelectedItems[relativeY-t.ReservedTopLines] = t.matches[relativeY-t.ReservedTopLines]
+			if curItem != nil {
+				if _, ok := t.SelectedItems[curItem.Key()]; ok {
+					delete(t.SelectedItems, curItem.Key())
+				} else {
+					t.SelectedItems[curItem.Key()] = *curItem
+				}
 			}
 		}
 	case KeyAddSearchGroup:

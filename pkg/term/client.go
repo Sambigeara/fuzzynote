@@ -212,7 +212,7 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		lineCollabers := collabMap[r.Key()]
 
 		// Mutually exclusive style triggers
-		if _, ok := t.c.SelectedItems[i]; ok {
+		if _, ok := t.c.SelectedItems[matches[i].Key()]; ok {
 			// Currently selected with Ctrl-S
 			// By default, we reverse the colourscheme for "dark" settings, so undo the
 			// reversal, to reverse again...
