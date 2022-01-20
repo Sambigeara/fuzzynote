@@ -1737,7 +1737,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 						log.Fatal(err)
 					}
 					compactInc++
-					c = compactChan
+					c = replayChan
+					//c = compactChan
 				}
 
 				// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
