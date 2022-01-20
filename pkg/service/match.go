@@ -31,10 +31,10 @@ const (
 	closeOp rune = '}'
 )
 
-type matchPattern int
+type MatchPattern int
 
 const (
-	FullMatchPattern matchPattern = iota
+	FullMatchPattern MatchPattern = iota
 	InverseMatchPattern
 	FuzzyMatchPattern
 	NoMatchPattern
@@ -59,9 +59,9 @@ func GetNewLinePrefix(search [][]rune) string {
 	return newString
 }
 
-// GetMatchPattern will return the matchPattern of a given string, if any, plus the number
+// GetMatchPattern will return the MatchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
-func GetMatchPattern(sub []rune) (matchPattern, int) {
+func GetMatchPattern(sub []rune) (MatchPattern, int) {
 	if len(sub) == 0 {
 		return NoMatchPattern, 0
 	}
@@ -75,7 +75,7 @@ func GetMatchPattern(sub []rune) (matchPattern, int) {
 }
 
 // If a matching group starts with `=` do a substring match, otherwise do a fuzzy search
-func isMatch(sub []rune, full string, pattern matchPattern) bool {
+func isMatch(sub []rune, full string, pattern MatchPattern) bool {
 	if len(sub) == 0 {
 		return true
 	}

@@ -530,7 +530,16 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
 				pattern, nChars := GetMatchPattern(group)
-				if !isMatch(group[nChars:], cur.rawLine, pattern) {
+
+				// Rather than use rawLine (which houses the client local email too, which we _dont_ want to
+				// match on), we generate a new line for the match func
+				var sb strings.Builder
+				sb.WriteString(cur.Line())
+				for _, f := range cur.Friends() {
+					sb.WriteString(" @")
+					sb.WriteString(f)
+				}
+				if !isMatch(group[nChars:], sb.String(), pattern) {
 					matched = false
 					break
 				}
