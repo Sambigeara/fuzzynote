@@ -58,6 +58,8 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
+	stopChan chan struct{}
+
 	// Wal stuff
 	uuid              uuid
 	log               []EventLog // log represents a fresh set of events (unique from the historical log below)
@@ -97,6 +99,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, syncF
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
+
+		stopChan: make(chan struct{}),
 
 		// Wal stuff
 		uuid:              generateUUID(),

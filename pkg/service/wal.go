@@ -1588,24 +1588,34 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 	return checksum, nil
 }
 
-func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog) {
+func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
 	//log.Print("Flushing...")
 	if len(wal) > 0 {
 		fullByteWal, err := buildByteWal(wal)
 		if err != nil {
 			return
 		}
-
+		var wg sync.WaitGroup
 		r.allWalFileMut.RLock()
 		defer r.allWalFileMut.RUnlock()
 		for _, wf := range r.allWalFiles {
+			if waitForCompletion {
+				wg.Add(1)
+			}
 			var byteWal *bytes.Buffer
 			if _, isOwned := r.syncWalFiles[wf.GetUUID()]; isOwned {
 				byteWal = fullByteWal
 			}
 			go func(wf WalFile) {
+				if waitForCompletion {
+					defer wg.Done()
+				}
 				r.push(ctx, wf, wal, byteWal)
 			}(wf)
+		}
+		if waitForCompletion {
+			wg.Wait()
+			os.Exit(0)
 		}
 	}
 }
@@ -1911,13 +1921,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 			case <-pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				r.flushPartialWals(ctx, el)
+				r.flushPartialWals(ctx, el, false)
 				el = []EventLog{}
 			case <-ctx.Done():
 				// TODO create a separate timeout here? This is the only case where we don't want the parent
 				// context cancellation to cancel the inflight flush
 				// TODO ensure completion of this operation before completing?? maybe bring back in the stop chan
-				r.flushPartialWals(context.Background(), el)
+				r.flushPartialWals(context.Background(), el, true)
+				go func() {
+					r.stopChan <- struct{}{}
+				}()
 				return
 			}
 		}
@@ -1947,6 +1960,7 @@ func (r *DBListRepo) finish(purge bool) error {
 		}
 		r.LocalWalFile.RemoveWals(ctx, filesToDelete)
 	} else {
+		<-r.stopChan
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
 	}
