@@ -351,7 +351,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 	// when creating new ListItems via the Add interface, so we can tell the backend what our
 	// current item is when asking for Matches (and adjusting for cursor offsets due to live collab)
 	// If itemKey is empty by the time we reach the Match call, we offset any movement against our
-	// existing match set (e.g. for Move*) and then default to matchedItem.Key()
+	// existing match set (e.g. for Move*) and then default to matchedItem.key
 	itemKey := ""
 
 	// relativeY accounts for any hidden lines at the top, which is required for match indexing
@@ -530,10 +530,10 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 		if t.useClientSearch || relativeY != t.ReservedTopLines-1 {
 			// If exists, clear, otherwise set
 			if curItem != nil {
-				if _, ok := t.SelectedItems[curItem.Key()]; ok {
-					delete(t.SelectedItems, curItem.Key())
+				if _, ok := t.SelectedItems[curItem.key]; ok {
+					delete(t.SelectedItems, curItem.key)
 				} else {
-					t.SelectedItems[curItem.Key()] = *curItem
+					t.SelectedItems[curItem.key] = *curItem
 				}
 			}
 		}
@@ -653,7 +653,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = curItem.Key()
+			itemKey = curItem.key
 		}
 	case KeyMoveItemDown:
 		if t.useClientSearch || relativeY > t.ReservedTopLines-1 {
@@ -662,7 +662,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = curItem.Key()
+			itemKey = curItem.key
 		}
 	case KeyCursorDown:
 		posDiff[1]++
@@ -734,10 +734,10 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 	// Set itemKey to the client's current curItem
 	if !t.useClientSearch {
 		if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
-			itemKey = t.matches[matchIdx].Key()
+			itemKey = t.matches[matchIdx].key
 		}
 	} else if curItem != nil {
-		itemKey = curItem.Key()
+		itemKey = curItem.key
 	}
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
