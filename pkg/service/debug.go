@@ -7,6 +7,17 @@ import (
 	"path"
 )
 
+var eventNameMap = map[EventType]string{
+	NullEvent:     "NullEvent",
+	AddEvent:      "AddEvent",
+	UpdateEvent:   "UpdateEvent",
+	MoveUpEvent:   "MoveUpEvent",
+	MoveDownEvent: "MoveDownEvent",
+	ShowEvent:     "ShowEvent",
+	HideEvent:     "HideEvent",
+	DeleteEvent:   "DeleteEvent",
+}
+
 // DebugWriteEventsToFile is used for debug purposes. It prints all events for the given uuid/lamportTimestamp
 // combination to file, for inspection
 func (r *DBListRepo) DebugWriteEventsToFile(filename string, key string) {
@@ -20,7 +31,7 @@ func (r *DBListRepo) DebugWriteEventsToFile(filename string, key string) {
 
 	for _, e := range el {
 		if e.ListItemKey == key {
-			f.WriteString(fmt.Sprintf("%v\n", e))
+			f.WriteString(fmt.Sprintf("[%s] [%s] [%s] [%v]\n", eventNameMap[e.EventType], e.key(), e.Line, e.Friends.Emails))
 		}
 	}
 }
