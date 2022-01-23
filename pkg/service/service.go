@@ -42,7 +42,7 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
-	lamportTimestamp                   int64
+	currentLamportTimestamp            int64
 	listItemTracker                    map[string]*ListItem
 	processedEventLogCache             map[string]struct{}
 	listItemProcessedEventLogTypeCache map[EventType]map[string]EventLog
@@ -198,10 +198,10 @@ func (i *ListItem) Key() string {
 }
 
 func (r *DBListRepo) newEventLog(t EventType) EventLog {
-	r.lamportTimestamp++
+	r.currentLamportTimestamp++
 	return EventLog{
 		UUID:             r.uuid,
-		LamportTimestamp: r.lamportTimestamp,
+		LamportTimestamp: r.currentLamportTimestamp,
 		EventType:        t,
 	}
 }
@@ -398,8 +398,8 @@ func (r *DBListRepo) Undo() (string, error) {
 		e := ue.oppEvent
 
 		// TODO centralise
-		r.lamportTimestamp++
-		e.LamportTimestamp = r.lamportTimestamp
+		r.currentLamportTimestamp++
+		e.LamportTimestamp = r.currentLamportTimestamp
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx--
@@ -415,8 +415,8 @@ func (r *DBListRepo) Redo() (string, error) {
 		e := ue.event
 
 		// TODO centralise
-		r.lamportTimestamp++
-		e.LamportTimestamp = r.lamportTimestamp
+		r.currentLamportTimestamp++
+		e.LamportTimestamp = r.currentLamportTimestamp
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx++
