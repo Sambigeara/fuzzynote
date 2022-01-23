@@ -32,7 +32,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 5
+const latestWalSchemaID uint16 = 6
 
 // sync intervals
 const (
@@ -79,27 +79,6 @@ const (
 	DeleteEvent
 )
 
-type LineFriends struct {
-	IsProcessed bool
-	Offset      int
-	Emails      []string
-	emailsMap   map[string]struct{}
-}
-
-type EventLog struct {
-	UUID                       uuid
-	TargetUUID                 uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	UnixNanoTime               int64
-	EventType                  EventType
-	Line                       string // TODO This represents the raw (un-friends-processed) line
-	Note                       []byte
-	Friends                    LineFriends
-	key                        string
-	targetKey                  string
-}
-
 type LineFriendsSchema4 struct {
 	IsProcessed bool
 	Offset      int
@@ -107,27 +86,57 @@ type LineFriendsSchema4 struct {
 }
 
 type EventLogSchema4 struct {
-	UUID                       uuid
-	TargetUUID                 uuid
+	UUID, TargetUUID           uuid
 	ListItemCreationTime       int64
 	TargetListItemCreationTime int64
 	UnixNanoTime               int64
 	EventType                  EventType
-	Line                       string // TODO This represents the raw (un-friends-processed) line
+	Line                       string
 	Note                       []byte
 	Friends                    LineFriendsSchema4
-	key                        string
-	targetKey                  string
+	key, targetKey             string
 }
 
-func (e *EventLog) getKeys() (string, string) {
-	if e.key == "" {
-		e.key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
+type LineFriends struct {
+	IsProcessed bool
+	Offset      int
+	Emails      []string
+	emailsMap   map[string]struct{}
+}
+
+type EventLogSchema5 struct {
+	UUID, TargetUUID           uuid
+	ListItemCreationTime       int64
+	TargetListItemCreationTime int64
+	UnixNanoTime               int64
+	EventType                  EventType
+	Line                       string
+	Note                       []byte
+	Friends                    LineFriends
+	key, targetKey             string
+}
+
+type EventLog struct {
+	UUID                           uuid
+	LamportTimestamp               int64
+	EventType                      EventType
+	ListItemKey, TargetListItemKey string
+	Line                           string
+	Note                           []byte
+	Friends                        LineFriends
+	cachedKey                      string
+
+	// This is a legacy field required for migrations from walSchemaVersionID <= 5
+	// See `Update` handling on nil items in processEventLog for notes, and schema
+	// migrations in buildFromFile for further ref.
+	listItemCreationTime int64
+}
+
+func (e *EventLog) key() string {
+	if e.cachedKey == "" {
+		e.cachedKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
 	}
-	if e.targetKey == "" {
-		e.targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
-	}
-	return e.key, e.targetKey
+	return e.cachedKey
 }
 
 func (e *EventLog) emailHasAccess(email string) bool {
@@ -400,8 +409,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 		return
 	}
 
-	key, _ := e.getKeys()
-
 	// We now iterate over each friend in the two slices and compare to the cached friends on DBListRepo.
 	// If the friend doesn't exist, or the timestamp is more recent than the cached counterpart, we update.
 	// We do this on a per-listItem basis to account for duplicate lines.
@@ -419,8 +426,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				r.friends[friendToAdd] = friendItems
 			}
 
-			if dtLastChange, exists := friendItems[key]; !exists || e.UnixNanoTime > dtLastChange {
-				r.friends[friendToAdd][key] = e.UnixNanoTime
+			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.LamportTimestamp > dtLastChange {
+				r.friends[friendToAdd][e.ListItemKey] = e.LamportTimestamp
 				// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 				r.AddWalFile(
 					&WebWalFile{
@@ -436,8 +443,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
 			if friendItems, friendExists := r.friends[friendToRemove]; friendExists {
-				if dtLastChange, exists := friendItems[key]; exists && e.UnixNanoTime > dtLastChange {
-					delete(r.friends[friendToRemove], key)
+				if dtLastChange, exists := friendItems[e.ListItemKey]; exists && e.LamportTimestamp > dtLastChange {
+					delete(r.friends[friendToRemove], e.ListItemKey)
 					if len(r.friends[friendToRemove]) == 0 {
 						delete(r.friends, friendToRemove)
 						r.DeleteWalFile(friendToRemove)
@@ -445,23 +452,57 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				}
 			}
 		}
-		if (friendToAdd != "" || friendToRemove != "") && r.friendsMostRecentChangeDT < e.UnixNanoTime {
-			r.friendsMostRecentChangeDT = e.UnixNanoTime
+		if (friendToAdd != "" || friendToRemove != "") && r.friendsMostRecentChangeDT < e.LamportTimestamp {
+			r.friendsMostRecentChangeDT = e.LamportTimestamp
 		}
 	}()
 }
 
-func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *ListItem, error) {
-	key, targetKey := e.getKeys()
-	item := r.listItemTracker[key]
-	targetItem := r.listItemTracker[targetKey]
+func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
+	item := r.listItemTracker[e.ListItemKey]
+	targetItem := r.listItemTracker[e.TargetListItemKey]
+
+	// Skip any events that have already been processed
+	if _, exists := r.processedEventLogCache[e.key()]; exists {
+		return item, nil
+	}
+	r.processedEventLogCache[e.key()] = struct{}{}
+
+	// Else, skip any event of equal EventType that is <= the most recently processed for a given ListItem
+	// TODO storing a whole EventLog might be expensive, use a specific/reduced type in the nested map
+	if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[e.EventType]; exists {
+		if ce, exists := eventTypeCache[e.ListItemKey]; exists {
+			switch checkEquality(ce, e) {
+			// if the new event is older or equal, skip
+			case rightEventOlder, eventsEqual:
+				return item, nil
+			}
+		}
+	} else {
+		r.listItemProcessedEventLogTypeCache[e.EventType] = make(map[string]EventLog)
+	}
+	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
+
+	if r.lamportTimestamp <= e.LamportTimestamp {
+		r.lamportTimestamp = e.LamportTimestamp + 1
+	}
+
+	// We need to maintain records of deleted items in the cache, but if deleted, want to assign nil ptrs
+	// in the various funcs below, so set to nil
+	if item != nil && item.isDeleted {
+		item = nil
+	}
+	if targetItem != nil && targetItem.isDeleted {
+		targetItem = nil
+	}
 
 	// When we're calling this function on initial WAL merge and load, we may come across
 	// orphaned items. There MIGHT be a valid case to keep events around if the EventType
 	// is Update. Item will obviously never exist for Add. For all other eventTypes,
 	// we should just skip the event and return
+	// TODO remove this AddEvent nil item passthrough
 	if item == nil && e.EventType != AddEvent && e.EventType != UpdateEvent {
-		return root, item, nil
+		return item, nil
 	}
 
 	r.generateFriendChangeEvents(e, item)
@@ -476,13 +517,10 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 			// this case by doing a dumb "if Add on existing item, change to Update". We need to run two updates, as
 			// Note and Line updates are individual operations.
 			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
-			if e.Note != nil {
-				item, err = r.update(e.Line, e.Friends, e.Note, item)
-			}
-			item, err = r.update(e.Line, e.Friends, nil, item)
+			err = r.update(item, e.Line, e.Friends, e.Note)
+			err = r.update(item, "", e.Friends, e.Note)
 		} else {
-			root, item, err = r.add(root, e.ListItemCreationTime, e.Line, e.Friends, e.Note, targetItem, e.UUID)
-			r.listItemTracker[key] = item
+			item, err = r.add(e.UUID, e.LamportTimestamp, e.Line, e.Friends, e.Note, targetItem)
 		}
 	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
@@ -496,52 +534,64 @@ func (r *DBListRepo) processEventLog(root *ListItem, e EventLog) (*ListItem, *Li
 		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
 		// becomes tricky to deal with child IDs
 		if item != nil {
-			item, err = r.update(e.Line, e.Friends, e.Note, item)
+			err = r.update(item, e.Line, e.Friends, e.Note)
 		} else {
-			addEl := e
-			addEl.EventType = AddEvent
-			root, item, err = r.processEventLog(root, addEl)
+			if e.listItemCreationTime == 0 {
+				// EventLogs created at walSchemaVersionID > 5
+				item, err = r.add(e.UUID, e.LamportTimestamp, e.Line, e.Friends, e.Note, targetItem)
+			} else {
+				// EventLogs created at walSchemaVersionID <= 5. We need to use listItemCreationTime because
+				// the event is of type Update, and therefore listItemCreationTime and LamportTimestamp won't
+				// have been made consistent (see the migration for schema v5 in buildFromFile)
+				// TODO this should be handled at migration, but that's proving to be quite tricky. The issue
+				// lies in the fact that we can't infer whether or not an Update will be used for an Add at point
+				// of loading from a file, and therefore cannot reset the LamportTimestamp accordingly (as we do
+				// for Add events migration from v5 and below)
+				item, err = r.add(e.UUID, e.listItemCreationTime, e.Line, e.Friends, e.Note, targetItem)
+			}
 		}
-	case DeleteEvent:
-		root, err = r.del(root, item)
-		delete(r.listItemTracker, key)
 	case MoveDownEvent:
 		if targetItem == nil {
-			return root, item, nil
+			return item, nil
 		}
 		fallthrough
 	case MoveUpEvent:
-		root, item, err = r.move(root, item, targetItem)
-		// Need to override the listItemTracker to ensure pointers are correct
-		r.listItemTracker[key] = item
+		item, err = r.move(item, targetItem)
 	case ShowEvent:
 		err = r.setVisibility(item, true)
 	case HideEvent:
 		err = r.setVisibility(item, false)
+	case DeleteEvent:
+		err = r.del(item)
 	}
-	return root, item, err
+
+	if item != nil {
+		r.listItemTracker[e.ListItemKey] = item
+	}
+
+	return item, err
 }
 
-func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friends LineFriends, note []byte, childItem *ListItem, uuid uuid) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) add(uuid uuid, lamportTimestamp int64, line string, friends LineFriends, note []byte, childItem *ListItem) (*ListItem, error) {
 	newItem := &ListItem{
-		originUUID:   uuid,
-		creationTime: creationTime,
-		child:        childItem,
-		rawLine:      line,
-		Note:         note,
-		friends:      friends,
-		localEmail:   r.email,
+		originUUID:       uuid,
+		lamportTimestamp: lamportTimestamp,
+		child:            childItem,
+		rawLine:          line,
+		Note:             note,
+		friends:          friends,
+		localEmail:       r.email,
 	}
 
 	// If `child` is nil, it's the first item in the list so set as root and return
 	if childItem == nil {
-		oldRoot := root
-		root = newItem
+		oldRoot := r.Root
+		r.Root = newItem
 		if oldRoot != nil {
 			newItem.parent = oldRoot
 			oldRoot.child = newItem
 		}
-		return root, newItem, nil
+		return newItem, nil
 	}
 
 	if childItem.parent != nil {
@@ -550,22 +600,22 @@ func (r *DBListRepo) add(root *ListItem, creationTime int64, line string, friend
 	}
 	childItem.parent = newItem
 
-	return root, newItem, nil
+	return newItem, nil
 }
 
-func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) update(item *ListItem, line string, friends LineFriends, note []byte) error {
 	if len(line) > 0 {
-		listItem.rawLine = line
-		// listItem.friends.emails is a map, which we only ever want to OR with to aggregate
+		item.rawLine = line
+		// item.friends.emails is a map, which we only ever want to OR with to aggregate
 		mergedEmailMap := make(map[string]struct{})
-		for _, e := range listItem.friends.Emails {
+		for _, e := range item.friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
 		for _, e := range friends.Emails {
 			mergedEmailMap[e] = struct{}{}
 		}
-		listItem.friends.IsProcessed = friends.IsProcessed
-		listItem.friends.Offset = friends.Offset
+		item.friends.IsProcessed = friends.IsProcessed
+		item.friends.Offset = friends.Offset
 		emails := []string{}
 		for e := range mergedEmailMap {
 			if e != r.email {
@@ -573,37 +623,43 @@ func (r *DBListRepo) update(line string, friends LineFriends, note []byte, listI
 			}
 		}
 		sort.Strings(emails)
-		listItem.friends.Emails = emails
+		item.friends.Emails = emails
 	} else {
-		listItem.Note = note
+		item.Note = note
 	}
-	return listItem, nil
+
+	// Just in case an Update occurs on a Deleted item (distributed race conditions)
+	item.isDeleted = false
+
+	return nil
 }
 
-func (r *DBListRepo) del(root *ListItem, item *ListItem) (*ListItem, error) {
+func (r *DBListRepo) del(item *ListItem) error {
+	item.isDeleted = true
+
 	if item.child != nil {
 		item.child.parent = item.parent
 	} else {
 		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		root = item.parent
+		r.Root = item.parent
 	}
 
 	if item.parent != nil {
 		item.parent.child = item.child
 	}
 
-	return root, nil
+	return nil
 }
 
-func (r *DBListRepo) move(root *ListItem, item *ListItem, childItem *ListItem) (*ListItem, *ListItem, error) {
+func (r *DBListRepo) move(item *ListItem, childItem *ListItem) (*ListItem, error) {
 	var err error
-	root, err = r.del(root, item)
+	err = r.del(item)
 	isHidden := item.IsHidden
-	root, item, err = r.add(root, item.creationTime, item.rawLine, item.friends, item.Note, childItem, item.originUUID)
+	item, err = r.add(item.originUUID, item.lamportTimestamp, item.rawLine, item.friends, item.Note, childItem)
 	if isHidden {
 		r.setVisibility(item, false)
 	}
-	return root, item, err
+	return item, err
 }
 
 func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
@@ -619,66 +675,12 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		return nil
 	}
 
-	fullMerge := true
-	// Establish whether or not the oldest event of the partialWal is newer than the most
-	// recent of the existing (and therefore already processed) wal.
-	// If all events in the partialWal are newer, we can avoid the full merge, and r.Root
-	// reset, which is a significant optimisation.
-	// This needs to be done pre-merge.
-	if len(r.log) > 0 && checkEquality(r.log[len(r.log)-1], partialWal[0]) == leftEventOlder {
-		fullMerge = false
+	for _, e := range partialWal {
+		r.processEventLog(e)
 	}
 
 	r.log = merge(r.log, partialWal)
 
-	var replayLog []EventLog
-	var root *ListItem
-	if fullMerge {
-		replayLog = r.log
-
-		// If doing a full merge, we generate checksum and check against the processedWalChecksums cache - if
-		// the wal has already been processed, there's no need to replay the events, so we can return early to
-		// avoid unnecessary work
-		var buf bytes.Buffer
-		enc := gob.NewEncoder(&buf)
-		if err := enc.Encode(replayLog); err != nil {
-			log.Fatal("Boom")
-		}
-		checksum := fmt.Sprintf("%x", md5.Sum(buf.Bytes()))
-		if r.isWalChecksumProcessed(checksum) {
-			return nil
-		}
-		r.setProcessedWalChecksum(checksum)
-
-		// Clear the listItemTracker for all full Replays
-		// This map is also used by the main service interface CRUD endpoints, but we can
-		// clear it here because both the CRUD ops and these Replays run in the same loop,
-		// so we won't get any contention.
-		r.listItemTracker = make(map[string]*ListItem)
-
-		// The same goes for the `friends` cache.
-		// The cache is populated by traversing through the list of events sequentially, so the state
-		// of the cache at any point is representative of the intent at _that_ point. Therefore, we reset
-		// it on full replays to ensure that events are only triggered for the intended state at the time.
-		r.friendsUpdateLock.Lock()
-		r.friends = make(map[string]map[string]int64)
-		// TODO dedup
-		if r.email != "" {
-			r.friends[r.email] = make(map[string]int64)
-		}
-		r.friendsUpdateLock.Unlock()
-	} else {
-		replayLog = partialWal
-		root = r.Root
-	}
-
-	for _, e := range replayLog {
-		// We need to pass a fresh null root and leave the old r.Root intact for the function
-		// caller logic
-		root, _, _ = r.processEventLog(root, e)
-	}
-
-	r.Root = root
 	return nil
 }
 
@@ -687,30 +689,30 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 
 	switch schemaVersionID {
 	case 3:
-		item := walItemSchema2{}
-		err := binary.Read(r, binary.LittleEndian, &item)
+		wi := walItemSchema2{}
+		err := binary.Read(r, binary.LittleEndian, &wi)
 		if err != nil {
 			return nil, err
 		}
-		el.ListItemCreationTime = item.ListItemCreationTime
-		el.TargetListItemCreationTime = item.TargetListItemCreationTime
-		el.UnixNanoTime = item.EventTime
-		el.UUID = item.UUID
-		el.TargetUUID = item.TargetUUID
-		el.EventType = item.EventType
 
-		line := make([]byte, item.LineLength)
+		el.UUID = wi.UUID
+		el.EventType = wi.EventType
+		el.ListItemKey = strconv.Itoa(int(wi.UUID)) + ":" + strconv.Itoa(int(wi.ListItemCreationTime))
+		el.TargetListItemKey = strconv.Itoa(int(wi.TargetUUID)) + ":" + strconv.Itoa(int(wi.TargetListItemCreationTime))
+		el.LamportTimestamp = wi.EventTime
+
+		line := make([]byte, wi.LineLength)
 		err = binary.Read(r, binary.LittleEndian, &line)
 		if err != nil {
 			return nil, err
 		}
 		el.Line = string(line)
 
-		if item.NoteExists {
+		if wi.NoteExists {
 			el.Note = []byte{}
 		}
-		if item.NoteLength > 0 {
-			note := make([]byte, item.NoteLength)
+		if wi.NoteLength > 0 {
+			note := make([]byte, wi.NoteLength)
 			err = binary.Read(r, binary.LittleEndian, &note)
 			if err != nil {
 				return nil, err
@@ -721,6 +723,19 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 		return nil, errors.New("unrecognised wal schema version")
 	}
 	return &el, nil
+}
+
+func getOldEventLogKeys(i interface{}) (string, string) {
+	var key, targetKey string
+	switch e := i.(type) {
+	case EventLogSchema4:
+		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
+		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
+	case EventLogSchema5:
+		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
+		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
+	}
+	return key, targetKey
 }
 
 func buildFromFile(raw io.Reader) ([]EventLog, error) {
@@ -742,7 +757,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			if _, err := io.Copy(pw, raw); err != nil {
 				errChan <- err
 			}
-		case 3, 4, 5:
+		default:
 			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
 			// prior to passing it to the loop below
 			zr, err := gzip.NewReader(raw)
@@ -794,20 +809,32 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			return el, err
 		}
 		for _, oe := range oel {
+			// For Add events, in schema <= 5, the EventLog.UnixNanoTime was stupidly created separately
+			// from the ListItem.creationTime, and therefore could be inconsistent. Schema 6 unifies this
+			// (lamport) timestamp, so the timestamp portion of the ListItemKey and `LamportTimestamp`
+			// will be consistent. However, for consistency when loading from these older schemas, for Add
+			// events ONLY, we set the LamportTimestamp to the oe.ListItemCreationTime. For all others, we
+			// set to UnixNanoTime as expected.
+			lamportTimestamp := oe.UnixNanoTime
+			if oe.EventType == AddEvent {
+				lamportTimestamp = oe.ListItemCreationTime
+			}
+
+			key, targetKey := getOldEventLogKeys(oe)
 			e := EventLog{
-				UUID:                       oe.UUID,
-				TargetUUID:                 oe.TargetUUID,
-				ListItemCreationTime:       oe.ListItemCreationTime,
-				TargetListItemCreationTime: oe.TargetListItemCreationTime,
-				UnixNanoTime:               oe.UnixNanoTime,
-				EventType:                  oe.EventType,
-				Line:                       oe.Line,
-				Note:                       oe.Note,
+				UUID:              oe.UUID,
+				ListItemKey:       key,
+				TargetListItemKey: targetKey,
+				LamportTimestamp:  lamportTimestamp,
+				EventType:         oe.EventType,
+				Line:              oe.Line,
+				Note:              oe.Note,
 				Friends: LineFriends{
 					IsProcessed: oe.Friends.IsProcessed,
 					Offset:      oe.Friends.Offset,
 					emailsMap:   oe.Friends.Emails,
 				},
+				listItemCreationTime: oe.ListItemCreationTime,
 			}
 			for f := range oe.Friends.Emails {
 				e.Friends.Emails = append(e.Friends.Emails, f)
@@ -816,6 +843,41 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			el = append(el, e)
 		}
 	case 5:
+		var oel []EventLogSchema5
+		dec := gob.NewDecoder(pr)
+		if err := dec.Decode(&oel); err != nil {
+			return el, err
+		}
+		if err := <-errChan; err != nil {
+			return el, err
+		}
+		for _, oe := range oel {
+			// For Add events, in schema <= 5, the EventLog.UnixNanoTime was stupidly created separately
+			// from the ListItem.creationTime, and therefore could be inconsistent. Schema 6 unifies this
+			// (lamport) timestamp, so the timestamp portion of the ListItemKey and `LamportTimestamp`
+			// will be consistent. However, for consistency when loading from these older schemas, for Add
+			// events ONLY, we set the LamportTimestamp to the oe.ListItemCreationTime. For all others, we
+			// set to UnixNanoTime as expected.
+			lamportTimestamp := oe.UnixNanoTime
+			if oe.EventType == AddEvent {
+				lamportTimestamp = oe.ListItemCreationTime
+			}
+
+			key, targetKey := getOldEventLogKeys(oe)
+			e := EventLog{
+				UUID:                 oe.UUID,
+				ListItemKey:          key,
+				TargetListItemKey:    targetKey,
+				LamportTimestamp:     lamportTimestamp,
+				EventType:            oe.EventType,
+				Line:                 oe.Line,
+				Note:                 oe.Note,
+				Friends:              oe.Friends,
+				listItemCreationTime: oe.ListItemCreationTime,
+			}
+			el = append(el, e)
+		}
+	case 6:
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
@@ -835,13 +897,11 @@ const (
 )
 
 func checkEquality(event1 EventLog, event2 EventLog) int {
-	if event1.UnixNanoTime < event2.UnixNanoTime ||
-		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID < event2.UUID ||
-		event1.UnixNanoTime == event2.UnixNanoTime && event1.UUID == event2.UUID && event1.EventType < event2.EventType {
+	if event1.LamportTimestamp < event2.LamportTimestamp ||
+		event1.LamportTimestamp == event2.LamportTimestamp && event1.UUID < event2.UUID {
 		return leftEventOlder
-	} else if event2.UnixNanoTime < event1.UnixNanoTime ||
-		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID < event1.UUID ||
-		event2.UnixNanoTime == event1.UnixNanoTime && event2.UUID == event1.UUID && event2.EventType < event1.EventType {
+	} else if event2.LamportTimestamp < event1.LamportTimestamp ||
+		event2.LamportTimestamp == event1.LamportTimestamp && event2.UUID < event1.UUID {
 		return rightEventOlder
 	}
 	return eventsEqual
@@ -931,7 +991,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 		string(a.Note) != string(b.Note) ||
 		a.IsHidden != b.IsHidden ||
 		a.originUUID != b.originUUID ||
-		a.creationTime != b.creationTime {
+		a.lamportTimestamp != b.lamportTimestamp {
 		return false
 	}
 	if checkPointers {
@@ -1092,7 +1152,7 @@ func checkWalIntegrity(wal []EventLog) (*ListItem, []ListItem, error) {
 // It collects as much metadata about each item as it can, from both the existing broken wal and the returned
 // match set, and then uses it to rebuild a fresh wal, maintaining as much of the original state as possible -
 // specifically with regards to DTs and ordering.
-func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
+func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	acknowledgedItems := make(map[string]ListItem)
 	listOrder := []string{}
 
@@ -1110,20 +1170,19 @@ func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	// then from the map (although any subsequent updates will put them back in)
 	// This cleanup will also dedup Add events if there are cases with duplicates.
 	for _, e := range wal {
-		key, _ := e.getKeys()
-		item, exists := acknowledgedItems[key]
+		item, exists := acknowledgedItems[e.ListItemKey]
 		switch e.EventType {
 		case AddEvent:
 			fallthrough
 		case UpdateEvent:
 			if !exists {
 				item = ListItem{
-					rawLine:      e.Line,
-					Note:         e.Note,
-					originUUID:   e.UUID,
-					creationTime: e.ListItemCreationTime,
+					rawLine:          e.Line,
+					Note:             e.Note,
+					originUUID:       e.UUID,
+					lamportTimestamp: e.LamportTimestamp,
 				}
-				if key != item.Key() {
+				if e.ListItemKey != item.Key() {
 					log.Fatal("ListItem key mismatch during recovery")
 				}
 			} else {
@@ -1139,19 +1198,19 @@ func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 					}
 				}
 			}
-			acknowledgedItems[key] = item
+			acknowledgedItems[e.ListItemKey] = item
 		case HideEvent:
 			if exists {
 				item.IsHidden = true
-				acknowledgedItems[key] = item
+				acknowledgedItems[e.ListItemKey] = item
 			}
 		case ShowEvent:
 			if exists {
 				item.IsHidden = false
-				acknowledgedItems[key] = item
+				acknowledgedItems[e.ListItemKey] = item
 			}
 		case DeleteEvent:
-			delete(acknowledgedItems, key)
+			delete(acknowledgedItems, e.ListItemKey)
 		}
 	}
 
@@ -1161,21 +1220,22 @@ func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	for i := len(listOrder) - 1; i >= 0; i-- {
 		item := acknowledgedItems[listOrder[i]]
 		el := EventLog{
-			EventType:            AddEvent,
-			UUID:                 item.originUUID,
-			UnixNanoTime:         item.creationTime, // Use original creation time
-			ListItemCreationTime: item.creationTime,
-			Line:                 item.rawLine,
-			Note:                 item.Note,
+			EventType:        AddEvent,
+			UUID:             item.originUUID,
+			LamportTimestamp: item.lamportTimestamp,
+			ListItemKey:      item.Key(),
+			Line:             item.rawLine,
+			Note:             item.Note,
 		}
 		newWal = append(newWal, el)
 
 		if item.IsHidden {
+			r.lamportTimestamp++
 			el := EventLog{
-				EventType:            HideEvent,
-				UUID:                 item.originUUID,
-				UnixNanoTime:         time.Now().UnixNano(),
-				ListItemCreationTime: item.creationTime,
+				EventType:        HideEvent,
+				UUID:             item.originUUID,
+				LamportTimestamp: r.lamportTimestamp,
+				ListItemKey:      item.Key(),
 			}
 			newWal = append(newWal, el)
 		}
@@ -1184,7 +1244,14 @@ func recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	return newWal
 }
 
-func compact(wal []EventLog) ([]EventLog, error) {
+func reorderWal(wal []EventLog) []EventLog {
+	sort.Slice(wal, func(i, j int) bool {
+		return checkEquality(wal[i], wal[j]) == leftEventOlder
+	})
+	return wal
+}
+
+func (r *DBListRepo) compact(wal []EventLog) ([]EventLog, error) {
 	if len(wal) == 0 {
 		return []EventLog{}, nil
 	}
@@ -1200,7 +1267,7 @@ func compact(wal []EventLog) ([]EventLog, error) {
 	testRootA, matchItemsA, err := checkWalIntegrity(wal)
 	if err != nil {
 		// If we get here, shit's on fire. This function is the equivalent of the fire brigade.
-		wal = recoverWal(wal, matchItemsA)
+		wal = r.recoverWal(wal, matchItemsA)
 		testRootA, _, err = checkWalIntegrity(wal)
 		if err != nil {
 			log.Fatal("wal recovery failed!")
@@ -1227,7 +1294,6 @@ func compact(wal []EventLog) ([]EventLog, error) {
 	compactedWal := []EventLog{}
 	for i := len(wal) - 1; i >= 0; i-- {
 		e := wal[i]
-		key, _ := e.getKeys()
 
 		// TODO figure out how to reintegrate full purge of deleted events, whilst guaranteeing consistent
 		// state of ListItems. OR purge everything older than X days, so ordering doesn't matter cos users
@@ -1235,9 +1301,9 @@ func compact(wal []EventLog) ([]EventLog, error) {
 		// Add DeleteEvents straight to the purge set, if there's not any newer update events
 		// NOTE it's important that we only continue if ONE OF BOTH UPDATE TYPES IS ALREADY PROCESSED
 		//if e.EventType == DeleteEvent {
-		//    if _, noteExists := updateWithNote[key]; !noteExists {
-		//        if _, lineExists := updateWithLine[key]; !lineExists {
-		//            keysToPurge[key] = struct{}{}
+		//    if _, noteExists := updateWithNote[e.ListItemKey]; !noteExists {
+		//        if _, lineExists := updateWithLine[e.ListItemKey]; !lineExists {
+		//            keysToPurge[e.ListItemKey] = struct{}{}
 		//            continue
 		//        }
 		//    }
@@ -1247,27 +1313,27 @@ func compact(wal []EventLog) ([]EventLog, error) {
 			//Check to see if the UpdateEvent alternative event has occurred
 			// Nil `Note` signifies `Line` update
 			//if e.Note != nil {
-			//    if _, exists := updateWithNote[key]; exists {
+			//    if _, exists := updateWithNote[e.ListItemKey]; exists {
 			//        continue
 			//    }
-			//    updateWithNote[key] = struct{}{}
+			//    updateWithNote[e.ListItemKey] = struct{}{}
 			//} else {
-			//    if _, exists := updateWithLine[key]; exists {
+			//    if _, exists := updateWithLine[e.ListItemKey]; exists {
 			//        continue
 			//    }
-			//    updateWithLine[key] = struct{}{}
+			//    updateWithLine[e.ListItemKey] = struct{}{}
 			//}
 
 			if len(e.Line) > 0 {
-				if _, exists := updateWithLine[key]; exists {
+				if _, exists := updateWithLine[e.ListItemKey]; exists {
 					continue
 				}
-				updateWithLine[key] = struct{}{}
+				updateWithLine[e.ListItemKey] = struct{}{}
 			} else {
-				if _, exists := updateWithNote[key]; exists {
+				if _, exists := updateWithNote[e.ListItemKey]; exists {
 					continue
 				}
-				updateWithNote[key] = struct{}{}
+				updateWithNote[e.ListItemKey] = struct{}{}
 			}
 		}
 
@@ -1331,41 +1397,41 @@ func generatePlainTextFile(matchItems []ListItem) error {
 }
 
 // This function is currently unused
-func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListItem) error {
-	wal := []EventLog{}
-	//now := time.Now().AddDate(-1, 0, 0).UnixNano()
-	now := int64(1) // TODO remove this - it's to ensure consistency to enable file diffs
+//func (r *DBListRepo) generatePartialView(ctx context.Context, matchItems []ListItem) error {
+//    wal := []EventLog{}
+//    //now := time.Now().AddDate(-1, 0, 0).UnixNano()
+//    now := int64(1) // TODO remove this - it's to ensure consistency to enable file diffs
 
-	// Iterate from oldest to youngest
-	for i := len(matchItems) - 1; i >= 0; i-- {
-		item := matchItems[i]
-		el := EventLog{
-			UUID:                       item.originUUID,
-			TargetUUID:                 0,
-			ListItemCreationTime:       item.creationTime,
-			TargetListItemCreationTime: 0,
-			UnixNanoTime:               now,
-			EventType:                  AddEvent,
-			Line:                       item.rawLine,
-			Note:                       item.Note,
-		}
-		wal = append(wal, el)
-		now++
+//    // Iterate from oldest to youngest
+//    for i := len(matchItems) - 1; i >= 0; i-- {
+//        item := matchItems[i]
+//        el := EventLog{
+//            UUID:                       item.originUUID,
+//            TargetUUID:                 0,
+//            ListItemCreationTime:       item.creationTime,
+//            TargetListItemCreationTime: 0,
+//            UnixNanoTime:               now,
+//            EventType:                  AddEvent,
+//            Line:                       item.rawLine,
+//            Note:                       item.Note,
+//        }
+//        wal = append(wal, el)
+//        now++
 
-		if item.IsHidden {
-			el.EventType = HideEvent
-			el.UnixNanoTime = now
-			wal = append(wal, el)
-			now++
-		}
-	}
+//        if item.IsHidden {
+//            el.EventType = HideEvent
+//            el.UnixNanoTime = now
+//            wal = append(wal, el)
+//            now++
+//        }
+//    }
 
-	b, _ := buildByteWal(wal)
-	viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
-	r.LocalWalFile.Flush(ctx, b, viewName)
-	log.Fatalf("N list generated events: %d", len(wal))
-	return nil
-}
+//    b, _ := buildByteWal(wal)
+//    viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
+//    r.LocalWalFile.Flush(ctx, b, viewName)
+//    log.Fatalf("N list generated events: %d", len(wal))
+//    return nil
+//}
 
 func (r *DBListRepo) setProcessedWalChecksum(checksum string) {
 	r.processedWalChecksumLock.Lock()
@@ -1655,7 +1721,7 @@ func (r *DBListRepo) emitRemoteUpdate() {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, compactChan chan []EventLog) error {
+func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
 	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
 	//pushAggregateWindowChan := make(chan struct{}, 1)
@@ -1721,7 +1787,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 
 	// Main sync event loop
 	go func() {
-		compactInc := 0
+		reporderInc := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -1744,13 +1810,12 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					c = replayChan
 				case <-gatherTriggerTimer.C:
 					// Runs compaction every Nth gather
-					runCompaction := compactInc > 0 && compactInc%compactionGatherMultiple == 0
+					runCompaction := reporderInc > 0 && reporderInc%compactionGatherMultiple == 0
 					if el, err = r.gather(ctx, runCompaction); err != nil {
 						log.Fatal(err)
 					}
-					compactInc++
-					c = replayChan
-					//c = compactChan
+					reporderInc++
+					c = reorderAndReplayChan
 				}
 
 				// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
@@ -1982,42 +2047,32 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 
 	// any random UUID is fine
 	uuid := generateUUID()
-	targetListItemCreationTime := int64(0)
-	// we need to set a unique UnixNanoTime for each event log, so we take Now() and then increment
-	// by one for each new log. This isn't a perfect solution given that the number of lines in the input
-	// can be unbounded, and therefore theoretically we could end up generating events in the future,
-	// but realistically, this is _highly_ unlikely to occur and I don't think it causes issues anyway.
-	unixNanoTime := time.Now().UnixNano()
+	var lamportTimestamp int64
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) == 0 {
 			continue
 		}
 
-		listItemCreationTime := unixNanoTime
+		key := strconv.Itoa(int(uuid)) + ":" + strconv.Itoa(int(lamportTimestamp))
 		el = append(el, EventLog{
-			UUID:                       uuid,
-			TargetUUID:                 uuid,
-			ListItemCreationTime:       listItemCreationTime,
-			TargetListItemCreationTime: targetListItemCreationTime,
-			UnixNanoTime:               unixNanoTime,
-			EventType:                  AddEvent,
-			Line:                       line,
+			UUID:             uuid,
+			EventType:        AddEvent,
+			LamportTimestamp: lamportTimestamp,
+			ListItemKey:      key,
+			Line:             line,
 		})
-		unixNanoTime++
+		lamportTimestamp++
 
 		if isHidden {
 			el = append(el, EventLog{
-				UUID:                       uuid,
-				TargetUUID:                 uuid,
-				ListItemCreationTime:       listItemCreationTime,
-				TargetListItemCreationTime: targetListItemCreationTime,
-				UnixNanoTime:               unixNanoTime,
-				EventType:                  HideEvent,
+				UUID:             uuid,
+				EventType:        HideEvent,
+				LamportTimestamp: lamportTimestamp,
+				ListItemKey:      key,
 			})
-			unixNanoTime++
+			lamportTimestamp++
 		}
-		targetListItemCreationTime = listItemCreationTime
 	}
 
 	b, _ := buildByteWal(el)
