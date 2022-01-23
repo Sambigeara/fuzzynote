@@ -2019,13 +2019,15 @@ func (r *DBListRepo) finish(purge bool) error {
 			return err
 		}
 		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		filesToDelete := make([]string, len(localFiles)-1)
-		for _, f := range localFiles {
-			if f != checksum {
-				filesToDelete = append(filesToDelete, f)
+		if len(localFiles) > 0 {
+			filesToDelete := make([]string, len(localFiles)-1)
+			for _, f := range localFiles {
+				if f != checksum {
+					filesToDelete = append(filesToDelete, f)
+				}
 			}
+			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
 		}
-		r.LocalWalFile.RemoveWals(ctx, filesToDelete)
 	} else {
 		<-r.stopChan
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
