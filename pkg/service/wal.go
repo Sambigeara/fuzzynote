@@ -484,7 +484,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
 	if r.currentLamportTimestamp <= e.LamportTimestamp {
-		r.currentLamportTimestamp = e.LamportTimestamp + 1
+		r.currentLamportTimestamp = e.LamportTimestamp
 	}
 
 	// We need to maintain records of deleted items in the cache, but if deleted, want to assign nil ptrs
@@ -1183,7 +1183,7 @@ func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	for i := len(listOrder) - 1; i >= 0; i-- {
 		item := acknowledgedItems[listOrder[i]]
 		el := EventLog{
-			EventType: AddEvent,
+			EventType:   AddEvent,
 			ListItemKey: item.key,
 			Line:        item.rawLine,
 			Note:        item.Note,
@@ -1193,7 +1193,7 @@ func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 		if item.IsHidden {
 			r.currentLamportTimestamp++
 			el := EventLog{
-				EventType: HideEvent,
+				EventType:        HideEvent,
 				LamportTimestamp: r.currentLamportTimestamp,
 				ListItemKey:      item.key,
 			}
