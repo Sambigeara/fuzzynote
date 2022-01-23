@@ -737,11 +737,12 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 	errChan := make(chan error, 1)
 	go func() {
 		defer pw.Close()
-		if walSchemaVersionID < 3 {
+		switch walSchemaVersionID {
+		case 1, 2:
 			if _, err := io.Copy(pw, raw); err != nil {
 				errChan <- err
 			}
-		} else {
+		case 3, 4, 5:
 			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
 			// prior to passing it to the loop below
 			zr, err := gzip.NewReader(raw)
@@ -756,7 +757,8 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		errChan <- nil
 	}()
 
-	if walSchemaVersionID <= 3 {
+	switch walSchemaVersionID {
+	case 1, 2, 3:
 		for {
 			select {
 			case err := <-errChan:
@@ -782,7 +784,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				el = append(el, *e)
 			}
 		}
-	} else if walSchemaVersionID == 4 {
+	case 4:
 		var oel []EventLogSchema4
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&oel); err != nil {
@@ -813,7 +815,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			sort.Strings(e.Friends.Emails)
 			el = append(el, e)
 		}
-	} else {
+	case 5:
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
