@@ -520,7 +520,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 			err = r.update(item, e.Line, e.Friends, e.Note)
 			err = r.update(item, "", e.Friends, e.Note)
 		} else {
-			item, err = r.add(e.UUID, e.LamportTimestamp, e.Line, e.Friends, e.Note, targetItem)
+			item, err = r.add(e.ListItemKey, e.Line, e.Friends, e.Note, targetItem)
 		}
 	case UpdateEvent:
 		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
@@ -536,19 +536,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		if item != nil {
 			err = r.update(item, e.Line, e.Friends, e.Note)
 		} else {
-			if e.listItemCreationTime == 0 {
-				// EventLogs created at walSchemaVersionID > 5
-				item, err = r.add(e.UUID, e.LamportTimestamp, e.Line, e.Friends, e.Note, targetItem)
-			} else {
-				// EventLogs created at walSchemaVersionID <= 5. We need to use listItemCreationTime because
-				// the event is of type Update, and therefore listItemCreationTime and LamportTimestamp won't
-				// have been made consistent (see the migration for schema v5 in buildFromFile)
-				// TODO this should be handled at migration, but that's proving to be quite tricky. The issue
-				// lies in the fact that we can't infer whether or not an Update will be used for an Add at point
-				// of loading from a file, and therefore cannot reset the LamportTimestamp accordingly (as we do
-				// for Add events migration from v5 and below)
-				item, err = r.add(e.UUID, e.listItemCreationTime, e.Line, e.Friends, e.Note, targetItem)
-			}
+			item, err = r.add(e.ListItemKey, e.Line, e.Friends, e.Note, targetItem)
 		}
 	case MoveDownEvent:
 		if targetItem == nil {
@@ -572,15 +560,14 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	return item, err
 }
 
-func (r *DBListRepo) add(uuid uuid, lamportTimestamp int64, line string, friends LineFriends, note []byte, childItem *ListItem) (*ListItem, error) {
+func (r *DBListRepo) add(key string, line string, friends LineFriends, note []byte, childItem *ListItem) (*ListItem, error) {
 	newItem := &ListItem{
-		originUUID:       uuid,
-		lamportTimestamp: lamportTimestamp,
-		child:            childItem,
-		rawLine:          line,
-		Note:             note,
-		friends:          friends,
-		localEmail:       r.email,
+		key:        key,
+		child:      childItem,
+		rawLine:    line,
+		Note:       note,
+		friends:    friends,
+		localEmail: r.email,
 	}
 
 	// If `child` is nil, it's the first item in the list so set as root and return
@@ -655,7 +642,7 @@ func (r *DBListRepo) move(item *ListItem, childItem *ListItem) (*ListItem, error
 	var err error
 	err = r.del(item)
 	isHidden := item.IsHidden
-	item, err = r.add(item.originUUID, item.lamportTimestamp, item.rawLine, item.friends, item.Note, childItem)
+	item, err = r.add(item.key, item.rawLine, item.friends, item.Note, childItem)
 	if isHidden {
 		r.setVisibility(item, false)
 	}
@@ -809,23 +796,12 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			return el, err
 		}
 		for _, oe := range oel {
-			// For Add events, in schema <= 5, the EventLog.UnixNanoTime was stupidly created separately
-			// from the ListItem.creationTime, and therefore could be inconsistent. Schema 6 unifies this
-			// (lamport) timestamp, so the timestamp portion of the ListItemKey and `LamportTimestamp`
-			// will be consistent. However, for consistency when loading from these older schemas, for Add
-			// events ONLY, we set the LamportTimestamp to the oe.ListItemCreationTime. For all others, we
-			// set to UnixNanoTime as expected.
-			lamportTimestamp := oe.UnixNanoTime
-			if oe.EventType == AddEvent {
-				lamportTimestamp = oe.ListItemCreationTime
-			}
-
 			key, targetKey := getOldEventLogKeys(oe)
 			e := EventLog{
 				UUID:              oe.UUID,
 				ListItemKey:       key,
 				TargetListItemKey: targetKey,
-				LamportTimestamp:  lamportTimestamp,
+				LamportTimestamp:  oe.UnixNanoTime,
 				EventType:         oe.EventType,
 				Line:              oe.Line,
 				Note:              oe.Note,
@@ -852,23 +828,12 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 			return el, err
 		}
 		for _, oe := range oel {
-			// For Add events, in schema <= 5, the EventLog.UnixNanoTime was stupidly created separately
-			// from the ListItem.creationTime, and therefore could be inconsistent. Schema 6 unifies this
-			// (lamport) timestamp, so the timestamp portion of the ListItemKey and `LamportTimestamp`
-			// will be consistent. However, for consistency when loading from these older schemas, for Add
-			// events ONLY, we set the LamportTimestamp to the oe.ListItemCreationTime. For all others, we
-			// set to UnixNanoTime as expected.
-			lamportTimestamp := oe.UnixNanoTime
-			if oe.EventType == AddEvent {
-				lamportTimestamp = oe.ListItemCreationTime
-			}
-
 			key, targetKey := getOldEventLogKeys(oe)
 			e := EventLog{
 				UUID:                 oe.UUID,
 				ListItemKey:          key,
 				TargetListItemKey:    targetKey,
-				LamportTimestamp:     lamportTimestamp,
+				LamportTimestamp:     oe.UnixNanoTime,
 				EventType:            oe.EventType,
 				Line:                 oe.Line,
 				Note:                 oe.Note,
@@ -990,8 +955,7 @@ func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
 	if a.rawLine != b.rawLine ||
 		string(a.Note) != string(b.Note) ||
 		a.IsHidden != b.IsHidden ||
-		a.originUUID != b.originUUID ||
-		a.lamportTimestamp != b.lamportTimestamp {
+		a.key != b.key {
 		return false
 	}
 	if checkPointers {
@@ -1021,18 +985,18 @@ func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
 		// Ensure current.child points to the previous
 		// TODO check if this is just duplicating a check in areListItemsEqual below
 		if listItem.child != prev {
-			return fmt.Errorf("list integrity error: listItem %s child ptr does not point to the expected item", listItem.Key())
+			return fmt.Errorf("list integrity error: listItem %s child ptr does not point to the expected item", listItem.key)
 		}
 
 		if !areListItemsEqual(listItem, &matchItems[i], false) {
-			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.Key())
+			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.key)
 		}
 
-		if _, exists := processedItems[listItem.Key()]; exists {
-			return fmt.Errorf("list integrity error: listItem %s has appeared twice", listItem.Key())
+		if _, exists := processedItems[listItem.key]; exists {
+			return fmt.Errorf("list integrity error: listItem %s has appeared twice", listItem.key)
 		}
 
-		processedItems[listItem.Key()] = struct{}{}
+		processedItems[listItem.key] = struct{}{}
 		prev = listItem
 		listItem = listItem.parent
 		i++
@@ -1158,7 +1122,7 @@ func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 
 	// Iterate over the match items and add all to the map
 	for _, item := range matches {
-		key := item.Key()
+		key := item.key
 		if _, exists := acknowledgedItems[key]; !exists {
 			listOrder = append(listOrder, key)
 		}
@@ -1177,12 +1141,11 @@ func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 		case UpdateEvent:
 			if !exists {
 				item = ListItem{
-					rawLine:          e.Line,
-					Note:             e.Note,
-					originUUID:       e.UUID,
-					lamportTimestamp: e.LamportTimestamp,
+					rawLine: e.Line,
+					Note:    e.Note,
+					key:     e.ListItemKey,
 				}
-				if e.ListItemKey != item.Key() {
+				if e.ListItemKey != item.key {
 					log.Fatal("ListItem key mismatch during recovery")
 				}
 			} else {
@@ -1220,22 +1183,19 @@ func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
 	for i := len(listOrder) - 1; i >= 0; i-- {
 		item := acknowledgedItems[listOrder[i]]
 		el := EventLog{
-			EventType:        AddEvent,
-			UUID:             item.originUUID,
-			LamportTimestamp: item.lamportTimestamp,
-			ListItemKey:      item.Key(),
-			Line:             item.rawLine,
-			Note:             item.Note,
+			EventType: AddEvent,
+			ListItemKey: item.key,
+			Line:        item.rawLine,
+			Note:        item.Note,
 		}
 		newWal = append(newWal, el)
 
 		if item.IsHidden {
 			r.currentLamportTimestamp++
 			el := EventLog{
-				EventType:        HideEvent,
-				UUID:             item.originUUID,
+				EventType: HideEvent,
 				LamportTimestamp: r.currentLamportTimestamp,
-				ListItemKey:      item.Key(),
+				ListItemKey:      item.key,
 			}
 			newWal = append(newWal, el)
 		}

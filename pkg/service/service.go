@@ -151,9 +151,7 @@ type ListItem struct {
 	rawLine string
 	Note    []byte // TODO make private
 
-	IsHidden         bool
-	originUUID       uuid
-	lamportTimestamp int64
+	IsHidden bool
 
 	child       *ListItem
 	parent      *ListItem
@@ -190,10 +188,8 @@ func (i *ListItem) Friends() []string {
 	return sortedEmails
 }
 
+// TODO make attribute public directly??
 func (i *ListItem) Key() string {
-	if i.key == "" {
-		i.key = strconv.Itoa(int(i.originUUID)) + ":" + strconv.Itoa(int(i.lamportTimestamp))
-	}
 	return i.key
 }
 
@@ -225,15 +221,12 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
 func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
-	var childKey string
-	if childItem != nil {
-		childKey = strconv.Itoa(int(childItem.originUUID)) + ":" + strconv.Itoa(int(childItem.lamportTimestamp))
-	}
-
 	e := r.newEventLog(AddEvent)
 	listItemKey := strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
 	e.ListItemKey = listItemKey
-	e.TargetListItemKey = childKey
+	if childItem != nil {
+		e.TargetListItemKey = childItem.key
+	}
 	e.Line = line
 	e.Note = note
 
@@ -245,7 +238,7 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 
 	r.addUndoLog(ue, e)
 
-	return newItem.Key(), nil
+	return newItem.key, nil
 }
 
 // Update will update the line or note of an existing ListItem
@@ -256,18 +249,18 @@ func (r *DBListRepo) Update(line string, note []byte, item *ListItem) error {
 
 	var childKey string
 	if c := item.child; c != nil {
-		childKey = c.Key()
+		childKey = c.key
 	}
 
 	e := r.newEventLog(UpdateEvent)
-	e.ListItemKey = item.Key()
+	e.ListItemKey = item.key
 	e.TargetListItemKey = childKey
 	e.Line = line
 	e.Note = note
 
 	// Undo event created from pre event processing state
 	ue := r.newEventLog(UpdateEvent)
-	ue.ListItemKey = item.Key()
+	ue.ListItemKey = item.key
 	ue.TargetListItemKey = childKey
 	ue.Line = item.rawLine
 	ue.Note = item.Note
@@ -281,17 +274,17 @@ func (r *DBListRepo) Update(line string, note []byte, item *ListItem) error {
 func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 	var childKey, matchChildKey string
 	if c := item.child; c != nil {
-		childKey = c.Key()
+		childKey = c.key
 	}
 
 	e := r.newEventLog(DeleteEvent)
-	e.ListItemKey = item.Key()
+	e.ListItemKey = item.key
 	e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 	r.addEventLog(e)
 
 	ue := r.newEventLog(AddEvent)
-	ue.ListItemKey = item.Key()
+	ue.ListItemKey = item.key
 	ue.TargetListItemKey = childKey
 	ue.Line = item.rawLine
 	ue.Note = item.Note
@@ -302,7 +295,7 @@ func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
 	// not match the current specified search groups)
 	if item.matchChild != nil {
-		matchChildKey = item.matchChild.Key()
+		matchChildKey = item.matchChild.key
 	}
 	return matchChildKey, nil
 }
@@ -314,18 +307,18 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
 		e := r.newEventLog(MoveUpEvent)
-		e.ListItemKey = item.Key()
+		e.ListItemKey = item.key
 		if item.matchChild.child != nil {
-			e.TargetListItemKey = item.matchChild.child.Key()
+			e.TargetListItemKey = item.matchChild.child.key
 		}
 		e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 		r.addEventLog(e)
 
 		ue := r.newEventLog(MoveDownEvent)
-		ue.ListItemKey = item.Key()
+		ue.ListItemKey = item.key
 		if item.matchParent != nil {
-			ue.TargetListItemKey = item.matchChild.Key()
+			ue.TargetListItemKey = item.matchChild.key
 		}
 		ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
@@ -340,16 +333,16 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 	//if item.matchParent != nil && item.matchParent.lamportTimestamp != 0 {
 	if item.matchParent != nil {
 		e := r.newEventLog(MoveDownEvent)
-		e.ListItemKey = item.Key()
-		e.TargetListItemKey = item.matchParent.Key()
+		e.ListItemKey = item.key
+		e.TargetListItemKey = item.matchParent.key
 		e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 		r.addEventLog(e)
 
 		ue := r.newEventLog(MoveUpEvent)
-		ue.ListItemKey = item.Key()
+		ue.ListItemKey = item.key
 		if item.matchChild != nil {
-			ue.TargetListItemKey = item.matchChild.Key()
+			ue.TargetListItemKey = item.matchChild.key
 		}
 		ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
@@ -366,25 +359,25 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 		evType = ShowEvent
 		oppEvType = HideEvent
 		// Cursor should remain on newly visible key
-		focusedItemKey = item.Key()
+		focusedItemKey = item.key
 	} else {
 		evType = HideEvent
 		oppEvType = ShowEvent
 		// Set focusedItemKey to parent if available, else child (e.g. bottom of list)
 		if item.matchParent != nil {
-			focusedItemKey = item.matchParent.Key()
+			focusedItemKey = item.matchParent.key
 		} else if item.matchChild != nil {
-			focusedItemKey = item.matchChild.Key()
+			focusedItemKey = item.matchChild.key
 		}
 	}
 	e := r.newEventLog(evType)
-	e.ListItemKey = item.Key()
+	e.ListItemKey = item.key
 	e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 	r.addEventLog(e)
 
 	ue := r.newEventLog(oppEvType)
-	ue.ListItemKey = item.Key()
+	ue.ListItemKey = item.key
 	ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 	r.addUndoLog(ue, e)
@@ -403,7 +396,7 @@ func (r *DBListRepo) Undo() (string, error) {
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx--
-		return item.Key(), err
+		return item.key, err
 	}
 	return "", nil
 }
@@ -422,9 +415,9 @@ func (r *DBListRepo) Redo() (string, error) {
 		r.eventLogger.curIdx++
 		var key string
 		if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
-			key = c.Key()
+			key = c.key
 		} else {
-			key = item.Key()
+			key = item.key
 		}
 		return key, err
 	}
@@ -481,7 +474,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 			for _, group := range keys {
 				// Match the currently selected item.
 				// Also, match any items with empty Lines (this accounts for lines added when search is active)
-				if cur.Key() == curKey || len(cur.rawLine) == 0 {
+				if cur.key == curKey || len(cur.rawLine) == 0 {
 					break
 				}
 				// TODO unfortunate reuse of vars - refactor to tidy
@@ -504,7 +497,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 				// Pagination: only add to results set if we've surpassed the min boundary of the page,
 				// otherwise only increment `idx`.
 				if idx >= offset {
-					r.matchListItems[cur.Key()] = cur
+					r.matchListItems[cur.key] = cur
 
 					// ListItems stored in the `res` slice are copies, and therefore will not reflect the
 					// matchChild/matchParent setting below. This doesn't reflect normal function as we only
@@ -520,7 +513,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 					lastCur = cur
 
 					// Set the new idx for the next iteration
-					listItemMatchIdx[cur.Key()] = idx
+					listItemMatchIdx[cur.key] = idx
 				}
 				idx++
 			}
