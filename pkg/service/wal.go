@@ -125,11 +125,6 @@ type EventLog struct {
 	Note                           []byte
 	Friends                        LineFriends
 	cachedKey                      string
-
-	// This is a legacy field required for migrations from walSchemaVersionID <= 5
-	// See `Update` handling on nil items in processEventLog for notes, and schema
-	// migrations in buildFromFile for further ref.
-	listItemCreationTime int64
 }
 
 func (e *EventLog) key() string {
@@ -810,7 +805,6 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 					Offset:      oe.Friends.Offset,
 					emailsMap:   oe.Friends.Emails,
 				},
-				listItemCreationTime: oe.ListItemCreationTime,
 			}
 			for f := range oe.Friends.Emails {
 				e.Friends.Emails = append(e.Friends.Emails, f)
@@ -830,15 +824,14 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		for _, oe := range oel {
 			key, targetKey := getOldEventLogKeys(oe)
 			e := EventLog{
-				UUID:                 oe.UUID,
-				ListItemKey:          key,
-				TargetListItemKey:    targetKey,
-				LamportTimestamp:     oe.UnixNanoTime,
-				EventType:            oe.EventType,
-				Line:                 oe.Line,
-				Note:                 oe.Note,
-				Friends:              oe.Friends,
-				listItemCreationTime: oe.ListItemCreationTime,
+				UUID:              oe.UUID,
+				ListItemKey:       key,
+				TargetListItemKey: targetKey,
+				LamportTimestamp:  oe.UnixNanoTime,
+				EventType:         oe.EventType,
+				Line:              oe.Line,
+				Note:              oe.Note,
+				Friends:           oe.Friends,
 			}
 			el = append(el, e)
 		}
