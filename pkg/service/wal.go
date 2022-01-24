@@ -1676,9 +1676,6 @@ func (r *DBListRepo) emitRemoteUpdate() {
 
 func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
-	// we use pushAggregateWindowChan to ensure that there is only a single pending push scheduled
-	//pushAggregateWindowChan := make(chan struct{}, 1)
-	//pushTriggerChan := make(chan struct{})
 	pushTriggerTimer := time.NewTimer(time.Second * 0)
 	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
 	// Drain the initial push timer, we want to wait for initial user input
@@ -1693,41 +1690,14 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 
 	websocketPushEvents := make(chan websocketMessage)
 
-	scheduleSync := func(afterSeconds int) {
-		// Attempt to put onto the channel, else pass
-		if afterSeconds > 0 {
-			time.Sleep(time.Second * time.Duration(afterSeconds))
-		}
+	scheduleSync := func() {
 		select {
 		case syncTriggerChan <- struct{}{}:
 		default:
 		}
 	}
 	schedulePush := func() {
-		//select {
-		//// Only schedule a post-interval push if there isn't already one pending. pushAggregateWindowChan
-		//// is responsible for holding pending pushes.
-		//case pushAggregateWindowChan <- struct{}{}:
-		//    go func() {
-		//        time.Sleep(time.Second * pushIntervalSeconds)
-		//        pushTriggerChan <- struct{}{}
-		//        <-pushAggregateWindowChan
-		//    }()
-		//default:
-		//}
 		pushTriggerTimer.Reset(pushWaitDuration)
-
-		// Each time a push is scheduled, successful or not (e.g. on a keypress), we reset the timer for
-		// the next gather trigger (up to the maximum window)
-		// TODO this appears to be working as is without the explicit channel drain, but if things start going
-		// awry here, this thread has useful context:
-		// https://stackoverflow.com/a/58631999
-		//if !gatherTriggerTimer.Stop() {
-		//    select {
-		//    case <-gatherTriggerTimer.C:
-		//    default:
-		//    }
-		//}
 		gatherTriggerTimer.Reset(gatherWaitDuration)
 	}
 
@@ -1781,8 +1751,9 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					if len(el) > 0 {
 						c <- el
 					}
-					scheduleSync(pullIntervalSeconds)
 				}()
+				time.Sleep(time.Second * time.Duration(pullIntervalSeconds))
+				scheduleSync()
 			}
 		}
 	}()
@@ -1825,8 +1796,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					r.web.isActive = false
 					switch err.(type) {
 					case authFailureError:
-						scheduleSync(0) // trigger initial (local) sync cycle before returning
-						return          // authFailureError signifies incorrect login details, disable web and run local only mode
+						return // authFailureError signifies incorrect login details, disable web and run local only mode
 					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
@@ -1839,7 +1809,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					waitInterval = webRefreshInterval
 				}
 				// Trigger web walfile sync (mostly relevant on initial start)
-				scheduleSync(0)
+				scheduleSync()
 
 				webCtx, webCancel = context.WithCancel(ctx)
 				if r.web.isActive {
