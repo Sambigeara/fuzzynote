@@ -320,7 +320,7 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 
 	// Avoiding expensive regex based ops for now
 	var f string
-	if words := strings.Split(line, " "); len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
+	if words := strings.Fields(line); len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
 		f = strings.ToLower(words[1])
 	}
 	return f
