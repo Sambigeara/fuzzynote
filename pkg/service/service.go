@@ -554,7 +554,7 @@ func (r *DBListRepo) GetListItemNote(key string) []byte {
 
 func (r *DBListRepo) SaveListItemNote(key string, note []byte) {
 	if item, exists := r.matchListItems[key]; exists {
-		item.Note = note
+		r.Update("", note, item)
 	}
 }
 
