@@ -286,7 +286,9 @@ func (r *DBListRepo) getFriendsFromLine(line string, existingFriends []string) (
 	}
 
 	for _, w := range strings.Split(line, " ") {
-		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
+		// We only force lower case when comparing to the friends cache, as we need to maintain case (for now)
+		// for purposes of matching on the string for repositiong. The email is lower-cased after repositioning.
+		if len(w) > 1 && rune(w[0]) == '@' && r.friends[strings.ToLower(w[1:])] != nil {
 			// If there are duplicates, the line has not been processed
 			if _, exists := friendsMap[w[1:]]; exists {
 				isOrdered = false
@@ -319,7 +321,7 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 	// Avoiding expensive regex based ops for now
 	var f string
 	if words := strings.Split(line, " "); len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
-		f = words[1]
+		f = strings.ToLower(words[1])
 	}
 	return f
 }
@@ -377,9 +379,11 @@ func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 
 	// Sort the emails, and then append a space separated string to the end of the Line
 	sort.Strings(friends)
-	for _, f := range friends {
+	for i, f := range friends {
 		friendString += " @"
-		friendString += f
+		lowerF := strings.ToLower(f)
+		friendString += lowerF
+		friends[i] = lowerF // override the friends slice to ensure lower case
 	}
 
 	newLine += friendString
