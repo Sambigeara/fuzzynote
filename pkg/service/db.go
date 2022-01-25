@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 )
 
 type refreshKey struct{}
@@ -160,4 +161,66 @@ func (r *DBListRepo) DeleteWalFile(name string) {
 	delete(r.allWalFiles, name)
 	delete(r.syncWalFiles, name)
 	delete(r.webWalFiles, name)
+}
+
+type walFileCategory int
+
+const (
+	walFileCategoryAll  walFileCategory = iota
+	walFileCategorySync                 // AKA owned walfiles
+	walFileCategoryWeb
+	walFileCategoryNotOwned
+)
+
+func (r *DBListRepo) walFileGen(cat walFileCategory) <-chan WalFile {
+	var mut *sync.RWMutex
+	var wfs map[string]WalFile
+
+	switch cat {
+	case walFileCategoryAll:
+		mut = r.allWalFileMut
+		wfs = r.allWalFiles
+	case walFileCategorySync:
+		mut = r.syncWalFileMut
+		wfs = r.syncWalFiles
+	case walFileCategoryWeb:
+		mut = r.webWalFileMut
+		wfs = r.webWalFiles
+	case walFileCategoryNotOwned:
+		m := make(map[string]struct{})
+		for s := range r.walFileGen(walFileCategorySync) {
+			m[s.GetUUID()] = struct{}{}
+		}
+		nch := make(chan WalFile)
+		go func() {
+			defer close(nch)
+			for a := range r.walFileGen(walFileCategoryAll) {
+				if _, exists := m[a.GetUUID()]; !exists {
+					nch <- a
+				}
+			}
+		}()
+		return nch
+	}
+
+	mut.RLock()
+	defer mut.RUnlock()
+
+	ch := make(chan WalFile)
+	go func() {
+		defer close(ch)
+		for _, wf := range wfs {
+			ch <- wf
+		}
+	}()
+
+	return ch
+}
+
+func (r *DBListRepo) isSyncWalfile(wf WalFile) bool {
+	r.syncWalFileMut.RLock()
+	defer r.syncWalFileMut.RUnlock()
+
+	_, exists := r.syncWalFiles[wf.GetUUID()]
+	return exists
 }

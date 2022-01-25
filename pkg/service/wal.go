@@ -36,10 +36,9 @@ const latestWalSchemaID uint16 = 6
 
 // sync intervals
 const (
-	pullIntervalSeconds      = 5
-	pushWaitDuration         = time.Second * time.Duration(5)
-	gatherWaitDuration       = time.Second * time.Duration(10)
-	compactionGatherMultiple = 2
+	pullIntervalSeconds       = 5
+	pushWaitDuration          = time.Second * time.Duration(5)
+	gatherFileNumberThreshold = 10
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -162,7 +161,7 @@ type LocalWalFile interface {
 }
 
 type LocalFileWalFile struct {
-	rootDir string
+	rootDir       string
 }
 
 func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
@@ -1399,135 +1398,120 @@ func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, map[WalFile]map[string]struct{}, error) {
-	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
-	newWalMutex := sync.Mutex{}
-	newWalfileMap := make(map[WalFile]map[string]struct{})
-	var wg sync.WaitGroup
-	for _, wf := range walFiles {
-		wg.Add(1)
-		go func(wf WalFile) {
-			defer wg.Done()
-			filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
-			newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
-			if err != nil {
-				//log.Fatal(err)
-				return
-			}
-			newWalMutex.Lock()
-			defer newWalMutex.Unlock()
-			newWalMap := make(map[string]struct{})
-			for _, f := range newWals {
-				newWalMap[f] = struct{}{}
-			}
-			newWalfileMap[wf] = newWalMap
-		}(wf)
-	}
-	wg.Wait()
+type walfileFilenamesJob struct {
+	wf        WalFile
+	filenames []string
+}
 
-	// We then run CPU bound ops in a single thread to mitigate excessive CPU usage (particularly as an N WalFiles
-	// is unbounded)
-	// We merge all wals before publishing to the walchan as each time the main app event loop consumes from walchan,
-	// it blocks user input and creates a poor user experience.
-	mergedWal := []EventLog{}
-	for wf, newWals := range newWalfileMap {
-		for newWal := range newWals {
-			if !r.isWalChecksumProcessed(newWal) {
-				pr, pw := io.Pipe()
-				go func() {
-					defer pw.Close()
-					if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
-						// TODO handle
-						//log.Fatal(err)
-					}
-				}()
+type logFilenameJob struct {
+	el       []EventLog
+	filename string
+}
 
-				// Build new wals
-				newWfWal, err := buildFromFile(pr)
+func (r *DBListRepo) pull(ctx context.Context, walfiles <-chan WalFile) ([]EventLog, error) {
+	walfileFilenameChan := make(chan walfileFilenamesJob, 5) // can't `len` walfiles gen, so just select an arbitrary buffer size
+
+	go func() {
+		var wg sync.WaitGroup
+		defer close(walfileFilenameChan)
+		for wf := range walfiles {
+			wg.Add(1)
+			go func(wf WalFile) {
+				defer wg.Done()
+				filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
+				newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
 				if err != nil {
-					// Ignore incompatible files
-					continue
+					return
 				}
+				walfileFilenameChan <- walfileFilenamesJob{
+					wf:        wf,
+					filenames: newWals,
+				}
+			}(wf)
+		}
+		wg.Wait()
+	}()
 
-				mergedWal = merge(mergedWal, newWfWal)
+	mergedWal := []EventLog{}
+	filenamesToAck := []string{}
+	for w := range walfileFilenameChan {
+		walfileChan := make(chan logFilenameJob, len(w.filenames)) // all wals for each walfile
+		go func() {
+			defer close(walfileChan)
+			for _, filename := range w.filenames {
+				var newWfWal []EventLog
+				if !r.isWalChecksumProcessed(filename) {
+					pr, pw := io.Pipe()
+					go func() {
+						defer pw.Close()
+						if err := w.wf.GetWalBytes(ctx, pw, filename); err != nil {
+							// TODO handle
+						}
+					}()
 
-				// Add to the processed cache after we've successfully pulled it
-				// TODO strictly we should only set processed once it's successfull merged and displayed to client
-				r.setProcessedWalChecksum(newWal)
+					// Build new wals
+					var err error
+					newWfWal, err = buildFromFile(pr)
+					if err != nil {
+						// Ignore incompatible files
+						continue
+					}
+				}
+				// We send to walfileChan regardless of prior processing (an empty []EventLog is
+				// passed if r.isWalChecksumProcessed resolves to true) as we may need to carry
+				// out a `gather` in the next step. Empty []EventLogs are ignored in the merge step.
+				walfileChan <- logFilenameJob{
+					el:       newWfWal,
+					filename: filename,
+				}
 			}
+		}()
+		walfileWal := []EventLog{}
+		walfileFilesToDelete := make(map[string]struct{})
+		for l := range walfileChan {
+			walfileWal = merge(walfileWal, l.el)
+			walfileFilesToDelete[l.filename] = struct{}{}
+			filenamesToAck = append(filenamesToAck, l.filename)
+		}
+		mergedWal = merge(mergedWal, walfileWal)
+		if len(w.filenames) > gatherFileNumberThreshold && r.isSyncWalfile(w.wf) {
+			// Sometimes, we would have already acknowledged all of the wiles in the walfile, and therefore
+			// the resultant event log will be empty. Therefore we need to merge with local r.log prior to
+			// pushing it, to ensure we flush the full log
+			walfileWal = merge(r.log, walfileWal)
+
+			checksum, err := r.push(ctx, w.wf, walfileWal, nil)
+			if err != nil {
+				// Definitely don't delete pre-existing wals if the push fails for whatever reason
+				return nil, err
+			}
+			r.setProcessedWalChecksum(checksum)
+
+			// TODO: we are generating partial wals from the FULL local log at this point, to all non-owned
+			// walfiles, on each separate gather. This is a duplication of effort and will have to be optimised in
+			// the future
+			for wf := range r.walFileGen(walFileCategoryNotOwned) {
+				r.push(ctx, wf, walfileWal, nil)
+			}
+
+			// There's a chance that the new generated log will be identical to one that was already in the
+			// remote walfile. Therefore, we omit that checksum from the delete set prior to sending to RemoveWals
+			delete(walfileFilesToDelete, checksum)
+			checksumOmitted := []string{}
+			for filename := range walfileFilesToDelete {
+				checksumOmitted = append(checksumOmitted, filename)
+			}
+			// Schedule a delete on the files
+			w.wf.RemoveWals(ctx, checksumOmitted)
 		}
 	}
 
-	return mergedWal, newWalfileMap, nil
-}
-
-func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog, error) {
-	//log.Print("Gathering...")
-	// Create a new list so we don't have to keep the lock on the mutex for too long
-	r.syncWalFileMut.RLock()
-	syncWalFiles := []WalFile{}
-	for _, wf := range r.syncWalFiles {
-		syncWalFiles = append(syncWalFiles, wf)
-	}
-	r.syncWalFileMut.RUnlock()
-
-	r.allWalFileMut.RLock()
-	allWalFiles := []WalFile{}
-	for _, wf := range r.allWalFiles {
-		allWalFiles = append(allWalFiles, wf)
-	}
-	r.allWalFileMut.RUnlock()
-
-	fullWal, syncWalfileWalNameMap, err := r.pull(ctx, syncWalFiles)
-	if err != nil {
-		return []EventLog{}, err
+	for _, filename := range filenamesToAck {
+		// Add to the processed cache after we've successfully pulled it
+		r.setProcessedWalChecksum(filename)
 	}
 
-	// Merge in the r.log, as local changes would not have propagated out to the local
-	// walfile
-	fullWal = merge(r.log, fullWal)
-
-	fullByteWal, err := buildByteWal(fullWal)
-	if err != nil {
-		return []EventLog{}, err
-	}
-
-	var wg sync.WaitGroup
-	for _, wf := range allWalFiles {
-		wg.Add(1)
-		go func(wf WalFile) {
-			defer wg.Done()
-
-			var byteWal *bytes.Buffer
-
-			walNameMap, isOwned := syncWalfileWalNameMap[wf]
-
-			if isOwned {
-				byteWal = fullByteWal
-			}
-
-			// Push to ALL walFiles
-			checksum, err := r.push(ctx, wf, fullWal, byteWal)
-			if err != nil {
-				return
-			}
-
-			// Only delete processed files from syncWalfiles - e.g. walfiles we own
-			if isOwned {
-				delete(walNameMap, checksum)
-
-				filesToDelete := make([]string, len(walNameMap))
-				for f := range walNameMap {
-					filesToDelete = append(filesToDelete, f)
-				}
-				// Schedule a delete on the files
-				wf.RemoveWals(ctx, filesToDelete)
-			}
-		}(wf)
-	}
-	wg.Wait()
-
-	return fullWal, nil
+	return mergedWal, nil
 }
 
 func buildByteWal(el []EventLog) (*bytes.Buffer, error) {
@@ -1677,7 +1661,6 @@ func (r *DBListRepo) emitRemoteUpdate() {
 func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
 	pushTriggerTimer := time.NewTimer(time.Second * 0)
-	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
 	// dropped in to the root directory, etc) are flushed
@@ -1696,13 +1679,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 		default:
 		}
 	}
-	schedulePush := func() {
-		pushTriggerTimer.Reset(pushWaitDuration)
-		gatherTriggerTimer.Reset(gatherWaitDuration)
-	}
 
 	// Run an initial load from the local walfile
-	localWal, _, err := r.pull(ctx, []WalFile{r.LocalWalFile})
+	localWal, err := r.pull(ctx, func() <-chan WalFile {
+		ch := make(chan WalFile)
+		go func() {
+			defer close(ch)
+			ch <- r.LocalWalFile
+		}()
+		return ch
+	}())
 	if err != nil {
 		return err
 	}
@@ -1710,48 +1696,30 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 
 	// Main sync event loop
 	go func() {
-		reporderInc := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				var c chan []EventLog
+				//var c chan []EventLog
 				var el []EventLog
 				var err error
-				select {
-				case <-syncTriggerChan:
-					syncWalFiles := []WalFile{}
-					r.syncWalFileMut.RLock()
-					for _, wf := range r.syncWalFiles {
-						syncWalFiles = append(syncWalFiles, wf)
-					}
-					r.syncWalFileMut.RUnlock()
-					if el, _, err = r.pull(ctx, syncWalFiles); err != nil {
-						log.Fatal(err)
-					}
-					c = replayChan
-				case <-gatherTriggerTimer.C:
-					// Runs compaction every Nth gather
-					runCompaction := reporderInc > 0 && reporderInc%compactionGatherMultiple == 0
-					if el, err = r.gather(ctx, runCompaction); err != nil {
-						log.Fatal(err)
-					}
-					reporderInc++
-					c = reorderAndReplayChan
+				syncWalfiles := r.walFileGen(walFileCategorySync)
+				if el, err = r.pull(ctx, syncWalfiles); err != nil {
+					log.Fatal(err)
 				}
+				//c = replayChan
+				//c = reorderAndReplayChan
 
 				// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
 				// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
 				// program with it's CPU constantly tied up, which leads to performance degradation.
 				// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
 				// onto the syncTriggerChan
-				go func() {
-					// we block on replayChan publish so it only schedules again after a Replay begins
-					if len(el) > 0 {
-						c <- el
-					}
-				}()
+				// we block on replayChan publish so it only schedules again after a Replay begins
+				if len(el) > 0 {
+					replayChan <- el
+				}
 				time.Sleep(time.Second * time.Duration(pullIntervalSeconds))
 				scheduleSync()
 			}
@@ -1907,7 +1875,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 				// Add to an ephemeral log
 				el = append(el, e)
 				// Trigger an aggregated push (if not already pending)
-				schedulePush()
+				pushTriggerTimer.Reset(pushWaitDuration)
 			case <-pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
