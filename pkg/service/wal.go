@@ -161,7 +161,7 @@ type LocalWalFile interface {
 }
 
 type LocalFileWalFile struct {
-	rootDir       string
+	rootDir string
 }
 
 func NewLocalFileWalFile(rootDir string) *LocalFileWalFile {
@@ -246,7 +246,7 @@ func (wf *LocalFileWalFile) Flush(ctx context.Context, b *bytes.Buffer, randomUU
 // getFriendsFromLine returns a map of @friends in the line, that currently exist in the friends cache, and a
 // boolean representing whether or not the line is already correctly ordered (e.g. the friends are all appended
 // to the end of the line, separated by single whitespace chars)
-func (r *DBListRepo) getFriendsFromLine(line string) ([]string, bool) {
+func (r *DBListRepo) getFriendsFromLine(line string, existingFriends []string) ([]string, bool) {
 	// (golang?) regex does return overlapping results, which we need in order to ensure space
 	// or start/end email boundaries. Therefore we iterate over the line and match/replace any
 	// email with (pre|app)ending spaces with a single space
@@ -279,6 +279,12 @@ func (r *DBListRepo) getFriendsFromLine(line string) ([]string, bool) {
 	hasFoundFriend := false
 	isOrdered := true
 	friendsMap := map[string]struct{}{}
+
+	// add existing friends, if there are any
+	for _, f := range existingFriends {
+		friendsMap[f] = struct{}{}
+	}
+
 	for _, w := range strings.Split(line, " ") {
 		if len(w) > 1 && rune(w[0]) == '@' && r.friends[w[1:]] != nil {
 			// If there are duplicates, the line has not been processed
@@ -335,8 +341,19 @@ func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 	if r.getEmailFromConfigLine(e.Line) != "" {
 		friends = append(friends, r.email)
 	} else {
+		// Retrieve existing friends from the item, if it already exists. This prevents the following bug:
+		// - Item is shared with `@foo@bar.com`
+		// - `fzn_cfg:friend foo@bar.com` is removed
+		// - Update is made on previously shared line
+		// - `@foo@bar.com` is appended to the Line() portion of the string, because the friend is no longer present in
+		//   the r.friends cache
+		var existingFriends []string
+		if item, exists := r.listItemTracker[e.ListItemKey]; exists {
+			existingFriends = item.friends.Emails
+		}
 		// If there are no friends, return early
-		if friends, _ = r.getFriendsFromLine(e.Line); len(friends) == 0 {
+		friends, _ = r.getFriendsFromLine(e.Line, existingFriends)
+		if len(friends) == 0 {
 			e.Friends.IsProcessed = true
 			e.Friends.Offset = len(e.Line)
 			return e
