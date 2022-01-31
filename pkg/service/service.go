@@ -417,10 +417,12 @@ func (r *DBListRepo) Redo() (string, error) {
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx++
 		var key string
-		if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
-			key = c.key
-		} else {
-			key = item.key
+		if item != nil {
+			if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
+				key = c.key
+			} else {
+				key = item.key
+			}
 		}
 		return key, err
 	}
