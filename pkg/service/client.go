@@ -506,7 +506,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 		}
 	case KeyCopy:
 		// Copy functionality
-		if relativeY != t.ReservedTopLines-1 {
+		if t.useClientSearch || relativeY != t.ReservedTopLines-1 {
 			t.copiedItem = curItem
 		}
 	case KeyOpenURL:
