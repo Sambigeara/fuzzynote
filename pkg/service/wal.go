@@ -500,7 +500,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
 	if r.currentLamportTimestamp <= e.LamportTimestamp {
-		r.currentLamportTimestamp = e.LamportTimestamp
+		r.currentLamportTimestamp = e.LamportTimestamp + 1
 	}
 
 	// We need to maintain records of deleted items in the cache, but if deleted, want to assign nil ptrs

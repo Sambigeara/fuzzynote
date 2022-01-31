@@ -194,7 +194,6 @@ func (i *ListItem) Key() string {
 }
 
 func (r *DBListRepo) newEventLog(t EventType) EventLog {
-	r.currentLamportTimestamp++
 	return EventLog{
 		UUID:             r.uuid,
 		LamportTimestamp: r.currentLamportTimestamp,
@@ -391,7 +390,9 @@ func (r *DBListRepo) Undo() (string, error) {
 		e := ue.oppEvent
 
 		// TODO centralise
-		r.currentLamportTimestamp++
+		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
+		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
+		// to the old ListItem in the caches
 		e.LamportTimestamp = r.currentLamportTimestamp
 
 		item, err := r.addEventLog(e)
@@ -408,7 +409,9 @@ func (r *DBListRepo) Redo() (string, error) {
 		e := ue.event
 
 		// TODO centralise
-		r.currentLamportTimestamp++
+		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
+		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
+		// to the old ListItem in the caches
 		e.LamportTimestamp = r.currentLamportTimestamp
 
 		item, err := r.addEventLog(e)
