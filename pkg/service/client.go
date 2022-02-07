@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"log"
 	"os/exec"
 	"runtime"
@@ -12,40 +11,43 @@ import (
 )
 
 const (
-	dateFormat                            = "Mon, Jan 02, 2006"
-	reservedTopLines, reservedBottomLines = 1, 1
-	reservedEndChars                      = 1
-	emptySearchLinePrompt                 = "Search here..."
-	searchGroupPrompt                     = "TAB: Create new search group"
-	newLinePrompt                         = "Enter: Create new line"
+	dateFormat            = "Mon, Jan 02, 2006"
+	emptySearchLinePrompt = "Search here..."
+	searchGroupPrompt     = "TAB: Create new search group"
+	newLinePrompt         = "Enter: Create new line"
 )
 
 // ClientBase ...
 type ClientBase struct {
-	db                *DBListRepo
-	Search            [][]rune
-	matches           []ListItem
-	CurItem           *ListItem // The currently selected item
-	Editor            string
-	W, H              int
-	CurX, CurY        int // Cur "screen" index, not related to matched item lists
-	VertOffset        int // The index of the first displayed item in the match set
-	HorizOffset       int // The index of the first displayed char in the curItem
-	ShowHidden        bool
-	SelectedItems     map[int]string // struct{} is more space efficient than bool
-	copiedItem        *ListItem
-	HiddenMatchPrefix string // The common string that we want to truncate from each line
+	db                                    *DBListRepo
+	Search                                [][]rune
+	matches                               []ListItem
+	CurItem                               *ListItem // The currently selected item
+	Editor                                string
+	W, H                                  int
+	ReservedTopLines, ReservedBottomLines int
+	CurX, CurY                            int // Cur "screen" index, not related to matched item lists
+	VertOffset                            int // The index of the first displayed item in the match set
+	HorizOffset                           int // The index of the first displayed char in the curItem
+	ShowHidden                            bool
+	SelectedItems                         map[string]ListItem
+	copiedItem                            *ListItem
+	HiddenMatchPrefix                     string // The common string that we want to truncate from each line
+	useClientSearch                       bool
 	//previousKey       InteractionEventType // Keep track of the previous keypress
-	footerMessage string // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
+	//footerMessage string // Because we refresh on an ongoing basis, this needs to be emitted each time we paint
 }
 
 // NewClientBase ...
-func NewClientBase(db *DBListRepo, maxWidth int, maxHeight int) *ClientBase {
+func NewClientBase(db *DBListRepo, maxWidth int, maxHeight int, useClientSearch bool) *ClientBase {
 	return &ClientBase{
-		db:            db,
-		W:             maxWidth,
-		H:             maxHeight,
-		SelectedItems: make(map[int]string),
+		db:                  db,
+		W:                   maxWidth,
+		H:                   maxHeight,
+		SelectedItems:       make(map[string]ListItem),
+		ReservedTopLines:    1,
+		ReservedBottomLines: 2,
+		useClientSearch:     useClientSearch,
 	}
 }
 
@@ -54,8 +56,9 @@ type InteractionEventType uint32
 
 // InteractionEvent ...
 type InteractionEvent struct {
-	T InteractionEventType
-	R []rune
+	T   InteractionEventType
+	Key string
+	R   []rune
 }
 
 const (
@@ -84,36 +87,83 @@ const (
 	KeyCursorRight
 	KeyCursorLeft
 	KeyRune
+
+	SetText
 )
 
+// TODO duplicated in getHiddenLinePrefix function, figure out how to unify
 func getLenHiddenMatchPrefix(line string, hiddenMatchPrefix string) int {
 	l := 0
 	if strings.HasPrefix(strings.ToLower(line), hiddenMatchPrefix) {
-		l = len([]byte(hiddenMatchPrefix))
+		l += len([]byte(hiddenMatchPrefix))
 	}
 	return l
 }
 
-func getCommonSearchPrefix(selectedItems map[int]string) [][]rune {
+func getMapIntersection(a map[string]struct{}, b map[string]struct{}) map[string]struct{} {
+	intersect := make(map[string]struct{})
+	for i := range a {
+		if _, exists := b[i]; exists {
+			intersect[i] = struct{}{}
+		}
+	}
+	return intersect
+}
+
+func GetCommonSearchPrefixAndFriends(selectedItems map[string]ListItem) [][]rune {
+	searchGroups := [][]rune{}
+	if len(selectedItems) == 0 {
+		return searchGroups
+	}
+
 	var lines []string
-	for _, line := range selectedItems {
-		lines = append(lines, strings.TrimSpace(line))
+
+	// We need to do a set intersection on the friends, as we only want to display
+	// commonly shared emails
+	// Therefore, we set the friends map to that of the first line, and then iterate
+	// over the subsequent lines, taking the intersect of the resultant map as we go
+	friends := make(map[string]struct{})
+	for _, item := range selectedItems {
+		for _, f := range item.Friends() {
+			friends[f] = struct{}{}
+		}
+		break // We only need one item from the iterable map to instantiate the set
 	}
-	prefix := strings.TrimSpace(longestCommonPrefix(lines))
-	if len(prefix) == 0 {
-		return [][]rune{[]rune{}}
+	for _, item := range selectedItems {
+		lines = append(lines, strings.TrimSpace(item.Line()))
+		lineFriends := make(map[string]struct{})
+		for _, f := range item.Friends() {
+			lineFriends[f] = struct{}{}
+		}
+		friends = getMapIntersection(friends, lineFriends)
 	}
-	return [][]rune{[]rune(fmt.Sprintf("=%s", prefix))}
+
+	var prefix string
+	// Only take longest common prefix on line if there's more than one line
+	if len(lines) > 1 {
+		prefix = strings.TrimSpace(longestCommonPrefix(lines))
+	}
+
+	if len(prefix) > 0 {
+		searchGroups = append(searchGroups, []rune(prefix))
+	}
+
+	for f := range friends {
+		searchGroups = append(searchGroups, []rune("@"+f))
+	}
+
+	return searchGroups
 }
 
 func longestCommonPrefix(strs []string) string {
 	if len(strs) == 0 {
 		return ""
 	}
-	// Assume prefix
-	prefix := strs[0]
+	// force lower case
+	prefix := strings.ToLower(strs[0])
 	for i := 1; i < len(strs); i++ {
-		for !strings.HasPrefix(strs[i], prefix) {
+		l := strings.ToLower(strs[i])
+		for !strings.HasPrefix(l, prefix) {
 			prefix = prefix[0 : len(prefix)-1]
 			if len(prefix) == 0 {
 				return ""
@@ -146,7 +196,7 @@ func (t *ClientBase) getLenSearchBox() int {
 	return lenSearchBox
 }
 
-func MatchFirstURL(line string) string {
+func MatchFirstURL(line string, ensureScheme bool) string {
 	// Attempt to match any urls in the line.
 	// Try "Strict" match first. This only matches if scheme is included.
 	rxStrict := xurls.Strict()
@@ -158,7 +208,9 @@ func MatchFirstURL(line string) string {
 		// `http://` to see if that works.
 		rxRelaxed := xurls.Relaxed()
 		if match = rxRelaxed.FindString(line); match != "" {
-			match = fmt.Sprintf("http://%s", match)
+			if ensureScheme {
+				match = "http://" + match
+			}
 		}
 	}
 	return match
@@ -220,7 +272,7 @@ func insertCharInPlace(line []rune, offset int, newChars []rune) []rune {
 	return line
 }
 
-func parseOperatorGroups(sub string) string {
+func ParseOperatorGroups(sub string) string {
 	// Match the op against any known operator (e.g. date) and parse if applicable.
 	// TODO for now, just match `d` or `D` for date, we'll expand in the future.
 	now := time.Now()
@@ -232,7 +284,6 @@ func parseOperatorGroups(sub string) string {
 func getHiddenLinePrefix(keys [][]rune) string {
 	// Only apply the trunaction on "closed" search groups (e.g. when the user has tabbed to
 	// the next one).
-
 	if len(keys) == 0 || (len(keys) == 1 && len(keys[0]) == 0) {
 		return ""
 	}
@@ -242,7 +293,7 @@ func getHiddenLinePrefix(keys [][]rune) string {
 	_, nChars := GetMatchPattern(key) // TODO can be private function now in same service
 	trimmedKey := string(key[nChars:])
 
-	shortenedPrefix := fmt.Sprintf("%s ", strings.TrimSpace(strings.ToLower(trimmedKey)))
+	shortenedPrefix := strings.TrimSpace(strings.ToLower(trimmedKey)) + " "
 
 	return shortenedPrefix
 }
@@ -252,41 +303,79 @@ func (t *ClientBase) TrimPrefix(line string) string {
 	// Truncate the full search string from any lines matching the entire thing,
 	// ignoring search operators
 	// Op needs to be case-insensitive, but must not mutate underlying line
+
+	if t.HiddenMatchPrefix == "" {
+		return line
+	}
+
+	// We explicitly avoid using `strings.TrimPrefix(...)` here because the lines are case-sensitive
 	if strings.HasPrefix(strings.ToLower(line), t.HiddenMatchPrefix) {
 		line = string([]rune(line)[len([]byte(t.HiddenMatchPrefix)):])
+		// If we strip the match prefix, and there is a space remaining, trim that too
+		return strings.TrimPrefix(line, " ")
 	}
-	// If we strip the match prefix, and there is a space remaining, trim that too
-	return strings.TrimPrefix(line, " ")
+	return line
 }
 
-// TODO rename t
-func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListItem, bool, error) {
+func (t *ClientBase) GetUnsearchedFriends(friends []string) []string {
+	removedSearchFriends := []string{}
+	for _, f := range friends {
+		f = "@" + f
+		isInSearch := false
+		for _, s := range t.Search {
+			if pattern, nChars := GetMatchPattern(s); pattern == FullMatchPattern {
+				s = s[nChars:]
+			} else if pattern == InverseMatchPattern {
+				break
+			}
+			if f == string(s) {
+				isInSearch = true
+				break
+			}
+		}
+		if !isInSearch {
+			removedSearchFriends = append(removedSearchFriends, f)
+		}
+	}
+	return removedSearchFriends
+}
+
+// TODO rename "t"
+func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, showHidden bool, bypassRefresh bool, limit int) ([]ListItem, bool, error) {
+	// the terminal client passes t.Search and t.ShowHidden as the search argument, so nothing changes, however other clients (who don't
+	// rely on backend search state) can override them on each iteration of HandleInteraction
+	t.Search = search
+	t.ShowHidden = showHidden
+
 	posDiff := []int{0, 0} // x and y mutations to apply after db data mutations
 
 	// itemKey represents the unique identifying key for the ListItem. We set it explicitly only
 	// when creating new ListItems via the Add interface, so we can tell the backend what our
 	// current item is when asking for Matches (and adjusting for cursor offsets due to live collab)
 	// If itemKey is empty by the time we reach the Match call, we offset any movement against our
-	// existing match set (e.g. for Move*) and then default to matchedItem.Key()
+	// existing match set (e.g. for Move*) and then default to matchedItem.key
 	itemKey := ""
 
 	// relativeY accounts for any hidden lines at the top, which is required for match indexing
 	relativeY := t.CurY + t.VertOffset
+	onSearch := !t.useClientSearch && relativeY == t.ReservedTopLines-1
+
+	curItem := t.db.matchListItems[ev.Key]
 
 	// offsetX represents the position in the underying curItem.Line
 	// Only apply the prefix offset if the line starts with the prefix, other lines will
 	// match but not have the prefix truncated
 	offsetX := t.HorizOffset + t.CurX
 	lenHiddenMatchPrefix := 0
-	if t.CurItem != nil {
-		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
+	if curItem != nil {
+		lenHiddenMatchPrefix = getLenHiddenMatchPrefix(curItem.Line(), t.HiddenMatchPrefix)
+		offsetX += lenHiddenMatchPrefix
 	}
-	offsetX += lenHiddenMatchPrefix
 	var err error
 	switch ev.T {
 	case KeyEscape:
 		if len(t.SelectedItems) > 0 {
-			t.SelectedItems = make(map[int]string)
+			t.SelectedItems = make(map[string]ListItem)
 		} else {
 			t.VertOffset = 0
 			relativeY = 0
@@ -294,8 +383,10 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyEnter:
 		if len(t.SelectedItems) > 0 {
 			// Add common search prefix to search groups
-			t.Search = getCommonSearchPrefix(t.SelectedItems)
-			t.SelectedItems = make(map[int]string)
+			if newSearch := GetCommonSearchPrefixAndFriends(t.SelectedItems); len(newSearch) > 0 {
+				t.Search = newSearch
+			}
+			t.SelectedItems = make(map[string]ListItem)
 			t.CurY = 0
 			if len(t.Search) > 0 {
 				posDiff[0] += len(t.Search[0])
@@ -304,24 +395,41 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			// Add a new item below current cursor position
 			// This will insert the contents of the current search string (omitting search args like `=`)
 			var err error
-			if relativeY == reservedTopLines-1 {
+			if onSearch {
 				if len(t.Search) > 0 {
 					posDiff[0] -= len([]byte(strings.TrimSpace(string(t.Search[0])))) + 1
 				}
 			}
 			newString := GetNewLinePrefix(t.Search)
-			itemKey, err = t.db.Add(newString, nil, relativeY)
+			// If the user is logged in, we automatically append the client email to each line (this is used
+			// for collaboration purposes)
+			// TODO do the email-in check better
+			if t.db.email != "" {
+				ownerPattern := " @" + t.db.email
+				newString = newString + ownerPattern
+			}
+			itemKey, err = t.db.Add(newString, nil, curItem)
 			if err != nil {
 				log.Fatal(err)
 			}
 			posDiff[1]++
 		}
 	case KeyDeleteItem:
-		if relativeY == reservedTopLines-1 {
-			t.Search = [][]rune{[]rune{}}
+		if onSearch {
+			if len(t.Search) > 0 {
+				// Only remove the current search group
+				grpIdx, _ := t.GetSearchGroupIdxAndOffset()
+				if len(t.Search) == 1 {
+					t.Search = [][]rune{[]rune{}}
+				} else if grpIdx == 0 {
+					t.Search = t.Search[1:]
+				} else {
+					t.Search = append(t.Search[:grpIdx], t.Search[grpIdx+1:]...)
+				}
+			}
 		} else {
 			// Copy into buffer in case we're moving it elsewhere
-			t.copiedItem = t.CurItem
+			t.copiedItem = curItem
 			if relativeY-1 != len(t.matches)-1 {
 				// TODO make `==` and reorder
 				// Default behaviour on delete is to return and set position to the child item.
@@ -329,7 +437,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				// increment the Y position.
 				// Because we increment, the key passed to Match below will exist and therefore
 				// will resolve properly.
-				_, err = t.db.Delete(relativeY - 1)
+				_, err = t.db.Delete(curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -337,7 +445,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			} else {
 				// APART from when calling CtrlD on the bottom item, in which case use the default
 				// behaviour and target the child for new positioning
-				itemKey, err = t.db.Delete(relativeY - 1)
+				itemKey, err = t.db.Delete(curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -363,16 +471,16 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		t.HorizOffset = 0
 	case KeyGotoEnd:
 		// Go to end of line
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			t.CurX = t.getLenSearchBox()
 		} else {
 			// TODO
-			t.CurX = len([]rune(t.CurItem.Line))
+			t.CurX = len([]rune(curItem.Line()))
 		}
 		t.HorizOffset = t.CurX - t.W
 	case KeyVisibility:
 		// Toggle hidden item visibility
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			t.ShowHidden = !t.ShowHidden
 		} else {
 			// Default returned itemKey behaviour on ToggleVisibility is one of the following:
@@ -380,7 +488,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			// - on "hide", it will look for matchParent first, matchChild second
 			// This is expected behaviour on the default "hide hidden" view, but when we're showing
 			// and operating on all items (including hidden), we don't need to change the itemKey
-			newItemKey, err := t.db.ToggleVisibility(relativeY - 1)
+			newItemKey, err := t.db.ToggleVisibility(curItem)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -400,12 +508,12 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 	case KeyCopy:
 		// Copy functionality
-		if relativeY != reservedTopLines-1 {
-			t.copiedItem = t.CurItem
+		if t.useClientSearch || relativeY != t.ReservedTopLines-1 {
+			t.copiedItem = curItem
 		}
 	case KeyOpenURL:
-		if relativeY != reservedTopLines-1 {
-			if url := MatchFirstURL(t.CurItem.Line); url != "" {
+		if relativeY != t.ReservedTopLines-1 {
+			if url := MatchFirstURL(curItem.Line(), true); url != "" {
 				openURL(url)
 			}
 		}
@@ -414,23 +522,25 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyPaste:
 		// Paste functionality
 		if t.copiedItem != nil {
-			itemKey, err = t.db.Add(t.copiedItem.Line, nil, relativeY)
+			itemKey, err = t.db.Add(t.copiedItem.rawLine, nil, curItem)
 			if err != nil {
 				log.Fatal(err)
 			}
 			posDiff[1]++
 		}
 	case KeySelect:
-		if relativeY != reservedTopLines-1 {
+		if t.useClientSearch || relativeY != t.ReservedTopLines-1 {
 			// If exists, clear, otherwise set
-			if _, ok := t.SelectedItems[relativeY-reservedTopLines]; ok {
-				delete(t.SelectedItems, relativeY-reservedTopLines)
-			} else {
-				t.SelectedItems[relativeY-reservedTopLines] = t.matches[relativeY-reservedTopLines].Line
+			if curItem != nil {
+				if _, ok := t.SelectedItems[curItem.key]; ok {
+					delete(t.SelectedItems, curItem.key)
+				} else {
+					t.SelectedItems[curItem.key] = *curItem
+				}
 			}
 		}
 	case KeyAddSearchGroup:
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			// If no search groups exist, rely on separate new char insertion elsewhere
 			if len(t.Search) > 0 {
 				// The location of the cursor will determine where the search group is added
@@ -448,7 +558,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			posDiff[0]++
 		}
 	case KeyBackspace:
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			if len(t.Search) > 0 {
 				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := []rune(t.Search[grpIdx])
@@ -471,22 +581,22 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line)
-			if t.HorizOffset+t.CurX > 0 && len(newLine) > 0 {
+			newLine := []rune(curItem.rawLine)
+			if t.HorizOffset+t.CurX > 0 && len(curItem.Line()) > 0 {
 				newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
+				err = t.db.Update(string(newLine), nil, curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
 				posDiff[0]--
-			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-				itemKey, err = t.db.Delete(relativeY - 1)
+			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(curItem.Line())-lenHiddenMatchPrefix) == 0 {
+				itemKey, err = t.db.Delete(curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
 				// Move up a cursor position
 				posDiff[1]--
-				if relativeY > reservedTopLines {
+				if relativeY > t.ReservedTopLines {
 					// TODO setting to the max width isn't completely robust as other
 					// decrements will affect, but it's good enough for now as the cursor
 					// repositioning logic will take care of over-increments
@@ -496,7 +606,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		}
 	case KeyDelete:
 		// TODO this is very similar to the Backspace logic above, refactor to avoid duplication
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			if len(t.Search) > 0 {
 				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := []rune(t.Search[grpIdx])
@@ -516,21 +626,21 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 		} else {
 			// If cursor in 0 position and current line is empty, delete current line and go
 			// to end of previous line (if present)
-			newLine := []rune(t.CurItem.Line)
-			if len(newLine) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(newLine) {
+			newLine := []rune(curItem.rawLine)
+			if len(curItem.Line()) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(curItem.Line()) {
 				newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-				err = t.db.Update(string(newLine), nil, relativeY-reservedTopLines)
+				err = t.db.Update(string(newLine), nil, curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
-			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(newLine)-lenHiddenMatchPrefix) == 0 {
-				itemKey, err = t.db.Delete(relativeY - 1)
+			} else if (offsetX-lenHiddenMatchPrefix) == 0 && (len(curItem.Line())-lenHiddenMatchPrefix) == 0 {
+				itemKey, err = t.db.Delete(curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
 				// Move up a cursor position
 				posDiff[1]--
-				if relativeY > reservedTopLines {
+				if relativeY > t.ReservedTopLines {
 					// TODO setting to the max width isn't completely robust as other
 					// decrements will affect, but it's good enough for now as the cursor
 					// repositioning logic will take care of over-increments
@@ -539,22 +649,22 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			}
 		}
 	case KeyMoveItemUp:
-		if relativeY > reservedTopLines-1 {
+		if t.useClientSearch || relativeY > t.ReservedTopLines-1 {
 			// Move the current item up and follow with cursor
-			if err = t.db.MoveUp(relativeY - 1); err != nil {
+			if err = t.db.MoveUp(curItem); err != nil {
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = t.CurItem.Key()
+			itemKey = curItem.key
 		}
 	case KeyMoveItemDown:
-		if relativeY > reservedTopLines-1 {
+		if t.useClientSearch || relativeY > t.ReservedTopLines-1 {
 			// Move the current item down and follow with cursor
-			if err = t.db.MoveDown(relativeY - 1); err != nil {
+			if err = t.db.MoveDown(curItem); err != nil {
 				log.Fatal(err)
 			}
 			// Set itemKey to current to ensure the cursor follows it
-			itemKey = t.CurItem.Key()
+			itemKey = curItem.key
 		}
 	case KeyCursorDown:
 		posDiff[1]++
@@ -565,7 +675,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 	case KeyCursorLeft:
 		posDiff[0]--
 	case KeyRune:
-		if relativeY == reservedTopLines-1 {
+		if onSearch {
 			if len(t.Search) > 0 {
 				grpIdx, charOffset := t.GetSearchGroupIdxAndOffset()
 				newGroup := make([]rune, len(t.Search[grpIdx]))
@@ -574,7 +684,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				// We want to insert a char into the current search group then update in place
 				newGroup = insertCharInPlace(newGroup, charOffset, ev.R)
 				oldLen := len(string(newGroup))
-				parsedGroup := parseOperatorGroups(string(newGroup))
+				parsedGroup := ParseOperatorGroups(string(newGroup))
 				t.Search[grpIdx] = []rune(parsedGroup)
 				posDiff[0] += len(parsedGroup) - oldLen
 			} else {
@@ -583,59 +693,79 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 				t.Search = append(t.Search, newTerm)
 			}
 		} else {
-			newLine := []rune(t.CurItem.Line)
+			newLine := []rune(curItem.rawLine)
 			// Insert characters at position
-			if len(newLine) == 0 || len(newLine) == offsetX {
+			if len(newLine) == 0 {
 				newLine = append(newLine, ev.R...)
 			} else {
 				newLine = insertCharInPlace(newLine, offsetX, ev.R)
 			}
 			oldLen := len(newLine)
-			parsedNewLine := parseOperatorGroups(string(newLine))
-			err = t.db.Update(parsedNewLine, nil, relativeY-reservedTopLines)
+			parsedNewLine := ParseOperatorGroups(string(newLine))
+			err = t.db.Update(parsedNewLine, nil, curItem)
 			if err != nil {
 				log.Fatal(err)
 			}
 			posDiff[0] += len([]rune(parsedNewLine)) - oldLen
 		}
 		posDiff[0] += len(ev.R)
-		t.footerMessage = ""
+		//t.footerMessage = ""
+	case SetText:
+		// This is only called from list items in the web client
+		oldLen := len([]rune(curItem.rawLine))
+		// The rune slice received will only have the line, and not the appended
+		// friends (the client has no knowledge of the collaborators being stored
+		// within the rawLine). These are appended in the TrimPrefix call below.
+		parsedNewLine := ParseOperatorGroups(string(ev.R)) + strings.TrimPrefix(curItem.rawLine, curItem.Line())
+		err = t.db.Update(parsedNewLine, nil, curItem)
+		if err != nil {
+			log.Fatal(err)
+		}
+		posDiff[0] += len([]rune(parsedNewLine)) - oldLen
 	}
-	//t.previousKey = ev.T
+
+	if bypassRefresh {
+		return []ListItem{}, true, nil
+	}
 
 	t.HiddenMatchPrefix = getHiddenLinePrefix(t.Search)
 
-	matchIdx := relativeY - reservedTopLines
+	matchIdx := relativeY - t.ReservedTopLines
 	// Adjust with any explicit moves
 	matchIdx = Min(matchIdx+posDiff[1], len(t.matches)-1)
 	// Set itemKey to the client's current curItem
-	if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
-		itemKey = t.matches[matchIdx].Key()
+	if !t.useClientSearch {
+		if itemKey == "" && matchIdx >= 0 && matchIdx < len(t.matches) {
+			itemKey = t.matches[matchIdx].key
+		}
+	} else if curItem != nil {
+		itemKey = curItem.key
 	}
 
 	// Handle any offsets that occurred due to other collaborators interacting with the same list
 	// at the same time
 	t.matches, matchIdx, err = t.db.Match(t.Search, t.ShowHidden, itemKey, 0, limit)
 
-	windowSize := t.H - reservedTopLines - reservedBottomLines
+	windowSize := t.H - t.ReservedTopLines - t.ReservedBottomLines
 
 	t.CurY = 0
 	if matchIdx >= 0 {
 		if matchIdx < t.VertOffset {
 			t.VertOffset = matchIdx
-			t.CurY = reservedTopLines
+			t.CurY = t.ReservedTopLines
 		} else if matchIdx >= t.VertOffset+windowSize {
 			t.VertOffset = matchIdx - windowSize
-			t.CurY = reservedTopLines + windowSize
+			t.CurY = t.ReservedTopLines + windowSize
 		} else {
-			t.CurY = matchIdx - t.VertOffset + reservedTopLines
+			t.CurY = matchIdx - t.VertOffset + t.ReservedTopLines
 		}
 	}
 
-	isSearchLine := t.CurY <= reservedTopLines-1 // `- 1` for 0 idx
+	isSearchLine := t.CurY <= t.ReservedTopLines-1 // `- 1` for 0 idx
 
 	// Set curItem before establishing max X position based on the len of the curItem line (to avoid
 	// nonexistent array indexes). If on search line, just set to nil
+	// This is legacy to support the terminal client until the key based interface refactor is done
 	if isSearchLine || len(t.matches) == 0 {
 		t.CurItem = nil
 	} else {
@@ -665,15 +795,15 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, limit int) ([]ListIt
 			}
 			t.CurX = 0 // Prevent index < 0
 		} else {
-			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.CurItem.Line) {
+			if newXIdx > t.W-1 && t.HorizOffset+t.W-1 < len(t.CurItem.Line()) {
 				t.HorizOffset++
 			}
 			// We need to recalc lenHiddenMatchPrefix here to cover the case when we arrow down from
 			// the search line to the top line, when there's a hidden prefix (otherwise there is a delay
 			// before the cursor sets to the end of the line and we're at risk of an index error).
-			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line, t.HiddenMatchPrefix)
-			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
-			t.CurX = Min(newXIdx, t.W-1)                                                           // Prevent going out of range of the page
+			lenHiddenMatchPrefix = getLenHiddenMatchPrefix(t.CurItem.Line(), t.HiddenMatchPrefix)
+			newXIdx = Min(newXIdx, len([]rune(t.CurItem.Line()))-t.HorizOffset-lenHiddenMatchPrefix) // Prevent going out of range of the line
+			t.CurX = Min(newXIdx, t.W-1)                                                             // Prevent going out of range of the page
 		}
 	}
 

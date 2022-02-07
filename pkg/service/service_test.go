@@ -114,7 +114,7 @@ func TestServicePushPull(t *testing.T) {
 
 		repo.push(&wal, localWalFile, "")
 		// Clear the cache to make sure we can pick the file up again
-		repo.processedPartialWals = make(map[string]struct{})
+		repo.processedWalNames = make(map[string]struct{})
 		newWal, _ := repo.pull([]WalFile{localWalFile})
 
 		if len(wal) != len(*newWal) {

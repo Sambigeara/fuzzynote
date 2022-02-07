@@ -18,11 +18,10 @@ import (
 )
 
 const (
-	reservedTopLines, reservedBottomLines = 1, 1
-	reservedEndChars                      = 1
-	emptySearchLinePrompt                 = "Search here..."
-	searchGroupPrompt                     = "TAB: Create new search group"
-	newLinePrompt                         = "Enter: Create new line"
+	reservedEndChars      = 1
+	emptySearchLinePrompt = "Search here..."
+	searchGroupPrompt     = "TAB: Create new search group"
+	newLinePrompt         = "Enter: Create new line"
 )
 
 type Terminal struct {
@@ -55,7 +54,7 @@ func NewTerm(db *service.DBListRepo, colour string, editor string) *Terminal {
 	w, h := s.Size()
 	t := Terminal{
 		db:     db,
-		c:      service.NewClientBase(db, w, h),
+		c:      service.NewClientBase(db, w, h, false),
 		S:      s,
 		style:  defStyle,
 		colour: colour,
@@ -133,23 +132,35 @@ func (t *Terminal) buildFooter(s tcell.Screen, text string) {
 	// Pad out remaining line with spaces to ensure whole bar is filled
 	lenStr := len([]rune(text))
 	text += string(make([]rune, t.c.W-lenStr))
-	// reservedBottomLines is subtracted from t.c.H globally, and we want to print on the bottom line
+	// ReservedBottomLines is subtracted from t.c.H globally, and we want to print on the bottom line
 	// so add it back in here
-	emitStr(s, 0, t.c.H-1+reservedBottomLines, footer, text)
+	emitStr(s, 0, t.c.H-1+t.c.ReservedBottomLines, footer, text)
 }
 
-func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style]string) {
-	x := 0
-	for style, collabStr := range collaborators {
-		emitStr(s, x, t.c.H-1+reservedBottomLines, style, collabStr)
-		x += len(collabStr)
+func (t *Terminal) buildSingleStyleCollabDisplay(s tcell.Screen, style tcell.Style, collaborators []string, xOffset int, yOffset int) {
+	friendStyles := map[tcell.Style][]string{
+		style: []string{},
+	}
+	for _, c := range collaborators {
+		friendStyles[style] = append(friendStyles[style], c)
+	}
+	t.buildCollabDisplay(t.S, friendStyles, xOffset, yOffset)
+}
+
+func (t *Terminal) buildCollabDisplay(s tcell.Screen, collaborators map[tcell.Style][]string, xOffset int, yOffset int) {
+	x := xOffset
+	for style, collabStrSlice := range collaborators {
+		for _, collabStr := range collabStrSlice {
+			emitStr(s, x, yOffset, style, collabStr)
+			x += len(collabStr) + 1
+		}
 	}
 }
 
 func (t *Terminal) resizeScreen() {
 	w, h := t.S.Size()
 	t.c.W = w - reservedEndChars
-	t.c.H = h - reservedBottomLines
+	t.c.H = h - t.c.ReservedBottomLines
 }
 
 // A selection of colour combos to apply to collaborators
@@ -188,20 +199,20 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	t.buildSearchBox(t.S)
 
 	// Store comma separated strings of collaborator emails against the style
-	collaborators := make(map[tcell.Style]string)
+	collaborators := make(map[tcell.Style][]string)
 
 	// Randomise the starting colour index for bants
 	collabStyleInc := collabStyleIncStart
 	offset := 0
-	for i, r := range matches[t.c.VertOffset:service.Min(len(matches), t.c.VertOffset+t.c.H-reservedTopLines)] {
+	for i, r := range matches[t.c.VertOffset:service.Min(len(matches), t.c.VertOffset+t.c.H-t.c.ReservedTopLines)] {
 		style := t.style
-		offset = i + reservedTopLines
+		offset = i + t.c.ReservedTopLines
 
 		// Get current collaborators on item, if any
 		lineCollabers := collabMap[r.Key()]
 
 		// Mutually exclusive style triggers
-		if _, ok := t.c.SelectedItems[i]; ok {
+		if _, ok := t.c.SelectedItems[matches[i].Key()]; ok {
 			// Currently selected with Ctrl-S
 			// By default, we reverse the colourscheme for "dark" settings, so undo the
 			// reversal, to reverse again...
@@ -213,11 +224,11 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 		} else if len(lineCollabers) > 0 {
 			// If collaborators are on line
 			style = collabStyleCombos[collabStyleInc%len(collabStyleCombos)]
-			collaborators[style] = strings.Join(lineCollabers, ",")
+			collaborators[style] = []string{strings.Join(lineCollabers, ",")}
 			collabStyleInc++
 		}
 
-		if r.Note != nil && len(*r.Note) > 0 {
+		if len(r.Note) > 0 {
 			style = style.Underline(true).Bold(true)
 		}
 
@@ -225,10 +236,10 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 			style = style.Dim(true)
 		}
 
-		line := t.c.TrimPrefix(r.Line)
+		line := t.c.TrimPrefix(r.Line())
 
 		// Account for horizontal offset if on curItem
-		if i == t.c.CurY-reservedTopLines {
+		if i == t.c.CurY-t.c.ReservedTopLines {
 			if len(line) > 0 {
 				line = line[t.c.HorizOffset:]
 			}
@@ -236,6 +247,15 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 
 		// Emit line
 		emitStr(t.S, 0, offset, style, line)
+
+		// If the line is shared with anyone, paint the collaborators after the line
+		if friends := r.Friends(); len(friends) > 0 {
+			// TODO optimise
+			// Don't bother displaying friends that are currently being searched for
+			removedSearchFriends := t.c.GetUnsearchedFriends(friends)
+			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Dim(true)
+			t.buildSingleStyleCollabDisplay(t.S, s, removedSearchFriends, len([]rune(line))+1, offset)
+		}
 
 		if offset == t.c.H {
 			break
@@ -246,21 +266,25 @@ func (t *Terminal) paint(matches []service.ListItem, saveWarning bool) error {
 	// TODO ordering
 	if len(matches) == 0 {
 		if len(t.c.Search) > 0 && len(t.c.Search[0]) > 0 {
-			newLinePrefixPrompt := fmt.Sprintf("Enter: Create new line with search prefix: \"%s\"", service.GetNewLinePrefix(t.c.Search))
-			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
+			newLinePrefixPrompt := "Enter: Create new line with search prefix: \"" + service.GetNewLinePrefix(t.c.Search) + "\""
+			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrefixPrompt)
 		} else {
-			emitStr(t.S, 0, reservedTopLines, t.style.Dim(true), newLinePrompt)
+			emitStr(t.S, 0, t.c.ReservedTopLines, t.style.Dim(true), newLinePrompt)
 		}
 	}
 
 	// Show active collaborators
 	if len(collaborators) > 0 {
-		t.buildCollabDisplay(t.S, collaborators)
+		t.buildCollabDisplay(t.S, collaborators, 0, t.c.H-2+t.c.ReservedBottomLines)
 	}
 
-	//if t.footerMessage != "" {
-	//    t.buildFooter(t.S, t.footerMessage)
-	//}
+	if t.c.CurItem != nil {
+		if friends := t.c.CurItem.Friends(); len(friends) > 0 {
+			friends := append([]string{"Shared with:"}, friends...) // Add a prompt as the initial string
+			s := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow)
+			t.buildSingleStyleCollabDisplay(t.S, s, friends, 0, t.c.H-1+t.c.ReservedBottomLines)
+		}
+	}
 
 	t.S.ShowCursor(t.c.CurX, t.c.CurY)
 	t.S.Show()
@@ -277,11 +301,7 @@ func (t *Terminal) openEditorSession() error {
 
 	defer os.Remove(tmpfile.Name())
 
-	var note []byte
-	if t.c.CurItem.Note != nil {
-		note = *t.c.CurItem.Note
-	}
-	if _, err := tmpfile.Write(note); err != nil {
+	if _, err := tmpfile.Write(t.c.CurItem.Note); err != nil {
 		log.Fatal(err)
 		return err
 	}
@@ -294,7 +314,7 @@ func (t *Terminal) openEditorSession() error {
 	if err != nil {
 		// For now, show a warning and return
 		// TODO make more robust
-		//t.footerMessage = fmt.Sprintf("Unable to open Note using editor setting : \"%s\"", t.Editor)
+		//t.footerMessage = "Unable to open Note using editor setting : \"" + t.Editor + "\""
 	}
 
 	// Read back from the temp file, and return to the write function
@@ -304,7 +324,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", &newDat, t.c.CurY-reservedTopLines)
+	err = t.db.Update("", newDat, t.c.CurItem)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -320,7 +340,7 @@ func (t *Terminal) AwaitEvent() interface{} {
 	return t.S.PollEvent()
 }
 
-func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
+func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 	interactionEvent := service.InteractionEvent{}
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
@@ -329,7 +349,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 			interactionEvent.T = service.KeyEscape
 			if t.previousKey == tcell.KeyEscape {
 				t.S.Fini()
-				return false, nil
+				return false, false, nil
 			}
 		case tcell.KeyEnter:
 			interactionEvent.T = service.KeyEnter
@@ -359,7 +379,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		case tcell.KeyCtrlR:
 			interactionEvent.T = service.KeyRedo
 		case tcell.KeyCtrlC:
-			if url := service.MatchFirstURL(t.c.CurItem.Line); url != "" {
+			if url := service.MatchFirstURL(t.c.CurItem.Line(), true); url != "" {
 				clipboard.WriteAll(url)
 			}
 			interactionEvent.T = service.KeyCopy
@@ -399,15 +419,16 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, error) {
 		t.previousKey = ev.Key()
 	}
 
-	matches, cont, err := t.c.HandleInteraction(interactionEvent, 0)
-	if err != nil {
-		return cont, err
+	if t.c.CurItem != nil {
+		interactionEvent.Key = t.c.CurItem.Key()
 	}
-	if !cont {
-		return false, nil
+
+	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, false, 0)
+	if err != nil {
+		return false, false, err
 	}
 
 	t.paint(matches, false)
 
-	return true, nil
+	return true, false, nil
 }

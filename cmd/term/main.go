@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -11,16 +12,16 @@ import (
 	"github.com/ardanlabs/conf"
 
 	"github.com/sambigeara/fuzzynote/pkg/prompt"
+	"github.com/sambigeara/fuzzynote/pkg/s3"
 	"github.com/sambigeara/fuzzynote/pkg/service"
 	"github.com/sambigeara/fuzzynote/pkg/term"
 )
 
 const (
-	namespace  = "FZN"
-	loginArg   = "login"
-	deleteArg  = "delete"
-	remotesArg = "cfg"
-	importArg  = "import"
+	namespace = "FZN"
+	loginArg  = "login"
+	deleteArg = "delete"
+	importArg = "import"
 )
 
 var (
@@ -30,13 +31,13 @@ var (
 
 func main() {
 	var cfg struct {
-		Version           conf.Version
-		Root              string
-		Colour            string `conf:"default:light"`
-		Editor            string `conf:"default:vim"`
-		SyncFrequencyMs   uint32 `conf:"default:10000"`
-		GatherFrequencyMs uint32 `conf:"default:30000"`
-		Args              conf.Args
+		Version conf.Version
+		Root    string
+		Colour  string `conf:"default:light"`
+		Editor  string `conf:"default:vim"`
+		//SyncFrequencyMs   uint32 `conf:"default:10000"`
+		//GatherFrequencyMs uint32 `conf:"default:30000"`
+		Args conf.Args
 	}
 
 	// Pre-instantiate default root direct (can't pass value dynamically to default above)
@@ -84,11 +85,7 @@ func main() {
 		case loginArg:
 			prompt.Login(cfg.Root)
 		case deleteArg:
-			localWalFile.Purge(nil)
-		case remotesArg:
-			webTokens := service.NewFileWebTokenStore(cfg.Root)
-			web := service.NewWeb(webTokens)
-			prompt.LaunchRemotesCLI(web, localWalFile)
+			localWalFile.Purge()
 		case importArg:
 			// Gather and assert existence of the remaining args.
 			// Bit of an odd way of handling it, but we need to assert existence of `--show` or `--hide` explicitly, and then accept any
@@ -128,7 +125,7 @@ func main() {
 			}
 			defer f.Close()
 
-			if err := service.BuildWalFromPlainText(localWalFile, f, hideItems); err != nil {
+			if err := service.BuildWalFromPlainText(context.Background(), localWalFile, f, hideItems); err != nil {
 				fmt.Println("failed to generate wal file from plain text file")
 				os.Exit(1)
 			}
@@ -146,16 +143,16 @@ func main() {
 	listRepo := service.NewDBListRepo(
 		localWalFile,
 		webTokens,
-		cfg.SyncFrequencyMs,
-		cfg.GatherFrequencyMs,
+		//cfg.SyncFrequencyMs,
+		//cfg.GatherFrequencyMs,
 	)
 
-	s3Remotes := service.GetS3Config(cfg.Root)
+	s3Remotes := s3.GetS3Config(cfg.Root)
 	for _, r := range s3Remotes {
 		// centralise this logic across different remote types when relevant
 		// TODO gracefully deal with missing config
-		s3FileWal := service.NewS3WalFile(r, cfg.Root)
-		listRepo.RegisterWalFile(s3FileWal)
+		s3FileWal := s3.NewS3WalFile(r, cfg.Root)
+		listRepo.AddWalFile(s3FileWal, true)
 	}
 
 	// Create term client

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,52 +14,38 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 )
 
 const (
-	// TODO envvars
 	websocketURL = "wss://ws.fuzzynote.co.uk/v1"
 	apiURL       = "https://api.fuzzynote.co.uk/v1"
 
 	walSyncAuthorizationHeader = "Authorization"
-	webRefreshInterval         = time.Minute * 10
+
+	webPingInterval    = time.Second * 30       // lower ping intervals (5s has been tested) cause performance degradation in the wasm app
+	webRefreshInterval = time.Second * (2 << 6) // 128 seconds ~= 2 minutes, because we use exponential backoffs
 )
 
 type WebWalFile struct {
-	uuid               string
-	web                *Web
-	mode               string
-	pushMatchTerm      []rune
-	processedEventLock *sync.Mutex
-	processedEventMap  map[string]struct{}
-}
-
-func NewWebWalFile(cfg WebRemote, web *Web) *WebWalFile {
-	return &WebWalFile{
-		uuid:               cfg.UUID,
-		web:                web,
-		mode:               cfg.Mode,
-		pushMatchTerm:      []rune(cfg.Match),
-		processedEventLock: &sync.Mutex{},
-		processedEventMap:  make(map[string]struct{}),
-	}
+	// TODO rename uuid to email
+	uuid string
+	web  *Web
+	mode string
 }
 
 func (w *Web) establishWebSocketConnection() error {
 	// TODO close off previous connection gracefully if present??
 
-	dialFunc := func(accessToken string) (*websocket.Conn, *http.Response, error) {
+	dialFunc := func(token string) (*websocket.Conn, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
 		u, _ := url.Parse(websocketURL)
 		q, _ := url.ParseQuery(u.RawQuery)
-		q.Add("auth", accessToken)
-		q.Add("uuid", fmt.Sprintf("%d", w.uuid))
+		q.Add("auth", token)
 		u.RawQuery = q.Encode()
 
 		return websocket.Dial(ctx, u.String(), &websocket.DialOptions{})
@@ -70,16 +57,18 @@ func (w *Web) establishWebSocketConnection() error {
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
 	if err != nil || resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		defer w.tokens.Flush()
+		w.tokens.SetIDToken("")
 		w.wsConn = nil
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		marshalBody, err := json.Marshal(body)
+		err = Authenticate(w.tokens, body)
 		if err != nil {
-			return err
-		}
-		err = Authenticate(w.tokens, marshalBody, nil)
-		if err != nil {
+			if _, ok := err.(authFailureError); ok {
+				w.tokens.SetRefreshToken("")
+				w.tokens.Flush()
+			}
 			return err
 		}
 		w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
@@ -88,6 +77,43 @@ func (w *Web) establishWebSocketConnection() error {
 		return err
 	}
 	return err
+}
+
+type pong struct {
+	Response string
+	User     string
+}
+
+func (w *Web) ping() (pong, error) {
+	p := pong{}
+	u, _ := url.Parse(apiURL)
+	u.Path = path.Join(u.Path, "ping")
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return p, err
+	}
+	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
+
+	resp, err := w.CallWithReAuth(req)
+	if err != nil {
+		return p, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return p, errors.New("ping did not return 201")
+	}
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(respBytes, &p); err != nil {
+		return p, err
+	}
+	if p.Response != "pong" {
+		return p, errors.New("ping did not return a pong")
+	}
+	return p, nil
 }
 
 type websocketMessage struct {
@@ -109,18 +135,18 @@ type cursorMoveEvent struct {
 	unixNanoTime int64
 }
 
-func (w *Web) pushWebsocket(m websocketMessage) {
+func (w *Web) pushWebsocket(m websocketMessage) error {
 	marshalData, err := json.Marshal(m)
 	if err != nil {
 		//log.Fatal("Json marshal: malformed WAL data on websocket push")
 		// TODO proper handling
-		return
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	err = w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	return w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
 	//if err != nil {
 	//    // Re-establish websocket connection on error
 	//    // TODO currently attempting to re-establish connection on ANY error - do better at
@@ -137,16 +163,17 @@ func (w *Web) pushWebsocket(m websocketMessage) {
 	//}
 }
 
-func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, remoteCursorMoveChan chan cursorMoveEvent) error {
-	_, body, err := w.wsConn.Read(ctx)
+func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
+	var el []EventLog
+	_, body, err := r.web.wsConn.Read(ctx)
 	if err != nil {
-		return err
+		return el, err
 	}
 
 	var m websocketMessage
 	err = json.Unmarshal(body, &m)
 	if err != nil {
-		return nil
+		return el, nil
 	}
 
 	switch m.Action {
@@ -154,25 +181,15 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
 		if err != nil {
 			// TODO proper handling
-			return nil
+			return el, nil
 		}
 
 		buf := bytes.NewBuffer([]byte(strWal))
-		el, err := buildFromFile(buf)
-		if err == nil && len(*el) > 0 {
-			walChan <- el
-
-			// Acknowledge the event in the WalFile event cache, so we know to emit further events even
-			// if the match term doesn't match
-			wf, exists := w.walFileMap[m.UUID]
-			// This can occur when running two independent instances for the same user.
-			if exists {
-				key, _ := (*el)[0].getKeys()
-				(*wf).SetProcessedEvent(key)
-			}
+		if el, err = buildFromFile(buf); err != nil {
+			return el, err
 		}
 	case "position":
-		remoteCursorMoveChan <- cursorMoveEvent{
+		r.remoteCursorMoveChan <- cursorMoveEvent{
 			email:        m.Email,
 			listItemKey:  m.Key,
 			unixNanoTime: m.UnixNanoTime,
@@ -180,10 +197,10 @@ func (w *Web) consumeWebsocket(ctx context.Context, walChan chan *[]EventLog, re
 	}
 
 	// TODO proper handling
-	return nil
+	return el, nil
 }
 
-func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, method string) (string, error) {
+func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, originUUID string, uuid string, method string) (string, error) {
 	u, _ := url.Parse(apiURL)
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
@@ -197,6 +214,8 @@ func (wf *WebWalFile) getPresignedURLForWal(originUUID string, uuid string, meth
 	if err != nil {
 		return "", err
 	}
+
+	req = req.WithContext(ctx)
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
@@ -223,14 +242,18 @@ func (wf *WebWalFile) GetUUID() string {
 
 func (wf *WebWalFile) GetRoot() string { return "" }
 
-func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
+func (wf *WebWalFile) GetMatchingWals(ctx context.Context, pattern string) ([]string, error) {
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "wal", "list", wf.uuid)
+	// we now pass emails as `wf.uuid`, so escape it here
+	escapedEmail := url.PathEscape(wf.uuid)
+	u.Path = path.Join(u.Path, "wal", "list", escapedEmail)
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		log.Fatalf("Error creating wal list request: %v", err)
 	}
+
+	req = req.WithContext(ctx)
 
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
@@ -243,14 +266,13 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 		return nil, nil
 	}
 
-	strUUIDs, err := ioutil.ReadAll(resp.Body)
+	byteUUIDs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		//log.Printf("Error parsing wals from S3 response body: %s", err)
 		return nil, nil
 	}
 
 	var uuids []string
-	err = json.Unmarshal([]byte(strUUIDs), &uuids)
+	err = json.Unmarshal(byteUUIDs, &uuids)
 	if err != nil {
 		return nil, err
 	}
@@ -258,14 +280,17 @@ func (wf *WebWalFile) GetMatchingWals(pattern string) ([]string, error) {
 	return uuids, nil
 }
 
-func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
-	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, fileName, "get")
+func (wf *WebWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName string) error {
+	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), fileName, "get")
 	if err != nil {
 		//log.Printf("Error retrieving wal %s: %s", fileName, err)
 		return err
 	}
 
-	s3Resp, err := http.Get(presignedURL)
+	req, err := http.NewRequest("GET", presignedURL, nil)
+	req = req.WithContext(ctx)
+
+	s3Resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
 		return err
@@ -279,14 +304,15 @@ func (wf *WebWalFile) GetWalBytes(w io.Writer, fileName string) error {
 	return nil
 }
 
-func (wf *WebWalFile) RemoveWals(fileNames []string) error {
+func (wf *WebWalFile) RemoveWals(ctx context.Context, fileNames []string) error {
 	var uuids []string
 	for _, f := range fileNames {
 		uuids = append(uuids, f)
 	}
 
 	u, _ := url.Parse(apiURL)
-	u.Path = path.Join(u.Path, "wal", "delete", wf.uuid)
+	escapedEmail := url.PathEscape(wf.uuid)
+	u.Path = path.Join(u.Path, "wal", "delete", escapedEmail)
 
 	marshalNames, err := json.Marshal(fileNames)
 	if err != nil {
@@ -298,6 +324,8 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 		return err
 	}
 
+	req = req.WithContext(ctx)
+
 	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
@@ -307,11 +335,11 @@ func (wf *WebWalFile) RemoveWals(fileNames []string) error {
 	return nil
 }
 
-func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
+func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, tempUUID string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
-	//partialWal := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
+	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
-	presignedURL, err := wf.getPresignedURLForWal(wf.uuid, partialWal, "put")
+	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), tempUUID, "put")
 	if err != nil || presignedURL == "" {
 		return nil
 	}
@@ -323,26 +351,12 @@ func (wf *WebWalFile) Flush(b *bytes.Buffer, partialWal string) error {
 		return err
 	}
 
+	req = req.WithContext(ctx)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil
 	}
 	resp.Body.Close()
 	return nil
-}
-
-func (wf *WebWalFile) GetMode() string          { return wf.mode }
-func (wf *WebWalFile) GetPushMatchTerm() []rune { return wf.pushMatchTerm }
-
-func (wf *WebWalFile) SetProcessedEvent(key string) {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	wf.processedEventMap[key] = struct{}{}
-}
-
-func (wf *WebWalFile) IsEventProcessed(key string) bool {
-	wf.processedEventLock.Lock()
-	defer wf.processedEventLock.Unlock()
-	_, exists := wf.processedEventMap[key]
-	return exists
 }

@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"path"
 
-	cognito "github.com/aws/aws-sdk-go/service/cognitoidentityprovider"
 	"gopkg.in/yaml.v2"
 )
 
@@ -20,18 +18,18 @@ const (
 )
 
 type WebTokenStore interface {
-	SetAccessToken(string)
+	SetEmail(string)
 	SetRefreshToken(string)
 	SetIDToken(string)
-	AccessToken() string
+	Email() string
 	RefreshToken() string
 	IDToken() string
-	Flush(ctx interface{})
+	Flush()
 }
 
 type FileWebTokenStore struct {
 	root    string
-	Access  string `yaml:"accessToken"`
+	User    string `yaml:"user"`
 	Refresh string `yaml:"refreshToken"`
 	ID      string `yaml:"idToken"`
 }
@@ -40,6 +38,7 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 	// Attempt to read from file
 	tokenFile := path.Join(root, webTokensFileName)
 	f, err := os.Open(tokenFile)
+	defer f.Close()
 
 	wt := &FileWebTokenStore{root: root}
 	if err == nil {
@@ -50,18 +49,24 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 			// TODO handle with appropriate error message
 			return wt
 		}
-		defer f.Close()
 	}
 	return wt
 }
 
-func (wt *FileWebTokenStore) SetAccessToken(s string)  { wt.Access = s }
+type authFailureError struct{}
+
+func (e authFailureError) Error() string {
+	return "Authentication unsuccessful, please try logging in"
+}
+
+// TODO reconsider this interface...
+func (wt *FileWebTokenStore) SetEmail(s string)        { wt.User = s }
 func (wt *FileWebTokenStore) SetRefreshToken(s string) { wt.Refresh = s }
 func (wt *FileWebTokenStore) SetIDToken(s string)      { wt.ID = s }
-func (wt *FileWebTokenStore) AccessToken() string      { return wt.Access }
+func (wt *FileWebTokenStore) Email() string            { return wt.User }
 func (wt *FileWebTokenStore) RefreshToken() string     { return wt.Refresh }
 func (wt *FileWebTokenStore) IDToken() string          { return wt.ID }
-func (wt *FileWebTokenStore) Flush(ctx interface{}) {
+func (wt *FileWebTokenStore) Flush() {
 	b, err := yaml.Marshal(&wt)
 	if err != nil {
 		log.Fatal(err)
@@ -76,7 +81,17 @@ func (wt *FileWebTokenStore) Flush(ctx interface{}) {
 	f.Write(b)
 }
 
-func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
+type authenticationResultType struct {
+	IdToken      *string `type:"string" sensitive:"true"`
+	RefreshToken *string `type:"string" sensitive:"true"`
+}
+
+func Authenticate(wt WebTokenStore, args map[string]string) error {
+	body, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+
 	u, _ := url.Parse(apiURL)
 	u.Path = path.Join(u.Path, "auth")
 	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(body))
@@ -86,7 +101,7 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("Authentication unsuccessful, please try logging in")
+		return authFailureError{}
 	}
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
@@ -94,12 +109,13 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 		return err
 	}
 
-	var authResult cognito.AuthenticationResultType
+	var authResult authenticationResultType
 	if err := json.Unmarshal(bodyBytes, &authResult); err != nil {
 		return err
 	}
-	if authResult.AccessToken != nil {
-		wt.SetAccessToken(*authResult.AccessToken)
+
+	if email, ok := args["user"]; ok {
+		wt.SetEmail(email)
 	}
 	if authResult.RefreshToken != nil {
 		wt.SetRefreshToken(*authResult.RefreshToken)
@@ -107,12 +123,12 @@ func Authenticate(wt WebTokenStore, body []byte, ctx interface{}) error {
 	if authResult.IdToken != nil {
 		wt.SetIDToken(*authResult.IdToken)
 	}
-	wt.Flush(ctx)
+	wt.Flush()
 	return nil
 }
 
 // CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
-// expired AccessToken, will reauth, and then retry the original function.
+// expired IDToken, will reauth, and then retry the original function.
 func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 	f := func(req *http.Request) (*http.Response, error) {
 		return http.DefaultClient.Do(req)
@@ -122,15 +138,17 @@ func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
+		defer w.tokens.Flush()
+		w.tokens.SetIDToken("")
 		body := map[string]string{
 			"refreshToken": w.tokens.RefreshToken(),
 		}
-		marshalBody, err := json.Marshal(body)
+		err = Authenticate(w.tokens, body)
 		if err != nil {
-			return nil, err
-		}
-		err = Authenticate(w.tokens, marshalBody, nil)
-		if err != nil {
+			if _, ok := err.(authFailureError); ok {
+				w.tokens.SetRefreshToken("")
+				w.tokens.Flush()
+			}
 			return nil, err
 		}
 		req.Header.Set(walSyncAuthorizationHeader, w.tokens.IDToken())

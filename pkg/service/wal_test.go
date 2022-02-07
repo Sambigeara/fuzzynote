@@ -730,7 +730,7 @@ func TestWalMerge(t *testing.T) {
 		repo.Start(newTestClient(), generateProcessingWalChan(), make(chan interface{}))
 
 		localWalFile = NewLocalFileWalFile(rootDir)
-		repo.processedPartialWals = make(map[string]struct{})
+		repo.processedWalNames = make(map[string]struct{})
 		eventLog, _ = repo.pull([]WalFile{localWalFile})
 		repo.Replay(eventLog)
 
@@ -1300,7 +1300,7 @@ func TestWalFilter(t *testing.T) {
 		// Create copy
 		filteredWalFile := NewLocalFileWalFile(otherRootDir)
 		filteredWalFile.pushMatchTerm = []rune("foo")
-		repo1.RegisterWalFile(filteredWalFile)
+		repo1.AddWalFile(filteredWalFile)
 
 		uuid := uuid(1)
 		eventTime := time.Now().UnixNano()

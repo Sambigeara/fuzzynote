@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 )
@@ -32,10 +31,10 @@ const (
 	closeOp rune = '}'
 )
 
-type matchPattern int
+type MatchPattern int
 
 const (
-	FullMatchPattern matchPattern = iota
+	FullMatchPattern MatchPattern = iota
 	InverseMatchPattern
 	FuzzyMatchPattern
 	NoMatchPattern
@@ -44,12 +43,6 @@ const (
 // matchChars represents the number of characters at the start of the string
 // which are attributed to the match pattern.
 // This is used elsewhere to strip the characters where appropriate
-var matchChars = map[matchPattern]int{
-	FullMatchPattern:    1,
-	InverseMatchPattern: 2,
-	FuzzyMatchPattern:   0,
-	NoMatchPattern:      0,
-}
 
 func GetNewLinePrefix(search [][]rune) string {
 	var searchStrings []string
@@ -61,33 +54,28 @@ func GetNewLinePrefix(search [][]rune) string {
 	}
 	newString := ""
 	if len(searchStrings) > 0 {
-		newString = fmt.Sprintf("%s ", strings.Join(searchStrings, " "))
+		newString = strings.Join(searchStrings, " ") + " "
 	}
 	return newString
 }
 
-// GetMatchPattern will return the matchPattern of a given string, if any, plus the number
+// GetMatchPattern will return the MatchPattern of a given string, if any, plus the number
 // of chars that can be omitted to leave only the relevant text
-func GetMatchPattern(sub []rune) (matchPattern, int) {
+func GetMatchPattern(sub []rune) (MatchPattern, int) {
 	if len(sub) == 0 {
 		return NoMatchPattern, 0
 	}
-	pattern := FuzzyMatchPattern
-	if sub[0] == '=' {
-		pattern = FullMatchPattern
-		if len(sub) > 1 {
-			// Inverse string match if a search group begins with `=!`
-			if sub[1] == '!' {
-				pattern = InverseMatchPattern
-			}
-		}
+	switch sub[0] {
+	case '~':
+		return FuzzyMatchPattern, 1
+	case '!':
+		return InverseMatchPattern, 1
 	}
-	nChars, _ := matchChars[pattern]
-	return pattern, nChars
+	return FullMatchPattern, 0
 }
 
 // If a matching group starts with `=` do a substring match, otherwise do a fuzzy search
-func isMatch(sub []rune, full string, pattern matchPattern) bool {
+func isMatch(sub []rune, full string, pattern MatchPattern) bool {
 	if len(sub) == 0 {
 		return true
 	}
