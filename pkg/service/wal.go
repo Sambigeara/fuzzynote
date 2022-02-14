@@ -1537,7 +1537,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 			if isOwned {
 				delete(walNameMap, checksum)
 
-				filesToDelete := make([]string, len(walNameMap))
+				filesToDelete := []string{}
 				for f := range walNameMap {
 					filesToDelete = append(filesToDelete, f)
 				}
