@@ -1696,7 +1696,10 @@ func (r *DBListRepo) emitRemoteUpdate() {
 }
 
 func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
-	syncTriggerChan := make(chan struct{})
+	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
+	// specified wait duration)
+	syncTriggerChan := make(chan struct{}, 1)
+
 	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
@@ -1742,11 +1745,13 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 				select {
 				case <-syncTriggerChan:
 					syncWalFiles := []WalFile{}
-					r.syncWalFileMut.RLock()
-					for _, wf := range r.syncWalFiles {
-						syncWalFiles = append(syncWalFiles, wf)
-					}
-					r.syncWalFileMut.RUnlock()
+					func() {
+						r.syncWalFileMut.RLock()
+						defer r.syncWalFileMut.RUnlock()
+						for _, wf := range r.syncWalFiles {
+							syncWalFiles = append(syncWalFiles, wf)
+						}
+					}()
 					if el, _, err = r.pull(ctx, syncWalFiles); err != nil {
 						log.Fatal(err)
 					}
