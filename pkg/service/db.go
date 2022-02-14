@@ -6,6 +6,12 @@ import (
 
 type refreshKey struct{}
 
+type FinishWithPurgeError struct{}
+
+func (e FinishWithPurgeError) Error() string {
+	return ""
+}
+
 // Start begins push/pull for all WalFiles
 func (r *DBListRepo) Start(client Client) error {
 	inputEvtsChan := make(chan interface{})
@@ -67,14 +73,14 @@ func (r *DBListRepo) Start(client Client) error {
 					scheduleRefresh()
 				}
 			case ev := <-inputEvtsChan:
-				cont, purge, err := client.HandleEvent(ev)
-				if err != nil {
-					errChan <- err
-					return
-				}
-				if !cont {
+				if err := client.HandleEvent(ev); err != nil {
 					cancel()
-					errChan <- r.finish(purge)
+					<-r.finalFlushChan
+					_, isPurge := err.(FinishWithPurgeError)
+					if finishErr := r.finish(isPurge); finishErr != nil {
+						errChan <- finishErr
+					}
+					errChan <- err
 					return
 				}
 			}

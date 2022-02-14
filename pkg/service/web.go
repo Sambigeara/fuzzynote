@@ -200,12 +200,12 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 	return el, nil
 }
 
-func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, originUUID string, uuid string, method string) (string, error) {
+func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, owner string, checksum string, method string) (string, error) {
 	u, _ := url.Parse(apiURL)
 	q, _ := url.ParseQuery(u.RawQuery)
 	q.Add("method", method)
-	q.Add("origin-uuid", originUUID)
-	q.Add("uuid", uuid)
+	q.Add("owner", owner)
+	q.Add("checksum", checksum)
 	u.RawQuery = q.Encode()
 
 	u.Path = path.Join(u.Path, "wal", "presigned")
@@ -290,14 +290,13 @@ func (wf *WebWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName str
 	req, err := http.NewRequest("GET", presignedURL, nil)
 	req = req.WithContext(ctx)
 
-	s3Resp, err := http.DefaultClient.Do(req)
+	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
-		//log.Printf("Error retrieving file using presigned S3 URL: %s", err)
 		return err
 	}
-	defer s3Resp.Body.Close()
+	defer resp.Body.Close()
 
-	dec := base64.NewDecoder(base64.StdEncoding, s3Resp.Body)
+	dec := base64.NewDecoder(base64.StdEncoding, resp.Body)
 
 	io.Copy(w, dec)
 
@@ -335,11 +334,11 @@ func (wf *WebWalFile) RemoveWals(ctx context.Context, fileNames []string) error 
 	return nil
 }
 
-func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, tempUUID string) error {
+func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, checksum string) error {
 	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
 	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
 
-	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), tempUUID, "put")
+	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), checksum, "put")
 	if err != nil || presignedURL == "" {
 		return nil
 	}
@@ -353,9 +352,9 @@ func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, tempUUID strin
 
 	req = req.WithContext(ctx)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
-		return nil
+		return err
 	}
 	resp.Body.Close()
 	return nil

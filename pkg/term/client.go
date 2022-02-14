@@ -1,6 +1,7 @@
 package term
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -340,7 +341,7 @@ func (t *Terminal) AwaitEvent() interface{} {
 	return t.S.PollEvent()
 }
 
-func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
+func (t *Terminal) HandleEvent(ev interface{}) error {
 	interactionEvent := service.InteractionEvent{}
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
@@ -349,7 +350,7 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 			interactionEvent.T = service.KeyEscape
 			if t.previousKey == tcell.KeyEscape {
 				t.S.Fini()
-				return false, false, nil
+				return errors.New("closing gracefully")
 			}
 		case tcell.KeyEnter:
 			interactionEvent.T = service.KeyEnter
@@ -425,10 +426,10 @@ func (t *Terminal) HandleEvent(ev interface{}) (bool, bool, error) {
 
 	matches, _, err := t.c.HandleInteraction(interactionEvent, t.c.Search, t.c.ShowHidden, false, 0)
 	if err != nil {
-		return false, false, err
+		return err
 	}
 
 	t.paint(matches, false)
 
-	return true, false, nil
+	return nil
 }

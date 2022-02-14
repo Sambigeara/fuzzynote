@@ -1542,7 +1542,9 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog
 					filesToDelete = append(filesToDelete, f)
 				}
 				// Schedule a delete on the files
-				wf.RemoveWals(ctx, filesToDelete)
+				if len(filesToDelete) > 0 {
+					wf.RemoveWals(ctx, filesToDelete)
+				}
 			}
 		}(wf)
 	}
@@ -1631,7 +1633,6 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 }
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
-	//log.Print("Flushing...")
 	if len(wal) > 0 {
 		fullByteWal, err := buildByteWal(wal)
 		if err != nil {
@@ -1657,7 +1658,6 @@ func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitF
 		}
 		if waitForCompletion {
 			wg.Wait()
-			os.Exit(0)
 		}
 	}
 }
@@ -1697,12 +1697,11 @@ func (r *DBListRepo) emitRemoteUpdate() {
 
 func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
 	syncTriggerChan := make(chan struct{})
-	pushTriggerTimer := time.NewTimer(time.Second * 0)
 	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
 	// dropped in to the root directory, etc) are flushed
-	<-pushTriggerTimer.C
+	<-r.pushTriggerTimer.C
 
 	webPingTicker := time.NewTicker(webPingInterval)
 	webRefreshTicker := time.NewTicker(webRefreshInterval)
@@ -1718,7 +1717,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 		}
 	}
 	schedulePush := func() {
-		pushTriggerTimer.Reset(pushWaitDuration)
+		r.pushTriggerTimer.Reset(pushWaitDuration)
 		gatherTriggerTimer.Reset(gatherWaitDuration)
 	}
 
@@ -1901,6 +1900,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 			// and then emit them in batches, for great efficiency gains.
 			select {
 			case e := <-r.eventsChan:
+				r.hasUnflushedEvents = true
 				// Write in real time to the websocket, if present
 				if r.web.isActive {
 					func() {
@@ -1929,18 +1929,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 				el = append(el, e)
 				// Trigger an aggregated push (if not already pending)
 				schedulePush()
-			case <-pushTriggerTimer.C:
+			case <-r.pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				r.flushPartialWals(ctx, el, false)
 				el = []EventLog{}
+				r.hasUnflushedEvents = false
 			case <-ctx.Done():
-				// TODO create a separate timeout here? This is the only case where we don't want the parent
-				// context cancellation to cancel the inflight flush
-				// TODO ensure completion of this operation before completing?? maybe bring back in the stop chan
 				r.flushPartialWals(context.Background(), el, true)
 				go func() {
-					r.stopChan <- struct{}{}
+					r.finalFlushChan <- struct{}{}
 				}()
 				return
 			}
@@ -1973,7 +1971,6 @@ func (r *DBListRepo) finish(purge bool) error {
 			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
 		}
 	} else {
-		<-r.stopChan
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
 	}

@@ -32,7 +32,7 @@ func toggle(b, flag bits) bits { return b ^ flag }
 func has(b, flag bits) bool    { return b&flag != 0 }
 
 type Client interface {
-	HandleEvent(interface{}) (bool, bool, error)
+	HandleEvent(interface{}) error
 	AwaitEvent() interface{}
 }
 
@@ -79,7 +79,9 @@ type DBListRepo struct {
 	processedWalChecksums    map[string]struct{}
 	processedWalChecksumLock *sync.Mutex
 
-	stopChan chan struct{}
+	pushTriggerTimer   *time.Timer
+	hasUnflushedEvents bool
+	finalFlushChan     chan struct{}
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -87,8 +89,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
-
-		stopChan: make(chan struct{}),
 
 		// Wal stuff
 		uuid:                               generateUUID(),
@@ -115,6 +115,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 
 		friends:           make(map[string]map[string]int64),
 		friendsUpdateLock: &sync.RWMutex{},
+
+		pushTriggerTimer: time.NewTimer(time.Second * 0),
+		finalFlushChan:   make(chan struct{}),
 	}
 
 	// The localWalFile gets attached to the Wal independently (there are certain operations
@@ -144,6 +147,19 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 func (r *DBListRepo) setEmail(email string) {
 	r.email = strings.ToLower(email)
 	r.friends[email] = make(map[string]int64)
+}
+
+// ForceTriggerFlush will zero the flush timer, and block til completion. E.g. this is a synchronous flush
+func (r *DBListRepo) ForceTriggerFlush() {
+	go func() {
+		r.pushTriggerTimer.Reset(0)
+	}()
+}
+
+// IsSynced is a boolean value defining whether or now there are currently events held in memory that are yet to be
+// flushed to local storage
+func (r *DBListRepo) IsSynced() bool {
+	return !r.hasUnflushedEvents
 }
 
 // ListItem represents a single item in the returned list, based on the Match() input

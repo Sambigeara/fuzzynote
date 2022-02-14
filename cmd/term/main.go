@@ -158,9 +158,5 @@ func main() {
 	// Create term client
 	client := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)
 
-	err = listRepo.Start(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-	os.Exit(0)
+	fmt.Println(listRepo.Start(client))
 }
