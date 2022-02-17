@@ -467,20 +467,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		return res, newPos, nil
 	}
 
-	// If web connection is enabled, broadcast a cursor move event
-	// We need to _only_ emit an event if the curKey has changed since the previous Match call.
-	// This prevents an endless loop that arises when more than one client is active and communicating on the same wal.
-	// If we emitted every time, the following would happen:
-	// 1. receive cursor move websocket event
-	// 2. process it, trigger a client refresh
-	// 3. which calls this function, which then emits an event
-	// 4. trigger stage 1 on remote...
-	if curKey != r.previousListItemKey && r.web.isActive && r.web.wsConn != nil {
-		r.EmitCursorMoveEvent(curKey)
-	}
-
-	r.previousListItemKey = curKey
-
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
 	for {
@@ -559,9 +545,24 @@ func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {
 }
 
 func (r *DBListRepo) EmitCursorMoveEvent(key string) {
-	r.localCursorMoveChan <- cursorMoveEvent{
-		listItemKey:  key,
-		unixNanoTime: time.Now().UnixNano(),
+	// We need to _only_ emit an event if the curKey has changed since the previous Match call.
+	// This prevents an endless loop that arises when more than one client is active and communicating on the same wal.
+	// If we emitted every time, the following would happen:
+	// 1. receive cursor move websocket event
+	// 2. process it, trigger a client refresh
+	// 3. which calls this function, which then emits an event
+	// 4. trigger stage 1 on remote...
+	if r.web.isActive && r.web.wsConn != nil {
+		if key != r.previousListItemKey {
+			//log.Println("cursor move: ", key)
+			go func() {
+				r.localCursorMoveChan <- cursorMoveEvent{
+					listItemKey:  key,
+					unixNanoTime: time.Now().UnixNano(),
+				}
+			}()
+			r.previousListItemKey = key
+		}
 	}
 }
 

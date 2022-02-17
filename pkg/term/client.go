@@ -429,6 +429,12 @@ func (t *Terminal) HandleEvent(ev interface{}) error {
 		return err
 	}
 
+	var newKey string
+	if t.c.CurItem != nil {
+		newKey = t.c.CurItem.Key()
+	}
+	t.db.EmitCursorMoveEvent(newKey)
+
 	t.paint(matches, false)
 
 	return nil
