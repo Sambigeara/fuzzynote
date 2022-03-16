@@ -566,6 +566,20 @@ func (r *DBListRepo) EmitCursorMoveEvent(key string) {
 	}
 }
 
+func getChangedListItemKeysFromWal(wal []EventLog) (map[string]struct{}, bool) {
+	var allowOverride bool
+	allowOverride = true
+	keys := make(map[string]struct{})
+	for _, el := range wal {
+		keys[el.ListItemKey] = struct{}{}
+		switch el.EventType {
+		case MoveUpEvent, MoveDownEvent, AddEvent, DeleteEvent:
+			allowOverride = false
+		}
+	}
+	return keys, allowOverride
+}
+
 func (r *DBListRepo) GetListItemNote(key string) []byte {
 	var note []byte
 	if item, exists := r.matchListItems[key]; exists {

@@ -4,7 +4,10 @@ import (
 	"context"
 )
 
-type refreshKey struct{}
+type RefreshKey struct {
+	AllowOverride bool
+	ChangedKeys   map[string]struct{}
+}
 
 type FinishWithPurgeError struct{}
 
@@ -17,20 +20,6 @@ func (r *DBListRepo) Start(client Client) error {
 	inputEvtsChan := make(chan interface{})
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// In the case of wal merges and receiving remote cursor positions below, we emit generic
-	// null events which are handled in the main loop to refresh the client/UI state.
-	// Only schedule a refresh if there is not one currently pending.
-	scheduleRefresh := func() {
-		go func() {
-			select {
-			case inputEvtsChan <- refreshKey{}:
-			case <-ctx.Done():
-				return
-			default:
-			}
-		}()
-	}
 
 	replayChan := make(chan []EventLog)
 	reorderAndReplayChan := make(chan []EventLog)
@@ -59,18 +48,32 @@ func (r *DBListRepo) Start(client Client) error {
 					errChan <- err
 					return
 				}
-				scheduleRefresh()
+				changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
+				go func() {
+					inputEvtsChan <- RefreshKey{
+						ChangedKeys:   changedKeys,
+						AllowOverride: allowOverride,
+					}
+				}()
 			case wal := <-replayChan:
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
 				}
-				scheduleRefresh()
+				changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
+				go func() {
+					inputEvtsChan <- RefreshKey{
+						ChangedKeys:   changedKeys,
+						AllowOverride: allowOverride,
+					}
+				}()
 			case ev := <-r.remoteCursorMoveChan:
 				// Update active key position of collaborator if changes have occurred
 				updated := r.SetCollabPosition(ev)
 				if updated {
-					scheduleRefresh()
+					go func() {
+						inputEvtsChan <- RefreshKey{}
+					}()
 				}
 			case ev := <-inputEvtsChan:
 				if err := client.HandleEvent(ev); err != nil {
@@ -107,7 +110,10 @@ func (r *DBListRepo) Start(client Client) error {
 	// }
 	go func() {
 		for {
-			inputEvtsChan <- client.AwaitEvent()
+			ev := client.AwaitEvent()
+			go func() {
+				inputEvtsChan <- ev
+			}()
 		}
 	}()
 	return <-errChan

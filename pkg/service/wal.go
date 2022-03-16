@@ -40,6 +40,8 @@ const (
 	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(10)
 	compactionGatherMultiple = 2
+	websocketConsumeDuration = time.Millisecond * 1000
+	websocketPublishDuration = time.Millisecond * 1000
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -444,7 +446,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 
 			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.LamportTimestamp > dtLastChange {
 				r.friends[friendToAdd][e.ListItemKey] = e.LamportTimestamp
-				// TODO the consumer of the channel below will need to be responsible for adding the walfile locally
 				r.AddWalFile(
 					&WebWalFile{
 						uuid: friendToAdd,
@@ -1838,27 +1839,32 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 
 				webCtx, webCancel = context.WithCancel(ctx)
 				if r.web.isActive {
+					wsConsAgg := []EventLog{}
+					wsConsChan := make(chan []EventLog)
 					go func() {
 						for {
-							wsEl, err := r.consumeWebsocket(webCtx)
+							wsEv, err := r.consumeWebsocket(webCtx)
 							if err != nil {
 								// webCancel() triggers error which we need to handle and return
 								// to avoid haywire goroutines with infinite loops and CPU destruction
 								return
 							}
-							// Rather than clogging up numerous goroutines waiting to publish
-							// single item event logs to replayChan, we attempt to publish to it,
-							// but if there's already a wal pending, we fail back and write to
-							// an aggregated log, which will then be attempted again on the next
-							// incoming event
-							// TODO if we get a failed publish and then no more incoming websocket
-							// events, the aggregated log will never be published to replayChan
-							// use a secondary ticker that will wait a given period and flush if
-							// needed????
-							if len(wsEl) > 0 {
-								go func() {
-									replayChan <- wsEl
-								}()
+							wsConsChan <- wsEv
+						}
+					}()
+					wsFlushTicker := time.NewTicker(websocketConsumeDuration)
+					go func() {
+						for {
+							select {
+							case wsEv := <-wsConsChan:
+								wsConsAgg = merge(wsConsAgg, wsEv)
+							case <-wsFlushTicker.C:
+								if len(wsConsAgg) > 0 {
+									replayChan <- wsConsAgg
+									wsConsAgg = []EventLog{}
+								}
+							case <-webCtx.Done():
+								return
 							}
 						}
 					}()
@@ -1898,13 +1904,27 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 	}()
 
 	// Push to all WalFiles
+	var flushAgg, wsPubAgg []EventLog
 	go func() {
-		el := []EventLog{}
+		for {
+			select {
+			case e := <-r.eventsChan:
+				wsPubAgg = merge(wsPubAgg, []EventLog{e})
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	wsPublishTicker := time.NewTicker(websocketPublishDuration)
+	go func() {
 		for {
 			// The events chan contains single events. We want to aggregate them between intervals
 			// and then emit them in batches, for great efficiency gains.
 			select {
-			case e := <-r.eventsChan:
+			case <-wsPublishTicker.C:
+				if len(wsPubAgg) == 0 {
+					continue
+				}
 				r.hasUnflushedEvents = true
 				// Write in real time to the websocket, if present
 				if r.web.isActive {
@@ -1912,7 +1932,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 						r.webWalFileMut.RLock()
 						defer r.webWalFileMut.RUnlock()
 						for _, wf := range r.webWalFiles {
-							if matchedEventLog := r.getMatchedWal([]EventLog{e}, wf); len(matchedEventLog) > 0 {
+							if matchedEventLog := r.getMatchedWal(wsPubAgg, wf); len(matchedEventLog) > 0 {
 								// There are only single events, so get the zero index
 								b, _ := buildByteWal(matchedEventLog)
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
@@ -1931,17 +1951,18 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					r.emitRemoteUpdate()
 				}
 				// Add to an ephemeral log
-				el = append(el, e)
-				// Trigger an aggregated push (if not already pending)
+				flushAgg = merge(flushAgg, wsPubAgg)
+				wsPubAgg = []EventLog{}
+				// Trigger an aggregated push
 				schedulePush()
 			case <-r.pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
-				r.flushPartialWals(ctx, el, false)
-				el = []EventLog{}
+				r.flushPartialWals(ctx, flushAgg, false)
+				flushAgg = []EventLog{}
 				r.hasUnflushedEvents = false
 			case <-ctx.Done():
-				r.flushPartialWals(context.Background(), el, true)
+				r.flushPartialWals(context.Background(), flushAgg, true)
 				go func() {
 					r.finalFlushChan <- struct{}{}
 				}()
