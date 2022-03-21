@@ -40,8 +40,8 @@ const (
 	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(10)
 	compactionGatherMultiple = 2
-	websocketConsumeDuration = time.Millisecond * 1000
-	websocketPublishDuration = time.Millisecond * 1000
+	websocketConsumeDuration = time.Millisecond * 600
+	websocketPublishDuration = time.Millisecond * 600
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
