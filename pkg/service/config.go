@@ -33,28 +33,41 @@ type WebRemote struct {
 	DTLastChange int64
 }
 
-// PostRemote is responsible for both additions and deletions
-func (w *Web) PostRemote(remote *WebRemote, u *url.URL) error {
+type postRemoteResponse struct {
+	ActiveFriends []string
+}
+
+// postRemote is responsible for both additions and deletions
+func (w *Web) postRemote(remote *WebRemote, u *url.URL) ([]string, error) {
 	body, err := json.Marshal(remote)
 	if err != nil {
-		return err
+		return []string{}, err
 	}
 
 	req, err := http.NewRequest("POST", u.String(), strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return []string{}, err
 	}
 
 	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
 	resp, err := w.CallWithReAuth(req)
 	if err != nil {
-		return err
+		return []string{}, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("Error creating new remote: %s", body)
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return []string{}, err
 	}
-	return nil
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return []string{}, fmt.Errorf("Error creating new remote: %s", respBytes)
+	}
+
+	remoteResp := postRemoteResponse{}
+	if err := json.Unmarshal(respBytes, &remoteResp); err != nil {
+		return []string{}, err
+	}
+
+	return remoteResp.ActiveFriends, nil
 }

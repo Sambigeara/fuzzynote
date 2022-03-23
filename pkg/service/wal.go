@@ -310,6 +310,14 @@ func (r *DBListRepo) getFriendsFromLine(line string, existingFriends []string) (
 	return friends, isOrdered
 }
 
+func (r *DBListRepo) checkIfConfigLine(line string) ([]string, bool) {
+	words := strings.Fields(line)
+	if len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
+		return words, true
+	}
+	return words, false
+}
+
 func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 	//if len(line) == 0 {
 	//    return ""
@@ -323,10 +331,11 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 
 	// Avoiding expensive regex based ops for now
 	var f string
-	if words := strings.Fields(line); len(words) == 3 && words[0] == "fzn_cfg:friend" && rune(words[2][0]) == '@' && words[2][1:] == r.email {
+	if words, isConfig := r.checkIfConfigLine(line); isConfig {
 		f = strings.ToLower(words[1])
 	}
 	return f
+
 }
 
 func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
@@ -442,6 +451,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 			if friendItems, friendExists = r.friends[friendToAdd]; !friendExists {
 				friendItems = make(map[string]int64)
 				r.friends[friendToAdd] = friendItems
+				// If the friend does not exist, add to the end of the friendsOrdered slice
+				r.friendsOrdered = append(r.friendsOrdered, friendToAdd)
 			}
 
 			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.LamportTimestamp > dtLastChange {
@@ -455,7 +466,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				)
 			}
 		}
-		//for email := range friendsToRemove {
 		if friendToRemove != "" && friendToRemove != r.email {
 			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
@@ -464,6 +474,13 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 					delete(r.friends[friendToRemove], e.ListItemKey)
 					if len(r.friends[friendToRemove]) == 0 {
 						delete(r.friends, friendToRemove)
+						// remove the friend from the friendsOrdered list
+						for i, f := range r.friendsOrdered {
+							if f == friendToRemove {
+								r.friendsOrdered = append(r.friendsOrdered[:i], r.friendsOrdered[i+1:]...)
+								break
+							}
+						}
 						r.DeleteWalFile(friendToRemove)
 					}
 				}
@@ -1663,7 +1680,20 @@ func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitF
 	}
 }
 
-func (r *DBListRepo) emitRemoteUpdate() {
+func (r *DBListRepo) updateActiveFriendsMap(s []string, updateChan chan interface{}) {
+	m := make(map[string]struct{})
+	for _, f := range s {
+		m[f] = struct{}{}
+	}
+	r.activeFriendsMapLock.Lock()
+	defer r.activeFriendsMapLock.Unlock()
+	r.activeFriends = m
+	go func() {
+		updateChan <- struct{}{}
+	}()
+}
+
+func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 	if r.web.isActive {
 		// We need to wrap the friendsMostRecentChangeDT comparison check, as the friend map update
 		// and subsequent friendsMostRecentChangeDT update needs to be an atomic operation
@@ -1673,22 +1703,13 @@ func (r *DBListRepo) emitRemoteUpdate() {
 			u, _ := url.Parse(apiURL)
 			u.Path = path.Join(u.Path, "remote")
 
-			emails := []string{}
-			for e := range r.friends {
-				if e != r.email {
-					emails = append(emails, e)
-				}
-			}
-
 			remote := WebRemote{
-				Emails:       emails,
+				Emails:       r.friendsOrdered,
 				DTLastChange: r.friendsMostRecentChangeDT,
 			}
-
 			go func() {
-				if err := r.web.PostRemote(&remote, u); err != nil {
-					//fmt.Println(err)
-					//os.Exit(0)
+				if activeFriends, err := r.web.postRemote(&remote, u); err == nil {
+					r.updateActiveFriendsMap(activeFriends, updateChan)
 				}
 			}()
 			r.friendsLastPushDT = r.friendsMostRecentChangeDT
@@ -1696,7 +1717,7 @@ func (r *DBListRepo) emitRemoteUpdate() {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, reorderAndReplayChan chan []EventLog) error {
+func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplayChan chan []EventLog, inputEvtsChan chan interface{}) error {
 	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
 	// specified wait duration)
 	syncTriggerChan := make(chan struct{}, 1)
@@ -1797,10 +1818,11 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 			case <-webPingTicker.C:
 				// is !isActive, we've already entered the exponential retry backoff below
 				if r.web.isActive {
-					if _, err := r.web.ping(); err != nil {
+					if pong, err := r.web.ping(); err != nil {
 						r.web.isActive = false
 						webRefreshTicker.Reset(0)
-						continue
+					} else {
+						r.updateActiveFriendsMap(pong.ActiveFriends, inputEvtsChan)
 					}
 				}
 			case m := <-websocketPushEvents:
@@ -1833,12 +1855,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					r.web.isActive = true
 					expBackoffInterval = time.Second * 1
 					waitInterval = webRefreshInterval
+
+					// Send immediate `ping` to populate ActiveFriends prior to initial sync
+					pong, _ := r.web.ping()
+					r.updateActiveFriendsMap(pong.ActiveFriends, inputEvtsChan)
 				}
 				// Trigger web walfile sync (mostly relevant on initial start)
 				scheduleSync()
 
-				webCtx, webCancel = context.WithCancel(ctx)
 				if r.web.isActive {
+					webCtx, webCancel = context.WithCancel(ctx)
 					wsConsAgg := []EventLog{}
 					wsConsChan := make(chan []EventLog)
 					go func() {
@@ -1948,7 +1974,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					}()
 
 					// Emit any remote updates if web active and local changes have occurred
-					r.emitRemoteUpdate()
+					r.emitRemoteUpdate(inputEvtsChan)
 				}
 				// Add to an ephemeral log
 				flushAgg = merge(flushAgg, wsPubAgg)

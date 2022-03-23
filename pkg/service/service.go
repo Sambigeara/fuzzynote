@@ -64,6 +64,9 @@ type DBListRepo struct {
 	//cfgFriendRegex            *regexp.Regexp
 	friends                   map[string]map[string]int64
 	friendsUpdateLock         *sync.RWMutex
+	friendsOrdered            []string            // operating sort of like a queue, with earliest friends at the head
+	activeFriends             map[string]struct{} // returned from the cloud
+	activeFriendsMapLock      *sync.RWMutex
 	friendsMostRecentChangeDT int64
 	friendsLastPushDT         int64
 
@@ -113,8 +116,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		processedWalChecksums:    make(map[string]struct{}),
 		processedWalChecksumLock: &sync.Mutex{},
 
-		friends:           make(map[string]map[string]int64),
-		friendsUpdateLock: &sync.RWMutex{},
+		friends:              make(map[string]map[string]int64),
+		friendsUpdateLock:    &sync.RWMutex{},
+		activeFriendsMapLock: &sync.RWMutex{},
 
 		pushTriggerTimer: time.NewTimer(time.Second * 0),
 		finalFlushChan:   make(chan struct{}),
@@ -534,6 +538,20 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		}
 		cur = cur.parent
 	}
+}
+
+func (r *DBListRepo) GetFriendFromConfig(item ListItem) (string, bool) {
+	if fields, isConfig := r.checkIfConfigLine(item.rawLine); isConfig {
+		return string(fields[1]), true
+	}
+	return "", false
+}
+
+func (r *DBListRepo) IsFriendActive(f string) bool {
+	r.activeFriendsMapLock.RLock()
+	defer r.activeFriendsMapLock.RUnlock()
+	_, exists := r.activeFriends[f]
+	return exists
 }
 
 func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {

@@ -93,7 +93,7 @@ func (r *DBListRepo) Start(client Client) error {
 	// To avoid blocking key presses on the main processing loop, run heavy sync ops in a separate
 	// loop, and only add to channel for processing if there's any changes that need syncing
 	// This is run after the goroutine above is triggered to ensure a thread is consuming from replayChan
-	err := r.startSync(ctx, replayChan, reorderAndReplayChan)
+	err := r.startSync(ctx, replayChan, reorderAndReplayChan, inputEvtsChan)
 	if err != nil {
 		return err
 	}
