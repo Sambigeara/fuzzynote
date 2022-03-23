@@ -1680,14 +1680,19 @@ func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitF
 	}
 }
 
-func (r *DBListRepo) updateActiveFriendsMap(s []string, updateChan chan interface{}) {
-	m := make(map[string]struct{})
-	for _, f := range s {
-		m[f] = struct{}{}
+func (r *DBListRepo) updateActiveFriendsMap(activeFriends, pendingFriends []string, updateChan chan interface{}) {
+	activeFriendsMap := make(map[string]struct{})
+	pendingFriendsMap := make(map[string]struct{})
+	for _, f := range activeFriends {
+		activeFriendsMap[f] = struct{}{}
+	}
+	for _, f := range pendingFriends {
+		pendingFriendsMap[f] = struct{}{}
 	}
 	r.activeFriendsMapLock.Lock()
 	defer r.activeFriendsMapLock.Unlock()
-	r.activeFriends = m
+	r.activeFriends = activeFriendsMap
+	r.pendingFriends = pendingFriendsMap
 	go func() {
 		updateChan <- struct{}{}
 	}()
@@ -1708,8 +1713,8 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 				DTLastChange: r.friendsMostRecentChangeDT,
 			}
 			go func() {
-				if activeFriends, err := r.web.postRemote(&remote, u); err == nil {
-					r.updateActiveFriendsMap(activeFriends, updateChan)
+				if resp, err := r.web.postRemote(&remote, u); err == nil {
+					r.updateActiveFriendsMap(resp.ActiveFriends, resp.PendingFriends, updateChan)
 				}
 			}()
 			r.friendsLastPushDT = r.friendsMostRecentChangeDT
@@ -1822,7 +1827,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 						r.web.isActive = false
 						webRefreshTicker.Reset(0)
 					} else {
-						r.updateActiveFriendsMap(pong.ActiveFriends, inputEvtsChan)
+						r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 					}
 				}
 			case m := <-websocketPushEvents:
@@ -1858,7 +1863,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 
 					// Send immediate `ping` to populate ActiveFriends prior to initial sync
 					pong, _ := r.web.ping()
-					r.updateActiveFriendsMap(pong.ActiveFriends, inputEvtsChan)
+					r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 				}
 				// Trigger web walfile sync (mostly relevant on initial start)
 				scheduleSync()

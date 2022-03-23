@@ -62,13 +62,13 @@ type DBListRepo struct {
 
 	email string
 	//cfgFriendRegex            *regexp.Regexp
-	friends                   map[string]map[string]int64
-	friendsUpdateLock         *sync.RWMutex
-	friendsOrdered            []string            // operating sort of like a queue, with earliest friends at the head
-	activeFriends             map[string]struct{} // returned from the cloud
-	activeFriendsMapLock      *sync.RWMutex
-	friendsMostRecentChangeDT int64
-	friendsLastPushDT         int64
+	friends                       map[string]map[string]int64
+	friendsUpdateLock             *sync.RWMutex
+	friendsOrdered                []string            // operating sort of like a queue, with earliest friends at the head
+	activeFriends, pendingFriends map[string]struct{} // returned from the cloud
+	activeFriendsMapLock          *sync.RWMutex
+	friendsMostRecentChangeDT     int64
+	friendsLastPushDT             int64
 
 	// TODO better naming convention
 	LocalWalFile   LocalWalFile
@@ -547,11 +547,24 @@ func (r *DBListRepo) GetFriendFromConfig(item ListItem) (string, bool) {
 	return "", false
 }
 
-func (r *DBListRepo) IsFriendActive(f string) bool {
+type FriendState int
+
+const (
+	FriendNull FriendState = iota
+	FriendPending
+	FriendActive
+)
+
+func (r *DBListRepo) GetFriendState(f string) FriendState {
 	r.activeFriendsMapLock.RLock()
 	defer r.activeFriendsMapLock.RUnlock()
-	_, exists := r.activeFriends[f]
-	return exists
+	f = strings.ToLower(f)
+	if _, exists := r.activeFriends[f]; exists {
+		return FriendActive
+	} else if _, exists := r.pendingFriends[f]; exists {
+		return FriendPending
+	}
+	return FriendNull
 }
 
 func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {

@@ -80,9 +80,9 @@ func (w *Web) establishWebSocketConnection() error {
 }
 
 type pong struct {
-	Response      string
-	User          string
-	ActiveFriends []string
+	Response                      string
+	User                          string
+	ActiveFriends, PendingFriends []string
 }
 
 func (w *Web) ping() (pong, error) {
