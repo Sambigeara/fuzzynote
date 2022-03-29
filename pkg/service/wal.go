@@ -1736,7 +1736,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 	webPingTicker := time.NewTicker(webPingInterval)
 	webRefreshTicker := time.NewTicker(webRefreshInterval)
 	// We set the interval to 0 because we want the initial connection establish attempt to occur ASAP
-	webRefreshTicker.Reset(0)
+	webRefreshTicker.Reset(time.Millisecond * 1)
 
 	websocketPushEvents := make(chan websocketMessage)
 
@@ -1782,6 +1782,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 					if el, _, err = r.pull(ctx, syncWalFiles); err != nil {
 						log.Fatal(err)
 					}
+					r.hasSyncedRemotes = true
 					c = replayChan
 				case <-gatherTriggerTimer.C:
 					// Runs compaction every Nth gather
@@ -1825,7 +1826,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 				if r.web.isActive {
 					if pong, err := r.web.ping(); err != nil {
 						r.web.isActive = false
-						webRefreshTicker.Reset(0)
+						webRefreshTicker.Reset(time.Millisecond * 1)
 					} else {
 						r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 					}
@@ -1835,6 +1836,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 					r.web.pushWebsocket(m)
 				}
 			case <-webRefreshTicker.C:
+				r.hasSyncedRemotes = false
 				if webCancel != nil {
 					webCancel()
 				}
@@ -1843,6 +1845,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 				if r.web.wsConn != nil {
 					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
 				}
+				// Send a state update here to ensure "offline" state is displayed if relevant
+				inputEvtsChan <- SyncEvent{}
 				// Start new one
 				err := r.registerWeb()
 				if err != nil {
@@ -1992,6 +1996,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 				r.flushPartialWals(ctx, flushAgg, false)
 				flushAgg = []EventLog{}
 				r.hasUnflushedEvents = false
+				inputEvtsChan <- SyncEvent{}
 			case <-ctx.Done():
 				r.flushPartialWals(context.Background(), flushAgg, true)
 				go func() {

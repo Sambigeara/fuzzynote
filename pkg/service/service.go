@@ -85,6 +85,8 @@ type DBListRepo struct {
 	pushTriggerTimer   *time.Timer
 	hasUnflushedEvents bool
 	finalFlushChan     chan struct{}
+
+	hasSyncedRemotes bool
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -156,7 +158,7 @@ func (r *DBListRepo) setEmail(email string) {
 // ForceTriggerFlush will zero the flush timer, and block til completion. E.g. this is a synchronous flush
 func (r *DBListRepo) ForceTriggerFlush() {
 	go func() {
-		r.pushTriggerTimer.Reset(0)
+		r.pushTriggerTimer.Reset(time.Millisecond * 1)
 	}()
 }
 
@@ -565,6 +567,28 @@ func (r *DBListRepo) GetFriendState(f string) FriendState {
 		return FriendPending
 	}
 	return FriendNull
+}
+
+type SyncState int
+
+const (
+	SyncOffline SyncState = iota
+	SyncSyncing
+	SyncSynced
+)
+
+type SyncEvent struct{}
+
+func (r *DBListRepo) GetSyncState() SyncState {
+	if !r.web.isActive {
+		return SyncOffline
+	}
+
+	if !r.hasSyncedRemotes || r.hasUnflushedEvents {
+		return SyncSyncing
+	}
+
+	return SyncSynced
 }
 
 func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {
