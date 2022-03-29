@@ -130,11 +130,17 @@ func Authenticate(wt WebTokenStore, args map[string]string) error {
 // CallWithReAuth accepts a pre-built request, attempts to call it, and if it fails authorisation due to an
 // expired IDToken, will reauth, and then retry the original function.
 func (w *Web) CallWithReAuth(req *http.Request) (*http.Response, error) {
-	resp, err := w.client.Do(req)
-	if err != nil && (resp == nil || resp.StatusCode != http.StatusUnauthorized) {
-		return nil, err
+	idToken := w.tokens.IDToken()
+	var resp *http.Response
+	var err error
+	if idToken != "" {
+		req.Header.Add(walSyncAuthorizationHeader, idToken)
+		resp, err = w.client.Do(req)
+		if err != nil && (resp == nil || resp.StatusCode != http.StatusUnauthorized) {
+			return nil, err
+		}
 	}
-	if resp.StatusCode == http.StatusUnauthorized {
+	if idToken == "" || resp.StatusCode == http.StatusUnauthorized {
 		defer w.tokens.Flush()
 		w.tokens.SetIDToken("")
 		body := map[string]string{

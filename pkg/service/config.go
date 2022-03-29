@@ -51,7 +51,6 @@ func (w *Web) postRemote(remote *WebRemote, u *url.URL) (postRemoteResponse, err
 		return remoteResp, err
 	}
 
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
 	resp, err := w.CallWithReAuth(req)
 	if err != nil {
 		return remoteResp, err

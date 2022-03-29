@@ -53,10 +53,13 @@ func (w *Web) establishWebSocketConnection() error {
 
 	var resp *http.Response
 	var err error
-	w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
+	idToken := w.tokens.IDToken()
+	if idToken != "" {
+		w.wsConn, resp, err = dialFunc(w.tokens.IDToken())
+	}
 	// TODO re-authentication explicitly handled here as wss handshake only occurs once (doesn't require
 	// retries) - can probably dedup at least a little
-	if err != nil || resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
+	if idToken == "" || err != nil || resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		defer w.tokens.Flush()
 		w.tokens.SetIDToken("")
 		w.wsConn = nil
@@ -93,7 +96,6 @@ func (w *Web) ping() (pong, error) {
 	if err != nil {
 		return p, err
 	}
-	req.Header.Add(walSyncAuthorizationHeader, w.tokens.IDToken())
 
 	resp, err := w.CallWithReAuth(req)
 	if err != nil {
@@ -218,7 +220,6 @@ func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, owner string, c
 
 	req = req.WithContext(ctx)
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return "", err
@@ -256,7 +257,6 @@ func (wf *WebWalFile) GetMatchingWals(ctx context.Context, pattern string) ([]st
 
 	req = req.WithContext(ctx)
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return nil, err
@@ -291,7 +291,7 @@ func (wf *WebWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName str
 	req, err := http.NewRequest("GET", presignedURL, nil)
 	req = req.WithContext(ctx)
 
-	resp, err := wf.web.CallWithReAuth(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,6 @@ func (wf *WebWalFile) RemoveWals(ctx context.Context, fileNames []string) error 
 
 	req = req.WithContext(ctx)
 
-	req.Header.Add(walSyncAuthorizationHeader, wf.web.tokens.IDToken())
 	resp, err := wf.web.CallWithReAuth(req)
 	if err != nil {
 		return err
@@ -353,7 +352,7 @@ func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, checksum strin
 
 	req = req.WithContext(ctx)
 
-	resp, err := wf.web.CallWithReAuth(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
