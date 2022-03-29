@@ -1990,13 +1990,13 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 				wsPubAgg = []EventLog{}
 				// Trigger an aggregated push
 				schedulePush()
+				inputEvtsChan <- SyncEvent{}
 			case <-r.pushTriggerTimer.C:
 				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
 				// ephemeral log. If empty, skip.
 				r.flushPartialWals(ctx, flushAgg, false)
 				flushAgg = []EventLog{}
 				r.hasUnflushedEvents = false
-				inputEvtsChan <- SyncEvent{}
 			case <-ctx.Done():
 				r.flushPartialWals(context.Background(), flushAgg, true)
 				go func() {
