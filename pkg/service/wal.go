@@ -1997,6 +1997,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 				r.flushPartialWals(ctx, flushAgg, false)
 				flushAgg = []EventLog{}
 				r.hasUnflushedEvents = false
+				inputEvtsChan <- SyncEvent{}
 			case <-ctx.Done():
 				r.flushPartialWals(context.Background(), flushAgg, true)
 				go func() {
