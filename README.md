@@ -19,6 +19,10 @@ Fuzzynote (fzn)
 
 # Terminal-based, hyper-fast, CRDT-backed, collaborative note-taking tool
 
+## Web app (Apr 2022)
+
+[WASM powered web-app](https://fuzzynote.app) is now live! More info [here](https://fuzzynote.xyz)
+
 ## Simple, powerful, extremely fast search
 
 `fzn` is local-first; remote-second. It acts on local in-memory data, meaning no expensive I/O and native speeds.
