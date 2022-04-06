@@ -1,25 +1,19 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"testing"
-	"time"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 const (
-	rootDir           = "folder_to_delete"
-	otherRootDir      = "other_folder_to_delete"
-	testPushFrequency = 60000
-)
-
-var (
-	rootPath      = path.Join(rootDir, rootFileName)
-	otherRootPath = path.Join(otherRootDir, rootFileName)
+	rootDir      = "folder_to_delete"
+	otherRootDir = "other_folder_to_delete"
 )
 
 type testClient struct {
@@ -34,8 +28,8 @@ func (c *testClient) AwaitEvent() interface{} {
 	return struct{}{}
 }
 
-func (c *testClient) HandleEvent(ev interface{}) (bool, error) {
-	return false, nil
+func (c *testClient) HandleEvent(ev interface{}) error {
+	return nil
 }
 
 func newTestClient() *testClient {
@@ -43,8 +37,10 @@ func newTestClient() *testClient {
 }
 
 func clearUp() {
-	os.Remove(rootPath)
-	os.Remove(otherRootPath)
+	//os.Remove(rootPath)
+	//os.Remove(otherRootPath)
+	os.Remove(rootDir)
+	os.Remove(otherRootDir)
 
 	walPathPattern := fmt.Sprintf(path.Join(rootDir, walFilePattern), "*")
 	wals, _ := filepath.Glob(walPathPattern)
@@ -71,14 +67,17 @@ func clearUp() {
 	}
 }
 
-func generateProcessingWalChan() chan *[]EventLog {
-	testWalChan := make(chan *[]EventLog)
-	go func() {
-		for {
-			<-testWalChan
-		}
-	}()
-	return testWalChan
+func checkEventLogEquality(a, b EventLog) bool {
+	if a.UUID != b.UUID ||
+		a.LamportTimestamp != b.LamportTimestamp ||
+		a.EventType != b.EventType ||
+		a.ListItemKey != b.ListItemKey ||
+		a.TargetListItemKey != b.TargetListItemKey ||
+		a.Line != b.Line ||
+		string(a.Note) != string(b.Note) {
+		return false
+	}
+	return true
 }
 
 func TestServicePushPull(t *testing.T) {
@@ -87,46 +86,45 @@ func TestServicePushPull(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
+		repo := NewDBListRepo(localWalFile, webTokenStore)
 
-		now := time.Now().UnixNano()
+		var lamport int64 = 0
 		wal := []EventLog{
-			EventLog{
-				UUID:                       repo.uuid,
-				TargetUUID:                 0,
-				ListItemCreationTime:       now,
-				TargetListItemCreationTime: 0,
-				UnixNanoTime:               now,
-				EventType:                  AddEvent,
-				Line:                       "Old newly created line",
+			{
+				UUID:             repo.uuid,
+				LamportTimestamp: lamport,
+				EventType:        AddEvent,
+				ListItemKey:      strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
+				Line:             "Old newly created line",
 			},
 		}
-		now++
 		wal = append(wal, EventLog{
-			UUID:                       repo.uuid,
-			TargetUUID:                 0,
-			ListItemCreationTime:       now,
-			TargetListItemCreationTime: 0,
-			UnixNanoTime:               now,
-			EventType:                  AddEvent,
-			Line:                       "New newly created line",
+			UUID:              repo.uuid,
+			LamportTimestamp:  lamport,
+			EventType:         AddEvent,
+			ListItemKey:       strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport+1)),
+			TargetListItemKey: strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
+			Line:              "New newly created line",
 		})
 
-		repo.push(&wal, localWalFile, "")
-		// Clear the cache to make sure we can pick the file up again
-		repo.processedWalNames = make(map[string]struct{})
-		newWal, _ := repo.pull([]WalFile{localWalFile})
+		ctx := context.Background()
+		repo.push(ctx, localWalFile, wal, nil)
 
-		if len(wal) != len(*newWal) {
+		// Clear the cache to make sure we can pick the file up again
+		repo.processedWalChecksums = make(map[string]struct{})
+
+		newWal, _, _ := repo.pull(ctx, []WalFile{localWalFile})
+
+		if len(wal) != len(newWal) {
 			t.Error("Pulled wal should be the same as the pushed one")
 		}
 
 		// Check equality of wals
 		for i := range wal {
-			oldEvent := wal[i]
-			newEvent := (*newWal)[i]
-			if !(cmp.Equal(oldEvent, newEvent, cmp.AllowUnexported(oldEvent, newEvent))) {
-				t.Fatalf("Old event %v does not equal new event %v at index %d", oldEvent, newEvent, i)
+			o := wal[i]
+			n := newWal[i]
+			if !checkEventLogEquality(o, n) {
+				t.Fatalf("Old event %v does not equal new event %v at index %d", o, n, i)
 			}
 		}
 	})
@@ -137,25 +135,24 @@ func TestServiceAdd(t *testing.T) {
 	webTokenStore := NewFileWebTokenStore(rootDir)
 	os.Mkdir(rootDir, os.ModePerm)
 	defer clearUp()
-	repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
-	repo.Start(newTestClient(), testWalChan, inputEvtChan)
-	repo.Add("Old existing created line", nil, 0)
-	repo.Add("New existing created line", nil, 0)
+
+	repo := NewDBListRepo(localWalFile, webTokenStore)
+	go func() {
+		repo.Start(newTestClient())
+	}()
+	log.Println("sam hello")
+
+	repo.Add("Old existing created line", nil, nil)
+	repo.Add("New existing created line", nil, nil)
 
 	item1 := repo.Root
 	item2 := repo.Root.parent
 
 	t.Run("Add item at head of list", func(t *testing.T) {
 		newLine := "Now I'm first"
-		_, err := repo.Add(newLine, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Add(newLine, nil, nil)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		newItem := matches[0]
 
 		expectedLen := 3
@@ -163,27 +160,27 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if newItem != item1.child {
+		if newItem.Key() != item1.child.Key() {
 			t.Errorf("New item should be original root's child")
 		}
 
-		if repo.Root != newItem {
+		if repo.Root.Key() != newItem.Key() {
 			t.Errorf("item2 should be new root")
 		}
 
-		if newItem.Line != newLine {
-			t.Errorf("Expected %s but got %s", newLine, newItem.Line)
+		if newItem.Line() != newLine {
+			t.Errorf("Expected %s but got %s", newLine, newItem.Line())
 		}
 
 		if newItem.child != nil {
 			t.Errorf("Newly generated listItem should have a nil child")
 		}
 
-		if newItem.parent != item1 {
+		if newItem.parent.Key() != item1.Key() {
 			t.Errorf("Newly generated listItem has incorrect parent")
 		}
 
-		if item1.child != newItem {
+		if item1.child.Key() != newItem.Key() {
 			t.Errorf("Original young listItem has incorrect child")
 		}
 	})
@@ -191,18 +188,13 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item at end of list", func(t *testing.T) {
 		newLine := "I should be last"
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		oldLen := len(matches)
 		oldParent := matches[len(matches)-1]
 
-		_, err := repo.Add(newLine, nil, oldLen)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Add(newLine, nil, &oldParent)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		newItem := matches[len(matches)-1]
 
 		expectedLen := oldLen + 1
@@ -210,24 +202,24 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if newItem != oldParent.parent {
+		if newItem.Line() != newLine {
 			t.Errorf("Returned item should be new bottom item")
 		}
 
 		expectedIdx := expectedLen - 1
-		if matches[expectedIdx].Line != newLine {
-			t.Errorf("Expected %s but got %s", newLine, matches[expectedIdx].Line)
+		if matches[expectedIdx].Line() != newLine {
+			t.Errorf("Expected %s but got %s", newLine, matches[expectedIdx].Line())
 		}
 
 		if matches[expectedIdx].parent != nil {
 			t.Errorf("Newly generated listItem should have a nil parent")
 		}
 
-		if matches[expectedIdx].child != oldParent {
+		if matches[expectedIdx].child.Key() != oldParent.Key() {
 			t.Errorf("Newly generated listItem has incorrect child")
 		}
 
-		if item2.parent != matches[expectedIdx] {
+		if item2.parent.Key() != matches[expectedIdx].Key() {
 			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 	})
@@ -235,31 +227,31 @@ func TestServiceAdd(t *testing.T) {
 	t.Run("Add item in middle of list", func(t *testing.T) {
 		newLine := "I'm somewhere in the middle"
 
-		oldParent := item1.parent
+		root := repo.Root
+		oldParent := repo.Root.parent
 
-		newIdx := 2
-		_, err := repo.Add(newLine, nil, newIdx)
-		if err != nil {
-			t.Fatal(err)
+		repo.Add(newLine, nil, repo.Root)
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+
+		if repo.Root != root {
+			t.Errorf("Root item should have remained unchanged")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
-
-		expectedItem := matches[newIdx]
-		if expectedItem.Line != newLine {
-			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
+		newItem := matches[1]
+		if newItem.Line() != newLine {
+			t.Errorf("Expected %s but got %s", newLine, newItem.Line())
 		}
 
-		if expectedItem.parent != oldParent {
+		if newItem.parent.Key() != oldParent.Key() {
 			t.Errorf("New item should have inherit old child's parent")
 		}
 
-		if item1.parent != expectedItem {
+		if root.parent.Key() != newItem.Key() {
 			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 
-		if oldParent.child != expectedItem {
+		if oldParent.child.Key() != newItem.Key() {
 			t.Errorf("Original old parent has incorrect child")
 		}
 	})
@@ -269,33 +261,35 @@ func TestServiceAdd(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
 		newLine := "First item in list"
-		repo.Add(newLine, nil, 0)
+		repo.Add(newLine, nil, nil)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if len(matches) != 1 {
 			t.Errorf("Matches should only have 1 item")
 		}
 
-		expectedItem := matches[0]
-		if expectedItem.Line != newLine {
-			t.Errorf("Expected %s but got %s", newLine, expectedItem.Line)
+		newItem := matches[0]
+		if newItem.Line() != newLine {
+			t.Errorf("Expected %s but got %s", newLine, newItem.Line())
 		}
 
-		if expectedItem.child != nil {
+		if newItem.child != nil {
 			t.Errorf("New item should have no child")
 		}
 
-		if expectedItem.parent != nil {
+		if newItem.parent != nil {
 			t.Errorf("New item should have no parent")
 		}
 
-		if repo.Root != expectedItem {
+		if repo.Root.Key() != newItem.Key() {
 			t.Errorf("New item should be new root")
 		}
 	})
@@ -303,36 +297,36 @@ func TestServiceAdd(t *testing.T) {
 }
 
 func TestServiceDelete(t *testing.T) {
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
 	t.Run("Delete item from head of list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item2 := repo.Root.parent
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-
-		_, err := repo.Delete(0)
-		if err != nil {
-			t.Fatal(err)
+		if matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0); len(matches) != 3 {
+			t.Errorf("Matches should have %d item", len(matches))
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		repo.Delete(repo.Root)
 
-		if matches[0] != item2 {
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("item2 should be new root")
 		}
 
-		if repo.Root != item2 {
+		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 should be new root")
 		}
 
@@ -342,8 +336,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 
 		expectedLine := "Second"
-		if matches[0].Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, matches[0].Line)
+		if matches[0].Line() != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, matches[0].Line())
 		}
 
 		if matches[0].child != nil {
@@ -355,36 +349,36 @@ func TestServiceDelete(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item2 := repo.Root.parent
 
-		repo.Match([][]rune{}, true, "", 0, 0)
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
-		_, err := repo.Delete(2)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Delete(&(matches[len(matches)-1]))
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
 		expectedLen := 2
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[expectedLen-1] != item2 {
+		if matches[expectedLen-1].Key() != item2.Key() {
 			t.Errorf("Last item should be item2")
 		}
 
 		expectedLine := "Second"
-		if matches[expectedLen-1].Line != expectedLine {
-			t.Errorf("Expected %s but got %s", expectedLine, matches[expectedLen-1].Line)
+		if matches[expectedLen-1].Line() != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, matches[expectedLen-1].Line())
 		}
 
 		if matches[expectedLen-1].parent != nil {
@@ -396,30 +390,29 @@ func TestServiceDelete(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
+		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, true, "", 0, 0)
+		repo.Delete(item2)
 
-		_, err := repo.Delete(1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
-
-		if matches[0] != item1 {
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("First item should be previous first item")
 		}
 
-		if matches[1] != item3 {
+		if matches[1].Key() != item3.Key() {
 			t.Errorf("Second item should be previous last item")
 		}
 
@@ -428,29 +421,31 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[0].parent != item3 {
+		if matches[0].parent.Key() != item3.Key() {
 			t.Errorf("First item parent should be third item")
 		}
 
-		if matches[1].child != item1 {
+		if matches[1].child.Key() != item1.Key() {
 			t.Errorf("Third item child should be first item")
 		}
 	})
 }
 
 func TestServiceMove(t *testing.T) {
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
 	t.Run("Move item up from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -458,15 +453,10 @@ func TestServiceMove(t *testing.T) {
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveUp(item3)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item1.Key() {
 			t.Errorf("item1 should still be root")
@@ -498,17 +488,20 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("New lowest parent should have no parent")
 		}
 	})
-
 	t.Run("Move item up from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -517,13 +510,9 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		err := repo.MoveUp(1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveUp(item2)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 should have become root")
@@ -541,7 +530,7 @@ func TestServiceMove(t *testing.T) {
 		if matches[0].child != nil {
 			t.Errorf("Moved item child should be null")
 		}
-		if matches[0].parent != item1 {
+		if matches[0].parent.Key() != item1.Key() {
 			t.Errorf("Moved item parent should be previous root")
 		}
 
@@ -561,11 +550,15 @@ func TestServiceMove(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -574,13 +567,9 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		err := repo.MoveUp(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveUp(item1)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
@@ -601,11 +590,15 @@ func TestServiceMove(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -614,13 +607,9 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		err := repo.MoveDown(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveDown(item1)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 should now be root")
@@ -658,11 +647,15 @@ func TestServiceMove(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -671,13 +664,9 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		err := repo.MoveDown(1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveDown(item2)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item1.Key() {
 			t.Errorf("Root should have remained the same")
@@ -715,11 +704,15 @@ func TestServiceMove(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -727,15 +720,10 @@ func TestServiceMove(t *testing.T) {
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
 
-		err := repo.MoveDown(len(matches) - 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveDown(item3)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item1.Key() {
 			t.Errorf("All items should remain unchanged")
@@ -756,11 +744,15 @@ func TestServiceMove(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -769,20 +761,18 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		err := repo.MoveDown(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveDown(item1)
 
-		// We need to call Match again to reset match pointers prior to move, to avoid infinite loops
+		// Update match pointers again
 		repo.Match([][]rune{}, true, "", 0, 0)
-		err = repo.MoveDown(1)
-		if err != nil {
-			t.Fatal(err)
-		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		// ATM, the returned matches are copies of a source-of-truth index stored on the ListRepo, and
+		// don't reflect the match pointers. To get correct state, we need to reference the item within
+		// the index
+		// TODO update this when I centralise the logic
+		repo.MoveDown(repo.matchListItems[item1.Key()])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		if repo.Root.Key() != item2.Key() {
 			t.Errorf("Root should be previous middle")
@@ -824,76 +814,72 @@ func TestServiceUpdate(t *testing.T) {
 	webTokenStore := NewFileWebTokenStore(rootDir)
 	os.Mkdir(rootDir, os.ModePerm)
 	defer clearUp()
-	repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
 
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
-	repo.Start(newTestClient(), testWalChan, inputEvtChan)
+	repo := NewDBListRepo(localWalFile, webTokenStore)
+	go func() {
+		repo.Start(newTestClient())
+	}()
 
-	repo.Add("Third", nil, 0)
-	repo.Add("Second", nil, 0)
-	repo.Add("First", nil, 0)
+	repo.Add("Third", nil, nil)
+	repo.Add("Second", nil, nil)
+	repo.Add("First", nil, nil)
 
 	// Call matches to trigger matchListItems creation
-	repo.Match([][]rune{}, true, "", 0, 0)
+	matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 	expectedLine := "Oooo I'm new"
-	err := repo.Update(expectedLine, nil, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	targetIdx := 1
+	repo.Update(expectedLine, nil, &(matches[targetIdx]))
 
-	repo.Match([][]rune{}, true, "", 0, 0)
-	matches := repo.matchListItems
+	matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
 	expectedLen := 3
 	if len(matches) != expectedLen {
 		t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 	}
 
-	if matches[1].Line != expectedLine {
-		t.Errorf("Expected %s but got %s", expectedLine, matches[1].Line)
+	if matches[targetIdx].Line() != expectedLine {
+		t.Errorf("Expected %s but got %s", expectedLine, matches[1].Line())
 	}
 }
 
 func TestServiceMatch(t *testing.T) {
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
 	t.Run("Full match items in list", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Also not second", nil, 0)
-		repo.Add("Not second", nil, 0)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Also not second", nil, nil)
+		repo.Add("Not second", nil, nil)
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
 		item5 := repo.Root.parent.parent.parent.parent
 
 		search := [][]rune{
-			[]rune{'=', 's', 'e', 'c', 'o', 'n', 'd'},
-		}
-		_, _, err := repo.Match(search, true, "", 0, 0)
-		matches := repo.matchListItems
-		if err != nil {
-			t.Fatal(err)
+			{'s', 'e', 'c', 'o', 'n', 'd'},
 		}
 
-		if matches[0] != item2 {
+		matches, _, _ := repo.Match(search, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("First match is incorrect")
 		}
 
-		if matches[1] != item4 {
+		if matches[1].Key() != item4.Key() {
 			t.Errorf("Second match is incorrect")
 		}
 
-		if matches[2] != item5 {
+		if matches[2].Key() != item5.Key() {
 			t.Errorf("Third match is incorrect")
 		}
 
@@ -902,38 +888,41 @@ func TestServiceMatch(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[0].matchChild != nil {
+		// TODO remove this once logic is centralised
+		p := repo.matchListItems
+
+		if p[matches[0].Key()].matchChild != nil {
 			t.Errorf("New root matchChild should be null")
 		}
-		if matches[0].matchParent != matches[1] {
+		if p[matches[0].Key()].matchParent.Key() != matches[1].Key() {
 			t.Errorf("New root matchParent should be second match")
 		}
-		if matches[1].matchChild != matches[0] {
+		if p[matches[1].Key()].matchChild.Key() != matches[0].Key() {
 			t.Errorf("Second item matchChild should be new root")
 		}
-		if matches[1].matchParent != matches[2] {
+		if p[matches[1].Key()].matchParent.Key() != matches[2].Key() {
 			t.Errorf("Second item matchParent should be third match")
 		}
-		if matches[2].matchChild != matches[1] {
+		if p[matches[2].Key()].matchChild.Key() != matches[1].Key() {
 			t.Errorf("Third item matchChild should be second match")
 		}
-		if matches[2].matchParent != nil {
+		if p[matches[2].Key()].matchParent != nil {
 			t.Errorf("Third item matchParent should be null")
 		}
 
 		expectedLine := "Second"
-		if matches[0].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[0].Line)
+		if matches[0].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[0].Line())
 		}
 
 		expectedLine = "Not second"
-		if matches[1].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[1].Line)
+		if matches[1].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[1].Line())
 		}
 
 		expectedLine = "Also not second"
-		if matches[2].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line)
+		if matches[2].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line())
 		}
 	})
 
@@ -942,36 +931,37 @@ func TestServiceMatch(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Also not second", nil, 0)
-		repo.Add("Not second", nil, 0)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Also not second", nil, nil)
+		repo.Add("Not second", nil, nil)
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item2 := repo.Root.parent
 		item4 := repo.Root.parent.parent.parent
 		item5 := repo.Root.parent.parent.parent.parent
 
 		search := [][]rune{
-			[]rune{'s', 'c', 'o', 'n', 'd'},
-		}
-		_, _, err := repo.Match(search, true, "", 0, 0)
-		matches := repo.matchListItems
-		if err != nil {
-			t.Fatal(err)
+			{'~', 's', 'c', 'o', 'n', 'd'},
 		}
 
-		if matches[0] != item2 {
+		matches, _, _ := repo.Match(search, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
 			t.Errorf("First match is incorrect")
 		}
 
-		if matches[1] != item4 {
+		if matches[1].Key() != item4.Key() {
 			t.Errorf("Second match is incorrect")
 		}
 
-		if matches[2] != item5 {
+		if matches[2].Key() != item5.Key() {
 			t.Errorf("Third match is incorrect")
 		}
 
@@ -980,38 +970,41 @@ func TestServiceMatch(t *testing.T) {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
 
-		if matches[0].matchChild != nil {
+		// TODO remove this once logic is centralised
+		p := repo.matchListItems
+
+		if p[matches[0].Key()].matchChild != nil {
 			t.Errorf("New root matchChild should be null")
 		}
-		if matches[0].matchParent != matches[1] {
+		if p[matches[0].Key()].matchParent.Key() != matches[1].Key() {
 			t.Errorf("New root matchParent should be second match")
 		}
-		if matches[1].matchChild != matches[0] {
+		if p[matches[1].Key()].matchChild.Key() != matches[0].Key() {
 			t.Errorf("Second item matchChild should be new root")
 		}
-		if matches[1].matchParent != matches[2] {
+		if p[matches[1].Key()].matchParent.Key() != matches[2].Key() {
 			t.Errorf("Second item matchParent should be third match")
 		}
-		if matches[2].matchChild != matches[1] {
+		if p[matches[2].Key()].matchChild.Key() != matches[1].Key() {
 			t.Errorf("Third item matchChild should be second match")
 		}
-		if matches[2].matchParent != nil {
+		if p[matches[2].Key()].matchParent != nil {
 			t.Errorf("Third item matchParent should be null")
 		}
 
 		expectedLine := "Second"
-		if matches[0].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[0].Line)
+		if matches[0].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[0].Line())
 		}
 
 		expectedLine = "Not second"
-		if matches[1].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[1].Line)
+		if matches[1].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[1].Line())
 		}
 
 		expectedLine = "Also not second"
-		if matches[2].Line != expectedLine {
-			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line)
+		if matches[2].Line() != expectedLine {
+			t.Errorf("Expected line %s but got %s", expectedLine, matches[2].Line())
 		}
 	})
 
@@ -1020,31 +1013,32 @@ func TestServiceMatch(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Also not second", nil, 0)
-		repo.Add("Not second", nil, 0)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Also not second", nil, nil)
+		repo.Add("Not second", nil, nil)
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item3 := repo.Root.parent.parent
 
 		search := [][]rune{
-			[]rune{'=', '!', 's', 'e', 'c', 'o', 'n', 'd'},
-		}
-		_, _, err := repo.Match(search, true, "", 0, 0)
-		matches := repo.matchListItems
-		if err != nil {
-			t.Fatal(err)
+			{'!', 's', 'e', 'c', 'o', 'n', 'd'},
 		}
 
-		if matches[0] != item1 {
+		matches, _, _ := repo.Match(search, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
 			t.Errorf("First match is incorrect")
 		}
 
-		if matches[1] != item3 {
+		if matches[1].Key() != item3.Key() {
 			t.Errorf("Active item should be returned even with no string match")
 		}
 
@@ -1059,27 +1053,32 @@ func TestServiceMatch(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Fifth", nil, 0)
-		repo.Add("Fourth", nil, 0)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Fifth", nil, nil)
+		repo.Add("Fourth", nil, nil)
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		// Partial response
 		matches, _, _ := repo.Match([][]rune{}, true, "", 2, 0)
+
 		expectedLen := 3
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-		if matches[0].Line != "Third" {
+		if matches[0].Line() != "Third" {
 			t.Error()
 		}
-		if matches[1].Line != "Fourth" {
+		if matches[1].Line() != "Fourth" {
 			t.Error()
 		}
-		if matches[2].Line != "Fifth" {
+		if matches[2].Line() != "Fifth" {
 			t.Error()
 		}
 
@@ -1089,10 +1088,10 @@ func TestServiceMatch(t *testing.T) {
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-		if matches[0].Line != "Third" {
+		if matches[0].Line() != "Third" {
 			t.Error()
 		}
-		if matches[1].Line != "Fourth" {
+		if matches[1].Line() != "Fourth" {
 			t.Error()
 		}
 
@@ -1102,13 +1101,13 @@ func TestServiceMatch(t *testing.T) {
 		if len(matches) != expectedLen {
 			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-		if matches[0].Line != "Third" {
+		if matches[0].Line() != "Third" {
 			t.Error()
 		}
-		if matches[1].Line != "Fourth" {
+		if matches[1].Line() != "Fourth" {
 			t.Error()
 		}
-		if matches[2].Line != "Fifth" {
+		if matches[2].Line() != "Fifth" {
 			t.Error()
 		}
 
@@ -1126,37 +1125,42 @@ func TestServiceMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("Move item up from bottom hidden middle", func(t *testing.T) {
+	t.Run("Move item up from bottom with hidden middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
 		item3 := repo.Root.parent.parent
 
-		repo.Match([][]rune{}, false, "", 0, 0)
+		repo.Match([][]rune{}, true, "", 0, 0)
 
 		// Hide middle item
-		repo.ToggleVisibility(1)
+		repo.ToggleVisibility(item2)
 
 		// Preset Match pointers with Match call
+		// showHidden needs to be set to `false`
 		repo.Match([][]rune{}, false, "", 0, 0)
-		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
-		if err != nil {
-			t.Fatal(err)
+		repo.MoveUp(repo.matchListItems[item3.Key()])
+
+		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
+
+		expectedLen := 2
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
 		}
-
-		repo.Match([][]rune{}, false, "", 0, 0)
-		matches = repo.matchListItems
 
 		if repo.Root.Key() != item3.Key() {
 			t.Errorf("item3 should now be root")
@@ -1168,42 +1172,36 @@ func TestServiceMatch(t *testing.T) {
 			t.Errorf("item1 should now be the lowest item")
 		}
 
+		// TODO remove this once logic is centralised
+		p := repo.matchListItems
+
 		if matches[0].child != nil {
 			t.Errorf("Moved item child should now be nil")
 		}
-		if matches[0].matchChild != nil {
+		if p[matches[0].Key()].matchChild != nil {
 			t.Errorf("Moved item matchChild should now be nil")
 		}
 		if matches[0].parent.Key() != item1.Key() {
 			t.Errorf("Moved item parent should be previous root")
 		}
-		if matches[0].matchParent.Key() != item1.Key() {
+		if p[matches[0].Key()].matchParent.Key() != item1.Key() {
 			t.Errorf("Moved item matchParent should be previous root")
 		}
 
 		if item1.child.Key() != matches[0].Key() {
 			t.Errorf("Previous root child should be moved item")
 		}
-		if item1.matchChild.Key() != matches[0].Key() {
+		if p[item1.Key()].matchChild.Key() != matches[0].Key() {
 			t.Errorf("Previous root matchChild should be moved item")
 		}
 		if item1.parent.Key() != item2.Key() {
 			t.Errorf("Previous root parent should be unchanged")
 		}
-		if item1.matchParent != nil {
-			t.Errorf("Previous root matchParent should be nil")
-		}
 
 		if item2.child.Key() != item1.Key() {
 			t.Errorf("Should be item1")
 		}
-		if item2.matchChild != nil {
-			t.Errorf("Should be nil")
-		}
 		if item2.parent != nil {
-			t.Errorf("Should be nil")
-		}
-		if item2.matchParent != nil {
 			t.Errorf("Should be nil")
 		}
 	})
@@ -1213,11 +1211,15 @@ func TestServiceMatch(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -1226,68 +1228,59 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false, "", 0, 0)
 
 		// Hide middle item
-		repo.ToggleVisibility(1)
+		repo.ToggleVisibility(item2)
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false, "", 0, 0)
-		matches := repo.matchListItems
 
-		err := repo.MoveUp(len(matches) - 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveUp(repo.matchListItems[item3.Key()])
 
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Stop()
-		repo.Match([][]rune{}, false, "", 0, 0)
-		matches = repo.matchListItems
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
-		if repo.Root.Line != item3.Line {
+		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
+
+		if repo.Root.Key() != item3.Key() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[0].Line != item3.Line {
+		if matches[0].Key() != item3.Key() {
 			t.Errorf("item3 should now be root")
 		}
-		if matches[1].Line != item1.Line {
+		if matches[1].Key() != item1.Key() {
 			t.Errorf("item1 should now be the lowest item")
 		}
+
+		// TODO remove this once logic is centralised
+		p := repo.matchListItems
 
 		if matches[0].child != nil {
 			t.Errorf("Moved item child should now be nil")
 		}
-		if matches[0].matchChild != nil {
+		if p[matches[0].Key()].matchChild != nil {
 			t.Errorf("Moved item matchChild should now be nil")
 		}
-		if matches[0].parent.Line != item1.Line {
+		if matches[0].parent.Key() != item1.Key() {
 			t.Errorf("Moved item parent should be previous root")
 		}
-		if matches[0].matchParent.Line != item1.Line {
+		if p[matches[0].Key()].matchParent.Key() != item1.Key() {
 			t.Errorf("Moved item matchParent should be previous root")
 		}
 
-		if matches[1].child.Line != item3.Line {
+		if matches[1].child.Key() != item3.Key() {
 			t.Errorf("Previous root child should be moved item")
 		}
-		if matches[1].matchChild.Line != item3.Line {
+		if p[matches[1].Key()].matchChild.Key() != item3.Key() {
 			t.Errorf("Previous root matchChild should be moved item")
 		}
-		if matches[1].parent.Line != item2.Line {
+		if matches[1].parent.Key() != item2.Key() {
 			t.Errorf("Previous root parent should be unchanged")
 		}
-		if matches[1].matchParent != nil {
-			t.Errorf("Previous root matchParent should be nil")
-		}
 
-		if item2.child != item1 {
+		if item2.child.Key() != item1.Key() {
 			t.Errorf("Should be item1")
 		}
-		if item2.matchChild != nil {
-			t.Errorf("Should be nil")
-		}
 		if item2.parent != nil {
-			t.Errorf("Should be nil")
-		}
-		if item2.matchParent != nil {
 			t.Errorf("Should be nil")
 		}
 	})
@@ -1297,11 +1290,15 @@ func TestServiceMatch(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
-		repo.Add("Third", nil, 0)
-		repo.Add("Second", nil, 0)
-		repo.Add("First", nil, 0)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		item1 := repo.Root
 		item2 := repo.Root.parent
@@ -1310,67 +1307,56 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, false, "", 0, 0)
 
 		// Hide middle item
-		repo.ToggleVisibility(1)
+		repo.ToggleVisibility(item2)
 
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, false, "", 0, 0)
-		matches := repo.matchListItems
 
-		err := repo.MoveDown(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.MoveDown(repo.matchListItems[item1.Key()])
 
-		repo.Match([][]rune{}, false, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
 
-		if repo.Root.Line != item2.Line {
+		if repo.Root.Key() != item2.Key() {
 			t.Errorf("item2 (hidden) should now be root")
 		}
-		if matches[0].Line != item3.Line {
+		if matches[0].Key() != item3.Key() {
 			t.Errorf("item3 should now be top match")
 		}
-		if matches[1].Line != item1.Line {
+		if matches[1].Key() != item1.Key() {
 			t.Errorf("item1 should now be the lowest item")
 		}
 
-		if matches[0].child == nil || matches[0].child.Line != item2.Line {
+		// TODO remove this once logic is centralised
+		p := repo.matchListItems
+
+		if matches[0].child == nil {
 			t.Errorf("Top match should still have child to hidden item")
 		}
-		if matches[0].matchChild != nil {
+		if p[matches[0].Key()].matchChild != nil {
 			t.Errorf("Moved item matchChild should now be nil")
 		}
-		if matches[0].parent.Line != item1.Line {
+		if matches[0].parent.Key() != item1.Key() {
 			t.Errorf("Moved item parent should be previous root")
 		}
-		if matches[0].matchParent.Line != item1.Line {
+		if p[matches[0].Key()].matchParent.Key() != item1.Key() {
 			t.Errorf("Moved item matchParent should be previous root")
 		}
 
-		if matches[1].child.Line != item3.Line {
+		if matches[1].child.Key() != item3.Key() {
 			t.Errorf("Previous root child should be moved item")
 		}
-		if matches[1].matchChild.Line != item3.Line {
+		if p[matches[1].Key()].matchChild.Key() != item3.Key() {
 			t.Errorf("Previous root matchChild should be moved item")
 		}
 		if matches[1].parent != nil {
 			t.Errorf("Previous root parent should be nil")
 		}
-		if matches[1].matchParent != nil {
-			t.Errorf("Previous root matchParent should be nil")
-		}
 
 		if item2.child != nil {
 			t.Errorf("Should be nil")
 		}
-		if item2.matchChild != nil {
-			t.Errorf("Should be nil")
-		}
 		if item2.parent != item3 {
 			t.Errorf("Should be item3")
-		}
-		if item2.matchParent != nil {
-			t.Errorf("Should be nil")
 		}
 	})
 }

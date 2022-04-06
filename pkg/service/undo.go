@@ -17,18 +17,6 @@ var oppositeEvent = map[EventType]EventType{
 	HideEvent:     ShowEvent,
 }
 
-type undoEventLog struct {
-	uuid                       uuid
-	targetUUID                 uuid
-	eventType                  EventType
-	listItemCreationTime       int64
-	targetListItemCreationTime int64
-	undoLine                   string
-	undoNote                   *[]byte
-	redoLine                   string
-	redoNote                   *[]byte
-}
-
 type undoLog struct {
 	oppEvent EventLog // The event required to undo the corresponding original event
 	event    EventLog // The original event that was triggered on the client interface call (Add/Update/etc)

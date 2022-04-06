@@ -68,7 +68,6 @@ type walItemSchema2 struct {
 type EventType uint16
 
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
-// (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
 	NullEvent EventType = iota
 	AddEvent
