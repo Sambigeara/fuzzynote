@@ -8,29 +8,24 @@ import (
 
 func TestTransactionUndo(t *testing.T) {
 	os.Mkdir(rootDir, os.ModePerm)
-	testWalChan := generateProcessingWalChan()
-	inputEvtChan := make(chan interface{})
 	t.Run("Undo on empty db", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 1 {
 			t.Errorf("Event log should instantiate with a null event log at idx zero")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
-
-		if len(matches) != 0 {
+		if matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0); len(matches) != 0 {
 			t.Errorf("Undo should have done nothing")
 		}
 	})
@@ -39,37 +34,43 @@ func TestTransactionUndo(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, nil)
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
-		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != AddEvent {
-			t.Errorf("Event log entry should be of type AddEvent")
+		item := repo.eventLogger.log[1]
+		if item.event.EventType != AddEvent {
+			t.Errorf("Event log event entry should be of type AddEvent")
 		}
-		if logItem.listItemCreationTime != matches[0].creationTime {
-			t.Errorf("Event log list item should have the same id")
+		if item.oppEvent.EventType != DeleteEvent {
+			t.Errorf("Event log oppEvent entry should be of type Delete")
 		}
+
+		if item.event.ListItemKey != matches[0].Key() {
+			t.Errorf("Event log list item should have the same key")
+		}
+		if item.oppEvent.ListItemKey != matches[0].Key() {
+			t.Errorf("Event log list item should have the same key")
+		}
+
 		if (repo.eventLogger.curIdx) != 1 {
 			t.Errorf("The event logger index should increment to 1")
 		}
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
 		if len(matches) != 0 {
 			t.Errorf("Undo should have removed the only item")
@@ -90,47 +91,55 @@ func TestTransactionUndo(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, nil)
 
 		updatedLine := "Updated item"
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
-		repo.Update(updatedLine, nil, 0)
 
-		if len(repo.eventLogger.log) != 3 {
-			t.Errorf("Event log should have one null and two real events in it")
+		repo.Update(updatedLine, nil, repo.Root)
+
+		if l := len(repo.eventLogger.log); l != 3 {
+			t.Errorf("Event log should have one null and two real events in it, but has %d", l)
 		}
 		if repo.eventLogger.curIdx != 2 {
 			t.Errorf("Event logger should be at position two")
 		}
 
 		newestLogItem := repo.eventLogger.log[2]
-		if newestLogItem.eventType != UpdateEvent {
-			t.Errorf("Newest event log entry should be of type UpdateEvent")
+		if newestLogItem.event.EventType != UpdateEvent {
+			t.Errorf("Newest event log event entry should be of type UpdateEvent")
 		}
-		if newestLogItem.undoLine != line {
-			t.Errorf("Newest event log list item should have the original line")
+		if newestLogItem.oppEvent.EventType != UpdateEvent {
+			t.Errorf("Newest event log oppEvent entry should be of type UpdateEvent")
+		}
+
+		if newestLogItem.event.Line != updatedLine {
+			t.Errorf("Newest event log event line should have the updated line")
+		}
+		if newestLogItem.oppEvent.Line != line {
+			t.Errorf("Newest event log oppEvent line should have the original line")
 		}
 
 		oldestLogItem := repo.eventLogger.log[1]
-		if oldestLogItem.eventType != AddEvent {
-			t.Errorf("Oldest event log entry should be of type AddEvent")
+		if oldestLogItem.event.EventType != AddEvent {
+			t.Errorf("Oldest event log event entry should be of type AddEvent")
+		}
+		if oldestLogItem.oppEvent.EventType != DeleteEvent {
+			t.Errorf("Oldest event log oppEvent entry should be of type DeleteEvent")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
-		if matches[0].Line != updatedLine {
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		if matches[0].Line() != updatedLine {
 			t.Errorf("List item should have the updated line")
 		}
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should still have three events in it")
@@ -139,19 +148,15 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to one")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 1 {
 			t.Errorf("Undo should have updated the item, not deleted it")
 		}
-		if matches[0].Line != line {
+		if matches[0].Line() != line {
 			t.Errorf("List item should now have the original line")
 		}
 
-		_, err = repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should still have three events in it")
@@ -160,8 +165,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to zero")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 0 {
 			t.Errorf("Second undo should have deleted the item")
 		}
@@ -174,11 +178,14 @@ func TestTransactionUndo(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
 		line := "New item"
-		repo.Add(line, nil, 0)
+		repo.Add(line, nil, nil)
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have one null and one real event in it")
@@ -187,30 +194,43 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to one")
 		}
 
-		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != AddEvent {
-			t.Errorf("Event log entry should be of type AddEvent")
+		logItem := &repo.eventLogger.log[1]
+		checkFirstLogItemFn := func() string {
+			if logItem.event.EventType != AddEvent {
+				return "Event log entry event should be of type AddEvent"
+			}
+			if logItem.oppEvent.EventType != DeleteEvent {
+				return "Event log entry oppEvent should be of type DeleteEvent"
+			}
+
+			if logItem.event.Line != line {
+				return "Event log list event should have the original line"
+			}
+			return ""
 		}
-		if logItem.undoLine != line {
-			t.Errorf("Event log list item should have the original line")
+		if errStr := checkFirstLogItemFn(); errStr != "" {
+			t.Error(errStr)
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		listItem := matches[0]
-		if logItem.listItemCreationTime != listItem.creationTime {
-			t.Errorf("The listItem ptr should be consistent with the original")
+		if logItem.event.ListItemKey != listItem.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
+		}
+		if logItem.oppEvent.ListItemKey != listItem.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
 		}
 
 		line2 := "Another item"
-		repo.Add(line2, nil, 1)
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		repo.Add(line2, nil, repo.Root)
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		idx := 1
+		listItem1 := matches[0]
 		listItem2 := matches[idx]
 
-		if repo.eventLogger.log[1] != logItem {
-			t.Errorf("Original log item should still be in the first position in the log")
+		// Ensure the first logItem remains unchanged
+		if errStr := checkFirstLogItemFn(); errStr != "" {
+			t.Error("Original log item should still be in the first position in the log")
 		}
 
 		if len(repo.eventLogger.log) != 3 {
@@ -221,18 +241,25 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem2 := repo.eventLogger.log[2]
-		if logItem2.eventType != AddEvent {
-			t.Errorf("Event log entry should be of type AddEvent")
+		if logItem2.event.EventType != AddEvent {
+			t.Errorf("Event log entry event should be of type AddEvent")
 		}
-		if logItem2.undoLine != line2 {
-			t.Errorf("Event log list item should have the new line")
+		if logItem2.oppEvent.EventType != DeleteEvent {
+			t.Errorf("Event log entry oppEvent should be of type DeleteEvent")
+		}
+		if logItem2.event.Line != line2 {
+			t.Errorf("Event log event should have the new line")
 		}
 
-		if logItem2.listItemCreationTime != listItem2.creationTime {
-			t.Errorf("The listItem ptr should be consistent with the original")
+		if logItem2.event.ListItemKey != listItem2.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
+		}
+		if logItem2.oppEvent.ListItemKey != listItem2.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
 		}
 
-		repo.Delete(idx)
+		// need to reference the item in matchListItems
+		repo.Delete(repo.matchListItems[listItem2.Key()])
 
 		if len(repo.eventLogger.log) != 4 {
 			t.Errorf("Event log should have one null and three real events in it")
@@ -242,20 +269,25 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem3 := repo.eventLogger.log[3]
-		if logItem3.eventType != DeleteEvent {
-			t.Errorf("Event log entry should be of type DeleteEvent")
+		if logItem3.event.EventType != DeleteEvent {
+			t.Errorf("Event log event entry should be of type DeleteEvent")
 		}
-		if logItem3.undoLine != line2 {
-			t.Errorf("Event log list item should have the original line")
+		if logItem3.oppEvent.EventType != AddEvent {
+			t.Errorf("Event log oppEvent entry should be of type AddEvent")
+		}
+		if logItem3.oppEvent.Line != line2 {
+			t.Errorf("Event log oppEvent should have the new line")
 		}
 
-		if logItem3.listItemCreationTime != listItem2.creationTime {
-			t.Errorf("The listItem ptr should be consistent with the original")
+		if logItem3.event.ListItemKey != listItem2.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
+		}
+		if logItem3.oppEvent.ListItemKey != listItem2.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
 		}
 
-		repo.Delete(0)
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		repo.Delete(repo.matchListItems[listItem1.Key()])
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
 		if len(repo.eventLogger.log) != 5 {
 			t.Errorf("Event log should have one null and four real events in it")
@@ -265,21 +297,24 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem4 := repo.eventLogger.log[4]
-		if logItem4.eventType != DeleteEvent {
-			t.Errorf("Event log entry should be of type DeleteEvent")
+		if logItem4.event.EventType != DeleteEvent {
+			t.Errorf("Event log entry event should be of type DeleteEvent")
 		}
-		if logItem4.undoLine != line {
+		if logItem4.oppEvent.EventType != AddEvent {
+			t.Errorf("Event log entry event should be of type AddEvent")
+		}
+		if logItem4.oppEvent.Line != line {
 			t.Errorf("Event log list item should have the original line")
 		}
 
-		if logItem4.listItemCreationTime != listItem.creationTime {
-			t.Errorf("The listItem ptr should be consistent with the original")
+		if logItem4.event.ListItemKey != listItem.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
+		}
+		if logItem4.oppEvent.ListItemKey != listItem.Key() {
+			t.Errorf("The listItem key should be consistent with the original")
 		}
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 5 {
 			t.Errorf("Event log should still have five events in it")
@@ -288,19 +323,15 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to three")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 1 {
 			t.Errorf("Undo should have added the original item back in")
 		}
-		if matches[0].Line != line {
+		if matches[0].Line() != line {
 			t.Errorf("List item should now have the original line")
 		}
 
-		_, err = repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 5 {
 			t.Errorf("Event log should still have five events in it")
@@ -309,20 +340,15 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to two")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 2 {
 			t.Errorf("Undo should have added the second original item back in")
 		}
-		//runtime.Breakpoint()
-		if matches[1].Line != line2 {
+		if matches[1].Line() != line2 {
 			t.Errorf("List item should now have the original line")
 		}
 
-		_, err = repo.Redo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Redo()
 
 		if len(repo.eventLogger.log) != 5 {
 			t.Errorf("Event log should still have five events in it")
@@ -331,12 +357,11 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to three")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 1 {
 			t.Errorf("Undo should have removed the second original item again")
 		}
-		if matches[0].Line != line {
+		if matches[0].Line() != line {
 			t.Errorf("List item should now have the original line")
 		}
 	})
@@ -345,21 +370,26 @@ func TestTransactionUndo(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
 
-		repo.Add("", nil, 0)
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
+
+		repo.Add("", nil, nil)
 
 		logItem := repo.eventLogger.log[1]
-		if logItem.eventType != AddEvent {
-			t.Errorf("Event log entry should be of type AddEvent")
+		if logItem.event.EventType != AddEvent {
+			t.Errorf("Event log event entry should be of type AddEvent")
+		}
+		if logItem.oppEvent.EventType != DeleteEvent {
+			t.Errorf("Event log event entry should be of type DeleteEvent")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		newLine := "a"
-		repo.Update(newLine, nil, 0)
+		repo.Update(newLine, nil, repo.Root)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -367,21 +397,27 @@ func TestTransactionUndo(t *testing.T) {
 		if repo.eventLogger.curIdx != 2 {
 			t.Errorf("Event logger should have incremented to two")
 		}
+
 		logItem2 := repo.eventLogger.log[2]
-		if logItem2.eventType != UpdateEvent {
-			t.Errorf("Event log entry should be of type UpdateEvent")
+		if logItem2.event.EventType != UpdateEvent {
+			t.Errorf("Event log entry event should be of type UpdateEvent")
+		}
+		if logItem2.oppEvent.EventType != UpdateEvent {
+			t.Errorf("Event log entry oppEvent should be of type UpdateEvent")
+		}
+		if logItem2.event.Line != newLine {
+			t.Errorf("Event log entry event Line should be the new line")
+		}
+		if logItem2.oppEvent.Line != "" {
+			t.Errorf("Event log entry event Line should be empty")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
-		if matches[0].Line != newLine {
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+		if matches[0].Line() != newLine {
 			t.Errorf("List item should now have the new line")
 		}
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should still have three events in it")
@@ -390,17 +426,13 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to one")
 		}
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
-		if matches[0].Line != "" {
-			t.Errorf("Undo should have removed the line")
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+		// TODO currently caused by bad `if len(line) > 0` check in `update()` handling
+		if matches[0].Line() != "" {
+			t.Errorf("Undo should have emptied the line")
 		}
-		//fmt.Println(repo.eventLogger.curIdx)
 
-		_, err = repo.Redo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Redo()
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should still have two events in it")
@@ -411,9 +443,8 @@ func TestTransactionUndo(t *testing.T) {
 
 		// TODO problem is, looking ahead to next log item for `Redo` redoes the old PRE state
 		// Idea: store old and new state in the log item lines, Undo sets to old, Redo sets to new
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
-		if matches[0].Line != newLine {
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+		if matches[0].Line() != newLine {
 			t.Errorf("Redo should have added the line back in")
 		}
 	})
@@ -422,11 +453,14 @@ func TestTransactionUndo(t *testing.T) {
 		webTokenStore := NewFileWebTokenStore(rootDir)
 		os.Mkdir(rootDir, os.ModePerm)
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore, testPushFrequency, testPushFrequency)
-		repo.Start(newTestClient(), testWalChan, inputEvtChan)
+
+		repo := NewDBListRepo(localWalFile, webTokenStore)
+		go func() {
+			repo.Start(newTestClient())
+		}()
 
 		originalLine := "Original line"
-		repo.Add(originalLine, nil, 0)
+		repo.Add(originalLine, nil, nil)
 
 		if len(repo.eventLogger.log) != 2 {
 			t.Errorf("Event log should have a nullEvent and addEvent in it")
@@ -437,10 +471,9 @@ func TestTransactionUndo(t *testing.T) {
 
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		repo.Delete(0)
+		repo.Delete(repo.Root)
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches := repo.matchListItems
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 0 {
 			t.Errorf("Item should have been deleted")
 		}
@@ -452,13 +485,9 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have incremented to one")
 		}
 
-		_, err := repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 1 {
 			t.Errorf("Item should have been added back in")
 		}
@@ -471,25 +500,25 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		newLine := "Updated line"
-		repo.Update(newLine, nil, 0)
+		repo.Update(newLine, nil, repo.Root)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have the nullEvent, addEvent and overriding updateEvent")
 		}
-		if repo.eventLogger.log[2].eventType != UpdateEvent {
-			t.Errorf("Event logger item should be of type updateEvent")
+		logEvent := repo.eventLogger.log[2]
+		if logEvent.event.EventType != UpdateEvent {
+			t.Errorf("Event logger item event should be of type updateEvent")
+		}
+		if logEvent.oppEvent.EventType != UpdateEvent {
+			t.Errorf("Event logger item oppEvent should be of type updateEvent")
 		}
 		if repo.eventLogger.curIdx != 2 {
 			t.Errorf("Event logger should have incremented to 2")
 		}
 
-		_, err = repo.Undo()
-		if err != nil {
-			t.Fatal(err)
-		}
+		repo.Undo()
 
-		repo.Match([][]rune{}, true, "", 0, 0)
-		matches = repo.matchListItems
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 1 {
 			t.Errorf("There should still be one match")
 		}
@@ -501,7 +530,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("Event logger should have decremented to 1")
 		}
 
-		if matches[0].Line != originalLine {
+		if matches[0].Line() != originalLine {
 			t.Errorf("The line should have reverted back to the original")
 		}
 	})

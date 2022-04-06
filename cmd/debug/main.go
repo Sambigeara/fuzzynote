@@ -23,7 +23,7 @@ func main() {
 
 	webTokens := service.NewFileWebTokenStore(root)
 	localWalFile := service.NewLocalFileWalFile(root)
-	r := service.NewDBListRepo(localWalFile, webTokens, 0, 0)
+	r := service.NewDBListRepo(localWalFile, webTokens)
 
 	r.DebugWriteEventsToFile(root, key)
 }

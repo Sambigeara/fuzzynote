@@ -69,7 +69,6 @@ var (
 type EventType uint16
 
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
-// (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
 	NullEvent EventType = iota
 	AddEvent
@@ -1243,7 +1242,8 @@ func reorderWal(wal []EventLog) []EventLog {
 	return wal
 }
 
-func (r *DBListRepo) compact(wal []EventLog) ([]EventLog, error) {
+//func (r *DBListRepo) compact(wal []EventLog) ([]EventLog, error) {
+func compact(wal []EventLog) ([]EventLog, error) {
 	if len(wal) == 0 {
 		return []EventLog{}, nil
 	}
@@ -1256,14 +1256,15 @@ func (r *DBListRepo) compact(wal []EventLog) ([]EventLog, error) {
 
 	// Check the integrity of the incoming full wal prior to compaction.
 	// If broken in some way, call the recovery function.
-	testRootA, matchItemsA, err := checkWalIntegrity(wal)
+	//testRootA, matchItemsA, err := checkWalIntegrity(wal)
+	testRootA, _, err := checkWalIntegrity(wal)
 	if err != nil {
 		// If we get here, shit's on fire. This function is the equivalent of the fire brigade.
-		wal = r.recoverWal(wal, matchItemsA)
-		testRootA, _, err = checkWalIntegrity(wal)
-		if err != nil {
-			log.Fatal("wal recovery failed!")
-		}
+		//wal = r.recoverWal(wal, matchItemsA)
+		//testRootA, _, err = checkWalIntegrity(wal)
+		//if err != nil {
+		//    log.Fatal("wal recovery failed!")
+		//}
 
 		return wal, errWalIntregrity
 	}
