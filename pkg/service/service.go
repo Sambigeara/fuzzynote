@@ -207,7 +207,7 @@ type ListItem struct {
 	localEmail string // set at creation time and used to exclude from Friends() method
 	key        string
 
-	isDeleted bool
+	isAppliedToList, isDeleted bool
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
@@ -316,9 +316,7 @@ func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 		childKey = c.key
 	}
 
-	e := r.newEventLog(DeleteEvent, true)
-	e.ListItemKey = item.key
-	e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
+	e := r.newEventLogFromListItem(DeleteEvent, item, true)
 
 	r.addEventLog(e)
 
@@ -346,6 +344,7 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
 		e := r.newEventLogFromListItem(PositionEvent, item, true)
+		e.TargetListItemKey = ""
 		if item.matchChild.child != nil {
 			e.TargetListItemKey = item.matchChild.child.key
 		}
@@ -370,7 +369,10 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 		r.addEventLog(e)
 
 		ue := r.newEventLogFromListItem(PositionEvent, item, false)
-		ue.TargetListItemKey = item.matchChild.key
+		ue.TargetListItemKey = ""
+		if item.matchChild != nil {
+			ue.TargetListItemKey = item.matchChild.key
+		}
 
 		r.addUndoLog(ue, e)
 	}
@@ -379,16 +381,19 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 
 // ToggleVisibility will toggle an item to be visible or invisible
 func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
-	var evType, oppEvType EventType
+	//var evType, oppEvType EventType
+	var newIsHidden bool
 	var focusedItemKey string
 	if item.IsHidden {
-		evType = ShowEvent
-		oppEvType = HideEvent
+		newIsHidden = false
+		//evType = ShowEvent
+		//oppEvType = HideEvent
 		// Cursor should remain on newly visible key
 		focusedItemKey = item.key
 	} else {
-		evType = HideEvent
-		oppEvType = ShowEvent
+		//evType = HideEvent
+		//oppEvType = ShowEvent
+		newIsHidden = true
 		// Set focusedItemKey to parent if available, else child (e.g. bottom of list)
 		if item.matchParent != nil {
 			focusedItemKey = item.matchParent.key
@@ -396,10 +401,12 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 			focusedItemKey = item.matchChild.key
 		}
 	}
-	e := r.newEventLogFromListItem(evType, item, true)
+	item.IsHidden = newIsHidden
+	e := r.newEventLogFromListItem(UpdateEvent, item, true)
 	r.addEventLog(e)
 
-	ue := r.newEventLogFromListItem(oppEvType, item, false)
+	item.IsHidden = !newIsHidden
+	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 	r.addUndoLog(ue, e)
 
 	return focusedItemKey, nil

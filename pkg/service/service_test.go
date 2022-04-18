@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	//"log"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
@@ -67,9 +68,22 @@ func clearUp() {
 	}
 }
 
+func checkVectorClockEquality(a, b map[uuid]int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 func checkEventLogEquality(a, b EventLog) bool {
 	if a.UUID != b.UUID ||
-		a.LamportTimestamp != b.LamportTimestamp ||
+		!checkVectorClockEquality(a.VectorClock, b.VectorClock) ||
+		//a.LamportTimestamp != b.LamportTimestamp ||
 		a.EventType != b.EventType ||
 		a.ListItemKey != b.ListItemKey ||
 		a.TargetListItemKey != b.TargetListItemKey ||
@@ -91,16 +105,20 @@ func TestServicePushPull(t *testing.T) {
 		var lamport int64 = 0
 		wal := []EventLog{
 			{
-				UUID:             repo.uuid,
-				LamportTimestamp: lamport,
-				EventType:        AddEvent,
-				ListItemKey:      strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
-				Line:             "Old newly created line",
+				UUID: repo.uuid,
+				VectorClock: map[uuid]int64{
+					repo.uuid: lamport,
+				},
+				EventType:   AddEvent,
+				ListItemKey: strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
+				Line:        "Old newly created line",
 			},
 		}
 		wal = append(wal, EventLog{
-			UUID:              repo.uuid,
-			LamportTimestamp:  lamport,
+			UUID: repo.uuid,
+			VectorClock: map[uuid]int64{
+				repo.uuid: lamport,
+			},
 			EventType:         AddEvent,
 			ListItemKey:       strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport+1)),
 			TargetListItemKey: strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
@@ -113,7 +131,9 @@ func TestServicePushPull(t *testing.T) {
 		// Clear the cache to make sure we can pick the file up again
 		repo.processedWalChecksums = make(map[string]struct{})
 
-		newWal, _, _ := repo.pull(ctx, []WalFile{localWalFile})
+		c := make(chan []EventLog)
+		repo.pull(ctx, []WalFile{localWalFile}, c)
+		newWal := <-c
 
 		if len(wal) != len(newWal) {
 			t.Error("Pulled wal should be the same as the pushed one")
@@ -140,7 +160,6 @@ func TestServiceAdd(t *testing.T) {
 	go func() {
 		repo.Start(newTestClient())
 	}()
-	log.Println("sam hello")
 
 	repo.Add("Old existing created line", nil, nil)
 	repo.Add("New existing created line", nil, nil)
@@ -293,7 +312,6 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("New item should be new root")
 		}
 	})
-
 }
 
 func TestServiceDelete(t *testing.T) {
@@ -544,7 +562,6 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("Lowest parent's child should be old root")
 		}
 	})
-
 	t.Run("Move item up from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -584,7 +601,6 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
-
 	t.Run("Move item down from top", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -641,7 +657,6 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("New lowest parent should have no parent")
 		}
 	})
-
 	t.Run("Move item down from middle", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -698,7 +713,6 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("Root's parent should be moved item")
 		}
 	})
-
 	t.Run("Move item down from bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -738,7 +752,6 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
-
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
 		localWalFile := NewLocalFileWalFile(rootDir)
 		webTokenStore := NewFileWebTokenStore(rootDir)
@@ -829,7 +842,7 @@ func TestServiceUpdate(t *testing.T) {
 
 	expectedLine := "Oooo I'm new"
 	targetIdx := 1
-	repo.Update(expectedLine, nil, &(matches[targetIdx]))
+	repo.Update(expectedLine, &(matches[targetIdx]))
 
 	matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
@@ -1147,6 +1160,7 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, true, "", 0, 0)
 
 		// Hide middle item
+		runtime.Breakpoint()
 		repo.ToggleVisibility(item2)
 
 		// Preset Match pointers with Match call

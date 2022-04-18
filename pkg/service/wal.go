@@ -136,6 +136,7 @@ type EventLog struct {
 	ListItemKey, TargetListItemKey string
 	Line                           string
 	Note                           []byte
+	IsHidden                       bool
 	Friends                        LineFriends
 	cachedKey                      string
 }
@@ -164,7 +165,7 @@ func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem, increm
 	}
 	e.Line = item.rawLine
 	e.Note = item.Note
-	e.Friends = item.friends
+	e.IsHidden = item.IsHidden
 	return e
 }
 
@@ -569,17 +570,15 @@ func (r *DBListRepo) getOrCreateListItem(key string, isDeleted bool) *ListItem {
 	item = &ListItem{
 		key:       key,
 		isDeleted: isDeleted,
-		//isDeleted: e.EventType == DeleteEvent,
 	}
 	r.listItemTracker[key] = item
 	return item
 }
 
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
-	//item := r.listItemTracker[e.ListItemKey]
-	//childItem := r.listItemTracker[e.ChildListItemKey]
 	item := r.getOrCreateListItem(e.ListItemKey, e.EventType == DeleteEvent)
 	childItem := r.getOrCreateListItem(e.TargetListItemKey, false)
+	//item.child = childItem
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	//
@@ -589,13 +588,18 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	//
 	// Therefore, if an AddEvent comes, in, we split it into two separate sub-events, and handle both
 	// individually (e.g. against the cache, and potentially applying to the LL)
-	//if e.EventType == AddEvent || e.EventType == UpdateEvent {
 	if e.EventType == UpdateEvent {
 		// Manually construct and handle a position event separately. Ordering isn't important here, because
 		// we reference common item pointer.
 		// we need to reset `item` in the call below as item state will have been updated in the
 		// `processEventLog` call and therefore different to the item retrieved from the cache above
-		item, _ = r.processEventLog(r.newEventLogFromListItem(PositionEvent, item, false))
+		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
+		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event. This
+		// is required, because during the insert operation, we skip if item.child == childItem, which is desired
+		// in cases when the item has already been applied to the linked list, but for new additions we need to
+		// bypass that check in order for the item to be added
+		subEvent.TargetListItemKey = e.TargetListItemKey
+		item, _ = r.processEventLog(subEvent)
 	}
 
 	// Check the event cache and skip if the event is older than the most-recently processed
@@ -640,11 +644,10 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	//runtime.Breakpoint()
 	var err error
 	switch e.EventType {
-	//case AddEvent, UpdateEvent:
 	case UpdateEvent:
-		err = r.update(item, e.Line, e.Note, e.Friends, false)
+		err = r.update(item, e)
 	case PositionEvent:
-		item, err = r.move(item, childItem)
+		item, err = r.insert(item, childItem)
 	case DeleteEvent:
 		err = r.del(item)
 	}
@@ -687,22 +690,22 @@ func (r *DBListRepo) add(key string, line string, friends LineFriends, note []by
 	return newItem, nil
 }
 
-func (r *DBListRepo) update(item *ListItem, line string, note []byte, friends LineFriends, isHidden bool) error {
+func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
-	item.rawLine = line
-	item.Note = note
-	item.IsHidden = isHidden
+	item.rawLine = e.Line
+	item.Note = e.Note
+	item.IsHidden = e.IsHidden
 
 	// item.friends.emails is a map, which we only ever want to OR with to aggregate
 	mergedEmailMap := make(map[string]struct{})
 	for _, e := range item.friends.Emails {
 		mergedEmailMap[e] = struct{}{}
 	}
-	for _, e := range friends.Emails {
+	for _, e := range e.Friends.Emails {
 		mergedEmailMap[e] = struct{}{}
 	}
-	item.friends.IsProcessed = friends.IsProcessed
-	item.friends.Offset = friends.Offset
+	item.friends.IsProcessed = e.Friends.IsProcessed
+	item.friends.Offset = e.Friends.Offset
 
 	emails := []string{}
 	for e := range mergedEmailMap {
@@ -724,57 +727,57 @@ func (r *DBListRepo) del(item *ListItem) error {
 
 	r.remove(item)
 
-	if item.child == nil && !item.isDeleted {
-		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.parent
-	}
-
 	return nil
 }
 
 func (r *DBListRepo) remove(item *ListItem) error {
+	oldChild := item.child
+	oldParent := item.parent
 	if item.child != nil {
-		item.child.parent = item.parent
+		item.child.parent = oldParent
+	} else if item.isAppliedToList {
+		r.Root = oldParent
 	}
-
 	if item.parent != nil {
-		item.parent.child = item.child
+		item.parent.child = oldChild
 	}
 
 	return nil
 }
 
-func (r *DBListRepo) insert(item, childItem *ListItem) error {
-	item.child = childItem
-	var parentItem *ListItem
-	if childItem != nil {
-		parentItem = childItem.parent
+func (r *DBListRepo) insert(item, targetChild *ListItem) (*ListItem, error) {
+	// Return early if already in place.
+	// if we don't return early, we end up with an endless loop when setting targetParent
+	// tp targetChild.parent below
+	if item.child != nil && item.child == targetChild && item.isAppliedToList {
+		return item, nil
 	}
-	item.parent = parentItem
 
-	if childItem != nil {
-		childItem.parent = item
+	var targetParent *ListItem
+	if targetChild != nil {
+		targetParent = targetChild.parent
 	} else {
-		// If `child` is nil, it's the first item in the list so set as root
-		oldRoot := r.Root
-		r.Root = item
-		r.Root.parent = oldRoot
-		if oldRoot != nil {
-			oldRoot.child = item
-		}
+		targetParent = r.Root
 	}
 
-	if parentItem != nil {
-		parentItem.child = item
-	}
-
-	return nil
-}
-
-func (r *DBListRepo) move(item, childItem *ListItem) (*ListItem, error) {
-	//var err error
 	r.remove(item)
-	r.insert(item, childItem)
+	item.isAppliedToList = true
+
+	// Insert item into new position
+	if targetChild != nil {
+		targetChild.parent = item
+	}
+	if targetParent != nil {
+		targetParent.child = item
+	}
+	item.child = targetChild
+	item.parent = targetParent
+
+	// Reset root if item is now at the top
+	if targetChild == nil {
+		r.Root = item
+	}
+
 	return item, nil
 }
 
