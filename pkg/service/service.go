@@ -42,14 +42,14 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
-	currentLamportTimestamp            int64
-	listItemTracker                    map[string]*ListItem
-	processedEventLogCache             map[string]struct{}
+	//currentLamportTimestamp int64
+	vectorClock     map[uuid]int64
+	listItemTracker map[string]*ListItem
+	//processedEventLogCache             map[string]struct{}
 	listItemProcessedEventLogTypeCache map[EventType]map[string]EventLog
 
 	// Wal stuff
 	uuid              uuid
-	log               []EventLog
 	eventsChan        chan EventLog
 	web               *Web
 	latestWalSchemaID uint16
@@ -96,11 +96,11 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
-		uuid:                               generateUUID(),
-		log:                                []EventLog{},
-		latestWalSchemaID:                  latestWalSchemaID,
-		listItemTracker:                    make(map[string]*ListItem),
-		processedEventLogCache:             make(map[string]struct{}),
+		uuid:              generateUUID(),
+		latestWalSchemaID: latestWalSchemaID,
+		vectorClock:       make(map[uuid]int64),
+		listItemTracker:   make(map[string]*ListItem),
+		//processedEventLogCache:             make(map[string]struct{}),
 		listItemProcessedEventLogTypeCache: make(map[EventType]map[string]EventLog),
 
 		LocalWalFile: localWalFile,
@@ -155,6 +155,28 @@ func (r *DBListRepo) setEmail(email string) {
 	r.friends[email] = make(map[string]int64)
 }
 
+func (r *DBListRepo) getVectorDT(id uuid) (int64, bool) {
+	dt, exists := r.vectorClock[id]
+	return dt, exists
+}
+
+func (r *DBListRepo) setVectorDT(id uuid, dt int64) {
+	r.vectorClock[id] = dt
+}
+
+func (r *DBListRepo) getLocalVectorDT() int64 {
+	dt, _ := r.getVectorDT(r.uuid)
+	return dt
+}
+
+func (r *DBListRepo) setLocalVectorDT(dt int64) {
+	r.setVectorDT(r.uuid, dt)
+}
+
+func (r *DBListRepo) incLocalVectorDT() {
+	r.vectorClock[r.uuid]++
+}
+
 // ForceTriggerFlush will zero the flush timer, and block til completion. E.g. this is a synchronous flush
 func (r *DBListRepo) ForceTriggerFlush() {
 	go func() {
@@ -168,11 +190,11 @@ func (r *DBListRepo) IsSynced() bool {
 	return !r.hasUnflushedEvents
 }
 
-// ListItem represents a single item in the returned list, based on the Match() input
+// ListItem is a mergeable data structure which represents a single item in the main list. It maintains record of the
+// last update lamport times
 type ListItem struct {
-	rawLine string
-	Note    []byte // TODO make private
-
+	rawLine  string
+	Note     []byte // TODO make private
 	IsHidden bool
 
 	child       *ListItem
@@ -215,14 +237,6 @@ func (i *ListItem) Key() string {
 	return i.key
 }
 
-func (r *DBListRepo) newEventLog(t EventType) EventLog {
-	return EventLog{
-		UUID:             r.uuid,
-		LamportTimestamp: r.currentLamportTimestamp,
-		EventType:        t,
-	}
-}
-
 func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	var err error
 	var item *ListItem
@@ -235,15 +249,14 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 
 	item, err = r.processEventLog(el)
 	r.eventsChan <- el
-	r.log = append(r.log, el)
 	return item, err
 }
 
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
 func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
-	e := r.newEventLog(AddEvent)
-	listItemKey := strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
+	e := r.newEventLog(UpdateEvent, true)
+	listItemKey := strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.getLocalVectorDT()))
 	e.ListItemKey = listItemKey
 	if childItem != nil {
 		e.TargetListItemKey = childItem.key
@@ -253,7 +266,7 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 
 	newItem, _ := r.addEventLog(e)
 
-	ue := r.newEventLog(DeleteEvent)
+	ue := r.newEventLog(DeleteEvent, false)
 	ue.ListItemKey = listItemKey
 	ue.Line = line // needed for Friends generation in repositionActiveFriends
 
@@ -263,28 +276,33 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 }
 
 // Update will update the line or note of an existing ListItem
-func (r *DBListRepo) Update(line string, note []byte, item *ListItem) error {
+func (r *DBListRepo) Update(line string, item *ListItem) error {
 	if item == nil {
 		return nil
 	}
 
-	var childKey string
-	if c := item.child; c != nil {
-		childKey = c.key
+	e := r.newEventLogFromListItem(UpdateEvent, item, true)
+	e.Line = line
+
+	// Undo event created from pre event processing state
+	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
+
+	r.addEventLog(e)
+	r.addUndoLog(ue, e)
+	return nil
+}
+
+// TODO rethink this interface
+func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
+	if item == nil {
+		return nil
 	}
 
-	e := r.newEventLog(UpdateEvent)
-	e.ListItemKey = item.key
-	e.TargetListItemKey = childKey
-	e.Line = line
+	e := r.newEventLogFromListItem(UpdateEvent, item, true)
 	e.Note = note
 
 	// Undo event created from pre event processing state
-	ue := r.newEventLog(UpdateEvent)
-	ue.ListItemKey = item.key
-	ue.TargetListItemKey = childKey
-	ue.Line = item.rawLine
-	ue.Note = item.Note
+	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 
 	r.addEventLog(e)
 	r.addUndoLog(ue, e)
@@ -298,13 +316,13 @@ func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 		childKey = c.key
 	}
 
-	e := r.newEventLog(DeleteEvent)
+	e := r.newEventLog(DeleteEvent, true)
 	e.ListItemKey = item.key
 	e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 	r.addEventLog(e)
 
-	ue := r.newEventLog(AddEvent)
+	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 	ue.ListItemKey = item.key
 	ue.TargetListItemKey = childKey
 	ue.Line = item.rawLine
@@ -327,21 +345,15 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// We need to target the child of the child (as when we apply move events, we specify the target that we want to be
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
-		e := r.newEventLog(MoveUpEvent)
-		e.ListItemKey = item.key
+		e := r.newEventLogFromListItem(PositionEvent, item, true)
 		if item.matchChild.child != nil {
 			e.TargetListItemKey = item.matchChild.child.key
 		}
-		e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 		r.addEventLog(e)
 
-		ue := r.newEventLog(MoveDownEvent)
-		ue.ListItemKey = item.key
-		if item.matchParent != nil {
-			ue.TargetListItemKey = item.matchChild.key
-		}
-		ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
+		ue := r.newEventLogFromListItem(PositionEvent, item, false)
+		ue.TargetListItemKey = item.matchChild.key
 
 		r.addUndoLog(ue, e)
 	}
@@ -351,21 +363,14 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 // MoveDown will swop a ListItem with the ListItem directly below it, taking visibility and
 // current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) error {
-	//if item.matchParent != nil && item.matchParent.lamportTimestamp != 0 {
 	if item.matchParent != nil {
-		e := r.newEventLog(MoveDownEvent)
-		e.ListItemKey = item.key
+		e := r.newEventLogFromListItem(PositionEvent, item, true)
 		e.TargetListItemKey = item.matchParent.key
-		e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
 
 		r.addEventLog(e)
 
-		ue := r.newEventLog(MoveUpEvent)
-		ue.ListItemKey = item.key
-		if item.matchChild != nil {
-			ue.TargetListItemKey = item.matchChild.key
-		}
-		ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
+		ue := r.newEventLogFromListItem(PositionEvent, item, false)
+		ue.TargetListItemKey = item.matchChild.key
 
 		r.addUndoLog(ue, e)
 	}
@@ -391,16 +396,10 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 			focusedItemKey = item.matchChild.key
 		}
 	}
-	e := r.newEventLog(evType)
-	e.ListItemKey = item.key
-	e.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
-
+	e := r.newEventLogFromListItem(evType, item, true)
 	r.addEventLog(e)
 
-	ue := r.newEventLog(oppEvType)
-	ue.ListItemKey = item.key
-	ue.Line = item.rawLine // needed for Friends generation in repositionActiveFriends
-
+	ue := r.newEventLogFromListItem(oppEvType, item, false)
 	r.addUndoLog(ue, e)
 
 	return focusedItemKey, nil
@@ -415,7 +414,8 @@ func (r *DBListRepo) Undo() (string, error) {
 		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
 		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
 		// to the old ListItem in the caches
-		e.LamportTimestamp = r.currentLamportTimestamp
+		r.incLocalVectorDT()
+		e.setVectorDT(r.uuid, r.getLocalVectorDT())
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx--
@@ -434,7 +434,8 @@ func (r *DBListRepo) Redo() (string, error) {
 		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
 		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
 		// to the old ListItem in the caches
-		e.LamportTimestamp = r.currentLamportTimestamp
+		r.incLocalVectorDT()
+		e.setVectorDT(r.uuid, r.getLocalVectorDT())
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx++
@@ -628,6 +629,7 @@ func getChangedListItemKeysFromWal(wal []EventLog) (map[string]struct{}, bool) {
 	for _, el := range wal {
 		keys[el.ListItemKey] = struct{}{}
 		switch el.EventType {
+		// TODO event updates
 		case MoveUpEvent, MoveDownEvent, AddEvent, DeleteEvent:
 			allowOverride = false
 		}
@@ -645,7 +647,7 @@ func (r *DBListRepo) GetListItemNote(key string) []byte {
 
 func (r *DBListRepo) SaveListItemNote(key string, note []byte) {
 	if item, exists := r.matchListItems[key]; exists {
-		r.Update("", note, item)
+		r.UpdateNote(note, item)
 	}
 }
 
