@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"log"
 )
 
 type RefreshKey struct {
@@ -34,18 +33,6 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			select {
-			//case wal := <-reorderAndReplayChan:
-			//    if err := r.Replay(wal); err != nil {
-			//        errChan <- err
-			//        return
-			//    }
-			//    changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
-			//    go func() {
-			//        inputEvtsChan <- RefreshKey{
-			//            ChangedKeys:   changedKeys,
-			//            AllowOverride: allowOverride,
-			//        }
-			//    }()
 			case wal := <-replayChan:
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
@@ -74,7 +61,6 @@ func (r *DBListRepo) Start(client Client) error {
 					if finishErr := r.finish(isPurge); finishErr != nil {
 						errChan <- finishErr
 					}
-					log.Printf("%v", r.vectorClock)
 					errChan <- err
 					return
 				}

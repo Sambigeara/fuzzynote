@@ -9,15 +9,8 @@ import (
 func TestTransactionUndo(t *testing.T) {
 	os.Mkdir(rootDir, os.ModePerm)
 	t.Run("Undo on empty db", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Undo()
 
@@ -30,15 +23,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		line := "New item"
 		repo.Add(line, nil, nil)
@@ -50,8 +36,8 @@ func TestTransactionUndo(t *testing.T) {
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		item := repo.eventLogger.log[1]
-		if item.event.EventType != AddEvent {
-			t.Errorf("Event log event entry should be of type AddEvent")
+		if item.event.EventType != UpdateEvent {
+			t.Errorf("Event log event entry should be of type UpdateEvent")
 		}
 		if item.oppEvent.EventType != DeleteEvent {
 			t.Errorf("Event log oppEvent entry should be of type Delete")
@@ -87,15 +73,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Undo single item Add and Update", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		line := "New item"
 		repo.Add(line, nil, nil)
@@ -127,8 +106,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		oldestLogItem := repo.eventLogger.log[1]
-		if oldestLogItem.event.EventType != AddEvent {
-			t.Errorf("Oldest event log event entry should be of type AddEvent")
+		if oldestLogItem.event.EventType != UpdateEvent {
+			t.Errorf("Oldest event log event entry should be of type UpdateEvent")
 		}
 		if oldestLogItem.oppEvent.EventType != DeleteEvent {
 			t.Errorf("Oldest event log oppEvent entry should be of type DeleteEvent")
@@ -174,15 +153,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add twice, Delete twice, Undo twice, Redo once", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		line := "New item"
 		repo.Add(line, nil, nil)
@@ -196,8 +168,8 @@ func TestTransactionUndo(t *testing.T) {
 
 		logItem := &repo.eventLogger.log[1]
 		checkFirstLogItemFn := func() string {
-			if logItem.event.EventType != AddEvent {
-				return "Event log entry event should be of type AddEvent"
+			if logItem.event.EventType != UpdateEvent {
+				return "Event log entry event should be of type UpdateEvent"
 			}
 			if logItem.oppEvent.EventType != DeleteEvent {
 				return "Event log entry oppEvent should be of type DeleteEvent"
@@ -241,8 +213,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 
 		logItem2 := repo.eventLogger.log[2]
-		if logItem2.event.EventType != AddEvent {
-			t.Errorf("Event log entry event should be of type AddEvent")
+		if logItem2.event.EventType != UpdateEvent {
+			t.Errorf("Event log entry event should be of type UpdateEvent")
 		}
 		if logItem2.oppEvent.EventType != DeleteEvent {
 			t.Errorf("Event log entry oppEvent should be of type DeleteEvent")
@@ -272,8 +244,8 @@ func TestTransactionUndo(t *testing.T) {
 		if logItem3.event.EventType != DeleteEvent {
 			t.Errorf("Event log event entry should be of type DeleteEvent")
 		}
-		if logItem3.oppEvent.EventType != AddEvent {
-			t.Errorf("Event log oppEvent entry should be of type AddEvent")
+		if logItem3.oppEvent.EventType != UpdateEvent {
+			t.Errorf("Event log oppEvent entry should be of type UpdateEvent")
 		}
 		if logItem3.oppEvent.Line != line2 {
 			t.Errorf("Event log oppEvent should have the new line")
@@ -300,8 +272,8 @@ func TestTransactionUndo(t *testing.T) {
 		if logItem4.event.EventType != DeleteEvent {
 			t.Errorf("Event log entry event should be of type DeleteEvent")
 		}
-		if logItem4.oppEvent.EventType != AddEvent {
-			t.Errorf("Event log entry event should be of type AddEvent")
+		if logItem4.oppEvent.EventType != UpdateEvent {
+			t.Errorf("Event log entry event should be of type UpdateEvent")
 		}
 		if logItem4.oppEvent.Line != line {
 			t.Errorf("Event log list item should have the original line")
@@ -314,6 +286,7 @@ func TestTransactionUndo(t *testing.T) {
 			t.Errorf("The listItem key should be consistent with the original")
 		}
 
+		//runtime.Breakpoint()
 		repo.Undo()
 
 		if len(repo.eventLogger.log) != 5 {
@@ -366,21 +339,14 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add empty item, update with character, Undo, Redo", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("", nil, nil)
 
 		logItem := repo.eventLogger.log[1]
-		if logItem.event.EventType != AddEvent {
-			t.Errorf("Event log event entry should be of type AddEvent")
+		if logItem.event.EventType != UpdateEvent {
+			t.Errorf("Event log event entry should be of type UpdateEvent")
 		}
 		if logItem.oppEvent.EventType != DeleteEvent {
 			t.Errorf("Event log event entry should be of type DeleteEvent")
@@ -449,15 +415,8 @@ func TestTransactionUndo(t *testing.T) {
 		}
 	})
 	t.Run("Add line, Delete line, Undo, delete character, Undo", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		originalLine := "Original line"
 		repo.Add(originalLine, nil, nil)

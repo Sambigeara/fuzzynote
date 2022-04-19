@@ -311,30 +311,20 @@ func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) (string, error) {
-	var childKey, matchChildKey string
-	if c := item.child; c != nil {
-		childKey = c.key
-	}
 
 	e := r.newEventLogFromListItem(DeleteEvent, item, true)
+	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 
 	r.addEventLog(e)
-
-	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
-	ue.ListItemKey = item.key
-	ue.TargetListItemKey = childKey
-	ue.Line = item.rawLine
-	ue.Note = item.Note
-
 	r.addUndoLog(ue, e)
 
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
 	// not match the current specified search groups)
 	if item.matchChild != nil {
-		matchChildKey = item.matchChild.key
+		return item.matchChild.key, nil
 	}
-	return matchChildKey, nil
+	return "", nil
 }
 
 // MoveUp will swop a ListItem with the ListItem directly above it, taking visibility and
@@ -401,12 +391,12 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 			focusedItemKey = item.matchChild.key
 		}
 	}
-	item.IsHidden = newIsHidden
 	e := r.newEventLogFromListItem(UpdateEvent, item, true)
+	e.IsHidden = newIsHidden
 	r.addEventLog(e)
 
-	item.IsHidden = !newIsHidden
 	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
+	ue.IsHidden = !newIsHidden
 	r.addUndoLog(ue, e)
 
 	return focusedItemKey, nil
@@ -422,7 +412,7 @@ func (r *DBListRepo) Undo() (string, error) {
 		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
 		// to the old ListItem in the caches
 		r.incLocalVectorDT()
-		e.setVectorDT(r.uuid, r.getLocalVectorDT())
+		e.VectorClock = r.getLocalVectorClockCopy()
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx--
@@ -442,7 +432,7 @@ func (r *DBListRepo) Redo() (string, error) {
 		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
 		// to the old ListItem in the caches
 		r.incLocalVectorDT()
-		e.setVectorDT(r.uuid, r.getLocalVectorDT())
+		e.VectorClock = r.getLocalVectorClockCopy()
 
 		item, err := r.addEventLog(e)
 		r.eventLogger.curIdx++

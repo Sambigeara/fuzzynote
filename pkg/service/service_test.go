@@ -2,34 +2,41 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	//"log"
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
+	//"runtime"
 	"strconv"
 	"testing"
 )
 
-const (
-	rootDir      = "folder_to_delete"
-	otherRootDir = "other_folder_to_delete"
+var (
+	wd, _        = os.Getwd()
+	rootDir      = path.Join(wd, "folder_to_delete")
+	otherRootDir = path.Join(wd, "other_folder_to_delete")
+
+	testEventChan chan interface{}
 )
 
 type testClient struct {
 }
 
 func (c *testClient) Refresh() {
-	//t.S.PostEvent(&RefreshKey{})
 }
 
+type testCloseEvent struct{}
+
 func (c *testClient) AwaitEvent() interface{} {
-	//return t.S.PollEvent()
-	return struct{}{}
+	//return struct{}{}
+	return <-testEventChan
 }
 
 func (c *testClient) HandleEvent(ev interface{}) error {
+	if _, isClose := ev.(testCloseEvent); isClose {
+		return errors.New("test close")
+	}
 	return nil
 }
 
@@ -37,35 +44,42 @@ func newTestClient() *testClient {
 	return &testClient{}
 }
 
-func clearUp() {
-	//os.Remove(rootPath)
-	//os.Remove(otherRootPath)
-	os.Remove(rootDir)
-	os.Remove(otherRootDir)
+func setupRepo() (*DBListRepo, func()) {
+	localWalFile := NewLocalFileWalFile(rootDir)
+	webTokenStore := NewFileWebTokenStore(rootDir)
+	os.Mkdir(rootDir, os.ModePerm)
+	repo := NewDBListRepo(localWalFile, webTokenStore)
 
-	walPathPattern := fmt.Sprintf(path.Join(rootDir, walFilePattern), "*")
-	wals, _ := filepath.Glob(walPathPattern)
-	for _, wal := range wals {
-		os.Remove(wal)
-	}
-	walPathPattern = fmt.Sprintf(path.Join(otherRootDir, walFilePattern), "*")
-	wals, _ = filepath.Glob(walPathPattern)
-	for _, wal := range wals {
-		os.Remove(wal)
-	}
+	testEventChan = make(chan interface{})
+	closeChan := make(chan struct{})
 
-	os.Remove(rootDir)
-	os.Remove(otherRootDir)
+	go func() {
+		repo.Start(newTestClient())
+		closeChan <- struct{}{}
+	}()
 
-	files, err := filepath.Glob("wal_*.db")
-	if err != nil {
-		panic(err)
-	}
-	for _, f := range files {
-		if err := os.Remove(f); err != nil {
-			panic(err)
+	closeFn := func() {
+		go func() {
+			testEventChan <- testCloseEvent{}
+		}()
+		<-closeChan
+
+		walPathPattern := fmt.Sprintf(path.Join(rootDir, walFilePattern), "*")
+		wals, _ := filepath.Glob(walPathPattern)
+		for _, wal := range wals {
+			os.Remove(wal)
 		}
+		walPathPattern = fmt.Sprintf(path.Join(otherRootDir, walFilePattern), "*")
+		wals, _ = filepath.Glob(walPathPattern)
+		for _, wal := range wals {
+			os.Remove(wal)
+		}
+
+		os.Remove(rootDir)
+		os.Remove(otherRootDir)
 	}
+
+	return repo, closeFn
 }
 
 func checkVectorClockEquality(a, b map[uuid]int64) bool {
@@ -96,11 +110,8 @@ func checkEventLogEquality(a, b EventLog) bool {
 
 func TestServicePushPull(t *testing.T) {
 	t.Run("Pushes to file and pulls back", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-		repo := NewDBListRepo(localWalFile, webTokenStore)
 
 		var lamport int64 = 0
 		wal := []EventLog{
@@ -125,6 +136,7 @@ func TestServicePushPull(t *testing.T) {
 			Line:              "New newly created line",
 		})
 
+		localWalFile := NewLocalFileWalFile(rootDir)
 		ctx := context.Background()
 		repo.push(ctx, localWalFile, wal, nil)
 
@@ -151,15 +163,39 @@ func TestServicePushPull(t *testing.T) {
 }
 
 func TestServiceAdd(t *testing.T) {
-	localWalFile := NewLocalFileWalFile(rootDir)
-	webTokenStore := NewFileWebTokenStore(rootDir)
-	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp()
+	t.Run("Add new item to empty list", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
 
-	repo := NewDBListRepo(localWalFile, webTokenStore)
-	go func() {
-		repo.Start(newTestClient())
-	}()
+		newLine := "First item in list"
+		repo.Add(newLine, nil, nil)
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+
+		if len(matches) != 1 {
+			t.Errorf("Matches should only have 1 item")
+		}
+
+		newItem := matches[0]
+		if newItem.Line() != newLine {
+			t.Errorf("Expected %s but got %s", newLine, newItem.Line())
+		}
+
+		if newItem.child != nil {
+			t.Errorf("New item should have no child")
+		}
+
+		if newItem.parent != nil {
+			t.Errorf("New item should have no parent")
+		}
+
+		if repo.Root.Key() != newItem.Key() {
+			t.Errorf("New item should be new root")
+		}
+	})
+
+	repo, clearUp := setupRepo()
+	defer clearUp()
 
 	repo.Add("Old existing created line", nil, nil)
 	repo.Add("New existing created line", nil, nil)
@@ -203,7 +239,6 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Original young listItem has incorrect child")
 		}
 	})
-
 	t.Run("Add item at end of list", func(t *testing.T) {
 		newLine := "I should be last"
 
@@ -242,7 +277,6 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Original youngest listItem has incorrect parent")
 		}
 	})
-
 	t.Run("Add item in middle of list", func(t *testing.T) {
 		newLine := "I'm somewhere in the middle"
 
@@ -274,57 +308,12 @@ func TestServiceAdd(t *testing.T) {
 			t.Errorf("Original old parent has incorrect child")
 		}
 	})
-
-	t.Run("Add new item to empty list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
-		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
-
-		newLine := "First item in list"
-		repo.Add(newLine, nil, nil)
-
-		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
-
-		if len(matches) != 1 {
-			t.Errorf("Matches should only have 1 item")
-		}
-
-		newItem := matches[0]
-		if newItem.Line() != newLine {
-			t.Errorf("Expected %s but got %s", newLine, newItem.Line())
-		}
-
-		if newItem.child != nil {
-			t.Errorf("New item should have no child")
-		}
-
-		if newItem.parent != nil {
-			t.Errorf("New item should have no parent")
-		}
-
-		if repo.Root.Key() != newItem.Key() {
-			t.Errorf("New item should be new root")
-		}
-	})
 }
 
 func TestServiceDelete(t *testing.T) {
 	t.Run("Delete item from head of list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -363,15 +352,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from end of list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -404,15 +386,8 @@ func TestServiceDelete(t *testing.T) {
 		}
 	})
 	t.Run("Delete item from middle of list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -451,15 +426,8 @@ func TestServiceDelete(t *testing.T) {
 
 func TestServiceMove(t *testing.T) {
 	t.Run("Move item up from bottom", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -507,15 +475,8 @@ func TestServiceMove(t *testing.T) {
 		}
 	})
 	t.Run("Move item up from middle", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -563,15 +524,8 @@ func TestServiceMove(t *testing.T) {
 		}
 	})
 	t.Run("Move item up from top", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -602,15 +556,8 @@ func TestServiceMove(t *testing.T) {
 		}
 	})
 	t.Run("Move item down from top", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -656,17 +603,11 @@ func TestServiceMove(t *testing.T) {
 		if matches[2].parent != nil {
 			t.Errorf("New lowest parent should have no parent")
 		}
+		//runtime.Breakpoint()
 	})
 	t.Run("Move item down from middle", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -714,15 +655,8 @@ func TestServiceMove(t *testing.T) {
 		}
 	})
 	t.Run("Move item down from bottom", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -753,15 +687,8 @@ func TestServiceMove(t *testing.T) {
 		}
 	})
 	t.Run("Move item down from top to bottom", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -823,50 +750,76 @@ func TestServiceMove(t *testing.T) {
 }
 
 func TestServiceUpdate(t *testing.T) {
-	localWalFile := NewLocalFileWalFile(rootDir)
-	webTokenStore := NewFileWebTokenStore(rootDir)
-	os.Mkdir(rootDir, os.ModePerm)
-	defer clearUp()
+	t.Run("Add one and update", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
 
-	repo := NewDBListRepo(localWalFile, webTokenStore)
-	go func() {
-		repo.Start(newTestClient())
-	}()
+		line := "New item"
+		repo.Add(line, nil, nil)
 
-	repo.Add("Third", nil, nil)
-	repo.Add("Second", nil, nil)
-	repo.Add("First", nil, nil)
+		updatedLine := "Updated item"
+		repo.Update(updatedLine, repo.Root)
 
-	// Call matches to trigger matchListItems creation
-	matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
-	expectedLine := "Oooo I'm new"
-	targetIdx := 1
-	repo.Update(expectedLine, &(matches[targetIdx]))
+		expectedLen := 1
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
 
-	matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+		match := matches[0]
+		if match.Line() != updatedLine {
+			t.Errorf("Expected %s but got %s", updatedLine, match.Line())
+		}
+		if repo.Root.Key() != match.Key() {
+			t.Errorf("Root should be previous middle")
+		}
 
-	expectedLen := 3
-	if len(matches) != expectedLen {
-		t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
-	}
+		if match.child != nil {
+			t.Errorf("Root child should be nil")
+		}
+		if match.parent != nil {
+			t.Errorf("Root parent should be nil")
+		}
+		if match.matchChild != nil {
+			t.Errorf("Root matchChild should be nil")
+		}
+		if match.matchParent != nil {
+			t.Errorf("Root matchParent should be nil")
+		}
+	})
+	t.Run("Update middle item", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
 
-	if matches[targetIdx].Line() != expectedLine {
-		t.Errorf("Expected %s but got %s", expectedLine, matches[1].Line())
-	}
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
+
+		// Call matches to trigger matchListItems creation
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+
+		expectedLine := "Oooo I'm new"
+		targetIdx := 1
+		repo.Update(expectedLine, &(matches[targetIdx]))
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		expectedLen := 3
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		if matches[targetIdx].Line() != expectedLine {
+			t.Errorf("Expected %s but got %s", expectedLine, matches[1].Line())
+		}
+	})
 }
 
 func TestServiceMatch(t *testing.T) {
 	t.Run("Full match items in list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Also not second", nil, nil)
 		repo.Add("Not second", nil, nil)
@@ -940,15 +893,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Fuzzy match items in list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Also not second", nil, nil)
 		repo.Add("Not second", nil, nil)
@@ -1022,15 +968,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Inverse match items in list", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Also not second", nil, nil)
 		repo.Add("Not second", nil, nil)
@@ -1062,15 +1001,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Full match items in list with offset and limit", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Fifth", nil, nil)
 		repo.Add("Fourth", nil, nil)
@@ -1139,15 +1071,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up from bottom with hidden middle", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -1160,7 +1085,6 @@ func TestServiceMatch(t *testing.T) {
 		repo.Match([][]rune{}, true, "", 0, 0)
 
 		// Hide middle item
-		runtime.Breakpoint()
 		repo.ToggleVisibility(item2)
 
 		// Preset Match pointers with Match call
@@ -1221,15 +1145,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item up persist between Save Load with hidden middle", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
@@ -1300,15 +1217,8 @@ func TestServiceMatch(t *testing.T) {
 	})
 
 	t.Run("Move item down persist between Save Load with hidden middle", func(t *testing.T) {
-		localWalFile := NewLocalFileWalFile(rootDir)
-		webTokenStore := NewFileWebTokenStore(rootDir)
-		os.Mkdir(rootDir, os.ModePerm)
+		repo, clearUp := setupRepo()
 		defer clearUp()
-
-		repo := NewDBListRepo(localWalFile, webTokenStore)
-		go func() {
-			repo.Start(newTestClient())
-		}()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)

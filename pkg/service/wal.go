@@ -80,18 +80,6 @@ const (
 	PositionEvent
 )
 
-var eventTypes = []EventType{
-	NullEvent,
-	AddEvent,
-	UpdateEvent,
-	MoveUpEvent,
-	MoveDownEvent,
-	ShowEvent,
-	HideEvent,
-	DeleteEvent,
-	PositionEvent,
-}
-
 type LineFriendsSchema4 struct {
 	IsProcessed bool
 	Offset      int
@@ -150,10 +138,7 @@ func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLo
 		EventType: t,
 	}
 	// make a copy of the map
-	e.VectorClock = make(map[uuid]int64)
-	for k, v := range r.vectorClock {
-		e.setVectorDT(k, v)
-	}
+	e.VectorClock = r.getLocalVectorClockCopy()
 	return e
 }
 
@@ -167,6 +152,14 @@ func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem, increm
 	e.Note = item.Note
 	e.IsHidden = item.IsHidden
 	return e
+}
+
+func (r *DBListRepo) getLocalVectorClockCopy() map[uuid]int64 {
+	clock := make(map[uuid]int64)
+	for k, v := range r.vectorClock {
+		clock[k] = v
+	}
+	return clock
 }
 
 func (e *EventLog) setVectorDT(id uuid, dt int64) {
@@ -578,29 +571,15 @@ func (r *DBListRepo) getOrCreateListItem(key string, isDeleted bool) *ListItem {
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey, e.EventType == DeleteEvent)
 	childItem := r.getOrCreateListItem(e.TargetListItemKey, false)
-	//item.child = childItem
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
-	//
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
 	// - PositionEvent
 	// - DeleteEvent
-	//
-	// Therefore, if an AddEvent comes, in, we split it into two separate sub-events, and handle both
-	// individually (e.g. against the cache, and potentially applying to the LL)
-	if e.EventType == UpdateEvent {
-		// Manually construct and handle a position event separately. Ordering isn't important here, because
-		// we reference common item pointer.
-		// we need to reset `item` in the call below as item state will have been updated in the
-		// `processEventLog` call and therefore different to the item retrieved from the cache above
-		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
-		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event. This
-		// is required, because during the insert operation, we skip if item.child == childItem, which is desired
-		// in cases when the item has already been applied to the linked list, but for new additions we need to
-		// bypass that check in order for the item to be added
-		subEvent.TargetListItemKey = e.TargetListItemKey
-		item, _ = r.processEventLog(subEvent)
-	}
+	// Therefore, if an AddEvent comes, in, we split it into two separate sub-events, and handle both individually
+	// (e.g. against the cache, and potentially applying to the LL). We need to handle the positional event AFTER the
+	// Update to cover the case where an Undo triggers the re-adding of an item, and we want item.isDeleted to have
+	// been reset to false (to allow the PositionEvent to be handled correctly).
 
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[e.EventType]; exists {
@@ -614,21 +593,9 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	}
 	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
-	// Check to see if the item has been deleted. If it has, we return early if the event is NOT of type
-	// AddEvent or UpdateEvent
-	if e.EventType != DeleteEvent {
-		for _, et := range eventTypes {
-			switch et {
-			//case AddEvent, UpdateEvent:
-			case UpdateEvent:
-			default:
-				if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[DeleteEvent]; exists {
-					if _, exists := eventTypeCache[e.ListItemKey]; exists {
-						return item, nil
-					}
-				}
-			}
-		}
+	// Check to see if the item has been deleted. If it has, we return early if the event is of type PositionEvent
+	if e.EventType == PositionEvent && item.isDeleted {
+		return item, nil
 	}
 
 	// Iterate over all counters in the event clock and update the local vector representation for each newer one
@@ -650,6 +617,19 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		item, err = r.insert(item, childItem)
 	case DeleteEvent:
 		err = r.del(item)
+	}
+
+	if e.EventType == UpdateEvent {
+		// Manually construct and handle a position event separately.
+		// We need to reset `item` in the call below as item state will have been updated in the
+		// `processEventLog` call and therefore different to the item retrieved from the cache above
+		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
+		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event. This
+		// is required, because during the insert operation, we skip if item.child == childItem, which is desired
+		// in cases when the item has already been applied to the linked list, but for new additions we need to
+		// bypass that check in order for the item to be added
+		subEvent.TargetListItemKey = e.TargetListItemKey
+		item, _ = r.processEventLog(subEvent)
 	}
 
 	r.listItemTracker[e.ListItemKey] = item
@@ -724,9 +704,9 @@ func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 
 func (r *DBListRepo) del(item *ListItem) error {
 	item.isDeleted = true
-
 	r.remove(item)
-
+	// isAppliedToList is used in r.remove, so set afterwards
+	item.isAppliedToList = false
 	return nil
 }
 
@@ -749,7 +729,8 @@ func (r *DBListRepo) insert(item, targetChild *ListItem) (*ListItem, error) {
 	// Return early if already in place.
 	// if we don't return early, we end up with an endless loop when setting targetParent
 	// tp targetChild.parent below
-	if item.child != nil && item.child == targetChild && item.isAppliedToList {
+	//if item.child != nil && item.child == targetChild && item.isAppliedToList {
+	if item.child == targetChild && item.isAppliedToList {
 		return item, nil
 	}
 
