@@ -1,6 +1,7 @@
 package service
 
 import (
+	//"runtime"
 	"testing"
 )
 
@@ -42,6 +43,155 @@ func TestEventEquality(t *testing.T) {
 		if equality != eventsEqual {
 			t.Fatalf("Expected events to be equal")
 		}
+	})
+}
+
+func TestMerge(t *testing.T) {
+	repo, clearUp := setupRepo()
+	repoUUID := uuid(1)
+	repo.uuid = repoUUID
+
+	exit := make(chan struct{})
+	elChan := make(chan []EventLog)
+	go func() {
+		el := []EventLog{}
+		for {
+			select {
+			case e := <-repo.eventsChan:
+				el = append(el, e)
+			case <-exit:
+				elChan <- el
+				return
+			}
+		}
+	}()
+	//t.Logf("%v", e)
+
+	repo.Add("", nil, nil)
+	n0 := repo.Root
+	repo.Update("a", n0)
+
+	repo.Add("", nil, n0)
+	n1 := n0.parent
+	repo.Update("b", n1)
+
+	repo.Add("", nil, n1)
+	n2 := n1.parent
+	repo.Update("c", n2)
+
+	// matchChild would usually be set during the Match() call, but set here manually
+	n2.matchChild = n1
+	repo.MoveUp(n2)
+
+	repo.Delete(n0)
+
+	go func() {
+		exit <- struct{}{}
+	}()
+	correctEl := <-elChan
+
+	// Clear up this repo state prior to running tests below - we only wanted the event log
+	clearUp()
+
+	checkFn := func(t *testing.T, n *ListItem) {
+		// We expect two items in the list as follows: n2 -> n1
+		if n.key != n2.key {
+			t.Errorf("first item key is incorrect")
+		}
+		if n.rawLine != n2.rawLine {
+			t.Errorf("first item rawLine is incorrect")
+		}
+		if n.parent.key != n1.key {
+			t.Errorf("second item key is incorrect")
+		}
+		if n.parent.rawLine != n1.rawLine {
+			t.Errorf("second item rawLine is incorrect")
+		}
+
+		if n.child != nil {
+			t.Errorf("first item child should be nil")
+		}
+		if n.parent.parent != nil {
+			t.Errorf("second item parent should be nil")
+		}
+		if n.parent.child.key != n2.key {
+			t.Errorf("second item child should be first item")
+		}
+	}
+
+	t.Run("Replay in order", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+		repo.uuid = repoUUID
+
+		el := make([]EventLog, len(correctEl))
+		copy(el, correctEl)
+
+		repo.Replay(el)
+
+		checkFn(t, repo.Root)
+	})
+	t.Run("Replay adds in reverse order", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+		repo.uuid = repoUUID
+
+		el := make([]EventLog, len(correctEl))
+		copy(el[0:2], correctEl[4:6]) // c
+		copy(el[2:4], correctEl[2:4]) // b
+		copy(el[4:6], correctEl[0:2]) // a
+		copy(el[6:], correctEl[6:])   // move + delete
+
+		//runtime.Breakpoint()
+		repo.Replay(el)
+
+		checkFn(t, repo.Root)
+	})
+	t.Run("Replay delete first", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+		repo.uuid = repoUUID
+
+		// TODO the below
+		el := make([]EventLog, len(correctEl))
+		copy(el[0:1], correctEl[7:8]) // delete
+		copy(el[1:8], correctEl[0:7])
+
+		repo.Replay(el)
+
+		checkFn(t, repo.Root)
+	})
+	t.Run("Replay move first", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+		repo.uuid = repoUUID
+
+		// TODO the below
+		el := make([]EventLog, len(correctEl))
+		copy(el[0:1], correctEl[6:7]) // delete
+		copy(el[1:7], correctEl[0:6])
+		copy(el[7:8], correctEl[7:8]) // delete
+
+		repo.Replay(el)
+
+		checkFn(t, repo.Root)
+	})
+	t.Run("Replay in reverse", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+		repo.uuid = repoUUID
+
+		el := make([]EventLog, len(correctEl))
+		copy(el, correctEl)
+
+		// Reverse the log
+		for i, j := 0, len(el)-1; i < j; i, j = i+1, j-1 {
+			el[i], el[j] = el[j], el[i]
+		}
+
+		repo.Replay(el)
+
+		checkFn(t, repo.Root)
 	})
 }
 
@@ -479,142 +629,6 @@ func TestEventEquality(t *testing.T) {
 //        }
 //        if matches[0].Line != "foo " {
 //            t.Fatalf("The item line should be %s", "foo ")
-//        }
-//    })
-//}
-
-//func TestWalReplay(t *testing.T) {
-//    os.Mkdir(rootDir, os.ModePerm)
-//    os.Mkdir(rootDir, os.ModePerm)
-//    defer clearUp()
-//    repo := NewDBListRepo(
-//        NewLocalFileWalFile(rootDir),
-//        NewFileWebTokenStore(rootDir),
-//        testPushFrequency,
-//        testPushFrequency,
-//    )
-//    t.Run("Check add creates item", func(t *testing.T) {
-//        line := "foobar"
-//        uuid := uuid(1)
-//        eventTime := time.Now().UnixNano()
-//        creationTime := eventTime
-//        el := []EventLog{
-//            EventLog{
-//                UnixNanoTime:         eventTime,
-//                UUID:                 uuid,
-//                EventType:            AddEvent,
-//                ListItemCreationTime: creationTime,
-//                Line:                 line,
-//            },
-//        }
-
-//        repo.log = &[]EventLog{}
-//        repo.Replay(&el)
-//        repo.Match([][]rune{}, true, "", 0, 0)
-//        matches := repo.matchListItems
-
-//        if len(matches) != 1 {
-//            t.Fatalf("There should be one matched item")
-//        }
-//        if matches[0].Line != line {
-//            t.Fatalf("The item line should be %s", line)
-//        }
-//    })
-//    t.Run("Check update creates item", func(t *testing.T) {
-//        line := "foobar"
-//        uuid := uuid(1)
-//        eventTime := time.Now().UnixNano()
-//        creationTime := eventTime
-//        el := []EventLog{
-//            EventLog{
-//                UnixNanoTime:         eventTime,
-//                UUID:                 uuid,
-//                EventType:            UpdateEvent,
-//                ListItemCreationTime: creationTime,
-//                Line:                 line,
-//            },
-//        }
-
-//        repo.log = &[]EventLog{}
-//        repo.Replay(&el)
-//        repo.Match([][]rune{}, true, "", 0, 0)
-//        matches := repo.matchListItems
-
-//        if len(matches) != 1 {
-//            t.Fatalf("There should be one matched item")
-//        }
-//        if matches[0].Line != line {
-//            t.Fatalf("The item line should be %s", line)
-//        }
-//    })
-//    t.Run("Check merge of updates replays correctly", func(t *testing.T) {
-//        line := "foo"
-//        uuid := uuid(1)
-//        eventTime := time.Now().UnixNano()
-//        creationTime := eventTime
-//        el := []EventLog{
-//            EventLog{
-//                UnixNanoTime:         eventTime,
-//                UUID:                 uuid,
-//                EventType:            AddEvent,
-//                ListItemCreationTime: creationTime,
-//            },
-//        }
-//        eventTime++
-//        el = append(el, EventLog{
-//            UnixNanoTime:         eventTime,
-//            UUID:                 uuid,
-//            EventType:            UpdateEvent,
-//            Line:                 "f",
-//            ListItemCreationTime: creationTime,
-//        })
-//        eventTime++
-//        el = append(el, EventLog{
-//            UnixNanoTime:         eventTime,
-//            UUID:                 uuid,
-//            EventType:            UpdateEvent,
-//            Line:                 "fo",
-//            ListItemCreationTime: creationTime,
-//        })
-//        eventTime++
-//        el = append(el, EventLog{
-//            UnixNanoTime:         eventTime,
-//            UUID:                 uuid,
-//            EventType:            UpdateEvent,
-//            Line:                 "foo",
-//            ListItemCreationTime: creationTime,
-//        })
-
-//        repo.log = &[]EventLog{}
-//        repo.Replay(&el)
-//        repo.Match([][]rune{}, true, "", 0, 0)
-//        matches := repo.matchListItems
-
-//        if len(matches) != 1 {
-//            t.Fatalf("There should be one matched item")
-//        }
-//        if matches[0].Line != "foo" {
-//            t.Fatalf("The item line should be %s", line)
-//        }
-
-//        newEl := []EventLog{
-//            EventLog{
-//                UnixNanoTime:         eventTime,
-//                UUID:                 uuid,
-//                EventType:            UpdateEvent,
-//                Line:                 "foo ",
-//                ListItemCreationTime: creationTime,
-//            },
-//        }
-//        repo.Replay(&newEl)
-//        repo.Match([][]rune{}, true, "", 0, 0)
-//        matches = repo.matchListItems
-
-//        if len(matches) != 1 {
-//            t.Fatalf("There should be one matched item")
-//        }
-//        if matches[0].Line != "foo " {
-//            t.Fatalf("The item line should be %s", line)
 //        }
 //    })
 //}

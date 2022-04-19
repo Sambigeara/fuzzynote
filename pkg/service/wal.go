@@ -571,6 +571,9 @@ func (r *DBListRepo) getOrCreateListItem(key string, isDeleted bool) *ListItem {
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey, e.EventType == DeleteEvent)
 	childItem := r.getOrCreateListItem(e.TargetListItemKey, false)
+	if childItem != nil && !childItem.isAppliedToList {
+		childItem = nil
+	}
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
@@ -613,13 +616,6 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	switch e.EventType {
 	case UpdateEvent:
 		err = r.update(item, e)
-	case PositionEvent:
-		item, err = r.insert(item, childItem)
-	case DeleteEvent:
-		err = r.del(item)
-	}
-
-	if e.EventType == UpdateEvent {
 		// Manually construct and handle a position event separately.
 		// We need to reset `item` in the call below as item state will have been updated in the
 		// `processEventLog` call and therefore different to the item retrieved from the cache above
@@ -630,6 +626,10 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		// bypass that check in order for the item to be added
 		subEvent.TargetListItemKey = e.TargetListItemKey
 		item, _ = r.processEventLog(subEvent)
+	case DeleteEvent:
+		err = r.del(item)
+	case PositionEvent:
+		item, err = r.insert(item, childItem)
 	}
 
 	r.listItemTracker[e.ListItemKey] = item
