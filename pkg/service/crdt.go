@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/btree"
 	"nhooyr.io/websocket"
 )
 
@@ -407,7 +408,7 @@ func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 		// - `@foo@bar.com` is appended to the Line() portion of the string, because the friend is no longer present in
 		//   the r.friends cache
 		var existingFriends []string
-		if item, exists := r.listItemTracker[e.ListItemKey]; exists {
+		if item, exists := r.listItemCache[e.ListItemKey]; exists {
 			existingFriends = item.friends.Emails
 		}
 		// If there are no friends, return early
@@ -537,44 +538,68 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (e *EventLog) isEqualOrHappenedAfter(a EventLog) bool {
+func (a *EventLog) happenedBefore(b EventLog) bool {
 	// for one event to have happened before another event, all the elements of its vector need to be
 	// smaller or equal to the matching elements in the other vector.
 	// therefore, if _any_ of the cached event counters are <= the remote counterpart, we need
 	// to process the event. Or in other words, if all of the cached event counters are greater than
 	// the counterpart, we can skip the event
-	for id, remoteDT := range a.VectorClock {
-		if cachedDT, cachedExists := e.VectorClock[id]; cachedExists && cachedDT < remoteDT {
+
+	isEqual := len(a.VectorClock) == len(b.VectorClock)
+
+	for id, aDT := range a.VectorClock {
+		if bDT, aCachedExists := b.VectorClock[id]; !aCachedExists || aDT > bDT {
 			return false
+		} else if isEqual && aDT < bDT {
+			isEqual = false
 		}
 	}
+
+	if isEqual {
+		return false
+	}
+
 	return true
 }
 
-func (r *DBListRepo) getOrCreateListItem(key string, isDeleted bool) *ListItem {
+func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
 	if key == "" {
 		return nil
 	}
-
-	item, exists := r.listItemTracker[key]
+	item, exists := r.listItemCache[key]
 	if exists {
 		return item
 	}
 	item = &ListItem{
-		key:       key,
-		isDeleted: isDeleted,
+		key: key,
 	}
-	r.listItemTracker[key] = item
+	r.listItemCache[key] = item
 	return item
 }
 
-func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
-	item := r.getOrCreateListItem(e.ListItemKey, e.EventType == DeleteEvent)
-	childItem := r.getOrCreateListItem(e.TargetListItemKey, false)
-	// TODO remove this
-	if childItem != nil && !childItem.isAppliedToList {
-		childItem = nil
+type orphanCacheNode struct {
+	event EventLog
+}
+
+func (a orphanCacheNode) Less(bItem btree.Item) bool {
+	b, _ := bItem.(orphanCacheNode)
+	if a.event.TargetListItemKey == b.event.TargetListItemKey {
+		return a.event.happenedBefore(b.event)
 	}
+
+	// items placed at the top of the list (e.g. with an empty target) take precedence
+	if a.event.TargetListItemKey == "" {
+		return true
+	} else if b.event.TargetListItemKey == "" {
+		return false
+	}
+
+	return a.event.TargetListItemKey < b.event.TargetListItemKey
+}
+
+func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
+	item := r.getOrCreateListItem(e.ListItemKey)
+	childItem := r.getOrCreateListItem(e.TargetListItemKey)
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
@@ -588,7 +613,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[e.EventType]; exists {
 		if ce, exists := eventTypeCache[e.ListItemKey]; exists {
-			if ce.isEqualOrHappenedAfter(e) {
+			if e.happenedBefore(ce) {
 				return item, nil
 			}
 		}
@@ -598,18 +623,20 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 
 	// Check to see if the item has been deleted. If it has, we return early if the event is of type PositionEvent or
 	// if the DeleteEvent occurred after the UpdateEvent
-	if item.isDeleted {
-		if e.EventType == PositionEvent {
-			return item, nil
-		}
-		if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[DeleteEvent]; exists {
-			if ce, exists := eventTypeCache[e.ListItemKey]; exists {
-				if ce.isEqualOrHappenedAfter(e) {
-					return item, nil
-				}
-			}
-		}
-	}
+	// TODO
+	//if item.isDeleted {
+	//    if e.EventType == PositionEvent {
+	//        return item, nil
+	//    }
+	//    if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[DeleteEvent]; exists {
+	//        if ce, exists := eventTypeCache[e.ListItemKey]; exists {
+	//			  if e.happenedBefore(ce) {
+	//            //if ce.isEqualOrHappenedAfter(e) {
+	//                return item, nil
+	//            }
+	//        }
+	//    }
+	//}
 
 	// Add the event to the cache AFTER the deletion check above, otherwise deleted events will be added then immediately
 	// return early as the event will be equal to itself in the next check
@@ -646,7 +673,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		item, err = r.insert(item, childItem)
 	}
 
-	r.listItemTracker[e.ListItemKey] = item
+	r.listItemCache[e.ListItemKey] = item
 
 	return item, err
 }
@@ -678,16 +705,16 @@ func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 	item.friends.Emails = emails
 
 	// Just in case an Update occurs on a Deleted item (distributed race conditions)
-	item.isDeleted = false
+	//item.isDeleted = false
 
 	return nil
 }
 
 func (r *DBListRepo) del(item *ListItem) error {
-	item.isDeleted = true
+	//item.isDeleted = true
 	r.remove(item)
 	// isAppliedToList is used in r.remove, so set afterwards
-	item.isAppliedToList = false
+	//item.isAppliedToList = false
 	return nil
 }
 
@@ -696,8 +723,8 @@ func (r *DBListRepo) remove(item *ListItem) error {
 	oldParent := item.parent
 	if item.child != nil {
 		item.child.parent = oldParent
-	} else if item.isAppliedToList {
-		r.Root = oldParent
+		//} else if item.isAppliedToList {
+		//    r.Root = oldParent
 	}
 	if item.parent != nil {
 		item.parent.child = oldChild
@@ -711,9 +738,9 @@ func (r *DBListRepo) insert(item, targetChild *ListItem) (*ListItem, error) {
 	// if we don't return early, we end up with an endless loop when setting targetParent
 	// tp targetChild.parent below
 	//if item.child != nil && item.child == targetChild && item.isAppliedToList {
-	if item.child == targetChild && item.isAppliedToList {
-		return item, nil
-	}
+	//if item.child == targetChild && item.isAppliedToList {
+	//    return item, nil
+	//}
 
 	var targetParent *ListItem
 	if targetChild != nil {
@@ -723,7 +750,7 @@ func (r *DBListRepo) insert(item, targetChild *ListItem) (*ListItem, error) {
 	}
 
 	r.remove(item)
-	item.isAppliedToList = true
+	//item.isAppliedToList = true
 
 	// Insert item into new position
 	if targetChild != nil {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/btree"
 )
 
 type (
@@ -18,6 +20,8 @@ const (
 	walFilePattern    = "wal_%v.db"
 	viewFilePattern   = "view_%v"
 	exportFilePattern = "export_%v.txt"
+
+	crdtOrphanCacheDegree = 2
 )
 
 type bits uint32
@@ -43,10 +47,12 @@ type DBListRepo struct {
 	matchListItems map[string]*ListItem
 
 	//currentLamportTimestamp int64
-	vectorClock     map[uuid]int64
-	listItemTracker map[string]*ListItem
+	vectorClock   map[uuid]int64
+	listItemCache map[string]*ListItem
 	//processedEventLogCache             map[string]struct{}
 	listItemProcessedEventLogTypeCache map[EventType]map[string]EventLog
+
+	crdtOrphanCache *btree.BTree
 
 	// Wal stuff
 	uuid              uuid
@@ -99,9 +105,11 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		uuid:              generateUUID(),
 		latestWalSchemaID: latestWalSchemaID,
 		vectorClock:       make(map[uuid]int64),
-		listItemTracker:   make(map[string]*ListItem),
+		listItemCache:     make(map[string]*ListItem),
 		//processedEventLogCache:             make(map[string]struct{}),
 		listItemProcessedEventLogTypeCache: make(map[EventType]map[string]EventLog),
+
+		crdtOrphanCache: btree.New(crdtOrphanCacheDegree),
 
 		LocalWalFile: localWalFile,
 		eventsChan:   make(chan EventLog),
@@ -206,8 +214,6 @@ type ListItem struct {
 
 	localEmail string // set at creation time and used to exclude from Friends() method
 	key        string
-
-	isAppliedToList, isDeleted bool
 }
 
 // Line returns a post-processed rawLine, with any matched collaborators omitted
@@ -590,7 +596,7 @@ func (r *DBListRepo) GetSyncState() SyncState {
 }
 
 func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {
-	itemPtr, exists := r.listItemTracker[key]
+	itemPtr, exists := r.listItemCache[key]
 	if exists {
 		return *itemPtr, true
 	}

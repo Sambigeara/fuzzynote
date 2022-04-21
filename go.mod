@@ -19,6 +19,7 @@ require (
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
 	github.com/gdamore/encoding v1.0.0 // indirect
 	github.com/gin-gonic/gin v1.7.0 // indirect
+	github.com/google/btree v1.0.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/juju/ansiterm v0.0.0-20180109212912-720a0952cc2a // indirect
 	github.com/klauspost/compress v1.10.3 // indirect

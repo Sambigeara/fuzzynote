@@ -3,6 +3,8 @@ package service
 import (
 	//"runtime"
 	"testing"
+
+	"github.com/google/btree"
 )
 
 const (
@@ -42,6 +44,207 @@ func TestEventEquality(t *testing.T) {
 		equality = checkEquality(event1, event1)
 		if equality != eventsEqual {
 			t.Fatalf("Expected events to be equal")
+		}
+	})
+}
+
+func TestOrphanCache(t *testing.T) {
+	t.Run("Test put node and get", func(t *testing.T) {
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		n := orphanCacheNode{event: EventLog{}}
+
+		cache.ReplaceOrInsert(n)
+
+		if cache.Get(n) == nil {
+			t.Fatalf("node should be available in the cache")
+		}
+
+		expectedLen := 1
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+	})
+	t.Run("Test put same node twice", func(t *testing.T) {
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		n := orphanCacheNode{event: EventLog{}}
+
+		cache.ReplaceOrInsert(n)
+		cache.ReplaceOrInsert(n)
+
+		if cache.Get(n) == nil {
+			t.Fatalf("node should be available in the cache")
+		}
+
+		expectedLen := 1
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+	})
+	t.Run("Test put two nodes different targets same vectorClocks", func(t *testing.T) {
+		// Uniqueness is determined by event.UUID and event.VectorClock
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		n0 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "1",
+		}}
+		n1 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "2",
+		}}
+
+		cache.ReplaceOrInsert(n0)
+		cache.ReplaceOrInsert(n1)
+
+		if cache.Get(n0) == nil {
+			t.Fatalf("n0 should be available in the cache")
+		}
+		if cache.Get(n1) == nil {
+			t.Fatalf("n1 should be available in the cache")
+		}
+
+		expectedLen := 2
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		// n0 has "" target (aka root) so should be first
+		if n0.event.TargetListItemKey != cache.Min().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n0 should be the minimum node")
+		}
+		if n1.event.TargetListItemKey != cache.Max().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n1 should be the maximum node")
+		}
+	})
+	t.Run("Test put two nodes same targets different vectorClocks", func(t *testing.T) {
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		id := uuid(1)
+		n0 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "1",
+			VectorClock: map[uuid]int64{
+				id: 1,
+			},
+		}}
+		n1 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "1",
+			VectorClock: map[uuid]int64{
+				id: 2,
+			},
+		}}
+
+		cache.ReplaceOrInsert(n0)
+		cache.ReplaceOrInsert(n1)
+		// n1 second addition should be ignored
+		cache.ReplaceOrInsert(n1)
+
+		if cache.Get(n0) == nil {
+			t.Fatalf("n0 should be available in the cache")
+		}
+		if cache.Get(n1) == nil {
+			t.Fatalf("n1 should be available in the cache")
+		}
+
+		expectedLen := 2
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		if n0.event.VectorClock[id] != cache.Min().(orphanCacheNode).event.VectorClock[id] {
+			t.Fatalf("n0 should be the minimum node")
+		}
+		if n1.event.VectorClock[id] != cache.Max().(orphanCacheNode).event.VectorClock[id] {
+			t.Fatalf("n1 should be the maximum node")
+		}
+	})
+	t.Run("Test put two nodes different targets different vectorClocks target precedence", func(t *testing.T) {
+		// Ensure target has ordering precedence over vectorClocks
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		id := uuid(1)
+		n0 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "1",
+			VectorClock: map[uuid]int64{
+				id: 2,
+			},
+		}}
+		n1 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "2",
+			VectorClock: map[uuid]int64{
+				id: 1,
+			},
+		}}
+
+		cache.ReplaceOrInsert(n0)
+		cache.ReplaceOrInsert(n1)
+
+		if cache.Get(n0) == nil {
+			t.Fatalf("n0 should be available in the cache")
+		}
+		if cache.Get(n1) == nil {
+			t.Fatalf("n1 should be available in the cache")
+		}
+
+		expectedLen := 2
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		if n0.event.TargetListItemKey != cache.Min().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n0 should be the minimum node")
+		}
+		if n1.event.TargetListItemKey != cache.Max().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n1 should be the maximum node")
+		}
+	})
+	t.Run("Test put multiple nodes different targets nil target takes precedence", func(t *testing.T) {
+		// The nil target vector clock will be later than the other, but that event should still be the minimum.
+		cache := btree.New(crdtOrphanCacheDegree)
+
+		id := uuid(1)
+		n0 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "",
+			VectorClock: map[uuid]int64{
+				id: 3,
+			},
+		}}
+		n1 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "1",
+			VectorClock: map[uuid]int64{
+				id: 2,
+			},
+		}}
+		n2 := orphanCacheNode{event: EventLog{
+			TargetListItemKey: "2",
+			VectorClock: map[uuid]int64{
+				id: 1,
+			},
+		}}
+
+		cache.ReplaceOrInsert(n0)
+		cache.ReplaceOrInsert(n1)
+		cache.ReplaceOrInsert(n2)
+
+		if cache.Get(n0) == nil {
+			t.Fatalf("n0 should be available in the cache")
+		}
+		if cache.Get(n1) == nil {
+			t.Fatalf("n1 should be available in the cache")
+		}
+		if cache.Get(n2) == nil {
+			t.Fatalf("n2 should be available in the cache")
+		}
+
+		expectedLen := 3
+		if l := cache.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		if n0.event.TargetListItemKey != cache.Min().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n0 should be the minimum node")
+		}
+		if n2.event.TargetListItemKey != cache.Max().(orphanCacheNode).event.TargetListItemKey {
+			t.Fatalf("n2 should be the maximum node")
 		}
 	})
 }
@@ -142,7 +345,6 @@ func TestMerge(t *testing.T) {
 		copy(el[4:6], correctEl[0:2]) // a
 		copy(el[6:], correctEl[6:])   // move + delete
 
-		//runtime.Breakpoint()
 		repo.Replay(el)
 
 		checkFn(t, repo.Root)
