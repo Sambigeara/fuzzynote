@@ -571,6 +571,7 @@ func (r *DBListRepo) getOrCreateListItem(key string, isDeleted bool) *ListItem {
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey, e.EventType == DeleteEvent)
 	childItem := r.getOrCreateListItem(e.TargetListItemKey, false)
+	// TODO remove this
 	if childItem != nil && !childItem.isAppliedToList {
 		childItem = nil
 	}
@@ -594,12 +595,25 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	} else {
 		r.listItemProcessedEventLogTypeCache[e.EventType] = make(map[string]EventLog)
 	}
-	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
-	// Check to see if the item has been deleted. If it has, we return early if the event is of type PositionEvent
-	if e.EventType == PositionEvent && item.isDeleted {
-		return item, nil
+	// Check to see if the item has been deleted. If it has, we return early if the event is of type PositionEvent or
+	// if the DeleteEvent occurred after the UpdateEvent
+	if item.isDeleted {
+		if e.EventType == PositionEvent {
+			return item, nil
+		}
+		if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[DeleteEvent]; exists {
+			if ce, exists := eventTypeCache[e.ListItemKey]; exists {
+				if ce.isEqualOrHappenedAfter(e) {
+					return item, nil
+				}
+			}
+		}
 	}
+
+	// Add the event to the cache AFTER the deletion check above, otherwise deleted events will be added then immediately
+	// return early as the event will be equal to itself in the next check
+	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
 	// Iterate over all counters in the event clock and update the local vector representation for each newer one
 	// IMPORTANT: this needs to occur **after** the equality check above
@@ -635,39 +649,6 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	r.listItemTracker[e.ListItemKey] = item
 
 	return item, err
-}
-
-func (r *DBListRepo) add(key string, line string, friends LineFriends, note []byte, childItem *ListItem) (*ListItem, error) {
-	newItem := &ListItem{
-		key:        key,
-		rawLine:    line,
-		Note:       note,
-		friends:    friends,
-		localEmail: r.email,
-	}
-
-	if childItem != nil && !childItem.isDeleted {
-		newItem.child = childItem
-	}
-
-	// If `child` is nil, it's the first item in the list so set as root and return
-	if childItem == nil {
-		oldRoot := r.Root
-		r.Root = newItem
-		if oldRoot != nil {
-			newItem.parent = oldRoot
-			oldRoot.child = newItem
-		}
-		return newItem, nil
-	}
-
-	if childItem.parent != nil {
-		childItem.parent.child = newItem
-		newItem.parent = childItem.parent
-	}
-	childItem.parent = newItem
-
-	return newItem, nil
 }
 
 func (r *DBListRepo) update(item *ListItem, e EventLog) error {
