@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"container/list"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
@@ -19,7 +20,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	//"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,6 +128,7 @@ type EventLog struct {
 	IsHidden                       bool
 	Friends                        LineFriends
 	cachedKey                      string
+	eventDLL                       *list.List
 }
 
 func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLog {
@@ -137,6 +138,7 @@ func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLo
 	e := EventLog{
 		UUID:      r.uuid,
 		EventType: t,
+		eventDLL:  list.New(),
 	}
 	// make a copy of the map
 	e.VectorClock = r.getLocalVectorClockCopy()
@@ -538,30 +540,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
-func (a *EventLog) happenedBefore(b EventLog) bool {
-	// for one event to have happened before another event, all the elements of its vector need to be
-	// smaller or equal to the matching elements in the other vector.
-	// therefore, if _any_ of the cached event counters are <= the remote counterpart, we need
-	// to process the event. Or in other words, if all of the cached event counters are greater than
-	// the counterpart, we can skip the event
-
-	isEqual := len(a.VectorClock) == len(b.VectorClock)
-
-	for id, aDT := range a.VectorClock {
-		if bDT, aCachedExists := b.VectorClock[id]; !aCachedExists || aDT > bDT {
-			return false
-		} else if isEqual && aDT < bDT {
-			isEqual = false
-		}
-	}
-
-	if isEqual {
-		return false
-	}
-
-	return true
-}
-
 func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
 	if key == "" {
 		return nil
@@ -577,29 +555,70 @@ func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
 	return item
 }
 
-type orphanCacheNode struct {
-	event EventLog
-}
+func vectorClockBefore(a, b map[uuid]int64) bool {
+	// for one event to have happened before another event, all the elements of its vector need to be
+	// smaller or equal to the matching elements in the other vector.
+	// therefore, if _any_ of the cached event counters are <= the remote counterpart, we need
+	// to process the event. Or in other words, if all of the cached event counters are greater than
+	// the counterpart, we can skip the event
 
-func (a orphanCacheNode) Less(bItem btree.Item) bool {
-	b, _ := bItem.(orphanCacheNode)
-	if a.event.TargetListItemKey == b.event.TargetListItemKey {
-		return a.event.happenedBefore(b.event)
+	isEqual := len(a) == len(b)
+
+	for id, aDT := range a {
+		if bDT, aCachedExists := b[id]; !aCachedExists || aDT > bDT {
+			return false
+		} else if isEqual && aDT < bDT {
+			isEqual = false
+		}
 	}
 
-	// items placed at the top of the list (e.g. with an empty target) take precedence
-	if a.event.TargetListItemKey == "" {
-		return true
-	} else if b.event.TargetListItemKey == "" {
+	if isEqual {
 		return false
 	}
 
-	return a.event.TargetListItemKey < b.event.TargetListItemKey
+	return true
+}
+
+func (a *EventLog) before(b EventLog) bool {
+	return vectorClockBefore(a.VectorClock, b.VectorClock)
+}
+
+// positionTreeNode represents a stub node which is yet to be created and added to the live list item list.
+// They're used as a reference parent on which we can order child nodes with known parents.
+type positionTreeNode struct {
+	listItemKey string
+	root        *ListItem
+	//vectorClock map[uuid]int64
+}
+
+// Less implements github.com/google/btree interface
+func (a positionTreeNode) Less(bItem btree.Item) bool {
+	b, _ := bItem.(positionTreeNode)
+
+	//if a.listItemKey == b.listItemKey {
+	//    return vectorClockBefore(a.vectorClock, b.vectorClock)
+	//}
+
+	return a.listItemKey < b.listItemKey
+}
+
+func (r *DBListRepo) itemIsLive(item *ListItem) bool {
+	var k string
+	if item != nil {
+		k = item.key
+	}
+	latestAddEvent, isAdded := r.addEventSet[k]
+	latestDeleteEvent, isDeleted := r.deleteEventSet[k]
+	if isAdded && (!isDeleted || (latestDeleteEvent.before(latestAddEvent))) {
+		return true
+	}
+	return false
 }
 
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
-	childItem := r.getOrCreateListItem(e.TargetListItemKey)
+	targetItem := r.getOrCreateListItem(e.TargetListItemKey)
+	//r.getOrCreateListItem(e.TargetListItemKey)
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
@@ -610,37 +629,27 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	// Update to cover the case where an Undo triggers the re-adding of an item, and we want item.isDeleted to have
 	// been reset to false (to allow the PositionEvent to be handled correctly).
 
-	// Check the event cache and skip if the event is older than the most-recently processed
-	if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[e.EventType]; exists {
-		if ce, exists := eventTypeCache[e.ListItemKey]; exists {
-			if e.happenedBefore(ce) {
-				return item, nil
-			}
-		}
-	} else {
-		r.listItemProcessedEventLogTypeCache[e.EventType] = make(map[string]EventLog)
+	var eventCache map[string]EventLog
+	switch e.EventType {
+	case UpdateEvent:
+		eventCache = r.addEventSet
+	case DeleteEvent:
+		eventCache = r.deleteEventSet
+	case PositionEvent:
+		eventCache = r.positionEventSet
 	}
 
-	// Check to see if the item has been deleted. If it has, we return early if the event is of type PositionEvent or
-	// if the DeleteEvent occurred after the UpdateEvent
-	// TODO
-	//if item.isDeleted {
-	//    if e.EventType == PositionEvent {
-	//        return item, nil
-	//    }
-	//    if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[DeleteEvent]; exists {
-	//        if ce, exists := eventTypeCache[e.ListItemKey]; exists {
-	//			  if e.happenedBefore(ce) {
-	//            //if ce.isEqualOrHappenedAfter(e) {
-	//                return item, nil
-	//            }
-	//        }
-	//    }
-	//}
+	// Check the event cache and skip if the event is older than the most-recently processed
+	if ce, exists := eventCache[e.ListItemKey]; exists {
+		// TODO also skip if already processed
+		if e.before(ce) {
+			return item, nil
+		}
+	}
 
 	// Add the event to the cache AFTER the deletion check above, otherwise deleted events will be added then immediately
 	// return early as the event will be equal to itself in the next check
-	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
+	eventCache[e.ListItemKey] = e
 
 	// Iterate over all counters in the event clock and update the local vector representation for each newer one
 	// IMPORTANT: this needs to occur **after** the equality check above
@@ -652,25 +661,19 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 
 	r.generateFriendChangeEvents(e, item)
 
-	//runtime.Breakpoint()
 	var err error
 	switch e.EventType {
 	case UpdateEvent:
 		err = r.update(item, e)
 		// Manually construct and handle a position event separately.
-		// We need to reset `item` in the call below as item state will have been updated in the
-		// `processEventLog` call and therefore different to the item retrieved from the cache above
 		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
-		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event. This
-		// is required, because during the insert operation, we skip if item.child == childItem, which is desired
-		// in cases when the item has already been applied to the linked list, but for new additions we need to
-		// bypass that check in order for the item to be added
+		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event
 		subEvent.TargetListItemKey = e.TargetListItemKey
 		item, _ = r.processEventLog(subEvent)
 	case DeleteEvent:
 		err = r.del(item)
 	case PositionEvent:
-		item, err = r.insert(item, childItem)
+		err = r.insert(item, targetItem)
 	}
 
 	r.listItemCache[e.ListItemKey] = item
@@ -704,27 +707,28 @@ func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 	sort.Strings(emails)
 	item.friends.Emails = emails
 
-	// Just in case an Update occurs on a Deleted item (distributed race conditions)
-	//item.isDeleted = false
-
 	return nil
 }
 
 func (r *DBListRepo) del(item *ListItem) error {
-	//item.isDeleted = true
 	r.remove(item)
-	// isAppliedToList is used in r.remove, so set afterwards
-	//item.isAppliedToList = false
 	return nil
 }
 
 func (r *DBListRepo) remove(item *ListItem) error {
 	oldChild := item.child
 	oldParent := item.parent
-	if item.child != nil {
+	if oldChild != nil {
 		item.child.parent = oldParent
 		//} else if item.isAppliedToList {
 		//    r.Root = oldParent
+		//} else {
+		//    node := positionTreeNode{
+		//        listItemKey: item.key,
+		//        vectorClock: e.VectorClock,
+		//    }
+		//    node.root = item
+		//    r.crdtPositionTree.ReplaceOrInsert(node)
 	}
 	if item.parent != nil {
 		item.parent.child = oldChild
@@ -733,41 +737,136 @@ func (r *DBListRepo) remove(item *ListItem) error {
 	return nil
 }
 
-func (r *DBListRepo) insert(item, targetChild *ListItem) (*ListItem, error) {
-	// Return early if already in place.
-	// if we don't return early, we end up with an endless loop when setting targetParent
-	// tp targetChild.parent below
-	//if item.child != nil && item.child == targetChild && item.isAppliedToList {
-	//if item.child == targetChild && item.isAppliedToList {
-	//    return item, nil
-	//}
+func (r *DBListRepo) insert(item, targetItem *ListItem) error {
+	if r.itemIsLive(item) {
+		// If the item is currently live in the list, we remove it from it's current linked list
+		r.remove(item)
+	}
 
-	var targetParent *ListItem
-	if targetChild != nil {
-		targetParent = targetChild.parent
+	var targetItemKey string
+	if targetItem != nil {
+		targetItemKey = targetItem.key
+	}
+	targetItemNode := positionTreeNode{
+		listItemKey: targetItemKey,
+	}
+
+	itemNode := positionTreeNode{
+		listItemKey: item.key,
+	}
+
+	// check to see if the targetItem is live in the list
+	if r.itemIsLive(targetItem) {
+		// insert the item into the linked list in which the target item resides.
+		var targetParent *ListItem
+		if targetItem != nil {
+			targetParent = targetItem.parent
+		} else {
+			targetParent = r.crdtPositionTree.Get(targetItemNode).(positionTreeNode).root
+		}
+
+		// if the item previously had a mapped stub positionTreeNode, retrieve the linked list from that
+		// node and insert it into this linked list. Also, remove the stub from the tree
+		// TODO dedup
+		var first, last *ListItem
+		first = item
+		if stub := r.crdtPositionTree.Get(itemNode); stub != nil {
+			stubRoot := stub.(positionTreeNode).root
+			// ensure the item is at the head of the new linked list
+			first.parent = stubRoot
+			stubRoot.child = first
+
+			last = stubRoot
+			for last.parent != nil {
+				last = last.parent
+			}
+		} else {
+			last = item
+		}
+
+		// Insert item into new position
+		if targetItem != nil {
+			targetItem.parent = first
+		}
+		if targetParent != nil {
+			targetParent.child = last
+		}
+		first.child = targetItem
+		last.parent = targetParent
+
+		// Reset root if item is now at the top
+		//if targetItem == nil {
+		//    // Firstly, retrieve the positionTreeNode by traversing up the linked list to the root,
+		//    // and using that listItemKey to lookup the node
+		//    c := item
+		//    for c.child != nil {
+		//        c = c.child
+		//    }
+		//    n := positionTreeNode{
+		//        listItemKey: c.key,
+		//    }
+		//    n.root = item
+		//    r.crdtPositionTree.ReplaceOrInsert(n)
+		//}
 	} else {
-		targetParent = r.Root
+		// if the item previously had a mapped stub positionTreeNode, retrieve the linked list from that
+		// node and join it to the end of this item. Also, remove the stub from the tree
+		var stubRoot *ListItem
+		if stub := r.crdtPositionTree.Get(itemNode); stub != nil {
+			stubRoot = stub.(positionTreeNode).root
+		}
+
+		if stubRoot != nil {
+			stubRoot.child = item
+			item.parent = stubRoot
+		}
+
+		//we add the target item to the tree as a stub, with the item as it's root node in the linked list
+		targetItemNode.root = item
+		r.crdtPositionTree.ReplaceOrInsert(targetItemNode)
 	}
 
-	r.remove(item)
-	//item.isAppliedToList = true
+	r.crdtPositionTree.Delete(itemNode)
 
-	// Insert item into new position
-	if targetChild != nil {
-		targetChild.parent = item
-	}
-	if targetParent != nil {
-		targetParent.child = item
-	}
-	item.child = targetChild
-	item.parent = targetParent
+	return nil
 
-	// Reset root if item is now at the top
-	if targetChild == nil {
-		r.Root = item
-	}
+	// retrieve or create event log dll
+	//    var dll *list.List
+	//    if eInterface := r.crdtPositionTree.Get(e); eInterface != nil {
+	//        dll = eInterface.(EventLog).eventDLL
+	//    } else {
+	//        dll = list.New()
+	//        dll.PushFront(e)
+	//        //e.eventDLL = dll
+	//        //r.crdtPositionTree.ReplaceOrInsert(e)
+	//    }
 
-	return item, nil
+	//    // check for existence of target key PositionEvent
+	//    targetEvent, exists := r.positionEventSet[e.TargetListItemKey]
+	//    if exists {
+	//        if treeTargetEvent := r.crdtPositionTree.Get(targetEvent); treeTargetEvent != nil {
+	//            // if target exists as an event node in the tree, we merge with the DLL on that target
+	//            targetEvent = treeTargetEvent.(EventLog)
+	//        } else {
+	//            // otherwise the target event resides in a DLL within a different event parent in the tree
+	//            targetEvent = r.crdtPositionTreeElemCache[e.TargetListItemKey]
+	//        }
+	//        targetEvent = r.crdtPositionTree.Get(targetEvent).(EventLog)
+	//    } else {
+	//        targetEvent = r.newEventLog(PositionEvent, false)
+	//        targetEvent.ListItemKey = e.TargetListItemKey
+	//        r.crdtPositionTree.ReplaceOrInsert(targetEvent)
+	//    }
+
+	//    // insert dll (consisting of one or more events) after the target event
+	//    for i, e := dll.Len(), dll.Front(); i > 0; i, e = i-1, e.Next() {
+	//        ev := e.Value.(EventLog)
+	//        r.positionEventSet[ev.ListItemKey] = targetEvent
+	//        // TODO ordering and conflict resolution
+	//        targetEvent.eventDLL.PushBack(ev)
+	//    }
+
+	return nil
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list

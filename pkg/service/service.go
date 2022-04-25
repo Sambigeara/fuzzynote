@@ -1,6 +1,7 @@
 package service
 
 import (
+	"container/list"
 	"errors"
 	"sort"
 	"strconv"
@@ -21,7 +22,7 @@ const (
 	viewFilePattern   = "view_%v"
 	exportFilePattern = "export_%v.txt"
 
-	crdtOrphanCacheDegree = 2
+	crdtPositionTreeDegree = 2
 )
 
 type bits uint32
@@ -50,9 +51,12 @@ type DBListRepo struct {
 	vectorClock   map[uuid]int64
 	listItemCache map[string]*ListItem
 	//processedEventLogCache             map[string]struct{}
-	listItemProcessedEventLogTypeCache map[EventType]map[string]EventLog
+	//listItemProcessedEventLogTypeCache        map[EventType]map[string]EventLog
+	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
 
-	crdtOrphanCache *btree.BTree
+	crdtPositionTree          *btree.BTree
+	crdtPositionTreeElemCache map[string]EventLog
+	crdtList                  *list.List
 
 	// Wal stuff
 	uuid              uuid
@@ -107,9 +111,14 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		vectorClock:       make(map[uuid]int64),
 		listItemCache:     make(map[string]*ListItem),
 		//processedEventLogCache:             make(map[string]struct{}),
-		listItemProcessedEventLogTypeCache: make(map[EventType]map[string]EventLog),
+		//listItemProcessedEventLogTypeCache: make(map[EventType]map[string]EventLog),
+		addEventSet:      make(map[string]EventLog),
+		deleteEventSet:   make(map[string]EventLog),
+		positionEventSet: make(map[string]EventLog),
 
-		crdtOrphanCache: btree.New(crdtOrphanCacheDegree),
+		crdtPositionTree:          btree.New(crdtPositionTreeDegree),
+		crdtPositionTreeElemCache: make(map[string]EventLog),
+		crdtList:                  list.New(),
 
 		LocalWalFile: localWalFile,
 		eventsChan:   make(chan EventLog),
