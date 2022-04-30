@@ -46,6 +46,8 @@ const (
 	compactionGatherMultiple = 2
 	websocketConsumeDuration = time.Millisecond * 600
 	websocketPublishDuration = time.Millisecond * 600
+
+	positionTreeRootKey = "root"
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -602,14 +604,35 @@ func (a positionTreeNode) Less(bItem btree.Item) bool {
 	return a.listItemKey < b.listItemKey
 }
 
+func (r *DBListRepo) getListItems() chan *ListItem {
+	ch := make(chan *ListItem)
+	go func() {
+		r.crdtPositionTree.Ascend(func(i btree.Item) bool {
+			node := i.(positionTreeNode).root
+			for node != nil {
+				ch <- node
+				node = node.parent
+			}
+			return true
+		})
+		close(ch)
+	}()
+	return ch
+}
+
 func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 	var k string
 	if item != nil {
 		k = item.key
 	}
+
 	latestAddEvent, isAdded := r.addEventSet[k]
+	_, isMoved := r.positionEventSet[k]
+
+	isLive := isAdded || isMoved
+
 	latestDeleteEvent, isDeleted := r.deleteEventSet[k]
-	if isAdded && (!isDeleted || (latestDeleteEvent.before(latestAddEvent))) {
+	if isLive && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
 		return true
 	}
 	return false
@@ -618,7 +641,6 @@ func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
 	targetItem := r.getOrCreateListItem(e.TargetListItemKey)
-	//r.getOrCreateListItem(e.TargetListItemKey)
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
@@ -669,6 +691,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
 		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event
 		subEvent.TargetListItemKey = e.TargetListItemKey
+		subEvent.VectorClock = e.VectorClock
 		item, _ = r.processEventLog(subEvent)
 	case DeleteEvent:
 		err = r.del(item)
@@ -716,155 +739,156 @@ func (r *DBListRepo) del(item *ListItem) error {
 }
 
 func (r *DBListRepo) remove(item *ListItem) error {
-	oldChild := item.child
+	// two potential scenarios:
+	// 1. node at head of linked list:
+	//   - remove the item from the linked list
+	//   - if the item had no parents, delete the tree node also
+	// 2. node in the middle/end of a linked list
+	//   - stitch the gap
 	oldParent := item.parent
-	if oldChild != nil {
-		item.child.parent = oldParent
-		//} else if item.isAppliedToList {
-		//    r.Root = oldParent
-		//} else {
-		//    node := positionTreeNode{
-		//        listItemKey: item.key,
-		//        vectorClock: e.VectorClock,
-		//    }
-		//    node.root = item
-		//    r.crdtPositionTree.ReplaceOrInsert(node)
+	currentListItemKey := item.currentLinkedListKey
+	if currentListItemKey == positionTreeRootKey {
+		// TODO centralise root key logic
+		currentListItemKey = ""
 	}
-	if item.parent != nil {
-		item.parent.child = oldChild
+	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: currentListItemKey})
+	if treeNode != nil && treeNode.(positionTreeNode).root == item {
+		if oldParent != nil {
+			oldParent.child = nil
+			r.crdtPositionTree.ReplaceOrInsert(positionTreeNode{
+				listItemKey: currentListItemKey,
+				root:        oldParent,
+			})
+		} else {
+			r.crdtPositionTree.Delete(treeNode)
+		}
+	} else {
+		oldChild := item.child
+		if oldChild != nil {
+			item.child.parent = oldParent
+		}
+		if oldParent != nil {
+			item.parent.child = oldChild
+		}
 	}
+
+	item.child = nil
+	item.parent = nil
+	item.currentLinkedListKey = ""
 
 	return nil
 }
 
+// TODO rename
+func (r *DBListRepo) offsetTargetPointers(item, end, targetItem, targetParent *ListItem) (*ListItem, *ListItem, *ListItem, *ListItem) {
+	// look at the nearest parent. Use the key to retrieve it's latest PositionEvent. If it shares the same TargetListItemKey and is
+	// also newer than the new item mapped PositionEvent, we skip past it to target it's own parent. In short, if items target the same
+	// target item, more recent events will take precedence and therefore appear higher up the list than older ones (therefore, older events
+	// with shared TargetListItemKey's will be lower in the linked list)
+	newPositionEvent := r.positionEventSet[item.key]
+	isOlderThanFn := func(i *ListItem) bool {
+		if i == nil {
+			return false
+		}
+		parentPositionEvent := r.positionEventSet[i.key]
+		return newPositionEvent.TargetListItemKey == parentPositionEvent.TargetListItemKey && newPositionEvent.before(parentPositionEvent)
+	}
+	for isOlderThanFn(targetParent) {
+		targetItem = targetParent
+		targetParent = targetParent.parent
+	}
+
+	if targetItem != nil {
+		targetParent = targetItem.parent
+		targetItem.parent = item
+	}
+	if targetParent != nil {
+		targetParent.child = item
+	}
+	item.child = targetItem
+	end.parent = targetParent
+
+	return item, end, targetItem, targetParent
+}
+
 func (r *DBListRepo) insert(item, targetItem *ListItem) error {
-	if r.itemIsLive(item) {
-		// If the item is currently live in the list, we remove it from it's current linked list
-		r.remove(item)
+	// if item key as a tree node:
+	// - join it's ll to the new item
+	// - create new node with key as new targetItemKey
+	// - add item as root to new node
+	// - delete the node
+	//
+	// then, three branch scenarios:
+	// 1. target item live, insert item directly after it
+	// 2. target item exists as a tree node, resolve with items in root node via clock comparisons
+	// 3. target item not exists as a tree node, create, add item as root, and add node to tree
+
+	if !r.itemIsLive(item) {
+		return nil
+	}
+
+	r.remove(item)
+
+	//retrieve existing ll and tidy nodes, if required
+	itemNode := positionTreeNode{
+		listItemKey: item.key,
+	}
+
+	//var start, end *ListItem
+	var end *ListItem
+	if tn := r.crdtPositionTree.Get(itemNode); tn != nil {
+		oldRoot := tn.(positionTreeNode).root
+		item.parent = oldRoot
+		oldRoot.child = item
+		end = item
+		for end.parent != nil {
+			end = end.parent
+		}
+		r.crdtPositionTree.Delete(tn)
+	} else {
+		end = item
 	}
 
 	var targetItemKey string
 	if targetItem != nil {
 		targetItemKey = targetItem.key
 	}
-	targetItemNode := positionTreeNode{
-		listItemKey: targetItemKey,
-	}
 
-	itemNode := positionTreeNode{
-		listItemKey: item.key,
-	}
-
-	// check to see if the targetItem is live in the list
 	if r.itemIsLive(targetItem) {
-		// insert the item into the linked list in which the target item resides.
-		var targetParent *ListItem
-		if targetItem != nil {
-			targetParent = targetItem.parent
-		} else {
-			targetParent = r.crdtPositionTree.Get(targetItemNode).(positionTreeNode).root
-		}
+		targetParent := targetItem.parent
 
-		// if the item previously had a mapped stub positionTreeNode, retrieve the linked list from that
-		// node and insert it into this linked list. Also, remove the stub from the tree
-		// TODO dedup
-		var first, last *ListItem
-		first = item
-		if stub := r.crdtPositionTree.Get(itemNode); stub != nil {
-			stubRoot := stub.(positionTreeNode).root
-			// ensure the item is at the head of the new linked list
-			first.parent = stubRoot
-			stubRoot.child = first
+		item, end, targetItem, targetParent = r.offsetTargetPointers(item, end, targetItem, targetParent)
+	} else if treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
+		// null targetItem prior to loops below. if no loops occur, item will be at root and therefore have no child
+		targetItem = nil
+		targetParent := treeNode.(positionTreeNode).root
 
-			last = stubRoot
-			for last.parent != nil {
-				last = last.parent
-			}
-		} else {
-			last = item
-		}
+		item, end, targetItem, targetParent = r.offsetTargetPointers(item, item, targetItem, targetParent)
 
-		// Insert item into new position
-		if targetItem != nil {
-			targetItem.parent = first
+		node := treeNode.(positionTreeNode)
+		newRoot := item
+		for newRoot.child != nil {
+			newRoot = newRoot.child
 		}
-		if targetParent != nil {
-			targetParent.child = last
-		}
-		first.child = targetItem
-		last.parent = targetParent
-
-		// Reset root if item is now at the top
-		//if targetItem == nil {
-		//    // Firstly, retrieve the positionTreeNode by traversing up the linked list to the root,
-		//    // and using that listItemKey to lookup the node
-		//    c := item
-		//    for c.child != nil {
-		//        c = c.child
-		//    }
-		//    n := positionTreeNode{
-		//        listItemKey: c.key,
-		//    }
-		//    n.root = item
-		//    r.crdtPositionTree.ReplaceOrInsert(n)
-		//}
+		node.root = newRoot
+		r.crdtPositionTree.ReplaceOrInsert(node)
 	} else {
-		// if the item previously had a mapped stub positionTreeNode, retrieve the linked list from that
-		// node and join it to the end of this item. Also, remove the stub from the tree
-		var stubRoot *ListItem
-		if stub := r.crdtPositionTree.Get(itemNode); stub != nil {
-			stubRoot = stub.(positionTreeNode).root
+		node := positionTreeNode{
+			listItemKey: targetItemKey,
+			root:        item,
 		}
-
-		if stubRoot != nil {
-			stubRoot.child = item
-			item.parent = stubRoot
-		}
-
-		//we add the target item to the tree as a stub, with the item as it's root node in the linked list
-		targetItemNode.root = item
-		r.crdtPositionTree.ReplaceOrInsert(targetItemNode)
+		r.crdtPositionTree.ReplaceOrInsert(node)
 	}
 
-	r.crdtPositionTree.Delete(itemNode)
-
-	return nil
-
-	// retrieve or create event log dll
-	//    var dll *list.List
-	//    if eInterface := r.crdtPositionTree.Get(e); eInterface != nil {
-	//        dll = eInterface.(EventLog).eventDLL
-	//    } else {
-	//        dll = list.New()
-	//        dll.PushFront(e)
-	//        //e.eventDLL = dll
-	//        //r.crdtPositionTree.ReplaceOrInsert(e)
-	//    }
-
-	//    // check for existence of target key PositionEvent
-	//    targetEvent, exists := r.positionEventSet[e.TargetListItemKey]
-	//    if exists {
-	//        if treeTargetEvent := r.crdtPositionTree.Get(targetEvent); treeTargetEvent != nil {
-	//            // if target exists as an event node in the tree, we merge with the DLL on that target
-	//            targetEvent = treeTargetEvent.(EventLog)
-	//        } else {
-	//            // otherwise the target event resides in a DLL within a different event parent in the tree
-	//            targetEvent = r.crdtPositionTreeElemCache[e.TargetListItemKey]
-	//        }
-	//        targetEvent = r.crdtPositionTree.Get(targetEvent).(EventLog)
-	//    } else {
-	//        targetEvent = r.newEventLog(PositionEvent, false)
-	//        targetEvent.ListItemKey = e.TargetListItemKey
-	//        r.crdtPositionTree.ReplaceOrInsert(targetEvent)
-	//    }
-
-	//    // insert dll (consisting of one or more events) after the target event
-	//    for i, e := dll.Len(), dll.Front(); i > 0; i, e = i-1, e.Next() {
-	//        ev := e.Value.(EventLog)
-	//        r.positionEventSet[ev.ListItemKey] = targetEvent
-	//        // TODO ordering and conflict resolution
-	//        targetEvent.eventDLL.PushBack(ev)
-	//    }
+	if targetItemKey == "" {
+		targetItemKey = positionTreeRootKey
+	}
+	item.currentLinkedListKey = targetItemKey
+	item = item.parent
+	for item != nil && item != end {
+		item.currentLinkedListKey = targetItemKey
+		item = item.parent
+	}
 
 	return nil
 }

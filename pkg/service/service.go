@@ -219,6 +219,8 @@ type ListItem struct {
 	matchChild  *ListItem
 	matchParent *ListItem
 
+	currentLinkedListKey string
+
 	friends LineFriends
 
 	localEmail string // set at creation time and used to exclude from Friends() method
@@ -476,19 +478,15 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		return res, 0, errors.New("limit must be >= 0")
 	}
 
-	cur := r.Root
 	var lastCur *ListItem
 
 	r.matchListItems = make(map[string]*ListItem)
 
 	newPos := -1
-	if cur == nil {
-		return res, newPos, nil
-	}
-
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
-	for {
+	for cur := range r.getListItems() {
+		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
 		// aren't cleaned up between ANY ops, it can lead to weird behaviour as things operate based on
@@ -545,14 +543,14 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 			}
 		}
 		// Terminate if we reach the root, or for when pagination is active and we reach the max boundary
-		if cur.parent == nil || (limit > 0 && idx == offset+limit) {
+		if limit > 0 && idx == offset+limit {
 			if p, exists := listItemMatchIdx[curKey]; exists {
 				newPos = p
 			}
 			return res, newPos, nil
 		}
-		cur = cur.parent
 	}
+	return res, newPos, nil
 }
 
 func (r *DBListRepo) GetFriendFromConfig(item ListItem) (string, bool) {

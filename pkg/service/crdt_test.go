@@ -3,7 +3,9 @@ package service
 import (
 	"container/list"
 	"fmt"
+
 	//"runtime"
+
 	"testing"
 
 	"github.com/google/btree"
@@ -13,7 +15,7 @@ const (
 	walDirPattern = "wal_%v.db"
 )
 
-func TestEventEquality(t *testing.T) {
+func TestCRDTEventEquality(t *testing.T) {
 	t.Run("Check event comparisons", func(t *testing.T) {
 		var lamport int64
 		id := uuid(1)
@@ -106,8 +108,7 @@ func TestCRDTPositionTree(t *testing.T) {
 			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
 		}
 	})
-	t.Run("Test put two nodes different targets same vectorClocks", func(t *testing.T) {
-		// Uniqueness is determined by event.UUID and event.VectorClock
+	t.Run("Test put two nodes different targets", func(t *testing.T) {
 		cache := btree.New(crdtPositionTreeDegree)
 
 		n0 := positionTreeNode{
@@ -133,73 +134,6 @@ func TestCRDTPositionTree(t *testing.T) {
 		}
 
 		// n0 has "" target (aka root) so should be first
-		if n0.listItemKey != cache.Min().(positionTreeNode).listItemKey {
-			t.Fatalf("n0 should be the minimum node")
-		}
-		if n1.listItemKey != cache.Max().(positionTreeNode).listItemKey {
-			t.Fatalf("n1 should be the maximum node")
-		}
-	})
-	t.Run("Test put two nodes same targets different vectorClocks", func(t *testing.T) {
-		cache := btree.New(crdtPositionTreeDegree)
-
-		n0 := positionTreeNode{
-			listItemKey: "1",
-		}
-		n1 := positionTreeNode{
-			listItemKey: "1",
-		}
-
-		cache.ReplaceOrInsert(n0)
-		cache.ReplaceOrInsert(n1)
-		// n1 second addition should be ignored
-		cache.ReplaceOrInsert(n1)
-
-		if cache.Get(n0) == nil {
-			t.Fatalf("n0 should be available in the cache")
-		}
-		if cache.Get(n1) == nil {
-			t.Fatalf("n1 should be available in the cache")
-		}
-
-		expectedLen := 2
-		if l := cache.Len(); l != expectedLen {
-			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
-		}
-
-		if n0.listItemKey != cache.Min().(positionTreeNode).listItemKey {
-			t.Fatalf("n0 should be the minimum node")
-		}
-		if n1.listItemKey != cache.Max().(positionTreeNode).listItemKey {
-			t.Fatalf("n1 should be the maximum node")
-		}
-	})
-	t.Run("Test put two nodes different targets different vectorClocks target precedence", func(t *testing.T) {
-		// Ensure target has ordering precedence over vectorClocks
-		cache := btree.New(crdtPositionTreeDegree)
-
-		n0 := positionTreeNode{
-			listItemKey: "1",
-		}
-		n1 := positionTreeNode{
-			listItemKey: "2",
-		}
-
-		cache.ReplaceOrInsert(n0)
-		cache.ReplaceOrInsert(n1)
-
-		if cache.Get(n0) == nil {
-			t.Fatalf("n0 should be available in the cache")
-		}
-		if cache.Get(n1) == nil {
-			t.Fatalf("n1 should be available in the cache")
-		}
-
-		expectedLen := 2
-		if l := cache.Len(); l != expectedLen {
-			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
-		}
-
 		if n0.listItemKey != cache.Min().(positionTreeNode).listItemKey {
 			t.Fatalf("n0 should be the minimum node")
 		}
@@ -339,6 +273,51 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("node1 should have key: %s", nodeKey1)
 		}
 	})
+	t.Run("Test update two events targeting root", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		nodeKey0 := "1"
+		nodeKey1 := "2"
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:   UpdateEvent,
+			ListItemKey: nodeKey0,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:   UpdateEvent,
+			ListItemKey: nodeKey1,
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		expectedNode := positionTreeNode{
+			listItemKey: "",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		treeNode := repo.crdtPositionTree.Min().(positionTreeNode)
+		if expectedNode.listItemKey != treeNode.listItemKey {
+			t.Fatalf("expectedNode should be the minimum node")
+		}
+		if treeNode.root == nil || treeNode.root.key != nodeKey1 {
+			t.Fatalf("node0 should have key: %s", nodeKey1)
+		}
+		if treeNode.root.parent == nil || treeNode.root.parent.key != nodeKey0 {
+			t.Fatalf("node1 should have key: %s", nodeKey0)
+		}
+	})
 	t.Run("Test two partial linked lists with eventual merge", func(t *testing.T) {
 		// End result should be items with ordered keys:
 		// 1 <- 2 <- 3 <- 4 <- 5 <- 6 <- 7 <- 8
@@ -422,6 +401,13 @@ func TestCRDTProcessEvent(t *testing.T) {
 			TargetListItemKey: "4",
 		})
 
+		//runtime.Breakpoint()
+		//for i := range repo.getListItems() {
+		//matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
+		//for _, i := range matches {
+		//    println(i.key)
+		//}
+
 		expectedLen := 1
 		if l := repo.crdtPositionTree.Len(); l != expectedLen {
 			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
@@ -434,8 +420,6 @@ func TestCRDTProcessEvent(t *testing.T) {
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
 			t.Fatalf("expectedNode should be available in the cache")
 		}
-
-		//runtime.Breakpoint()
 
 		treeNode := repo.crdtPositionTree.Min().(positionTreeNode).root
 
@@ -469,9 +453,195 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatal("final node parent should be nil")
 		}
 	})
+	t.Run("Test updates and delete from linked list", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1",
+			TargetListItemKey: "",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "2",
+			TargetListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "2",
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		expectedNode := positionTreeNode{
+			listItemKey: "",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		treeNode := repo.crdtPositionTree.Min().(positionTreeNode).root
+
+		c := 1
+		n := treeNode
+		for n.parent != nil {
+			c++
+			n = n.parent
+		}
+
+		nItems := 1
+		if nItems != c {
+			t.Fatalf("expected %d items in the linked list but got %d", nItems, c)
+		}
+
+		if treeNode.key != "1" {
+			t.Fatalf("the wrong item was deleted from the linked list")
+		}
+	})
+	t.Run("Test updates and delete root", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1",
+			TargetListItemKey: "",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "2",
+			TargetListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "1",
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		// The same tree node remains, if there is an item remaining in the linked list
+		expectedNode := positionTreeNode{
+			listItemKey: "",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		treeNode := repo.crdtPositionTree.Min().(positionTreeNode).root
+
+		c := 1
+		n := treeNode
+		for n.parent != nil {
+			c++
+			n = n.parent
+		}
+
+		nItems := 1
+		if nItems != c {
+			t.Fatalf("expected %d items in the linked list but got %d", nItems, c)
+		}
+
+		if treeNode.key != "2" {
+			t.Fatalf("the wrong item was deleted from the linked list")
+		}
+	})
+	t.Run("Test delete before updates", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1",
+			TargetListItemKey: "",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "2",
+			TargetListItemKey: "1",
+		})
+		// throw a duplicate delete in for good measure
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "1",
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		expectedNode := positionTreeNode{
+			listItemKey: "1",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		treeNode := repo.crdtPositionTree.Min().(positionTreeNode).root
+
+		c := 1
+		n := treeNode
+		for n.parent != nil {
+			c++
+			n = n.parent
+		}
+
+		nItems := 1
+		if nItems != c {
+			t.Fatalf("expected %d items in the linked list but got %d", nItems, c)
+		}
+
+		if treeNode.key != "2" {
+			t.Fatalf("the wrong item was deleted from the linked list")
+		}
+	})
 }
 
-func TestMerge(t *testing.T) {
+func TestCRDTMerge(t *testing.T) {
 	repo, clearUp := setupRepo()
 	repoUUID := uuid(1)
 	repo.uuid = repoUUID
@@ -493,7 +663,7 @@ func TestMerge(t *testing.T) {
 	//t.Logf("%v", e)
 
 	repo.Add("", nil, nil)
-	n0 := repo.Root
+	n0 := repo.crdtPositionTree.Min().(positionTreeNode).root
 	repo.Update("a", n0)
 
 	repo.Add("", nil, n0)
@@ -519,7 +689,14 @@ func TestMerge(t *testing.T) {
 	clearUp()
 
 	checkFn := func(t *testing.T, n *ListItem) {
-		// We expect two items in the list as follows: n2 -> n1
+		// We expect two items in the list as follows: n2 ("c") -> n1 ("b")
+		if n == nil {
+			t.Errorf("node 1 should exist")
+		}
+		if n.parent == nil {
+			t.Errorf("node 2 should exist")
+		}
+
 		if n.key != n2.key {
 			t.Errorf("first item key is incorrect")
 		}
@@ -554,7 +731,7 @@ func TestMerge(t *testing.T) {
 
 		repo.Replay(el)
 
-		checkFn(t, repo.Root)
+		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
 	})
 	t.Run("Replay adds in reverse order", func(t *testing.T) {
 		repo, clearUp := setupRepo()
@@ -569,7 +746,7 @@ func TestMerge(t *testing.T) {
 
 		repo.Replay(el)
 
-		checkFn(t, repo.Root)
+		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
 	})
 	t.Run("Replay delete first", func(t *testing.T) {
 		repo, clearUp := setupRepo()
@@ -583,7 +760,7 @@ func TestMerge(t *testing.T) {
 
 		repo.Replay(el)
 
-		checkFn(t, repo.Root)
+		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
 	})
 	t.Run("Replay move first", func(t *testing.T) {
 		repo, clearUp := setupRepo()
@@ -592,13 +769,13 @@ func TestMerge(t *testing.T) {
 
 		// TODO the below
 		el := make([]EventLog, len(correctEl))
-		copy(el[0:1], correctEl[6:7]) // delete
+		copy(el[0:1], correctEl[6:7]) // move
 		copy(el[1:7], correctEl[0:6])
 		copy(el[7:8], correctEl[7:8]) // delete
 
 		repo.Replay(el)
 
-		checkFn(t, repo.Root)
+		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
 	})
 	t.Run("Replay in reverse", func(t *testing.T) {
 		repo, clearUp := setupRepo()
@@ -613,9 +790,10 @@ func TestMerge(t *testing.T) {
 			el[i], el[j] = el[j], el[i]
 		}
 
+		//runtime.Breakpoint()
 		repo.Replay(el)
 
-		checkFn(t, repo.Root)
+		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
 	})
 }
 

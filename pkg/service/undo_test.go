@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestTransactionUndo(t *testing.T) {
+func TestUndoTransaction(t *testing.T) {
 	os.Mkdir(rootDir, os.ModePerm)
 	t.Run("Undo on empty db", func(t *testing.T) {
 		repo, clearUp := setupRepo()
