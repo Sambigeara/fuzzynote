@@ -61,7 +61,7 @@ func TestUndoTransaction(t *testing.T) {
 		if len(matches) != 0 {
 			t.Errorf("Undo should have removed the only item")
 		}
-		if repo.Root != nil {
+		if repo.crdtPositionTree.Min() != nil {
 			t.Errorf("The root should have been cleared")
 		}
 
@@ -81,7 +81,8 @@ func TestUndoTransaction(t *testing.T) {
 
 		updatedLine := "Updated item"
 
-		repo.Update(updatedLine, repo.Root)
+		//runtime.Breakpoint()
+		repo.Update(updatedLine, repo.crdtPositionTree.Min().(positionTreeNode).root)
 
 		if l := len(repo.eventLogger.log); l != 3 {
 			t.Errorf("Event log should have one null and two real events in it, but has %d", l)
@@ -148,7 +149,7 @@ func TestUndoTransaction(t *testing.T) {
 		if len(matches) != 0 {
 			t.Errorf("Second undo should have deleted the item")
 		}
-		if repo.Root != nil {
+		if repo.crdtPositionTree.Min() != nil {
 			t.Errorf("Undo should have removed the root")
 		}
 	})
@@ -194,7 +195,7 @@ func TestUndoTransaction(t *testing.T) {
 		}
 
 		line2 := "Another item"
-		repo.Add(line2, nil, repo.Root)
+		repo.Add(line2, nil, repo.crdtPositionTree.Min().(positionTreeNode).root)
 		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 		idx := 1
 		listItem1 := matches[0]
@@ -286,7 +287,6 @@ func TestUndoTransaction(t *testing.T) {
 			t.Errorf("The listItem key should be consistent with the original")
 		}
 
-		//runtime.Breakpoint()
 		repo.Undo()
 
 		if len(repo.eventLogger.log) != 5 {
@@ -355,7 +355,7 @@ func TestUndoTransaction(t *testing.T) {
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		newLine := "a"
-		repo.Update(newLine, repo.Root)
+		repo.Update(newLine, repo.crdtPositionTree.Min().(positionTreeNode).root)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have one null and two real events in it")
@@ -430,7 +430,7 @@ func TestUndoTransaction(t *testing.T) {
 
 		repo.Match([][]rune{}, true, "", 0, 0)
 
-		repo.Delete(repo.Root)
+		repo.Delete(repo.crdtPositionTree.Min().(positionTreeNode).root)
 
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		if len(matches) != 0 {
@@ -459,7 +459,7 @@ func TestUndoTransaction(t *testing.T) {
 		}
 
 		newLine := "Updated line"
-		repo.Update(newLine, repo.Root)
+		repo.Update(newLine, repo.crdtPositionTree.Min().(positionTreeNode).root)
 
 		if len(repo.eventLogger.log) != 3 {
 			t.Errorf("Event log should have the nullEvent, addEvent and overriding updateEvent")
