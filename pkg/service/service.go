@@ -43,7 +43,6 @@ type Client interface {
 
 // DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
-	Root           *ListItem
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
@@ -482,7 +481,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 
 	r.matchListItems = make(map[string]*ListItem)
 
-	newPos := -1
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
 	for cur := range r.getListItems() {
@@ -544,11 +542,12 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		}
 		// Terminate if we reach the root, or for when pagination is active and we reach the max boundary
 		if limit > 0 && idx == offset+limit {
-			if p, exists := listItemMatchIdx[curKey]; exists {
-				newPos = p
-			}
-			return res, newPos, nil
+			break
 		}
+	}
+	newPos := -1
+	if p, exists := listItemMatchIdx[curKey]; exists {
+		newPos = p
 	}
 	return res, newPos, nil
 }
