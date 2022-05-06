@@ -397,6 +397,7 @@ func TestServiceDelete(t *testing.T) {
 		item3 := repo.matchListItems[matches[2].key]
 
 		repo.Delete(item2)
+		repo.Delete(item2) // duplicate (idempotent) delete for good measure
 
 		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
 
@@ -419,6 +420,88 @@ func TestServiceDelete(t *testing.T) {
 
 		if matches[1].child.Key() != item1.Key() {
 			t.Errorf("Third item child should be first item")
+		}
+	})
+	t.Run("Delete nonexistent item", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k := "key"
+		repo.Delete(&ListItem{key: k})
+
+		if matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0); len(matches) != 0 {
+			t.Errorf("Matches should be len 0")
+		}
+
+		if _, exists := repo.deleteEventSet[k]; !exists {
+			t.Errorf("Delete event should be present in the deleteEventSet")
+		}
+	})
+	t.Run("Delete, update, then delete item again", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		repo.Delete(item2)
+		repo.Update("", item2)
+		repo.Delete(item2)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
+			t.Errorf("First item should be previous first item")
+		}
+
+		if matches[1].Key() != item3.Key() {
+			t.Errorf("Second item should be previous last item")
+		}
+
+		expectedLen := 2
+		if len(matches) != expectedLen {
+			t.Errorf("Expected len %d but got %d", expectedLen, len(matches))
+		}
+
+		if matches[0].parent.Key() != item3.Key() {
+			t.Errorf("First item parent should be third item")
+		}
+
+		if matches[1].child.Key() != item1.Key() {
+			t.Errorf("Third item child should be first item")
+		}
+	})
+	t.Run("Position event only then delete item", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k := "key"
+		matchK := "matchKey"
+		matchChild := ListItem{
+			key: matchK,
+		}
+		item := ListItem{
+			key:        k,
+			matchChild: &matchChild,
+		}
+		repo.MoveUp(&item)
+		repo.Delete(&item)
+
+		if matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0); len(matches) != 0 {
+			t.Errorf("Matches should be len 0")
+		}
+
+		if _, exists := repo.positionEventSet[k]; !exists {
+			t.Errorf("Position event should be present in the positionEventSet")
+		}
+		if _, exists := repo.deleteEventSet[k]; !exists {
+			t.Errorf("Delete event should be present in the deleteEventSet")
 		}
 	})
 }
@@ -564,6 +647,7 @@ func TestServiceMove(t *testing.T) {
 		// Preset Match pointers with Match call
 		repo.Match([][]rune{}, true, "", 0, 0)
 
+		//runtime.Breakpoint()
 		repo.MoveDown(item1)
 
 		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
@@ -744,7 +828,6 @@ func TestServiceUpdate(t *testing.T) {
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 
 		updatedLine := "Updated item"
-		//runtime.Breakpoint()
 		repo.Update(updatedLine, &matches[0])
 
 		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)

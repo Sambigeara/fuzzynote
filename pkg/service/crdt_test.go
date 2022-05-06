@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	//"runtime"
-
 	"testing"
 
 	"github.com/google/btree"
@@ -401,13 +400,6 @@ func TestCRDTProcessEvent(t *testing.T) {
 			TargetListItemKey: "4",
 		})
 
-		//runtime.Breakpoint()
-		//for i := range repo.getListItems() {
-		//matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
-		//for _, i := range matches {
-		//    println(i.key)
-		//}
-
 		expectedLen := 1
 		if l := repo.crdtPositionTree.Len(); l != expectedLen {
 			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
@@ -614,7 +606,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		}
 
 		expectedNode := positionTreeNode{
-			listItemKey: "1",
+			listItemKey: "",
 		}
 
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
@@ -639,6 +631,180 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("the wrong item was deleted from the linked list")
 		}
 	})
+	t.Run("Test position two updates targetting deleted previous root item", func(t *testing.T) {
+		// Add 1 <- 2 <- 3
+		// Delete 1
+		// Position 1 <- 3
+		// should end up with: 3 <- 2, tree node key should be root, aka ""
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1",
+			TargetListItemKey: "",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "2",
+			TargetListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "3",
+			TargetListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 4,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 5,
+			},
+			EventType:         PositionEvent,
+			ListItemKey:       "3",
+			TargetListItemKey: "1",
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		expectedNode := positionTreeNode{
+			listItemKey: "",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		matches := []*ListItem{}
+		for l := range repo.getListItems() {
+			matches = append(matches, l)
+		}
+
+		nItems := 2
+		if l := len(matches); nItems != l {
+			t.Fatalf("expected %d items in the linked list but got %d", nItems, l)
+		}
+
+		if matches[0].key != "3" {
+			t.Fatalf("root item has the wrong key")
+		}
+		if matches[1].key != "2" {
+			t.Fatalf("root item has the wrong key")
+		}
+	})
+	t.Run("Test position two updates targetting deleted previous central item", func(t *testing.T) {
+		// Add 1 <- 2 <- 3 <- 4
+		// Delete 1, 2
+		// Position 2 <- 4
+		// should end up with: 4 <- 3, tree node key should be root, aka ""
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1",
+			TargetListItemKey: "",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "2",
+			TargetListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "3",
+			TargetListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 4,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "4",
+			TargetListItemKey: "3",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 5,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 5,
+			},
+			EventType:   DeleteEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 6,
+			},
+			EventType:         PositionEvent,
+			ListItemKey:       "4",
+			TargetListItemKey: "2",
+		})
+
+		expectedLen := 1
+		if l := repo.crdtPositionTree.Len(); l != expectedLen {
+			t.Fatalf("cache should have len %d but has %d", expectedLen, l)
+		}
+
+		expectedNode := positionTreeNode{
+			listItemKey: "",
+		}
+
+		if repo.crdtPositionTree.Get(expectedNode) == nil {
+			t.Fatalf("expectedNode should be available in the cache")
+		}
+
+		matches := []*ListItem{}
+		for l := range repo.getListItems() {
+			matches = append(matches, l)
+		}
+
+		nItems := 2
+		if l := len(matches); nItems != l {
+			t.Fatalf("expected %d items in the linked list but got %d", nItems, l)
+		}
+
+		expectedKey := "4"
+		if k := matches[0].key; k != expectedKey {
+			t.Fatalf("matches[0] key should be %s but is %s", expectedKey, k)
+		}
+
+		expectedKey = "3"
+		if k := matches[1].key; k != expectedKey {
+			t.Fatalf("matches[1] key should be %s but is %s", expectedKey, k)
+		}
+	})
 }
 
 func TestCRDTMerge(t *testing.T) {
@@ -660,7 +826,6 @@ func TestCRDTMerge(t *testing.T) {
 			}
 		}
 	}()
-	//t.Logf("%v", e)
 
 	repo.Add("", nil, nil)
 	n0 := repo.crdtPositionTree.Min().(positionTreeNode).root
@@ -692,29 +857,37 @@ func TestCRDTMerge(t *testing.T) {
 		// We expect two items in the list as follows: n2 ("c") -> n1 ("b")
 		if n == nil {
 			t.Errorf("node 1 should exist")
+			//return
 		}
 		if n.parent == nil {
 			t.Errorf("node 2 should exist")
+			//return
 		}
 
 		if n.key != n2.key {
 			t.Errorf("first item key is incorrect")
+			//return
 		}
 		if n.rawLine != n2.rawLine {
 			t.Errorf("first item rawLine is incorrect")
+			//return
 		}
 		if n.parent.key != n1.key {
 			t.Errorf("second item key is incorrect")
+			//return
 		}
 		if n.parent.rawLine != n1.rawLine {
 			t.Errorf("second item rawLine is incorrect")
+			//return
 		}
 
 		if n.child != nil {
 			t.Errorf("first item child should be nil")
+			//return
 		}
 		if n.parent.parent != nil {
 			t.Errorf("second item parent should be nil")
+			//return
 		}
 		if n.parent.child.key != n2.key {
 			t.Errorf("second item child should be first item")
@@ -790,10 +963,405 @@ func TestCRDTMerge(t *testing.T) {
 			el[i], el[j] = el[j], el[i]
 		}
 
-		//runtime.Breakpoint()
 		repo.Replay(el)
 
 		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	})
+
+	repo, clearUp = setupRepo()
+	t.Run("All permutations", func(t *testing.T) {
+		for i, p := range permutationsOfEvents(correctEl) {
+			//for _, p := range permutationsOfEvents(correctEl) {
+			//repo, clearUp := setupRepo()
+
+			// We can't rely on fresh repos each iterations here because OS+file management lags behind and
+			// causes inconsistencies. Therefore, use the same repo and refresh state
+			repo.crdtPositionTree = btree.New(crdtPositionTreeDegree)
+			repo.listItemCache = make(map[string]*ListItem)
+			repo.addEventSet = make(map[string]EventLog)
+			repo.deleteEventSet = make(map[string]EventLog)
+			repo.positionEventSet = make(map[string]EventLog)
+
+			// 8! == 40320
+			//if i == 5050 {
+			if i == 5051 {
+				//runtime.Breakpoint()
+			}
+
+			repo.Replay(p)
+
+			checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+			//clearUp()
+		}
+	})
+	clearUp()
+}
+
+func permutationsOfEvents(arr []EventLog) [][]EventLog {
+	var helper func([]EventLog, int)
+	res := [][]EventLog{}
+
+	helper = func(arr []EventLog, n int) {
+		if n == 1 {
+			tmp := make([]EventLog, len(arr))
+			copy(tmp, arr)
+			res = append(res, tmp)
+		} else {
+			for i := 0; i < n; i++ {
+				helper(arr, n-1)
+				if n%2 == 1 {
+					tmp := arr[i]
+					arr[i] = arr[n-1]
+					arr[n-1] = tmp
+				} else {
+					tmp := arr[0]
+					arr[0] = arr[n-1]
+					arr[n-1] = tmp
+				}
+			}
+		}
+	}
+	helper(arr, len(arr))
+	return res
+}
+
+func permutationsOfEventLogs(arr [][]EventLog) [][][]EventLog {
+	var helper func([][]EventLog, int)
+	res := [][][]EventLog{}
+
+	helper = func(arr [][]EventLog, n int) {
+		if n == 1 {
+			tmp := make([][]EventLog, len(arr))
+			copy(tmp, arr)
+			res = append(res, tmp)
+		} else {
+			for i := 0; i < n; i++ {
+				helper(arr, n-1)
+				if n%2 == 1 {
+					tmp := arr[i]
+					arr[i] = arr[n-1]
+					arr[n-1] = tmp
+				} else {
+					tmp := arr[0]
+					arr[0] = arr[n-1]
+					arr[n-1] = tmp
+				}
+			}
+		}
+	}
+	helper(arr, len(arr))
+	return res
+}
+
+func TestCRDTMergeReal(t *testing.T) {
+	// The following are event logs generated by a real world scenario with inconsistent merge results
+	el1 := []EventLog{
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:1",
+			TargetListItemKey: "",
+			Line:              "",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:1",
+			TargetListItemKey: "",
+			Line:              "a",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "",
+		},
+	}
+	el2 := []EventLog{
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 4,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "h",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 5,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "he",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 6,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hel",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 7,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hell",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 8,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 9,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello ",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 10,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello h",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 11,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello ho",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 12,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 13,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how ",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 14,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how a",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 15,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how ar",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 16,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 17,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are ",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 18,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are y",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 19,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are yo",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 20,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are you",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 21,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:21",
+			TargetListItemKey: "1:3",
+			Line:              "",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 22,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:21",
+			TargetListItemKey: "1:3",
+			Line:              "b",
+		},
+	}
+	el3 := []EventLog{
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 23,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:23",
+			TargetListItemKey: "1:21",
+			Line:              "",
+		},
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 24,
+			},
+			EventType:         UpdateEvent,
+			ListItemKey:       "1:23",
+			TargetListItemKey: "1:21",
+			Line:              "c",
+		},
+	}
+	el4 := []EventLog{
+		{
+			UUID: 1,
+			VectorClock: map[uuid]int64{
+				1: 25,
+			},
+			EventType:         DeleteEvent,
+			ListItemKey:       "1:3",
+			TargetListItemKey: "1:1",
+			Line:              "hello how are you",
+		},
+	}
+
+	checkFn := func(t *testing.T, matches []ListItem) {
+		// We expect two items in the list as follows: n2 ("c") -> n1 ("b")
+		// We expect 3 nodes, "a" -> "b" -> "c"
+		n1 := matches[0]
+		n2 := matches[1]
+		n3 := matches[2]
+
+		if n1.key != "1:1" {
+			t.Errorf("node 1 key should be 1:1 but is %s", n1.key)
+		}
+		if n1.rawLine != "a" {
+			t.Errorf("node 1 line should be a but is %s", n1.rawLine)
+		}
+
+		if n2.key != "1:21" {
+			t.Errorf("node 2 key should be 1:21 but is %s", n2.key)
+		}
+		if n2.rawLine != "b" {
+			t.Errorf("node 2 line should be b but is %s", n2.rawLine)
+		}
+
+		if n3.key != "1:23" {
+			t.Errorf("node 3 key should be 1:23 but is %s", n3.key)
+		}
+		if n3.rawLine != "c" {
+			t.Errorf("node 3 line should be c but is %s", n3.rawLine)
+		}
+	}
+
+	t.Run("All permutations", func(t *testing.T) {
+		el := [][]EventLog{el1, el2, el3, el4}
+		for _, arr := range permutationsOfEventLogs(el) {
+			repo, clearUp := setupRepo()
+
+			el := make([]EventLog, 25)
+			i := 0
+			for _, partialEl := range arr {
+				l := len(partialEl)
+				copy(el[i:i+l], partialEl)
+				i += l
+			}
+
+			repo.Replay(el)
+
+			matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
+			checkFn(t, matches)
+			clearUp()
+		}
 	})
 }
 

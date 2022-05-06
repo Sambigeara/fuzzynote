@@ -834,7 +834,6 @@ func (r *DBListRepo) insert(item, targetItem *ListItem) error {
 		listItemKey: item.key,
 	}
 
-	//var start, end *ListItem
 	var end *ListItem
 	if tn := r.crdtPositionTree.Get(itemNode); tn != nil {
 		oldRoot := tn.(positionTreeNode).root
@@ -849,16 +848,35 @@ func (r *DBListRepo) insert(item, targetItem *ListItem) error {
 		end = item
 	}
 
-	var targetItemKey string
+	var targetItemKey, currentLinkedListKey string
 	if targetItem != nil {
 		targetItemKey = targetItem.key
+	}
+	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey})
+	if treeNode == nil && !r.itemIsLive(targetItem) {
+		// recursively traverse back through previously known targets until we find an active item, or an active node in the tree
+		for {
+			if lastPositionEvent, exists := r.positionEventSet[targetItemKey]; exists {
+				targetItemKey = lastPositionEvent.TargetListItemKey
+				if targetItem = r.listItemCache[targetItemKey]; targetItem != nil && r.itemIsLive(targetItem) {
+					break
+				}
+				if treeNode = r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
+					break
+				}
+			} else {
+				break
+			}
+		}
 	}
 
 	if r.itemIsLive(targetItem) {
 		targetParent := targetItem.parent
 
+		// TODO does end need to be returned now? Or even passed?
 		item, end, targetItem, targetParent = r.offsetTargetPointers(item, end, targetItem, targetParent)
-	} else if treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
+		currentLinkedListKey = targetItem.currentLinkedListKey
+	} else if treeNode != nil {
 		// null targetItem prior to loops below. if no loops occur, item will be at root and therefore have no child
 		targetItem = nil
 		targetParent := treeNode.(positionTreeNode).root
@@ -872,21 +890,23 @@ func (r *DBListRepo) insert(item, targetItem *ListItem) error {
 		}
 		node.root = newRoot
 		r.crdtPositionTree.ReplaceOrInsert(node)
+		currentLinkedListKey = node.listItemKey
 	} else {
 		node := positionTreeNode{
 			listItemKey: targetItemKey,
 			root:        item,
 		}
 		r.crdtPositionTree.ReplaceOrInsert(node)
+		currentLinkedListKey = targetItemKey
 	}
 
-	if targetItemKey == "" {
-		targetItemKey = positionTreeRootKey
+	if currentLinkedListKey == "" {
+		currentLinkedListKey = positionTreeRootKey
 	}
-	item.currentLinkedListKey = targetItemKey
+	item.currentLinkedListKey = currentLinkedListKey
 	item = item.parent
-	for item != nil && item != end {
-		item.currentLinkedListKey = targetItemKey
+	for item != nil {
+		item.currentLinkedListKey = currentLinkedListKey
 		item = item.parent
 	}
 
