@@ -1,11 +1,10 @@
 package service
 
 import (
-	"container/list"
 	"fmt"
-
-	//"runtime"
 	"testing"
+
+	//"fmt"
 
 	"github.com/google/btree"
 )
@@ -47,28 +46,6 @@ func TestCRDTEventEquality(t *testing.T) {
 		equality = checkEquality(event1, event1)
 		if equality != eventsEqual {
 			t.Fatalf("Expected events to be equal")
-		}
-	})
-}
-
-func TestCRDTList(t *testing.T) {
-	t.Run("Test add node and iterate", func(t *testing.T) {
-		dll := list.New()
-
-		k := "1"
-		n := ListItem{
-			key: k,
-		}
-
-		dll.PushFront(n)
-
-		expectedLen := 1
-		if l := dll.Len(); l != expectedLen {
-			t.Fatalf("list should have len %d but has %d", expectedLen, l)
-		}
-
-		if n := dll.Front(); n == nil || n.Value.(ListItem).key != k {
-			t.Fatalf("first node should contain the pushed event log")
 		}
 	})
 }
@@ -539,7 +516,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 
 		// The same tree node remains, if there is an item remaining in the linked list
 		expectedNode := positionTreeNode{
-			listItemKey: "",
+			listItemKey: "1",
 		}
 
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
@@ -606,7 +583,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		}
 
 		expectedNode := positionTreeNode{
-			listItemKey: "",
+			listItemKey: "1",
 		}
 
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
@@ -635,7 +612,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		// Add 1 <- 2 <- 3
 		// Delete 1
 		// Position 1 <- 3
-		// should end up with: 3 <- 2, tree node key should be root, aka ""
+		// should end up with: 3 <- 2, tree node key should be 1
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -685,7 +662,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		}
 
 		expectedNode := positionTreeNode{
-			listItemKey: "",
+			listItemKey: "1",
 		}
 
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
@@ -713,7 +690,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		// Add 1 <- 2 <- 3 <- 4
 		// Delete 1, 2
 		// Position 2 <- 4
-		// should end up with: 4 <- 3, tree node key should be root, aka ""
+		// should end up with: 4 <- 3, tree node key should be 2
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -756,16 +733,17 @@ func TestCRDTProcessEvent(t *testing.T) {
 			EventType:   DeleteEvent,
 			ListItemKey: "1",
 		})
+		//runtime.Breakpoint()
 		repo.processEventLog(EventLog{
 			VectorClock: map[uuid]int64{
-				1: 5,
+				1: 6,
 			},
 			EventType:   DeleteEvent,
 			ListItemKey: "2",
 		})
 		repo.processEventLog(EventLog{
 			VectorClock: map[uuid]int64{
-				1: 6,
+				1: 7,
 			},
 			EventType:         PositionEvent,
 			ListItemKey:       "4",
@@ -778,7 +756,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 		}
 
 		expectedNode := positionTreeNode{
-			listItemKey: "",
+			listItemKey: "2",
 		}
 
 		if repo.crdtPositionTree.Get(expectedNode) == nil {
@@ -807,7 +785,35 @@ func TestCRDTProcessEvent(t *testing.T) {
 	})
 }
 
-func TestCRDTMerge(t *testing.T) {
+func permutationsOfEvents(arr []EventLog) [][]EventLog {
+	var helper func([]EventLog, int)
+	res := [][]EventLog{}
+
+	helper = func(arr []EventLog, n int) {
+		if n == 1 {
+			tmp := make([]EventLog, len(arr))
+			copy(tmp, arr)
+			res = append(res, tmp)
+		} else {
+			for i := 0; i < n; i++ {
+				helper(arr, n-1)
+				if n%2 == 1 {
+					tmp := arr[i]
+					arr[i] = arr[n-1]
+					arr[n-1] = tmp
+				} else {
+					tmp := arr[0]
+					arr[0] = arr[n-1]
+					arr[n-1] = tmp
+				}
+			}
+		}
+	}
+	helper(arr, len(arr))
+	return res
+}
+
+func TestCRDTMergeMix(t *testing.T) {
 	repo, clearUp := setupRepo()
 	repoUUID := uuid(1)
 	repo.uuid = repoUUID
@@ -857,123 +863,112 @@ func TestCRDTMerge(t *testing.T) {
 		// We expect two items in the list as follows: n2 ("c") -> n1 ("b")
 		if n == nil {
 			t.Errorf("node 1 should exist")
-			//return
 		}
 		if n.parent == nil {
 			t.Errorf("node 2 should exist")
-			//return
 		}
 
 		if n.key != n2.key {
 			t.Errorf("first item key is incorrect")
-			//return
 		}
 		if n.rawLine != n2.rawLine {
 			t.Errorf("first item rawLine is incorrect")
-			//return
 		}
 		if n.parent.key != n1.key {
 			t.Errorf("second item key is incorrect")
-			//return
 		}
 		if n.parent.rawLine != n1.rawLine {
 			t.Errorf("second item rawLine is incorrect")
-			//return
 		}
 
 		if n.child != nil {
 			t.Errorf("first item child should be nil")
-			//return
 		}
 		if n.parent.parent != nil {
 			t.Errorf("second item parent should be nil")
-			//return
 		}
 		if n.parent.child.key != n2.key {
 			t.Errorf("second item child should be first item")
 		}
 	}
 
-	t.Run("Replay in order", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
+	//t.Run("Replay in order", func(t *testing.T) {
+	//    repo, clearUp := setupRepo()
+	//    defer clearUp()
+	//    repo.uuid = repoUUID
 
-		el := make([]EventLog, len(correctEl))
-		copy(el, correctEl)
+	//    el := make([]EventLog, len(correctEl))
+	//    copy(el, correctEl)
 
-		repo.Replay(el)
+	//    repo.Replay(el)
 
-		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-	})
-	t.Run("Replay adds in reverse order", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
+	//    checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	//})
+	//t.Run("Replay adds in reverse order", func(t *testing.T) {
+	//    repo, clearUp := setupRepo()
+	//    defer clearUp()
+	//    repo.uuid = repoUUID
 
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:2], correctEl[4:6]) // c
-		copy(el[2:4], correctEl[2:4]) // b
-		copy(el[4:6], correctEl[0:2]) // a
-		copy(el[6:], correctEl[6:])   // move + delete
+	//    el := make([]EventLog, len(correctEl))
+	//    copy(el[0:2], correctEl[4:6]) // c
+	//    copy(el[2:4], correctEl[2:4]) // b
+	//    copy(el[4:6], correctEl[0:2]) // a
+	//    copy(el[6:], correctEl[6:])   // move + delete
 
-		repo.Replay(el)
+	//    repo.Replay(el)
 
-		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-	})
-	t.Run("Replay delete first", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
+	//    checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	//})
+	//t.Run("Replay delete first", func(t *testing.T) {
+	//    repo, clearUp := setupRepo()
+	//    defer clearUp()
+	//    repo.uuid = repoUUID
 
-		// TODO the below
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:1], correctEl[7:8]) // delete
-		copy(el[1:8], correctEl[0:7])
+	//    // TODO the below
+	//    el := make([]EventLog, len(correctEl))
+	//    copy(el[0:1], correctEl[7:8]) // delete
+	//    copy(el[1:8], correctEl[0:7])
 
-		repo.Replay(el)
+	//    repo.Replay(el)
 
-		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-	})
-	t.Run("Replay move first", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
+	//    checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	//})
+	//t.Run("Replay move first", func(t *testing.T) {
+	//    repo, clearUp := setupRepo()
+	//    defer clearUp()
+	//    repo.uuid = repoUUID
 
-		// TODO the below
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:1], correctEl[6:7]) // move
-		copy(el[1:7], correctEl[0:6])
-		copy(el[7:8], correctEl[7:8]) // delete
+	//    // TODO the below
+	//    el := make([]EventLog, len(correctEl))
+	//    copy(el[0:1], correctEl[6:7]) // move
+	//    copy(el[1:7], correctEl[0:6])
+	//    copy(el[7:8], correctEl[7:8]) // delete
 
-		repo.Replay(el)
+	//    repo.Replay(el)
 
-		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-	})
-	t.Run("Replay in reverse", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
+	//    checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	//})
+	//t.Run("Replay in reverse", func(t *testing.T) {
+	//    repo, clearUp := setupRepo()
+	//    defer clearUp()
+	//    repo.uuid = repoUUID
 
-		el := make([]EventLog, len(correctEl))
-		copy(el, correctEl)
+	//    el := make([]EventLog, len(correctEl))
+	//    copy(el, correctEl)
 
-		// Reverse the log
-		for i, j := 0, len(el)-1; i < j; i, j = i+1, j-1 {
-			el[i], el[j] = el[j], el[i]
-		}
+	//    // Reverse the log
+	//    for i, j := 0, len(el)-1; i < j; i, j = i+1, j-1 {
+	//        el[i], el[j] = el[j], el[i]
+	//    }
 
-		repo.Replay(el)
+	//    repo.Replay(el)
 
-		checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-	})
+	//    checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+	//})
 
-	repo, clearUp = setupRepo()
 	t.Run("All permutations", func(t *testing.T) {
+		repo, clearUp = setupRepo()
 		for i, p := range permutationsOfEvents(correctEl) {
-			//for _, p := range permutationsOfEvents(correctEl) {
-			//repo, clearUp := setupRepo()
-
 			// We can't rely on fresh repos each iterations here because OS+file management lags behind and
 			// causes inconsistencies. Therefore, use the same repo and refresh state
 			repo.crdtPositionTree = btree.New(crdtPositionTreeDegree)
@@ -983,46 +978,243 @@ func TestCRDTMerge(t *testing.T) {
 			repo.positionEventSet = make(map[string]EventLog)
 
 			// 8! == 40320
-			//if i == 5050 {
-			if i == 5051 {
+			if i == 775 {
 				//runtime.Breakpoint()
 			}
 
 			repo.Replay(p)
 
 			checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
-			//clearUp()
 		}
+		clearUp()
 	})
-	clearUp()
 }
 
-func permutationsOfEvents(arr []EventLog) [][]EventLog {
-	var helper func([]EventLog, int)
-	res := [][]EventLog{}
+func TestCRDTMergeMoves(t *testing.T) {
+	repo, clearUp := setupRepo()
+	repoUUID := uuid(1)
+	repo.uuid = repoUUID
 
-	helper = func(arr []EventLog, n int) {
-		if n == 1 {
-			tmp := make([]EventLog, len(arr))
-			copy(tmp, arr)
-			res = append(res, tmp)
-		} else {
-			for i := 0; i < n; i++ {
-				helper(arr, n-1)
-				if n%2 == 1 {
-					tmp := arr[i]
-					arr[i] = arr[n-1]
-					arr[n-1] = tmp
-				} else {
-					tmp := arr[0]
-					arr[0] = arr[n-1]
-					arr[n-1] = tmp
-				}
+	exit := make(chan struct{})
+	elChan := make(chan []EventLog)
+	go func() {
+		el := []EventLog{}
+		for {
+			select {
+			case e := <-repo.eventsChan:
+				el = append(el, e)
+			case <-exit:
+				elChan <- el
+				return
 			}
 		}
+	}()
+
+	repo.Add("", nil, nil)
+	n0 := repo.crdtPositionTree.Min().(positionTreeNode).root
+	repo.Update("a", n0)
+
+	repo.Add("", nil, n0)
+	n1 := n0.parent
+	repo.Update("b", n1)
+
+	repo.Add("", nil, n1)
+	n2 := n1.parent
+	repo.Update("c", n2)
+
+	// match* ptrs would usually be set during the Match() call, but set here manually
+	n0.matchParent = n1
+	repo.MoveDown(n0)
+
+	n1.matchParent = n0
+	repo.MoveDown(n1)
+
+	go func() {
+		exit <- struct{}{}
+	}()
+	correctEl := <-elChan
+
+	// Clear up this repo state prior to running tests below - we only wanted the event log
+	clearUp()
+
+	checkFn := func(t *testing.T, n *ListItem) {
+		// We expect two items in the list as follows: n2 ("c") -> n1 ("b")
+		if n == nil {
+			t.Errorf("node 1 should exist")
+		}
+		if n.parent == nil {
+			t.Errorf("node 2 should exist")
+		}
+		if n.parent.parent == nil {
+			t.Errorf("node 3 should exist")
+		}
+
+		if n.key != n0.key {
+			t.Errorf("first item key is incorrect")
+		}
+		if n.rawLine != n0.rawLine {
+			t.Errorf("first item rawLine is incorrect")
+		}
+		if n.parent.key != n1.key {
+			t.Errorf("second item key is incorrect")
+		}
+		if n.parent.rawLine != n1.rawLine {
+			t.Errorf("second item rawLine is incorrect")
+		}
+		if n.parent.parent.key != n2.key {
+			t.Errorf("third item key is incorrect")
+		}
+		if n.parent.parent.rawLine != n2.rawLine {
+			t.Errorf("third item rawLine is incorrect")
+		}
+
+		if n.child != nil {
+			t.Errorf("first item child should be nil")
+		}
+		if n.parent.parent.parent != nil {
+			t.Errorf("third item parent should be nil")
+		}
+		if n.parent.child.key != n0.key {
+			t.Errorf("second item child should be first item")
+		}
+		if n.parent.parent.child.key != n1.key {
+			t.Errorf("third item child should be second item")
+		}
 	}
-	helper(arr, len(arr))
-	return res
+
+	t.Run("All permutations", func(t *testing.T) {
+		repo, clearUp = setupRepo()
+		for i, p := range permutationsOfEvents(correctEl) {
+			// We can't rely on fresh repos each iterations here because OS+file management lags behind and
+			// causes inconsistencies. Therefore, use the same repo and refresh state
+			repo.crdtPositionTree = btree.New(crdtPositionTreeDegree)
+			repo.listItemCache = make(map[string]*ListItem)
+			repo.addEventSet = make(map[string]EventLog)
+			repo.deleteEventSet = make(map[string]EventLog)
+			repo.positionEventSet = make(map[string]EventLog)
+
+			// 8! == 40320
+			if i == 1 {
+				//runtime.Breakpoint()
+			}
+
+			repo.Replay(p)
+
+			checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+			return
+		}
+		clearUp()
+	})
+}
+
+func TestCRDTMergeDeletes(t *testing.T) {
+	repo, clearUp := setupRepo()
+	repoUUID := uuid(1)
+	repo.uuid = repoUUID
+
+	exit := make(chan struct{})
+	elChan := make(chan []EventLog)
+	go func() {
+		el := []EventLog{}
+		for {
+			select {
+			case e := <-repo.eventsChan:
+				el = append(el, e)
+			case <-exit:
+				elChan <- el
+				return
+			}
+		}
+	}()
+
+	repo.Add("a", nil, nil)
+	n0 := repo.crdtPositionTree.Min().(positionTreeNode).root
+
+	repo.Add("b", nil, n0)
+	n1 := n0.parent
+
+	//repo.Delete(n0)
+
+	//repo.Update("bb", n1)
+
+	repo.Add("c", nil, n1)
+	n2 := n1.parent
+
+	repo.Add("d", nil, n2)
+	n3 := n2.parent
+
+	repo.Add("e", nil, n3)
+	n4 := n3.parent
+
+	repo.Add("f", nil, n4)
+	n5 := n4.parent
+
+	repo.Delete(n0)
+	repo.Delete(n1)
+	repo.Delete(n3)
+	repo.Delete(n5)
+
+	go func() {
+		exit <- struct{}{}
+	}()
+	correctEl := <-elChan
+
+	// Clear up this repo state prior to running tests below - we only wanted the event log
+	clearUp()
+
+	checkFn := func(t *testing.T, n *ListItem) {
+		if n == nil {
+			t.Errorf("node 1 should exist")
+		}
+		if n.parent == nil {
+			t.Errorf("node 2 should exist")
+		}
+
+		if n.key != n2.key {
+			t.Errorf("first item key is incorrect")
+		}
+		if n.rawLine != n2.rawLine {
+			t.Errorf("first item rawLine is incorrect")
+		}
+		if n.parent.key != n4.key {
+			t.Errorf("second item key is incorrect")
+		}
+		if n.parent.rawLine != n4.rawLine {
+			t.Errorf("second item rawLine is incorrect")
+		}
+
+		if n.child != nil {
+			t.Errorf("first item child should be nil")
+		}
+		if n.parent.parent != nil {
+			t.Errorf("second item parent should be nil")
+		}
+		if n.parent.child.key != n2.key {
+			t.Errorf("second item child should be first item")
+		}
+	}
+
+	t.Run("All permutations", func(t *testing.T) {
+		repo, clearUp = setupRepo()
+		for i, p := range permutationsOfEvents(correctEl) {
+			// We can't rely on fresh repos each iterations here because OS+file management lags behind and
+			// causes inconsistencies. Therefore, use the same repo and refresh state
+			repo.crdtPositionTree = btree.New(crdtPositionTreeDegree)
+			repo.listItemCache = make(map[string]*ListItem)
+			repo.addEventSet = make(map[string]EventLog)
+			repo.deleteEventSet = make(map[string]EventLog)
+			repo.positionEventSet = make(map[string]EventLog)
+
+			if i == 100 {
+				return
+			}
+
+			repo.Replay(p)
+
+			checkFn(t, repo.crdtPositionTree.Min().(positionTreeNode).root)
+		}
+		clearUp()
+	})
 }
 
 func permutationsOfEventLogs(arr [][]EventLog) [][][]EventLog {
@@ -1344,9 +1536,16 @@ func TestCRDTMergeReal(t *testing.T) {
 	}
 
 	t.Run("All permutations", func(t *testing.T) {
+		repo, clearUp := setupRepo()
 		el := [][]EventLog{el1, el2, el3, el4}
 		for _, arr := range permutationsOfEventLogs(el) {
-			repo, clearUp := setupRepo()
+			// We can't rely on fresh repos each iterations here because OS+file management lags behind and
+			// causes inconsistencies. Therefore, use the same repo and refresh state
+			repo.crdtPositionTree = btree.New(crdtPositionTreeDegree)
+			repo.listItemCache = make(map[string]*ListItem)
+			repo.addEventSet = make(map[string]EventLog)
+			repo.deleteEventSet = make(map[string]EventLog)
+			repo.positionEventSet = make(map[string]EventLog)
 
 			el := make([]EventLog, 25)
 			i := 0
@@ -1360,8 +1559,8 @@ func TestCRDTMergeReal(t *testing.T) {
 
 			matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
 			checkFn(t, matches)
-			clearUp()
 		}
+		clearUp()
 	})
 }
 

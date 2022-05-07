@@ -746,22 +746,29 @@ func (r *DBListRepo) remove(item *ListItem) error {
 	// 2. node in the middle/end of a linked list
 	//   - stitch the gap
 	oldParent := item.parent
-	currentListItemKey := item.currentLinkedListKey
-	if currentListItemKey == positionTreeRootKey {
+	currentLinkedListKey := item.currentLinkedListKey
+	if currentLinkedListKey == positionTreeRootKey {
 		// TODO centralise root key logic
-		currentListItemKey = ""
+		currentLinkedListKey = ""
 	}
-	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: currentListItemKey})
+	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: currentLinkedListKey})
 	if treeNode != nil && treeNode.(positionTreeNode).root == item {
 		if oldParent != nil {
 			oldParent.child = nil
 			r.crdtPositionTree.ReplaceOrInsert(positionTreeNode{
-				listItemKey: currentListItemKey,
+				listItemKey: item.key,
 				root:        oldParent,
 			})
-		} else {
-			r.crdtPositionTree.Delete(treeNode)
+			// currentLinkedListKey is updated in `insert`, but on `remove` only calls, it's
+			// skipped, so update here too
+			i := oldParent
+			i.currentLinkedListKey = item.key
+			for i.parent != nil {
+				i.parent.currentLinkedListKey = item.key
+				i = i.parent
+			}
 		}
+		r.crdtPositionTree.Delete(treeNode)
 	} else {
 		oldChild := item.child
 		if oldChild != nil {
@@ -779,8 +786,7 @@ func (r *DBListRepo) remove(item *ListItem) error {
 	return nil
 }
 
-// TODO rename
-func (r *DBListRepo) offsetTargetPointers(item, end, targetItem, targetParent *ListItem) (*ListItem, *ListItem, *ListItem, *ListItem) {
+func (r *DBListRepo) mergeItemAfterTargetItem(item, end, targetItem, targetParent *ListItem) {
 	// look at the nearest parent. Use the key to retrieve it's latest PositionEvent. If it shares the same TargetListItemKey and is
 	// also newer than the new item mapped PositionEvent, we skip past it to target it's own parent. In short, if items target the same
 	// target item, more recent events will take precedence and therefore appear higher up the list than older ones (therefore, older events
@@ -807,8 +813,6 @@ func (r *DBListRepo) offsetTargetPointers(item, end, targetItem, targetParent *L
 	}
 	item.child = targetItem
 	end.parent = targetParent
-
-	return item, end, targetItem, targetParent
 }
 
 func (r *DBListRepo) insert(item, targetItem *ListItem) error {
@@ -829,17 +833,38 @@ func (r *DBListRepo) insert(item, targetItem *ListItem) error {
 
 	r.remove(item)
 
-	//retrieve existing ll and tidy nodes, if required
-	itemNode := positionTreeNode{
-		listItemKey: item.key,
+	var targetItemKey, currentLinkedListKey string
+	if targetItem != nil {
+		targetItemKey = targetItem.key
 	}
-
 	var end *ListItem
-	if tn := r.crdtPositionTree.Get(itemNode); tn != nil {
+	//if tn := r.crdtPositionTree.Get(positionTreeNode{listItemKey: item.key}); tn != nil && targetItem != nil && targetItem.currentLinkedListKey == item.key {
+	if tn := r.crdtPositionTree.Get(positionTreeNode{listItemKey: item.key}); tn != nil {
+		// Retrieve the old linked list. If the targetItem is live, and in the old linked list, we insert the item in after said target
 		oldRoot := tn.(positionTreeNode).root
-		item.parent = oldRoot
-		oldRoot.child = item
-		end = item
+		end = oldRoot
+
+		var targetItemInLL bool
+		p := targetItem
+		for p != nil && p.child != nil {
+			p = p.child
+		}
+		if p == oldRoot {
+			targetItemInLL = true
+		}
+
+		if r.itemIsLive(targetItem) && targetItemInLL {
+			// insert item into linked list after targetItem
+			r.mergeItemAfterTargetItem(item, item, targetItem, targetItem.parent)
+			item = oldRoot
+			// bypass mergeItemAfterTargetItem below
+			targetItem = nil
+			targetItemKey = "" // the ll needs to be merged with the root, to avoid it becoming orphaned
+		} else {
+			// put item onto head of linked list
+			item.parent = oldRoot
+			oldRoot.child = item
+		}
 		for end.parent != nil {
 			end = end.parent
 		}
@@ -848,40 +873,14 @@ func (r *DBListRepo) insert(item, targetItem *ListItem) error {
 		end = item
 	}
 
-	var targetItemKey, currentLinkedListKey string
-	if targetItem != nil {
-		targetItemKey = targetItem.key
-	}
-	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey})
-	if treeNode == nil && !r.itemIsLive(targetItem) {
-		// recursively traverse back through previously known targets until we find an active item, or an active node in the tree
-		for {
-			if lastPositionEvent, exists := r.positionEventSet[targetItemKey]; exists {
-				targetItemKey = lastPositionEvent.TargetListItemKey
-				if targetItem = r.listItemCache[targetItemKey]; targetItem != nil && r.itemIsLive(targetItem) {
-					break
-				}
-				if treeNode = r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
-					break
-				}
-			} else {
-				break
-			}
-		}
-	}
-
 	if r.itemIsLive(targetItem) {
-		targetParent := targetItem.parent
+		r.mergeItemAfterTargetItem(item, end, targetItem, targetItem.parent)
 
-		// TODO does end need to be returned now? Or even passed?
-		item, end, targetItem, targetParent = r.offsetTargetPointers(item, end, targetItem, targetParent)
 		currentLinkedListKey = targetItem.currentLinkedListKey
-	} else if treeNode != nil {
+		//} else if treeNode != nil {
+	} else if treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
 		// null targetItem prior to loops below. if no loops occur, item will be at root and therefore have no child
-		targetItem = nil
-		targetParent := treeNode.(positionTreeNode).root
-
-		item, end, targetItem, targetParent = r.offsetTargetPointers(item, item, targetItem, targetParent)
+		r.mergeItemAfterTargetItem(item, item, nil, treeNode.(positionTreeNode).root)
 
 		node := treeNode.(positionTreeNode)
 		newRoot := item
