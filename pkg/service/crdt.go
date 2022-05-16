@@ -20,13 +20,13 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/btree"
 	"nhooyr.io/websocket"
 )
 
@@ -38,16 +38,12 @@ const latestWalSchemaID uint16 = 6
 
 // sync intervals
 const (
-	pullIntervalSeconds = 1
-	pushWaitDuration    = time.Second * time.Duration(1)
-	//pullIntervalSeconds      = 5
-	//pushWaitDuration         = time.Second * time.Duration(5)
+	pullIntervalSeconds      = 5
+	pushWaitDuration         = time.Second * time.Duration(5)
 	gatherWaitDuration       = time.Second * time.Duration(10)
 	compactionGatherMultiple = 2
 	websocketConsumeDuration = time.Millisecond * 600
 	websocketPublishDuration = time.Millisecond * 600
-
-	positionTreeRootKey = "root"
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -585,41 +581,6 @@ func (a *EventLog) before(b EventLog) bool {
 	return vectorClockBefore(a.VectorClock, b.VectorClock)
 }
 
-// positionTreeNode represents a stub node which is yet to be created and added to the live list item list.
-// They're used as a reference parent on which we can order child nodes with known parents.
-type positionTreeNode struct {
-	listItemKey string
-	root        *ListItem
-	//vectorClock map[uuid]int64
-}
-
-// Less implements github.com/google/btree interface
-func (a positionTreeNode) Less(bItem btree.Item) bool {
-	b, _ := bItem.(positionTreeNode)
-
-	//if a.listItemKey == b.listItemKey {
-	//    return vectorClockBefore(a.vectorClock, b.vectorClock)
-	//}
-
-	return a.listItemKey < b.listItemKey
-}
-
-func (r *DBListRepo) getListItems() chan *ListItem {
-	ch := make(chan *ListItem)
-	go func() {
-		r.crdtPositionTree.Ascend(func(i btree.Item) bool {
-			node := i.(positionTreeNode).root
-			for node != nil {
-				ch <- node
-				node = node.parent
-			}
-			return true
-		})
-		close(ch)
-	}()
-	return ch
-}
-
 func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 	var k string
 	if item != nil {
@@ -640,7 +601,6 @@ func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
-	targetItem := r.getOrCreateListItem(e.TargetListItemKey)
 
 	// Each event is either `content`+`positional`, `positional` or `delete`:
 	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
@@ -661,9 +621,15 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		eventCache = r.positionEventSet
 	}
 
+	// for UpdateEvents, we update the TargetListItemKey if a position event has previously occurred
+	if e.EventType == UpdateEvent {
+		if p, exists := r.positionEventSet[e.ListItemKey]; exists {
+			e.TargetListItemKey = p.TargetListItemKey
+		}
+	}
+
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if ce, exists := eventCache[e.ListItemKey]; exists {
-		// TODO also skip if already processed
 		if e.before(ce) {
 			return item, nil
 		}
@@ -694,9 +660,11 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		subEvent.VectorClock = e.VectorClock
 		item, _ = r.processEventLog(subEvent)
 	case DeleteEvent:
-		err = r.del(item)
+		r.crdt.del(e)
 	case PositionEvent:
-		err = r.insert(item, targetItem)
+		if r.itemIsLive(item) {
+			r.crdt.add(e)
+		}
 	}
 
 	r.listItemCache[e.ListItemKey] = item
@@ -733,183 +701,14 @@ func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 	return nil
 }
 
-func (r *DBListRepo) del(item *ListItem) error {
-	r.remove(item)
-	return nil
-}
-
-func (r *DBListRepo) remove(item *ListItem) error {
-	// two potential scenarios:
-	// 1. node at head of linked list:
-	//   - remove the item from the linked list
-	//   - if the item had no parents, delete the tree node also
-	// 2. node in the middle/end of a linked list
-	//   - stitch the gap
-	oldParent := item.parent
-	currentLinkedListKey := item.currentLinkedListKey
-	if currentLinkedListKey == positionTreeRootKey {
-		// TODO centralise root key logic
-		currentLinkedListKey = ""
+func (r *DBListRepo) getLatestVectorClock(item *ListItem) map[uuid]int64 {
+	// if the item is being newly added, the add event comes before the position event, so default to the add event if position is not
+	// yet set
+	latestVectorClockEvent, exists := r.positionEventSet[item.key]
+	if !exists {
+		latestVectorClockEvent = r.addEventSet[item.key]
 	}
-	treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: currentLinkedListKey})
-	if treeNode != nil && treeNode.(positionTreeNode).root == item {
-		if oldParent != nil {
-			oldParent.child = nil
-			r.crdtPositionTree.ReplaceOrInsert(positionTreeNode{
-				listItemKey: item.key,
-				root:        oldParent,
-			})
-			// currentLinkedListKey is updated in `insert`, but on `remove` only calls, it's
-			// skipped, so update here too
-			i := oldParent
-			i.currentLinkedListKey = item.key
-			for i.parent != nil {
-				i.parent.currentLinkedListKey = item.key
-				i = i.parent
-			}
-		}
-		r.crdtPositionTree.Delete(treeNode)
-	} else {
-		oldChild := item.child
-		if oldChild != nil {
-			item.child.parent = oldParent
-		}
-		if oldParent != nil {
-			item.parent.child = oldChild
-		}
-	}
-
-	item.child = nil
-	item.parent = nil
-	item.currentLinkedListKey = ""
-
-	return nil
-}
-
-func (r *DBListRepo) mergeItemAfterTargetItem(item, end, targetItem, targetParent *ListItem) {
-	// look at the nearest parent. Use the key to retrieve it's latest PositionEvent. If it shares the same TargetListItemKey and is
-	// also newer than the new item mapped PositionEvent, we skip past it to target it's own parent. In short, if items target the same
-	// target item, more recent events will take precedence and therefore appear higher up the list than older ones (therefore, older events
-	// with shared TargetListItemKey's will be lower in the linked list)
-	newPositionEvent := r.positionEventSet[item.key]
-	isOlderThanFn := func(i *ListItem) bool {
-		if i == nil {
-			return false
-		}
-		parentPositionEvent := r.positionEventSet[i.key]
-		return newPositionEvent.TargetListItemKey == parentPositionEvent.TargetListItemKey && newPositionEvent.before(parentPositionEvent)
-	}
-	for isOlderThanFn(targetParent) {
-		targetItem = targetParent
-		targetParent = targetParent.parent
-	}
-
-	if targetItem != nil {
-		targetParent = targetItem.parent
-		targetItem.parent = item
-	}
-	if targetParent != nil {
-		targetParent.child = item
-	}
-	item.child = targetItem
-	end.parent = targetParent
-}
-
-func (r *DBListRepo) insert(item, targetItem *ListItem) error {
-	// if item key as a tree node:
-	// - join it's ll to the new item
-	// - create new node with key as new targetItemKey
-	// - add item as root to new node
-	// - delete the node
-	//
-	// then, three branch scenarios:
-	// 1. target item live, insert item directly after it
-	// 2. target item exists as a tree node, resolve with items in root node via clock comparisons
-	// 3. target item not exists as a tree node, create, add item as root, and add node to tree
-
-	if !r.itemIsLive(item) {
-		return nil
-	}
-
-	r.remove(item)
-
-	var targetItemKey, currentLinkedListKey string
-	if targetItem != nil {
-		targetItemKey = targetItem.key
-	}
-	var end *ListItem
-	//if tn := r.crdtPositionTree.Get(positionTreeNode{listItemKey: item.key}); tn != nil && targetItem != nil && targetItem.currentLinkedListKey == item.key {
-	if tn := r.crdtPositionTree.Get(positionTreeNode{listItemKey: item.key}); tn != nil {
-		// Retrieve the old linked list. If the targetItem is live, and in the old linked list, we insert the item in after said target
-		oldRoot := tn.(positionTreeNode).root
-		end = oldRoot
-
-		var targetItemInLL bool
-		p := targetItem
-		for p != nil && p.child != nil {
-			p = p.child
-		}
-		if p == oldRoot {
-			targetItemInLL = true
-		}
-
-		if r.itemIsLive(targetItem) && targetItemInLL {
-			// insert item into linked list after targetItem
-			r.mergeItemAfterTargetItem(item, item, targetItem, targetItem.parent)
-			item = oldRoot
-			// bypass mergeItemAfterTargetItem below
-			targetItem = nil
-			targetItemKey = "" // the ll needs to be merged with the root, to avoid it becoming orphaned
-		} else {
-			// put item onto head of linked list
-			item.parent = oldRoot
-			oldRoot.child = item
-		}
-		for end.parent != nil {
-			end = end.parent
-		}
-		r.crdtPositionTree.Delete(tn)
-	} else {
-		end = item
-	}
-
-	if r.itemIsLive(targetItem) {
-		r.mergeItemAfterTargetItem(item, end, targetItem, targetItem.parent)
-
-		currentLinkedListKey = targetItem.currentLinkedListKey
-		//} else if treeNode != nil {
-	} else if treeNode := r.crdtPositionTree.Get(positionTreeNode{listItemKey: targetItemKey}); treeNode != nil {
-		// null targetItem prior to loops below. if no loops occur, item will be at root and therefore have no child
-		r.mergeItemAfterTargetItem(item, item, nil, treeNode.(positionTreeNode).root)
-
-		node := treeNode.(positionTreeNode)
-		newRoot := item
-		for newRoot.child != nil {
-			newRoot = newRoot.child
-		}
-		node.root = newRoot
-		r.crdtPositionTree.ReplaceOrInsert(node)
-		currentLinkedListKey = node.listItemKey
-	} else {
-		node := positionTreeNode{
-			listItemKey: targetItemKey,
-			root:        item,
-		}
-		r.crdtPositionTree.ReplaceOrInsert(node)
-		currentLinkedListKey = targetItemKey
-	}
-
-	if currentLinkedListKey == "" {
-		currentLinkedListKey = positionTreeRootKey
-	}
-	item.currentLinkedListKey = currentLinkedListKey
-	item = item.parent
-	for item != nil {
-		item.currentLinkedListKey = currentLinkedListKey
-		item = item.parent
-	}
-
-	return nil
+	return latestVectorClockEvent.VectorClock
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list
@@ -1319,36 +1118,52 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, c chan []Even
 	// is unbounded)
 	// We merge all wals before publishing to the walchan as each time the main app event loop consumes from walchan,
 	// it blocks user input and creates a poor user experience.
+	//nameC := make(chan string)
+	//go func() {
 	for wf, newWals := range newWalfileMap {
 		for newWal := range newWals {
-			if !r.isWalChecksumProcessed(newWal) {
-				pr, pw := io.Pipe()
-				go func() {
-					defer pw.Close()
-					if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
-						// TODO handle
-						//log.Fatal(err)
-					}
-				}()
-
-				// Build new wals
-				newWfWal, err := buildFromFile(pr)
-				if err != nil {
-					// Ignore incompatible files
-					continue
+			//if !r.isWalChecksumProcessed(newWal) {
+			pr, pw := io.Pipe()
+			go func() {
+				defer pw.Close()
+				if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
+					// TODO handle
+					//log.Fatal(err)
 				}
+			}()
 
+			// Build new wals
+			newWfWal, err := buildFromFile(pr)
+			if err != nil {
+				// Ignore incompatible files
+				continue
+			}
+
+			if len(newWfWal) > 0 {
 				go func() {
-					if len(newWfWal) > 0 {
-						c <- newWfWal
-					}
+					c <- newWfWal
 					// Add to the processed cache after we've successfully pulled it
-					// TODO strictly we should only set processed once it's successfull merged and displayed to client
-					r.setProcessedWalChecksum(newWal)
+					// TODO strictly we should only set processed once it's successfully merged and displayed to client
+					//r.setProcessedWalChecksum(newWal)
 				}()
 			}
+			//nameC <- newWal
+			//}
+			//r.setProcessedWalChecksum(newWal)
 		}
 	}
+	//close(nameC)
+	//}()
+
+	//names := []string{}
+	//for n := range nameC {
+	//    names = append(names, n)
+	//}
+
+	//go func() {
+	//    time.Sleep(time.Second * 3)
+	//    log.Print(names)
+	//}()
 
 	return newWalfileMap, nil
 }
@@ -1604,7 +1419,9 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 	if _, err := r.pull(ctx, []WalFile{r.LocalWalFile}, replayChan); err != nil {
 		return err
 	}
-	scheduleSync()
+	//time.Sleep(time.Second * 4)
+	//os.Exit(0)
+	//scheduleSync()
 
 	// Main sync event loop
 	go func() {
@@ -1935,4 +1752,22 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	wf.Flush(ctx, b, fmt.Sprintf("%d", uuid))
 
 	return nil
+}
+
+func (r *DBListRepo) TestPullLocal() error {
+	c := make(chan []EventLog)
+	if _, err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
+		return err
+	}
+	//go func() {
+	for {
+		wal := <-c
+		//s := fmt.Sprintf("%v", wal)
+		runtime.Breakpoint()
+		//fmt.Printf(s)
+		r.Replay(wal)
+	}
+	//}()
+	//runtime.Breakpoint()
+	//return nil
 }

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"container/list"
 	"errors"
 	"sort"
 	"strconv"
@@ -22,7 +21,7 @@ const (
 	viewFilePattern   = "view_%v"
 	exportFilePattern = "export_%v.txt"
 
-	crdtPositionTreeDegree = 2
+	crdtPositionTreeDegree = 6
 )
 
 type bits uint32
@@ -53,9 +52,9 @@ type DBListRepo struct {
 	//listItemProcessedEventLogTypeCache        map[EventType]map[string]EventLog
 	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
 
-	crdtPositionTree          *btree.BTree
-	crdtPositionTreeElemCache map[string]EventLog
-	crdtList                  *list.List
+	crdtPositionTree    *btree.BTree
+	crdtTargetItemCache map[string]*ListItem
+	crdt                *crdtTree
 
 	// Wal stuff
 	uuid              uuid
@@ -115,9 +114,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		deleteEventSet:   make(map[string]EventLog),
 		positionEventSet: make(map[string]EventLog),
 
-		crdtPositionTree:          btree.New(crdtPositionTreeDegree),
-		crdtPositionTreeElemCache: make(map[string]EventLog),
-		crdtList:                  list.New(),
+		crdtPositionTree:    btree.New(crdtPositionTreeDegree),
+		crdtTargetItemCache: make(map[string]*ListItem),
+		crdt:                newTree(),
 
 		LocalWalFile: localWalFile,
 		eventsChan:   make(chan EventLog),
@@ -218,8 +217,6 @@ type ListItem struct {
 	matchChild  *ListItem
 	matchParent *ListItem
 
-	currentLinkedListKey string
-
 	friends LineFriends
 
 	localEmail string // set at creation time and used to exclude from Friends() method
@@ -303,6 +300,11 @@ func (r *DBListRepo) Update(line string, item *ListItem) error {
 	// Undo event created from pre event processing state
 	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 
+	if c := item.matchChild; c != nil {
+		e.TargetListItemKey = c.key
+		ue.TargetListItemKey = c.key
+	}
+
 	r.addEventLog(e)
 	r.addUndoLog(ue, e)
 	return nil
@@ -334,6 +336,15 @@ func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 	r.addEventLog(e)
 	r.addUndoLog(ue, e)
 
+	// the client is responsible for repositioning the old parent, if present
+	if p := item.matchParent; p != nil {
+		posEvent := r.newEventLogFromListItem(PositionEvent, p, true)
+		if item.matchChild != nil {
+			posEvent.TargetListItemKey = item.matchChild.key
+		}
+		r.addEventLog(posEvent)
+	}
+
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
 	// not match the current specified search groups)
@@ -351,16 +362,25 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	if item.matchChild != nil {
 		e := r.newEventLogFromListItem(PositionEvent, item, true)
 		e.TargetListItemKey = ""
-		if item.matchChild.child != nil {
-			e.TargetListItemKey = item.matchChild.child.key
+		if item.matchChild.matchChild != nil {
+			e.TargetListItemKey = item.matchChild.matchChild.key
 		}
-
 		r.addEventLog(e)
+
+		// client is responsible for repointing the matchChild and matchParent
+		childEvent := r.newEventLogFromListItem(PositionEvent, item.matchChild, true)
+		childEvent.TargetListItemKey = item.key
+		r.addEventLog(childEvent)
+		if item.matchParent != nil {
+			parentEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent, true)
+			parentEvent.TargetListItemKey = item.matchChild.key
+			r.addEventLog(parentEvent)
+		}
 
 		ue := r.newEventLogFromListItem(PositionEvent, item, false)
 		ue.TargetListItemKey = item.matchChild.key
-
 		r.addUndoLog(ue, e)
+		// TODO extra undo events too (due to repointing)
 	}
 	return nil
 }
@@ -371,16 +391,28 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 	if item.matchParent != nil {
 		e := r.newEventLogFromListItem(PositionEvent, item, true)
 		e.TargetListItemKey = item.matchParent.key
-
 		r.addEventLog(e)
+
+		// client is responsible for repointing the matchParent and matchParent.matchParent
+		upEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent, true)
+		upEvent.TargetListItemKey = ""
+		if item.matchChild != nil {
+			upEvent.TargetListItemKey = item.matchChild.key
+		}
+		r.addEventLog(upEvent)
+		if item.matchParent.matchParent != nil {
+			upEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent.matchParent, true)
+			upEvent.TargetListItemKey = item.key
+			r.addEventLog(upEvent)
+		}
 
 		ue := r.newEventLogFromListItem(PositionEvent, item, false)
 		ue.TargetListItemKey = ""
 		if item.matchChild != nil {
 			ue.TargetListItemKey = item.matchChild.key
 		}
-
 		r.addUndoLog(ue, e)
+		// TODO extra undo events too (due to repointing)
 	}
 	return nil
 }
@@ -483,7 +515,9 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
-	for cur := range r.getListItems() {
+	//for cur := range r.getListItems() {
+	for curKey := range r.crdt.traverse() {
+		cur := r.listItemCache[curKey]
 		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
