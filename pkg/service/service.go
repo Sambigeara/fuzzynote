@@ -89,6 +89,8 @@ type DBListRepo struct {
 	finalFlushChan     chan struct{}
 
 	hasSyncedRemotes bool
+
+	isTest bool
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo

@@ -591,6 +591,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 
 func TestCRDTAllPermsMix(t *testing.T) {
 	repo, clearUp := setupRepo()
+	repo.isTest = true
 	repoUUID := uuid(1)
 	repo.uuid = repoUUID
 
@@ -694,6 +695,7 @@ func TestCRDTAllPermsMix(t *testing.T) {
 
 func TestCRDTAllPermsMoves(t *testing.T) {
 	repo, clearUp := setupRepo()
+	repo.isTest = true
 	repoUUID := uuid(1)
 	repo.uuid = repoUUID
 
@@ -801,6 +803,7 @@ func TestCRDTAllPermsMoves(t *testing.T) {
 
 func TestCRDTAllPermsDeletes(t *testing.T) {
 	repo, clearUp := setupRepo()
+	repo.isTest = true
 	repo.uuid = uuid(1)
 
 	exit := make(chan struct{})

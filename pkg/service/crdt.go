@@ -1604,16 +1604,18 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 
 	// Push to all WalFiles
 	var flushAgg, wsPubAgg []EventLog
-	go func() {
-		for {
-			select {
-			case e := <-r.eventsChan:
-				wsPubAgg = merge(wsPubAgg, []EventLog{e})
-			case <-ctx.Done():
-				return
+	if !r.isTest {
+		go func() {
+			for {
+				select {
+				case e := <-r.eventsChan:
+					wsPubAgg = merge(wsPubAgg, []EventLog{e})
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 	wsPublishTicker := time.NewTicker(websocketPublishDuration)
 	go func() {
 		for {
