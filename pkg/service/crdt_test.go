@@ -664,90 +664,6 @@ func TestCRDTAllPermsMix(t *testing.T) {
 		}
 		return success
 	}
-
-	t.Run("Replay in order", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
-
-		el := make([]EventLog, len(correctEl))
-		copy(el, correctEl)
-
-		repo.Replay(el)
-
-		if !checkFn(t, repo) {
-			return
-		}
-	})
-	t.Run("Replay adds in reverse order", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
-
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:2], correctEl[4:6]) // c
-		copy(el[2:4], correctEl[2:4]) // b
-		copy(el[4:6], correctEl[0:2]) // a
-		copy(el[6:], correctEl[6:])   // move + delete
-
-		repo.Replay(el)
-
-		if !checkFn(t, repo) {
-			return
-		}
-	})
-	t.Run("Replay delete first", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
-
-		// TODO the below
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:1], correctEl[7:8]) // delete
-		copy(el[1:8], correctEl[0:7])
-
-		repo.Replay(el)
-
-		if !checkFn(t, repo) {
-			return
-		}
-	})
-	t.Run("Replay move first", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
-
-		// TODO the below
-		el := make([]EventLog, len(correctEl))
-		copy(el[0:1], correctEl[6:7]) // move
-		copy(el[1:7], correctEl[0:6])
-		copy(el[7:8], correctEl[7:8]) // delete
-
-		repo.Replay(el)
-
-		if !checkFn(t, repo) {
-			return
-		}
-	})
-	t.Run("Replay in reverse", func(t *testing.T) {
-		repo, clearUp := setupRepo()
-		defer clearUp()
-		repo.uuid = repoUUID
-
-		el := make([]EventLog, len(correctEl))
-		copy(el, correctEl)
-
-		// Reverse the log
-		for i, j := 0, len(el)-1; i < j; i, j = i+1, j-1 {
-			el[i], el[j] = el[j], el[i]
-		}
-
-		repo.Replay(el)
-
-		if !checkFn(t, repo) {
-			return
-		}
-	})
 	t.Run("All permutations", func(t *testing.T) {
 		repo, clearUp = setupRepo()
 		defer clearUp()
@@ -761,9 +677,9 @@ func TestCRDTAllPermsMix(t *testing.T) {
 			repo.positionEventSet = make(map[string]EventLog)
 
 			// 8! == 40320
-			if i == 775 {
-				//runtime.Breakpoint()
-			}
+			//if i == 120 {
+			//runtime.Breakpoint()
+			//}
 
 			repo.Replay(p)
 

@@ -588,12 +588,8 @@ func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 	}
 
 	latestAddEvent, isAdded := r.addEventSet[k]
-	_, isMoved := r.positionEventSet[k]
-
-	isLive := isAdded || isMoved
-
 	latestDeleteEvent, isDeleted := r.deleteEventSet[k]
-	if isLive && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
+	if isAdded && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
 		return true
 	}
 	return false
@@ -621,13 +617,6 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		eventCache = r.positionEventSet
 	}
 
-	// for UpdateEvents, we update the TargetListItemKey if a position event has previously occurred
-	if e.EventType == UpdateEvent {
-		if p, exists := r.positionEventSet[e.ListItemKey]; exists {
-			e.TargetListItemKey = p.TargetListItemKey
-		}
-	}
-
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if ce, exists := eventCache[e.ListItemKey]; exists {
 		if e.before(ce) {
@@ -635,8 +624,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		}
 	}
 
-	// Add the event to the cache AFTER the deletion check above, otherwise deleted events will be added then immediately
-	// return early as the event will be equal to itself in the next check
+	// Add the event to the cache after the pre-existence checks above
 	eventCache[e.ListItemKey] = e
 
 	// Iterate over all counters in the event clock and update the local vector representation for each newer one
@@ -653,11 +641,22 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	switch e.EventType {
 	case UpdateEvent:
 		err = r.update(item, e)
-		// Manually construct and handle a position event separately.
-		subEvent := r.newEventLogFromListItem(PositionEvent, item, false)
-		// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event
-		subEvent.TargetListItemKey = e.TargetListItemKey
-		subEvent.VectorClock = e.VectorClock
+
+		// There's a case where we receive later PositionEvents out of order, but do not action PositionEvents for
+		// items which have not yet been added. Therefore, check the positionEventSet for an event later than this
+		// update, and if one exists, set subEvent to this cached event. Otherwise, generate a new one from the
+		// UpdateEvent and override the VectorClock and TargetListItemKey
+		var subEvent EventLog
+		if ce, exists := r.positionEventSet[e.ListItemKey]; exists && e.before(ce) {
+			subEvent = ce
+		} else {
+			// Manually construct and handle a position event separately.
+			subEvent = r.newEventLogFromListItem(PositionEvent, item, false)
+			subEvent.VectorClock = e.VectorClock
+			// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event
+			subEvent.TargetListItemKey = e.TargetListItemKey
+		}
+
 		item, _ = r.processEventLog(subEvent)
 	case DeleteEvent:
 		r.crdt.del(e)

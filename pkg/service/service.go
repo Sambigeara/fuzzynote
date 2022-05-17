@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/btree"
 )
 
 type (
@@ -20,8 +18,6 @@ const (
 	walFilePattern    = "wal_%v.db"
 	viewFilePattern   = "view_%v"
 	exportFilePattern = "export_%v.txt"
-
-	crdtPositionTreeDegree = 6
 )
 
 type bits uint32
@@ -52,9 +48,7 @@ type DBListRepo struct {
 	//listItemProcessedEventLogTypeCache        map[EventType]map[string]EventLog
 	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
 
-	crdtPositionTree    *btree.BTree
-	crdtTargetItemCache map[string]*ListItem
-	crdt                *crdtTree
+	crdt *crdtTree
 
 	// Wal stuff
 	uuid              uuid
@@ -114,9 +108,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		deleteEventSet:   make(map[string]EventLog),
 		positionEventSet: make(map[string]EventLog),
 
-		crdtPositionTree:    btree.New(crdtPositionTreeDegree),
-		crdtTargetItemCache: make(map[string]*ListItem),
-		crdt:                newTree(),
+		crdt: newTree(),
 
 		LocalWalFile: localWalFile,
 		eventsChan:   make(chan EventLog),
@@ -322,6 +314,11 @@ func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
 	// Undo event created from pre event processing state
 	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 
+	if c := item.matchChild; c != nil {
+		e.TargetListItemKey = c.key
+		ue.TargetListItemKey = c.key
+	}
+
 	r.addEventLog(e)
 	r.addUndoLog(ue, e)
 	return nil
@@ -516,8 +513,8 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
 	//for cur := range r.getListItems() {
-	for curKey := range r.crdt.traverse() {
-		cur := r.listItemCache[curKey]
+	for nodeKey := range r.crdt.traverse() {
+		cur := r.listItemCache[nodeKey]
 		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
