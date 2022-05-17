@@ -146,8 +146,8 @@ func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLo
 func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem, incrementLocalVector bool) EventLog {
 	e := r.newEventLog(t, incrementLocalVector)
 	e.ListItemKey = item.key
-	if item.child != nil {
-		e.TargetListItemKey = item.child.key
+	if item.matchChild != nil {
+		e.TargetListItemKey = item.matchChild.key
 	}
 	e.Line = item.rawLine
 	e.Note = item.Note
@@ -640,7 +640,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	var err error
 	switch e.EventType {
 	case UpdateEvent:
-		err = r.update(item, e)
+		err = updateItemFromEvent(item, e, r.email)
 
 		// There's a case where we receive later PositionEvents out of order, but do not action PositionEvents for
 		// items which have not yet been added. Therefore, check the positionEventSet for an event later than this
@@ -671,7 +671,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	return item, err
 }
 
-func (r *DBListRepo) update(item *ListItem, e EventLog) error {
+func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
 	item.rawLine = e.Line
 	item.Note = e.Note
@@ -690,7 +690,7 @@ func (r *DBListRepo) update(item *ListItem, e EventLog) error {
 
 	emails := []string{}
 	for e := range mergedEmailMap {
-		if e != r.email {
+		if e != email {
 			emails = append(emails, e)
 		}
 	}

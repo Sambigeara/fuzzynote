@@ -257,6 +257,31 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	return item, err
 }
 
+func (r *DBListRepo) update(line string, item *ListItem, incrementLocalVector bool) EventLog {
+	e := r.newEventLogFromListItem(UpdateEvent, item, incrementLocalVector)
+	e.Line = line
+	return e
+}
+
+func (r *DBListRepo) updateNote(note []byte, item *ListItem, incrementLocalVector bool) EventLog {
+	e := r.newEventLogFromListItem(UpdateEvent, item, incrementLocalVector)
+	e.Note = note
+	return e
+}
+
+func (r *DBListRepo) del(item *ListItem, incrementLocalVector bool) EventLog {
+	return r.newEventLogFromListItem(DeleteEvent, item, incrementLocalVector)
+}
+
+func (r *DBListRepo) move(item, targetItem *ListItem, incrementLocalVector bool) EventLog {
+	e := r.newEventLogFromListItem(PositionEvent, item, incrementLocalVector)
+	e.TargetListItemKey = ""
+	if targetItem != nil {
+		e.TargetListItemKey = targetItem.key
+	}
+	return e
+}
+
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
 func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
@@ -271,11 +296,8 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 
 	newItem, _ := r.addEventLog(e)
 
-	ue := r.newEventLog(DeleteEvent, false)
-	ue.ListItemKey = listItemKey
-	ue.Line = line // needed for Friends generation in repositionActiveFriends
-
-	r.addUndoLog(ue, e)
+	ue := r.del(newItem, false)
+	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
 
 	return newItem.key, nil
 }
@@ -286,19 +308,11 @@ func (r *DBListRepo) Update(line string, item *ListItem) error {
 		return nil
 	}
 
-	e := r.newEventLogFromListItem(UpdateEvent, item, true)
-	e.Line = line
-
-	// Undo event created from pre event processing state
-	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
-
-	if c := item.matchChild; c != nil {
-		e.TargetListItemKey = c.key
-		ue.TargetListItemKey = c.key
-	}
+	e := r.update(line, item, true)
+	ue := r.update(item.rawLine, item, false)
 
 	r.addEventLog(e)
-	r.addUndoLog(ue, e)
+	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
 	return nil
 }
 
@@ -308,39 +322,33 @@ func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
 		return nil
 	}
 
-	e := r.newEventLogFromListItem(UpdateEvent, item, true)
-	e.Note = note
-
-	// Undo event created from pre event processing state
-	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
-
-	if c := item.matchChild; c != nil {
-		e.TargetListItemKey = c.key
-		ue.TargetListItemKey = c.key
-	}
+	e := r.updateNote(note, item, true)
+	ue := r.updateNote(item.Note, item, false)
 
 	r.addEventLog(e)
-	r.addUndoLog(ue, e)
+	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
 	return nil
 }
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) (string, error) {
-
-	e := r.newEventLogFromListItem(DeleteEvent, item, true)
+	e := r.del(item, true)
 	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 
 	r.addEventLog(e)
-	r.addUndoLog(ue, e)
+	events := []EventLog{e}
+	undoEvents := []EventLog{ue}
 
 	// the client is responsible for repositioning the old parent, if present
 	if p := item.matchParent; p != nil {
-		posEvent := r.newEventLogFromListItem(PositionEvent, p, true)
-		if item.matchChild != nil {
-			posEvent.TargetListItemKey = item.matchChild.key
-		}
+		posEvent := r.move(item.matchParent, item.matchChild, false)
+		undoPosEvent := r.move(item.matchParent, item, false)
 		r.addEventLog(posEvent)
+		events = append(events, posEvent)
+		undoEvents = append(undoEvents, undoPosEvent)
 	}
+
+	r.addUndoLogs(undoEvents, events)
 
 	// We use matchChild to set the next "current key", otherwise, if we delete the final matched item, which happens
 	// to have a child in the full (un-matched) set, it will default to that on the return (confusing because it will
@@ -357,27 +365,28 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// We need to target the child of the child (as when we apply move events, we specify the target that we want to be
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
-		e := r.newEventLogFromListItem(PositionEvent, item, true)
-		e.TargetListItemKey = ""
-		if item.matchChild.matchChild != nil {
-			e.TargetListItemKey = item.matchChild.matchChild.key
-		}
+		var events, undoEvents []EventLog
+		e := r.move(item, item.matchChild.matchChild, true)
+		ue := r.move(item, item.matchChild, false)
 		r.addEventLog(e)
+		events = append(events, e)
+		undoEvents = append(undoEvents, ue)
 
 		// client is responsible for repointing the matchChild and matchParent
-		childEvent := r.newEventLogFromListItem(PositionEvent, item.matchChild, true)
-		childEvent.TargetListItemKey = item.key
+		childEvent := r.move(item.matchChild, item, false)
+		undoChildEvent := r.move(item.matchChild, item.matchChild.matchChild, false)
 		r.addEventLog(childEvent)
-		if item.matchParent != nil {
-			parentEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent, true)
-			parentEvent.TargetListItemKey = item.matchChild.key
-			r.addEventLog(parentEvent)
-		}
+		events = append(events, childEvent)
+		undoEvents = append(undoEvents, undoChildEvent)
 
-		ue := r.newEventLogFromListItem(PositionEvent, item, false)
-		ue.TargetListItemKey = item.matchChild.key
-		r.addUndoLog(ue, e)
-		// TODO extra undo events too (due to repointing)
+		if item.matchParent != nil {
+			parentEvent := r.move(item.matchParent, item.matchChild, false)
+			undoParentEvent := r.move(item.matchParent, item, false)
+			r.addEventLog(parentEvent)
+			events = append(events, parentEvent)
+			undoEvents = append(undoEvents, undoParentEvent)
+		}
+		r.addUndoLogs(undoEvents, events)
 	}
 	return nil
 }
@@ -386,30 +395,28 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 // current matches into account.
 func (r *DBListRepo) MoveDown(item *ListItem) error {
 	if item.matchParent != nil {
-		e := r.newEventLogFromListItem(PositionEvent, item, true)
-		e.TargetListItemKey = item.matchParent.key
+		var events, undoEvents []EventLog
+		e := r.move(item, item.matchParent, true)
+		ue := r.move(item, item.matchChild, false)
 		r.addEventLog(e)
+		events = append(events, e)
+		undoEvents = append(undoEvents, ue)
 
 		// client is responsible for repointing the matchParent and matchParent.matchParent
-		upEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent, true)
-		upEvent.TargetListItemKey = ""
-		if item.matchChild != nil {
-			upEvent.TargetListItemKey = item.matchChild.key
-		}
-		r.addEventLog(upEvent)
-		if item.matchParent.matchParent != nil {
-			upEvent := r.newEventLogFromListItem(PositionEvent, item.matchParent.matchParent, true)
-			upEvent.TargetListItemKey = item.key
-			r.addEventLog(upEvent)
-		}
+		parentEvent := r.move(item.matchParent, item.matchChild, false)
+		undoParentEvent := r.move(item.matchParent, item, false)
+		r.addEventLog(parentEvent)
+		events = append(events, parentEvent)
+		undoEvents = append(undoEvents, undoParentEvent)
 
-		ue := r.newEventLogFromListItem(PositionEvent, item, false)
-		ue.TargetListItemKey = ""
-		if item.matchChild != nil {
-			ue.TargetListItemKey = item.matchChild.key
+		if item.matchParent.matchParent != nil {
+			childEvent := r.move(item.matchParent.matchParent, item, false)
+			undoChildEvent := r.move(item.matchParent.matchParent, item.matchParent, false)
+			r.addEventLog(childEvent)
+			events = append(events, childEvent)
+			undoEvents = append(undoEvents, undoChildEvent)
 		}
-		r.addUndoLog(ue, e)
-		// TODO extra undo events too (due to repointing)
+		r.addUndoLogs(undoEvents, events)
 	}
 	return nil
 }
@@ -421,13 +428,9 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 	var focusedItemKey string
 	if item.IsHidden {
 		newIsHidden = false
-		//evType = ShowEvent
-		//oppEvType = HideEvent
 		// Cursor should remain on newly visible key
 		focusedItemKey = item.key
 	} else {
-		//evType = HideEvent
-		//oppEvType = ShowEvent
 		newIsHidden = true
 		// Set focusedItemKey to parent if available, else child (e.g. bottom of list)
 		if item.matchParent != nil {
@@ -442,26 +445,38 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 
 	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
 	ue.IsHidden = !newIsHidden
-	r.addUndoLog(ue, e)
+	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
 
 	return focusedItemKey, nil
+}
+
+func (r *DBListRepo) replayEventsFromUndoLog(events []EventLog) string {
+	// TODO centralise
+	// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
+	// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
+	// to the old ListItem in the caches
+	r.incLocalVectorDT() // we increment once, as the events are atomic, and the ListItemKeys are unique, so they can share the VectorClock
+	var key string
+	for i, e := range events {
+		e.VectorClock = r.getLocalVectorClockCopy()
+		item, _ := r.addEventLog(e)
+		if i == 0 && item != nil {
+			if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
+				key = c.key
+			} else {
+				key = item.key
+			}
+		}
+	}
+	return key
 }
 
 func (r *DBListRepo) Undo() (string, error) {
 	if r.eventLogger.curIdx > 0 {
 		ue := r.eventLogger.log[r.eventLogger.curIdx]
-		e := ue.oppEvent
-
-		// TODO centralise
-		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
-		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
-		// to the old ListItem in the caches
-		r.incLocalVectorDT()
-		e.VectorClock = r.getLocalVectorClockCopy()
-
-		item, err := r.addEventLog(e)
+		key := r.replayEventsFromUndoLog(ue.oppEvents)
 		r.eventLogger.curIdx--
-		return item.key, err
+		return key, nil
 	}
 	return "", nil
 }
@@ -470,26 +485,9 @@ func (r *DBListRepo) Redo() (string, error) {
 	// Redo needs to look forward +1 index when actioning events
 	if r.eventLogger.curIdx < len(r.eventLogger.log)-1 {
 		ue := r.eventLogger.log[r.eventLogger.curIdx+1]
-		e := ue.event
-
-		// TODO centralise
-		// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
-		// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
-		// to the old ListItem in the caches
-		r.incLocalVectorDT()
-		e.VectorClock = r.getLocalVectorClockCopy()
-
-		item, err := r.addEventLog(e)
+		key := r.replayEventsFromUndoLog(ue.events)
 		r.eventLogger.curIdx++
-		var key string
-		if item != nil {
-			if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
-				key = c.key
-			} else {
-				key = item.key
-			}
-		}
-		return key, err
+		return key, nil
 	}
 	return "", nil
 }
