@@ -287,29 +287,27 @@ func (r *DBListRepo) move(item, targetItem *ListItem, incrementLocalVector bool)
 // Add adds a new LineItem with string, note and a position to insert the item into the matched list
 // It returns a string representing the unique key of the newly created item
 func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
+	var events []EventLog
+
 	e := r.newEventLog(UpdateEvent, true)
-	listItemKey := strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.getLocalVectorDT()))
-	e.ListItemKey = listItemKey
-	if childItem != nil {
-		e.TargetListItemKey = childItem.key
-	}
+	e.ListItemKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.getLocalVectorDT()))
 	e.Line = line
 	e.Note = note
-
 	newItem, _ := r.addEventLog(e)
-
 	ue := r.del(newItem, false)
-	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
+	events = append(events, e)
+
+	posEvent := r.move(newItem, childItem, true)
+	r.addEventLog(posEvent)
+	events = append(events, posEvent)
+
+	r.addUndoLogs([]EventLog{ue}, events)
 
 	return newItem.key, nil
 }
 
 // Update will update the line or note of an existing ListItem
 func (r *DBListRepo) Update(line string, item *ListItem) error {
-	if item == nil {
-		return nil
-	}
-
 	e := r.update(line, item, true)
 	ue := r.update(item.rawLine, item, false)
 
@@ -320,10 +318,6 @@ func (r *DBListRepo) Update(line string, item *ListItem) error {
 
 // TODO rethink this interface
 func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
-	if item == nil {
-		return nil
-	}
-
 	e := r.updateNote(note, item, true)
 	ue := r.updateNote(item.Note, item, false)
 
@@ -340,15 +334,6 @@ func (r *DBListRepo) Delete(item *ListItem) (string, error) {
 	r.addEventLog(e)
 	events := []EventLog{e}
 	undoEvents := []EventLog{ue}
-
-	// the client is responsible for repositioning the old parent, if present
-	if p := item.matchParent; p != nil {
-		posEvent := r.move(item.matchParent, item.matchChild, false)
-		undoPosEvent := r.move(item.matchParent, item, false)
-		r.addEventLog(posEvent)
-		events = append(events, posEvent)
-		undoEvents = append(undoEvents, undoPosEvent)
-	}
 
 	r.addUndoLogs(undoEvents, events)
 
@@ -374,15 +359,8 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
 
-		// client is responsible for repointing the matchChild and matchParent
-		childEvent := r.move(item.matchChild, item, false)
-		undoChildEvent := r.move(item.matchChild, item.matchChild.matchChild, false)
-		r.addEventLog(childEvent)
-		events = append(events, childEvent)
-		undoEvents = append(undoEvents, undoChildEvent)
-
 		if item.matchParent != nil {
-			parentEvent := r.move(item.matchParent, item.matchChild, false)
+			parentEvent := r.move(item.matchParent, item.matchChild, true)
 			undoParentEvent := r.move(item.matchParent, item, false)
 			r.addEventLog(parentEvent)
 			events = append(events, parentEvent)
@@ -404,20 +382,13 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
 
-		// client is responsible for repointing the matchParent and matchParent.matchParent
-		parentEvent := r.move(item.matchParent, item.matchChild, false)
+		// client is responsible for repointing the matchParent
+		parentEvent := r.move(item.matchParent, item.matchChild, true)
 		undoParentEvent := r.move(item.matchParent, item, false)
 		r.addEventLog(parentEvent)
 		events = append(events, parentEvent)
 		undoEvents = append(undoEvents, undoParentEvent)
 
-		if item.matchParent.matchParent != nil {
-			childEvent := r.move(item.matchParent.matchParent, item, false)
-			undoChildEvent := r.move(item.matchParent.matchParent, item.matchParent, false)
-			r.addEventLog(childEvent)
-			events = append(events, childEvent)
-			undoEvents = append(undoEvents, undoChildEvent)
-		}
 		r.addUndoLogs(undoEvents, events)
 	}
 	return nil
@@ -515,6 +486,9 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	//for cur := range r.getListItems() {
 	for nodeKey := range r.crdt.traverse() {
 		cur := r.listItemCache[nodeKey]
+		if !r.itemIsLive(cur) {
+			continue
+		}
 		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers

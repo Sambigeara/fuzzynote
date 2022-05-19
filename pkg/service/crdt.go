@@ -20,7 +20,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -563,7 +562,7 @@ func vectorClockBefore(a, b map[uuid]int64) bool {
 	isEqual := len(a) == len(b)
 
 	for id, aDT := range a {
-		if bDT, aCachedExists := b[id]; !aCachedExists || aDT > bDT {
+		if bDT, bCachedExists := b[id]; !bCachedExists || aDT > bDT {
 			return false
 		} else if isEqual && aDT < bDT {
 			isEqual = false
@@ -597,15 +596,6 @@ func (r *DBListRepo) itemIsLive(item *ListItem) bool {
 
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
-
-	// Each event is either `content`+`positional`, `positional` or `delete`:
-	// - AddEvent/UpdateEvent: constituting both content (Line, Note, Visibility etc) AND positional updates
-	// - PositionEvent
-	// - DeleteEvent
-	// Therefore, if an AddEvent comes, in, we split it into two separate sub-events, and handle both individually
-	// (e.g. against the cache, and potentially applying to the LL). We need to handle the positional event AFTER the
-	// Update to cover the case where an Undo triggers the re-adding of an item, and we want item.isDeleted to have
-	// been reset to false (to allow the PositionEvent to be handled correctly).
 
 	var eventCache map[string]EventLog
 	switch e.EventType {
@@ -641,29 +631,10 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	switch e.EventType {
 	case UpdateEvent:
 		err = updateItemFromEvent(item, e, r.email)
-
-		// There's a case where we receive later PositionEvents out of order, but do not action PositionEvents for
-		// items which have not yet been added. Therefore, check the positionEventSet for an event later than this
-		// update, and if one exists, set subEvent to this cached event. Otherwise, generate a new one from the
-		// UpdateEvent and override the VectorClock and TargetListItemKey
-		var subEvent EventLog
-		if ce, exists := r.positionEventSet[e.ListItemKey]; exists && e.before(ce) {
-			subEvent = ce
-		} else {
-			// Manually construct and handle a position event separately.
-			subEvent = r.newEventLogFromListItem(PositionEvent, item, false)
-			subEvent.VectorClock = e.VectorClock
-			// If an item is new, item.child won't be set, so we manually set TargetListItemKey in the event
-			subEvent.TargetListItemKey = e.TargetListItemKey
-		}
-
-		item, _ = r.processEventLog(subEvent)
-	case DeleteEvent:
-		r.crdt.del(e)
+	//case DeleteEvent:
+	//r.crdt.del(e)
 	case PositionEvent:
-		if r.itemIsLive(item) {
-			r.crdt.add(e)
-		}
+		r.crdt.add(e)
 	}
 
 	r.listItemCache[e.ListItemKey] = item
@@ -1418,9 +1389,6 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 	if _, err := r.pull(ctx, []WalFile{r.LocalWalFile}, replayChan); err != nil {
 		return err
 	}
-	//time.Sleep(time.Second * 4)
-	//os.Exit(0)
-	//scheduleSync()
 
 	// Main sync event loop
 	go func() {
@@ -1755,20 +1723,20 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	return nil
 }
 
-func (r *DBListRepo) TestPullLocal() error {
-	c := make(chan []EventLog)
+func (r *DBListRepo) TestPullLocal(c chan []EventLog) error {
+	//c := make(chan []EventLog)
 	if _, err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
 		return err
 	}
 	//go func() {
-	for {
-		wal := <-c
-		//s := fmt.Sprintf("%v", wal)
-		runtime.Breakpoint()
-		//fmt.Printf(s)
-		r.Replay(wal)
-	}
+	//for {
+	//    wal := <-c
+	//    //s := fmt.Sprintf("%v", wal)
+	//    runtime.Breakpoint()
+	//    //fmt.Printf(s)
+	//    r.Replay(wal)
+	//}
 	//}()
 	//runtime.Breakpoint()
-	//return nil
+	return nil
 }

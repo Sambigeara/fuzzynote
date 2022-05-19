@@ -45,7 +45,7 @@ func TestCRDTEventEquality(t *testing.T) {
 				id: lamport,
 			},
 			UUID:      id,
-			EventType: AddEvent,
+			EventType: UpdateEvent,
 		}
 
 		event2 := EventLog{
@@ -53,7 +53,7 @@ func TestCRDTEventEquality(t *testing.T) {
 				id: lamport + 1,
 			},
 			UUID:      id,
-			EventType: AddEvent,
+			EventType: UpdateEvent,
 		}
 
 		equality := checkEquality(event1, event2)
@@ -74,7 +74,7 @@ func TestCRDTEventEquality(t *testing.T) {
 }
 
 func TestCRDTProcessEvent(t *testing.T) {
-	t.Run("Test update event", func(t *testing.T) {
+	t.Run("Test add event", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -85,6 +85,11 @@ func TestCRDTProcessEvent(t *testing.T) {
 		repo.processEventLog(EventLog{
 			VectorClock: vc,
 			EventType:   UpdateEvent,
+			ListItemKey: key,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: vc,
+			EventType:   PositionEvent,
 			ListItemKey: key,
 		})
 
@@ -100,7 +105,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("item should have key: %s", key)
 		}
 	})
-	t.Run("Test update two linked events in order", func(t *testing.T) {
+	t.Run("Test add two linked events in order", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -118,8 +123,18 @@ func TestCRDTProcessEvent(t *testing.T) {
 			ListItemKey: nodeKey0,
 		})
 		repo.processEventLog(EventLog{
+			VectorClock: vc0,
+			EventType:   PositionEvent,
+			ListItemKey: nodeKey0,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: vc1,
+			EventType:   UpdateEvent,
+			ListItemKey: nodeKey1,
+		})
+		repo.processEventLog(EventLog{
 			VectorClock:       vc1,
-			EventType:         UpdateEvent,
+			EventType:         PositionEvent,
 			ListItemKey:       nodeKey1,
 			TargetListItemKey: nodeKey0,
 		})
@@ -140,7 +155,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("node1 should have key: %s", nodeKey1)
 		}
 	})
-	t.Run("Test update two linked events reverse order", func(t *testing.T) {
+	t.Run("Test add two linked events reverse order", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -151,7 +166,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: nodeKey1,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       nodeKey1,
 			TargetListItemKey: nodeKey0,
 		})
@@ -160,6 +182,13 @@ func TestCRDTProcessEvent(t *testing.T) {
 				1: 1,
 			},
 			EventType:   UpdateEvent,
+			ListItemKey: nodeKey0,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:   PositionEvent,
 			ListItemKey: nodeKey0,
 		})
 
@@ -179,7 +208,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("node1 should have key: %s", nodeKey1)
 		}
 	})
-	t.Run("Test update two events targeting root", func(t *testing.T) {
+	t.Run("Test add two events targeting root", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -194,9 +223,23 @@ func TestCRDTProcessEvent(t *testing.T) {
 		})
 		repo.processEventLog(EventLog{
 			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:   PositionEvent,
+			ListItemKey: nodeKey0,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
 				1: 2,
 			},
 			EventType:   UpdateEvent,
+			ListItemKey: nodeKey1,
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:   PositionEvent,
 			ListItemKey: nodeKey1,
 		})
 
@@ -231,7 +274,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -240,7 +290,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "3",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
@@ -249,7 +306,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -258,7 +322,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "4",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "4",
 			TargetListItemKey: "3",
 		})
@@ -267,7 +338,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "8",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "8",
 			TargetListItemKey: "7",
 		})
@@ -276,7 +354,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "6",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "6",
 			TargetListItemKey: "5",
 		})
@@ -285,7 +370,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "7",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "7",
 			TargetListItemKey: "6",
 		})
@@ -294,7 +386,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: i,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "5",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: i,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "5",
 			TargetListItemKey: "4",
 		})
@@ -312,7 +411,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			}
 		}
 	})
-	t.Run("Test updates and delete from linked list", func(t *testing.T) {
+	t.Run("Test adds and delete from linked list", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -320,7 +419,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 1,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -328,7 +434,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -352,7 +465,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("the wrong item was deleted from the linked list")
 		}
 	})
-	t.Run("Test updates and delete root", func(t *testing.T) {
+	t.Run("Test adds and delete root", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -360,7 +473,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 1,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -368,7 +488,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -392,7 +519,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("the wrong item was deleted from the linked list")
 		}
 	})
-	t.Run("Test delete before updates", func(t *testing.T) {
+	t.Run("Test delete before adds", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -407,7 +534,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 1,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -415,7 +549,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -440,7 +581,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("the wrong item was deleted from the linked list")
 		}
 	})
-	t.Run("Test position two updates targetting deleted previous root item", func(t *testing.T) {
+	t.Run("Test position two adds targetting deleted previous root item", func(t *testing.T) {
 		// Add 1 <- 2 <- 3
 		// Delete 1
 		// Position 1 <- 3
@@ -452,7 +593,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 1,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -460,7 +608,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -468,7 +623,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 3,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "3",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
@@ -504,7 +666,7 @@ func TestCRDTProcessEvent(t *testing.T) {
 			t.Fatalf("root item has the wrong key")
 		}
 	})
-	t.Run("Test position two updates targetting deleted previous central item", func(t *testing.T) {
+	t.Run("Test position two adds targetting deleted previous central item", func(t *testing.T) {
 		// Add 1 <- 2 <- 3 <- 4
 		// Delete 1, 2
 		// Position 2 <- 4
@@ -516,7 +678,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 1,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "1",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 1,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
@@ -524,7 +693,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 2,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "2",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 2,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
@@ -532,7 +708,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 3,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "3",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 3,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
@@ -540,7 +723,14 @@ func TestCRDTProcessEvent(t *testing.T) {
 			VectorClock: map[uuid]int64{
 				1: 4,
 			},
-			EventType:         UpdateEvent,
+			EventType:   UpdateEvent,
+			ListItemKey: "4",
+		})
+		repo.processEventLog(EventLog{
+			VectorClock: map[uuid]int64{
+				1: 4,
+			},
+			EventType:         PositionEvent,
 			ListItemKey:       "4",
 			TargetListItemKey: "3",
 		})
@@ -622,6 +812,7 @@ func TestCRDTAllPermsMix(t *testing.T) {
 
 	repo.Match([][]rune{}, false, "", 0, 0)
 	repo.MoveUp(nC)
+	//runtime.Breakpoint()
 
 	repo.Match([][]rune{}, false, "", 0, 0)
 	repo.Delete(nA)
@@ -677,9 +868,8 @@ func TestCRDTAllPermsMix(t *testing.T) {
 			repo.deleteEventSet = make(map[string]EventLog)
 			repo.positionEventSet = make(map[string]EventLog)
 
-			// 8! == 40320
-			//if i == 120 {
-			//runtime.Breakpoint()
+			//if i == 5042 {
+			//    runtime.Breakpoint()
 			//}
 
 			repo.Replay(p)
@@ -796,6 +986,9 @@ func TestCRDTAllPermsMoves(t *testing.T) {
 				t.Log("failed on iteration: ", i)
 				return
 			}
+			//if i == 2000000 {
+			//    return
+			//}
 			i++
 		}
 	})

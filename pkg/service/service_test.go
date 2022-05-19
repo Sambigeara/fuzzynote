@@ -412,16 +412,14 @@ func TestServiceDelete(t *testing.T) {
 }
 
 func TestServiceMove(t *testing.T) {
-	t.Run("Move item up from bottom", func(t *testing.T) {
+	t.Run("Move item up from bottom all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		repo.uuid = 1
 		defer clearUp()
 
-		k, _ := repo.Add("Third", nil, nil)
-		third := repo.listItemCache[k]
-		k, _ = repo.Add("Second", nil, third)
-		second := repo.listItemCache[k]
-		repo.Add("First", nil, second)
+		repo.Add("Third", nil, nil)
+		repo.Add("Second", nil, nil)
+		repo.Add("First", nil, nil)
 
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		item1 := repo.matchListItems[matches[0].key]
@@ -445,7 +443,38 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("item2 should have moved down one")
 		}
 	})
-	t.Run("Move item up from middle", func(t *testing.T) {
+	t.Run("Move item up from bottom single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		repo.uuid = 1
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveUp(item3)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
+			t.Errorf("item1 should still be root")
+		}
+		if matches[1].Key() != item3.Key() {
+			t.Errorf("item3 should have moved up one")
+		}
+		if matches[2].Key() != item2.Key() {
+			t.Errorf("item2 should have moved down one")
+		}
+	})
+	t.Run("Move item up from middle all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -475,7 +504,37 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("previous oldest should have stayed the same")
 		}
 	})
-	t.Run("Move item up from top", func(t *testing.T) {
+	t.Run("Move item up from middle single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveUp(item2)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
+			t.Errorf("item2 should have become root")
+		}
+		if matches[1].Key() != item1.Key() {
+			t.Errorf("previous root should have moved up one")
+		}
+		if matches[2].Key() != item3.Key() {
+			t.Errorf("previous oldest should have stayed the same")
+		}
+	})
+	t.Run("Move item up from top all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -505,7 +564,37 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
-	t.Run("Move item down from top", func(t *testing.T) {
+	t.Run("Move item up from top single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveUp(item1)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[1].Key() != item2.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[2].Key() != item3.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+	})
+	t.Run("Move item down from top all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -535,7 +624,37 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("item3 should still be at the bottom")
 		}
 	})
-	t.Run("Move item down from middle", func(t *testing.T) {
+	t.Run("Move item down from top single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveDown(item1)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
+			t.Errorf("item2 should now be root")
+		}
+		if matches[1].Key() != item1.Key() {
+			t.Errorf("item1 should have moved down one")
+		}
+		if matches[2].Key() != item3.Key() {
+			t.Errorf("item3 should still be at the bottom")
+		}
+	})
+	t.Run("Move item down from middle all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -565,7 +684,37 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("moved item should now be oldest")
 		}
 	})
-	t.Run("Move item down from bottom", func(t *testing.T) {
+	t.Run("Move item down from middle single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveDown(item2)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
+			t.Errorf("Root should have remained the same")
+		}
+		if matches[1].Key() != item3.Key() {
+			t.Errorf("previous oldest should have moved up one")
+		}
+		if matches[2].Key() != item2.Key() {
+			t.Errorf("moved item should now be oldest")
+		}
+	})
+	t.Run("Move item down from bottom all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
@@ -595,13 +744,82 @@ func TestServiceMove(t *testing.T) {
 			t.Errorf("All items should remain unchanged")
 		}
 	})
-	t.Run("Move item down from top to bottom", func(t *testing.T) {
+	t.Run("Move item down from bottom single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveDown(item3)
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item1.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[1].Key() != item2.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+		if matches[2].Key() != item3.Key() {
+			t.Errorf("All items should remain unchanged")
+		}
+	})
+	t.Run("Move item down from top to bottom all root children", func(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
 		repo.Add("Third", nil, nil)
 		repo.Add("Second", nil, nil)
 		repo.Add("First", nil, nil)
+
+		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
+		item1 := repo.matchListItems[matches[0].key]
+		item2 := repo.matchListItems[matches[1].key]
+		item3 := repo.matchListItems[matches[2].key]
+
+		// Preset Match pointers with Match call
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		repo.MoveDown(item1)
+
+		// Update match pointers again
+		repo.Match([][]rune{}, true, "", 0, 0)
+
+		// ATM, the returned matches are copies of a source-of-truth index stored on the ListRepo, and
+		// don't reflect the match pointers. To get correct state, we need to reference the item within
+		// the index
+		// TODO update this when I centralise the logic
+		repo.MoveDown(repo.matchListItems[item1.Key()])
+
+		matches, _, _ = repo.Match([][]rune{}, true, "", 0, 0)
+
+		if matches[0].Key() != item2.Key() {
+			t.Errorf("Root should be previous middle")
+		}
+		if matches[1].Key() != item3.Key() {
+			t.Errorf("Previous oldest should have moved up one")
+		}
+		if matches[2].Key() != item1.Key() {
+			t.Errorf("Preview root should have moved to the bottom")
+		}
+	})
+	t.Run("Move item down from top to bottom single tree branch", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		k, _ := repo.Add("First", nil, nil)
+		k, _ = repo.Add("Second", nil, repo.listItemCache[k])
+		repo.Add("Third", nil, repo.listItemCache[k])
 
 		matches, _, _ := repo.Match([][]rune{}, true, "", 0, 0)
 		item1 := repo.matchListItems[matches[0].key]
