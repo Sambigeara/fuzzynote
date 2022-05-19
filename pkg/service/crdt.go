@@ -580,31 +580,17 @@ func (a *EventLog) before(b EventLog) bool {
 	return vectorClockBefore(a.VectorClock, b.VectorClock)
 }
 
-func (r *DBListRepo) itemIsLive(item *ListItem) bool {
-	var k string
-	if item != nil {
-		k = item.key
-	}
-
-	latestAddEvent, isAdded := r.addEventSet[k]
-	latestDeleteEvent, isDeleted := r.deleteEventSet[k]
-	if isAdded && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
-		return true
-	}
-	return false
-}
-
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
 
 	var eventCache map[string]EventLog
 	switch e.EventType {
 	case UpdateEvent:
-		eventCache = r.addEventSet
+		eventCache = r.crdt.addEventSet
 	case DeleteEvent:
-		eventCache = r.deleteEventSet
+		eventCache = r.crdt.deleteEventSet
 	case PositionEvent:
-		eventCache = r.positionEventSet
+		eventCache = r.crdt.positionEventSet
 	}
 
 	// Check the event cache and skip if the event is older than the most-recently processed
@@ -631,8 +617,6 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	switch e.EventType {
 	case UpdateEvent:
 		err = updateItemFromEvent(item, e, r.email)
-	//case DeleteEvent:
-	//r.crdt.del(e)
 	case PositionEvent:
 		r.crdt.add(e)
 	}
@@ -669,16 +653,6 @@ func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 	item.friends.Emails = emails
 
 	return nil
-}
-
-func (r *DBListRepo) getLatestVectorClock(item *ListItem) map[uuid]int64 {
-	// if the item is being newly added, the add event comes before the position event, so default to the add event if position is not
-	// yet set
-	latestVectorClockEvent, exists := r.positionEventSet[item.key]
-	if !exists {
-		latestVectorClockEvent = r.addEventSet[item.key]
-	}
-	return latestVectorClockEvent.VectorClock
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list

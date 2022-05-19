@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"runtime"
@@ -40,6 +39,5 @@ func main() {
 	r.TestPullLocal(c)
 	matches, _, _ := r.Match([][]rune{}, true, "", 0, 0)
 	_ = matches
-	fmt.Println(r.Tree())
 	runtime.Breakpoint()
 }

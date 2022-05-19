@@ -13,7 +13,8 @@ const (
 )
 
 type crdtTree struct {
-	cache map[string]*node
+	cache                                         map[string]*node
+	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
 }
 
 type node struct {
@@ -37,6 +38,9 @@ func newTree() *crdtTree {
 			crdtOrphanKey: orphan,
 			crdtRootKey:   root,
 		},
+		addEventSet:      make(map[string]EventLog),
+		deleteEventSet:   make(map[string]EventLog),
+		positionEventSet: make(map[string]EventLog),
 	}
 }
 
@@ -58,6 +62,15 @@ func (crdt *crdtTree) String() string {
 	return tree.String()
 }
 
+func (crdt *crdtTree) itemIsLive(key string) bool {
+	latestAddEvent, isAdded := crdt.addEventSet[key]
+	latestDeleteEvent, isDeleted := crdt.deleteEventSet[key]
+	if isAdded && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
+		return true
+	}
+	return false
+}
+
 func (crdt *crdtTree) traverse() <-chan string {
 	ch := make(chan string)
 	go func() {
@@ -71,7 +84,7 @@ func (crdt *crdtTree) traverse() <-chan string {
 				curChildren = append(curChildren, crdt.cache[k])
 			}
 			items = append(curChildren, items...)
-			if cur.key != crdtRootKey && cur.key != crdtOrphanKey && cur.parent.key != crdtOrphanKey {
+			if cur.key != crdtRootKey && cur.key != crdtOrphanKey && cur.parent.key != crdtOrphanKey && crdt.itemIsLive(cur.key) {
 				ch <- cur.key
 			}
 		}
@@ -99,36 +112,6 @@ func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 	target.children = newChildren
 }
 
-func (crdt *crdtTree) removeFromParentChildArray(item *node) {
-	newParentChildren := []string{}
-	for _, c := range item.parent.children {
-		if c != item.key {
-			newParentChildren = append(newParentChildren, c)
-		}
-	}
-	item.parent.children = newParentChildren
-}
-
-func (crdt *crdtTree) del(e EventLog) {
-	item, exists := crdt.cache[e.ListItemKey]
-	if !exists {
-		return
-	}
-	crdt.removeFromParentChildArray(item)
-
-	// if the parent is not an orphan child, we move all children of the deleted item
-	// to the children of the parent (resolving with clocks as we go)
-	if item.parent.key != crdtOrphanKey {
-		for _, c := range item.children {
-			crdt.addToTargetChildArray(crdt.cache[c], item.parent)
-		}
-		item.children = []string{}
-	}
-
-	orphan := crdt.cache[crdtOrphanKey]
-	crdt.addToTargetChildArray(item, orphan)
-}
-
 func (crdt *crdtTree) add(e EventLog) {
 	target, exists := crdt.cache[e.TargetListItemKey]
 	if !exists {
@@ -149,13 +132,15 @@ func (crdt *crdtTree) add(e EventLog) {
 		crdt.cache[e.ListItemKey] = item
 	} else {
 		// remove from parent.children if pre-existing
-		crdt.removeFromParentChildArray(item)
+		newParentChildren := []string{}
+		for _, c := range item.parent.children {
+			if c != item.key {
+				newParentChildren = append(newParentChildren, c)
+			}
+		}
+		item.parent.children = newParentChildren
 	}
 	item.latestVectorClock = e.VectorClock
 
 	crdt.addToTargetChildArray(item, target)
-}
-
-func (r *DBListRepo) Tree() *crdtTree {
-	return r.crdt
 }

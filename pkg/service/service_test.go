@@ -345,7 +345,7 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Matches should be len 0")
 		}
 
-		if _, exists := repo.deleteEventSet[k]; !exists {
+		if _, exists := repo.crdt.deleteEventSet[k]; !exists {
 			t.Errorf("Delete event should be present in the deleteEventSet")
 		}
 	})
@@ -402,10 +402,10 @@ func TestServiceDelete(t *testing.T) {
 			t.Errorf("Matches should be len 0 but is %d", l)
 		}
 
-		if _, exists := repo.positionEventSet[k]; !exists {
+		if _, exists := repo.crdt.positionEventSet[k]; !exists {
 			t.Errorf("Position event should be present in the positionEventSet")
 		}
-		if _, exists := repo.deleteEventSet[k]; !exists {
+		if _, exists := repo.crdt.deleteEventSet[k]; !exists {
 			t.Errorf("Delete event should be present in the deleteEventSet")
 		}
 	})

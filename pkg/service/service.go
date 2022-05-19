@@ -44,9 +44,6 @@ type DBListRepo struct {
 	//currentLamportTimestamp int64
 	vectorClock   map[uuid]int64
 	listItemCache map[string]*ListItem
-	//processedEventLogCache             map[string]struct{}
-	//listItemProcessedEventLogTypeCache        map[EventType]map[string]EventLog
-	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
 
 	crdt *crdtTree
 
@@ -104,11 +101,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		latestWalSchemaID: latestWalSchemaID,
 		vectorClock:       make(map[uuid]int64),
 		listItemCache:     make(map[string]*ListItem),
-		//processedEventLogCache:             make(map[string]struct{}),
-		//listItemProcessedEventLogTypeCache: make(map[EventType]map[string]EventLog),
-		addEventSet:      make(map[string]EventLog),
-		deleteEventSet:   make(map[string]EventLog),
-		positionEventSet: make(map[string]EventLog),
 
 		crdt: newTree(),
 
@@ -486,9 +478,6 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 	//for cur := range r.getListItems() {
 	for nodeKey := range r.crdt.traverse() {
 		cur := r.listItemCache[nodeKey]
-		if !r.itemIsLive(cur) {
-			continue
-		}
 		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
