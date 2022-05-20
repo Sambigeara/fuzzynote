@@ -93,6 +93,25 @@ func (crdt *crdtTree) traverse() <-chan string {
 	return ch
 }
 
+func (crdt *crdtTree) generateEvents() []EventLog {
+	events := []EventLog{}
+
+	// Add all PositionEvents
+	for _, e := range crdt.positionEventSet {
+		events = append(events, e)
+	}
+
+	// Add UpdateEvents for active items (deleted items don't need content state, as any update that overrides deleted state will
+	// come with it's own
+	for k, addEvent := range crdt.addEventSet {
+		if crdt.itemIsLive(k) {
+			events = append(events, addEvent)
+		}
+	}
+
+	return events
+}
+
 func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 	item.parent = target
 
