@@ -1062,52 +1062,36 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, c chan []Even
 	// is unbounded)
 	// We merge all wals before publishing to the walchan as each time the main app event loop consumes from walchan,
 	// it blocks user input and creates a poor user experience.
-	//nameC := make(chan string)
-	//go func() {
 	for wf, newWals := range newWalfileMap {
 		for newWal := range newWals {
-			//if !r.isWalChecksumProcessed(newWal) {
-			pr, pw := io.Pipe()
-			go func() {
-				defer pw.Close()
-				if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
-					// TODO handle
-					//log.Fatal(err)
-				}
-			}()
-
-			// Build new wals
-			newWfWal, err := buildFromFile(pr)
-			if err != nil {
-				// Ignore incompatible files
-				continue
-			}
-
-			if len(newWfWal) > 0 {
+			if !r.isWalChecksumProcessed(newWal) {
+				pr, pw := io.Pipe()
 				go func() {
-					c <- newWfWal
-					// Add to the processed cache after we've successfully pulled it
-					// TODO strictly we should only set processed once it's successfully merged and displayed to client
-					//r.setProcessedWalChecksum(newWal)
+					defer pw.Close()
+					if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
+						// TODO handle
+						//log.Fatal(err)
+					}
 				}()
+
+				// Build new wals
+				newWfWal, err := buildFromFile(pr)
+				if err != nil {
+					// Ignore incompatible files
+					continue
+				}
+
+				if len(newWfWal) > 0 {
+					go func() {
+						c <- newWfWal
+						// Add to the processed cache after we've successfully pulled it
+						// TODO strictly we should only set processed once it's successfully merged and displayed to client
+						r.setProcessedWalChecksum(newWal)
+					}()
+				}
 			}
-			//nameC <- newWal
-			//}
-			//r.setProcessedWalChecksum(newWal)
 		}
 	}
-	//close(nameC)
-	//}()
-
-	//names := []string{}
-	//for n := range nameC {
-	//    names = append(names, n)
-	//}
-
-	//go func() {
-	//    time.Sleep(time.Second * 3)
-	//    log.Print(names)
-	//}()
 
 	return newWalfileMap, nil
 }
@@ -1459,7 +1443,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 					r.web.isActive = false
 					switch err.(type) {
 					case authFailureError:
-						return // authFailureError signifies incorrect login details, disable web and run local only mode
+						scheduleSync() // still trigger pull cycle for local only sync
+						return         // authFailureError signifies incorrect login details, disable web and run local only mode
 					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
