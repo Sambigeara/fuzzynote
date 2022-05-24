@@ -15,13 +15,18 @@ func (e FinishWithPurgeError) Error() string {
 	return ""
 }
 
+type namedWal struct {
+	checksum string
+	wal      []EventLog
+}
+
 // Start begins push/pull for all WalFiles
 func (r *DBListRepo) Start(client Client) error {
 	inputEvtsChan := make(chan interface{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	replayChan := make(chan []EventLog)
+	replayChan := make(chan namedWal)
 	//reorderAndReplayChan := make(chan []EventLog)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
@@ -33,10 +38,14 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			select {
-			case wal := <-replayChan:
+			case n := <-replayChan:
+				name, wal := n.checksum, n.wal
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
+				}
+				if name != "" {
+					r.setProcessedWalChecksum(name)
 				}
 				changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
 				go func() {

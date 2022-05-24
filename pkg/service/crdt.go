@@ -1032,7 +1032,7 @@ func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, c chan []EventLog) error {
+func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan chan namedWal) error {
 	type wfWalPair struct {
 		wf      WalFile
 		newWals []string
@@ -1084,10 +1084,10 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, c chan []Even
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						c <- newWfWal
-						// Add to the processed cache after we've successfully pulled it
-						// TODO strictly we should only set processed once it's successfully merged and displayed to client
-						r.setProcessedWalChecksum(newWal)
+						replayChan <- namedWal{
+							checksum: newWal,
+							wal:      newWfWal,
+						}
 					}()
 				}
 			}
@@ -1098,7 +1098,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, c chan []Even
 	return nil
 }
 
-func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, c chan []EventLog) error {
+func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan chan namedWal) error {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	r.syncWalFileMut.RLock()
@@ -1116,7 +1116,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, c chan []Ev
 	r.syncWalFileMut.RUnlock()
 	r.allWalFileMut.RUnlock()
 
-	if err := r.pull(ctx, ownedWalFiles, c); err != nil {
+	if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
 		return err
 	}
 
@@ -1329,7 +1329,7 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, inputEvtsChan chan interface{}) error {
+func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, inputEvtsChan chan interface{}) error {
 	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
 	// specified wait duration)
 	syncTriggerChan := make(chan struct{}, 1)
@@ -1485,7 +1485,10 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 								wsConsAgg = merge(wsConsAgg, wsEv)
 							case <-wsFlushTicker.C:
 								if len(wsConsAgg) > 0 {
-									replayChan <- wsConsAgg
+									replayChan <- namedWal{
+										checksum: "",
+										wal:      wsConsAgg,
+									}
 									wsConsAgg = []EventLog{}
 								}
 							case <-webCtx.Done():
@@ -1681,7 +1684,7 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	return nil
 }
 
-func (r *DBListRepo) TestPullLocal(c chan []EventLog) error {
+func (r *DBListRepo) TestPullLocal(c chan namedWal) error {
 	//c := make(chan []EventLog)
 	if err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
 		return err
