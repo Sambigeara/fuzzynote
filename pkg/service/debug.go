@@ -21,7 +21,7 @@ var eventNameMap = map[EventType]string{
 // DebugWriteEventsToFile is used for debug purposes. It prints all events for the given uuid/lamportTimestamp
 // combination to file, for inspection
 func (r *DBListRepo) DebugWriteEventsToFile(filename string, key string) {
-	c := make(chan namedEventLog)
+	c := make(chan namedWal)
 	go func() {
 		r.pull(context.Background(), []WalFile{r.LocalWalFile}, c)
 	}()

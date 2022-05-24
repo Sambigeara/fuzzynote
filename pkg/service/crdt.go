@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"container/list"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
@@ -1085,8 +1084,8 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan ch
 					go func() {
 						defer wg.Done()
 						replayChan <- namedWal{
-							checksum: newWal,
-							wal:      newWfWal,
+							name: newWal,
+							wal:  newWfWal,
 						}
 					}()
 				}
@@ -1133,7 +1132,8 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan 
 		go func(wf WalFile) {
 			defer wg.Done()
 
-			checksum, err := r.push(ctx, wf, []EventLog{}, fullByteWal)
+			name := fmt.Sprintf("%v%v", r.uuid, generateUUID())
+			err := r.push(ctx, wf, []EventLog{}, fullByteWal, name)
 			if err != nil {
 				return
 			}
@@ -1147,7 +1147,7 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan 
 			}
 
 			for _, f := range allFiles {
-				if f != checksum && r.isWalChecksumProcessed(f) {
+				if f != name && r.isWalChecksumProcessed(f) {
 					filesToDelete = append(filesToDelete, f)
 				}
 			}
@@ -1168,7 +1168,8 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan 
 			var byteWal *bytes.Buffer
 
 			// Push to ALL walFiles
-			if _, err := r.push(ctx, wf, fullWal, byteWal); err != nil {
+			// we don't set a common name, as filtering could generate different wals to each walfile
+			if err := r.push(ctx, wf, fullWal, byteWal, ""); err != nil {
 				return
 			}
 		}(wf)
@@ -1227,34 +1228,39 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	return filteredWal
 }
 
-func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWal *bytes.Buffer) (string, error) {
+func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWal *bytes.Buffer, name string) error {
 	if byteWal == nil {
 		// Apply any filtering based on Push match configuration
 		el = r.getMatchedWal(el, wf)
 
 		// Return for empty wals
 		if len(el) == 0 {
-			return "", nil
+			return nil
 		}
 
 		var err error
 		if byteWal, err = buildByteWal(el); err != nil {
-			return "", err
+			return err
 		}
 
 	}
-	checksum := fmt.Sprintf("%x", md5.Sum(byteWal.Bytes()))
+
+	if name == "" {
+		name = fmt.Sprintf("%v%v", r.uuid, generateUUID())
+	}
 
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
-	r.setProcessedWalChecksum(checksum)
-	if err := wf.Flush(ctx, byteWal, checksum); err != nil {
-		return checksum, err
+	// There is a chance that Flush would fail, but given the names are randomly generated, the impact of caching
+	// the broken name is small.
+	r.setProcessedWalChecksum(name)
+	if err := wf.Flush(ctx, byteWal, name); err != nil {
+		return err
 	}
 
-	return checksum, nil
+	return nil
 }
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
@@ -1278,7 +1284,8 @@ func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitF
 				if waitForCompletion {
 					defer wg.Done()
 				}
-				r.push(ctx, wf, wal, byteWal)
+				// we don't set a common name, as filtering could generate different wals to each walfile
+				r.push(ctx, wf, wal, byteWal, "")
 			}(wf)
 		}
 		if waitForCompletion {
@@ -1486,8 +1493,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 							case <-wsFlushTicker.C:
 								if len(wsConsAgg) > 0 {
 									replayChan <- namedWal{
-										checksum: "",
-										wal:      wsConsAgg,
+										name: "",
+										wal:  wsConsAgg,
 									}
 									wsConsAgg = []EventLog{}
 								}

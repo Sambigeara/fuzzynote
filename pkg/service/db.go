@@ -16,8 +16,8 @@ func (e FinishWithPurgeError) Error() string {
 }
 
 type namedWal struct {
-	checksum string
-	wal      []EventLog
+	name string
+	wal  []EventLog
 }
 
 // Start begins push/pull for all WalFiles
@@ -39,7 +39,7 @@ func (r *DBListRepo) Start(client Client) error {
 		for {
 			select {
 			case n := <-replayChan:
-				name, wal := n.checksum, n.wal
+				name, wal := n.name, n.wal
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
