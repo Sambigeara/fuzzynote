@@ -13,7 +13,7 @@ Fuzzynote (fzn)
 - [Issues/Considerations](#issuesconsiderations)
 - [Tests](#tests)
 
-[Follow me on Twitter](https://twitter.com/fuzzynote_app) for the latest `fzn` updates and announcements, or just to watch me talk to myself.
+[Follow me on Twitter](https://twitter.com/fzn_sam) for the latest `fzn` updates and announcements, or just to watch me talk to myself.
 
 ---
 
