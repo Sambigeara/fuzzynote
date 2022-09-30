@@ -138,23 +138,24 @@ func TestServicePushPull(t *testing.T) {
 
 		localWalFile := NewLocalFileWalFile(rootDir)
 		ctx := context.Background()
-		repo.push(ctx, localWalFile, wal, nil)
+
+		repo.push(ctx, localWalFile, wal, nil, "")
 
 		// Clear the cache to make sure we can pick the file up again
 		repo.processedWalChecksums = make(map[string]struct{})
 
-		c := make(chan []EventLog)
+		c := make(chan namedWal)
 		repo.pull(ctx, []WalFile{localWalFile}, c)
-		newWal := <-c
+		nw := <-c
 
-		if len(wal) != len(newWal) {
+		if len(wal) != len(nw.wal) {
 			t.Error("Pulled wal should be the same as the pushed one")
 		}
 
 		// Check equality of wals
 		for i := range wal {
 			o := wal[i]
-			n := newWal[i]
+			n := nw.wal[i]
 			if !checkEventLogEquality(o, n) {
 				t.Fatalf("Old event %v does not equal new event %v at index %d", o, n, i)
 			}

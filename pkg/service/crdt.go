@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
-	"container/list"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -124,7 +123,6 @@ type EventLog struct {
 	IsHidden                       bool
 	Friends                        LineFriends
 	cachedKey                      string
-	eventDLL                       *list.List
 }
 
 func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLog {
@@ -134,7 +132,6 @@ func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLo
 	e := EventLog{
 		UUID:      r.uuid,
 		EventType: t,
-		eventDLL:  list.New(),
 	}
 	// make a copy of the map
 	e.VectorClock = r.getLocalVectorClockCopy()

@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/xlab/treeprint"
 )
@@ -18,10 +17,94 @@ type crdtTree struct {
 }
 
 type node struct {
-	key               string
-	parent            *node
-	children          []string
-	latestVectorClock map[uuid]int64
+	key                 string
+	parent, left, right *node
+	children            childDll
+	latestVectorClock   map[uuid]int64
+}
+
+func (n *node) moreRecentThan(o *node) bool {
+	if n.key == "_orphan" {
+		return false
+	} else if o.key == "_orphan" {
+		return false
+	}
+	return !vectorClockBefore(n.latestVectorClock, o.latestVectorClock)
+}
+
+// Consider using https://pkg.go.dev/container/list
+type childDll struct {
+	firstChild *node
+}
+
+func (l *childDll) iter() <-chan *node {
+	ch := make(chan *node)
+	go func() {
+		n := l.firstChild
+		for n != nil {
+			ch <- n
+			n = n.right
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+func (l *childDll) insertInPlace(n *node) {
+	right := l.firstChild
+
+	if right == nil {
+		l.firstChild = n
+		return
+	}
+
+	var left *node
+	for right != nil {
+		if n.moreRecentThan(right) {
+			break
+		}
+		left = right
+		right = right.right
+	}
+
+	// insert into place
+	if left != nil {
+		left.right = n
+	} else {
+		l.firstChild = n
+	}
+	// If we traversed to the end
+	if right != nil {
+		right.left = n
+	}
+	n.left = left
+	n.right = right
+}
+
+func (l *childDll) removeChild(key string) {
+	n := l.firstChild
+
+	if n == nil {
+		return
+	}
+
+	for n != nil {
+		if n.key == key {
+			if n.left != nil {
+				n.left.right = n.right
+			} else {
+				// node is firstChild, so reset firstChild in dll
+				l.firstChild = n.right
+			}
+			if r := n.right; r != nil {
+				r.left = n.left
+			}
+			n.left = nil
+			n.right = nil
+			return
+		}
+		n = n.right
+	}
 }
 
 func newTree() *crdtTree {
@@ -30,7 +113,7 @@ func newTree() *crdtTree {
 	}
 	root := &node{
 		key:      crdtRootKey,
-		children: []string{crdtOrphanKey},
+		children: childDll{orphan},
 	}
 	orphan.parent = root
 	return &crdtTree{
@@ -50,8 +133,8 @@ func (crdt *crdtTree) String() string {
 	var addNode func(t treeprint.Tree, n *node)
 	addNode = func(t treeprint.Tree, n *node) {
 		treeNode := t.AddBranch(fmt.Sprintf("%s (%v)", n.key, n.latestVectorClock))
-		for _, c := range n.children {
-			addNode(treeNode, crdt.cache[c])
+		for c := range n.children.iter() {
+			addNode(treeNode, c)
 		}
 	}
 
@@ -80,8 +163,8 @@ func (crdt *crdtTree) traverse() <-chan string {
 			cur := items[0]
 			items = items[1:]
 			curChildren := []*node{}
-			for _, k := range cur.children {
-				curChildren = append(curChildren, crdt.cache[k])
+			for c := range cur.children.iter() {
+				curChildren = append(curChildren, c)
 			}
 			items = append(curChildren, items...)
 			if cur.key != crdtRootKey && cur.key != crdtOrphanKey && cur.parent.key != crdtOrphanKey && crdt.itemIsLive(cur.key) {
@@ -115,20 +198,7 @@ func (crdt *crdtTree) generateEvents() []EventLog {
 func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 	item.parent = target
 
-	newChildren := append(target.children, item.key)
-
-	sort.Slice(newChildren, func(i, j int) bool {
-		if newChildren[i] == "_orphan" {
-			return true
-		} else if newChildren[j] == "_orphan" {
-			return false
-		}
-		left := crdt.cache[newChildren[i]]
-		right := crdt.cache[newChildren[j]]
-		return !vectorClockBefore(left.latestVectorClock, right.latestVectorClock)
-	})
-
-	target.children = newChildren
+	target.children.insertInPlace(item)
 }
 
 func (crdt *crdtTree) add(e EventLog) {
@@ -151,13 +221,7 @@ func (crdt *crdtTree) add(e EventLog) {
 		crdt.cache[e.ListItemKey] = item
 	} else {
 		// remove from parent.children if pre-existing
-		newParentChildren := []string{}
-		for _, c := range item.parent.children {
-			if c != item.key {
-				newParentChildren = append(newParentChildren, c)
-			}
-		}
-		item.parent.children = newParentChildren
+		item.parent.children.removeChild(item.key)
 	}
 	item.latestVectorClock = e.VectorClock
 

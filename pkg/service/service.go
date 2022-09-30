@@ -345,15 +345,17 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
 		var events, undoEvents []EventLog
-		e := r.move(item, item.matchChild.matchChild, true)
+		e := r.move(item, item.matchChild.child, true)
 		ue := r.move(item, item.matchChild, false)
 		r.addEventLog(e)
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
 
-		if item.matchParent != nil {
-			parentEvent := r.move(item.matchParent, item.matchChild, true)
-			undoParentEvent := r.move(item.matchParent, item, false)
+		// client is responsible for repointing the parent -
+		// we operate only on true pointers (accounting for hidden items)
+		if item.parent != nil {
+			parentEvent := r.move(item.parent, item.child, true)
+			undoParentEvent := r.move(item.parent, item, false)
 			r.addEventLog(parentEvent)
 			events = append(events, parentEvent)
 			undoEvents = append(undoEvents, undoParentEvent)
@@ -374,9 +376,10 @@ func (r *DBListRepo) MoveDown(item *ListItem) error {
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
 
-		// client is responsible for repointing the matchParent
-		parentEvent := r.move(item.matchParent, item.matchChild, true)
-		undoParentEvent := r.move(item.matchParent, item, false)
+		// client is responsible for repointing the parent -
+		// we operate only on true pointers (accounting for hidden items)
+		parentEvent := r.move(item.parent, item.child, true)
+		undoParentEvent := r.move(item.parent, item, false)
 		r.addEventLog(parentEvent)
 		events = append(events, parentEvent)
 		undoEvents = append(undoEvents, undoParentEvent)
@@ -469,16 +472,14 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		return res, 0, errors.New("limit must be >= 0")
 	}
 
-	var lastCur *ListItem
+	var last, lastMatched *ListItem
 
 	r.matchListItems = make(map[string]*ListItem)
 
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
-	//for cur := range r.getListItems() {
 	for nodeKey := range r.crdt.traverse() {
 		cur := r.listItemCache[nodeKey]
-		//for {
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
 		// aren't cleaned up between ANY ops, it can lead to weird behaviour as things operate based on
@@ -522,11 +523,11 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 					// TODO centralise this
 					res = append(res, *cur)
 
-					if lastCur != nil {
-						lastCur.matchParent = cur
+					if lastMatched != nil {
+						lastMatched.matchParent = cur
 					}
-					cur.matchChild = lastCur
-					lastCur = cur
+					cur.matchChild = lastMatched
+					lastMatched = cur
 
 					// Set the new idx for the next iteration
 					listItemMatchIdx[cur.key] = idx
@@ -538,6 +539,13 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 		if limit > 0 && idx == offset+limit {
 			break
 		}
+
+		// set full pointers (e.g. for moves when some items are hidden)
+		cur.child = last
+		if last != nil {
+			last.parent = cur
+		}
+		last = cur
 	}
 	newPos := -1
 	if p, exists := listItemMatchIdx[curKey]; exists {
