@@ -1655,7 +1655,8 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	el := []EventLog{}
 
 	// any random UUID is fine
-	uuid := generateUUID()
+	id := generateUUID()
+	prevKey := ""
 	var lamportTimestamp int64
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1663,30 +1664,44 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 			continue
 		}
 
-		key := strconv.Itoa(int(uuid)) + ":" + strconv.Itoa(int(lamportTimestamp))
+		key := strconv.Itoa(int(id)) + ":" + strconv.Itoa(int(lamportTimestamp))
 		e := EventLog{
-			UUID:        uuid,
-			EventType:   AddEvent,
+			UUID:        id,
+			EventType:   UpdateEvent,
 			ListItemKey: key,
 			Line:        line,
+			VectorClock: make(map[uuid]int64),
 		}
 		e.setLocalVectorDT(lamportTimestamp)
 		el = append(el, e)
 		lamportTimestamp++
 
 		e = EventLog{
-			UUID:        uuid,
-			EventType:   HideEvent,
-			ListItemKey: key,
+			UUID:              id,
+			EventType:         PositionEvent,
+			ListItemKey:       key,
+			TargetListItemKey: prevKey,
+			VectorClock:       make(map[uuid]int64),
 		}
+		e.setLocalVectorDT(lamportTimestamp)
+		el = append(el, e)
+		lamportTimestamp++
+
 		if isHidden {
+			e = EventLog{
+				UUID:        id,
+				EventType:   HideEvent,
+				ListItemKey: key,
+			}
 			el = append(el, e)
 			lamportTimestamp++
 		}
+
+		prevKey = key
 	}
 
 	b, _ := buildByteWal(el)
-	wf.Flush(ctx, b, fmt.Sprintf("%d", uuid))
+	wf.Flush(ctx, b, fmt.Sprintf("%d", id))
 
 	return nil
 }
