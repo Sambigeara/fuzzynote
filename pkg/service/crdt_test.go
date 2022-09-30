@@ -982,7 +982,7 @@ func TestCRDTAllPermsMoves(t *testing.T) {
 				return
 			}
 			//if i == 2000000 {
-			//    return
+			//return
 			//}
 			i++
 		}
