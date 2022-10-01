@@ -35,12 +35,11 @@ const latestWalSchemaID uint16 = 6
 
 // sync intervals
 const (
-	pullIntervalSeconds      = 5
-	pushWaitDuration         = time.Second * time.Duration(5)
-	gatherWaitDuration       = time.Second * time.Duration(10)
-	compactionGatherMultiple = 2
-	websocketConsumeDuration = time.Millisecond * 600
-	websocketPublishDuration = time.Millisecond * 600
+	pullInterval             = time.Second * 5
+	pushInterval             = time.Second * 5
+	gatherInterval           = time.Second * 10
+	websocketConsumeInterval = time.Millisecond * 600
+	websocketPublishInterval = time.Millisecond * 600
 )
 
 var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
@@ -115,7 +114,7 @@ type EventLogSchema5 struct {
 
 type EventLog struct {
 	UUID                           uuid // origin UUID
-	VectorClock                    map[uuid]int64
+	LamportTimestamp               int64
 	EventType                      EventType
 	ListItemKey, TargetListItemKey string
 	Line                           string
@@ -125,21 +124,16 @@ type EventLog struct {
 	cachedKey                      string
 }
 
-func (r *DBListRepo) newEventLog(t EventType, incrementLocalVector bool) EventLog {
-	if incrementLocalVector {
-		r.incLocalVectorDT()
+func (r *DBListRepo) newEventLog(t EventType) EventLog {
+	return EventLog{
+		UUID:             r.uuid,
+		LamportTimestamp: r.currentLamportTimestamp,
+		EventType:        t,
 	}
-	e := EventLog{
-		UUID:      r.uuid,
-		EventType: t,
-	}
-	// make a copy of the map
-	e.VectorClock = r.getLocalVectorClockCopy()
-	return e
 }
 
-func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem, incrementLocalVector bool) EventLog {
-	e := r.newEventLog(t, incrementLocalVector)
+func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem) EventLog {
+	e := r.newEventLog(t)
 	e.ListItemKey = item.key
 	if item.matchChild != nil {
 		e.TargetListItemKey = item.matchChild.key
@@ -150,29 +144,9 @@ func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem, increm
 	return e
 }
 
-func (r *DBListRepo) getLocalVectorClockCopy() map[uuid]int64 {
-	clock := make(map[uuid]int64)
-	for k, v := range r.vectorClock {
-		clock[k] = v
-	}
-	return clock
-}
-
-func (e *EventLog) setVectorDT(id uuid, dt int64) {
-	e.VectorClock[id] = dt
-}
-
-func (e *EventLog) getLocalVectorDT() int64 {
-	return e.VectorClock[e.UUID]
-}
-
-func (e *EventLog) setLocalVectorDT(dt int64) {
-	e.setVectorDT(e.UUID, dt)
-}
-
 func (e *EventLog) key() string {
 	if e.cachedKey == "" {
-		e.cachedKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.getLocalVectorDT()))
+		e.cachedKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
 	}
 	return e.cachedKey
 }
@@ -496,8 +470,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				r.friendsOrdered = append(r.friendsOrdered, friendToAdd)
 			}
 
-			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.getLocalVectorDT() > dtLastChange {
-				r.friends[friendToAdd][e.ListItemKey] = e.getLocalVectorDT()
+			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.LamportTimestamp > dtLastChange {
+				r.friends[friendToAdd][e.ListItemKey] = e.LamportTimestamp
 				r.AddWalFile(
 					&WebWalFile{
 						uuid: friendToAdd,
@@ -511,7 +485,7 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 			// We only delete and emit the cloud event if the friend exists (which it always should tbf)
 			// Although we ignore the delete if the event timestamp is older than the latest known cache state.
 			if friendItems, friendExists := r.friends[friendToRemove]; friendExists {
-				if dtLastChange, exists := friendItems[e.ListItemKey]; exists && e.getLocalVectorDT() > dtLastChange {
+				if dtLastChange, exists := friendItems[e.ListItemKey]; exists && e.LamportTimestamp > dtLastChange {
 					delete(r.friends[friendToRemove], e.ListItemKey)
 					if len(r.friends[friendToRemove]) == 0 {
 						delete(r.friends, friendToRemove)
@@ -527,8 +501,8 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 				}
 			}
 		}
-		if (friendToAdd != "" || friendToRemove != "") && r.friendsMostRecentChangeDT < e.getLocalVectorDT() {
-			r.friendsMostRecentChangeDT = e.getLocalVectorDT()
+		if (friendToAdd != "" || friendToRemove != "") && r.friendsMostRecentChangeDT < e.LamportTimestamp {
+			r.friendsMostRecentChangeDT = e.LamportTimestamp
 		}
 	}()
 }
@@ -548,32 +522,8 @@ func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
 	return item
 }
 
-func vectorClockBefore(a, b map[uuid]int64) bool {
-	// for one event to have happened before another event, all the elements of its vector need to be
-	// smaller or equal to the matching elements in the other vector.
-	// therefore, if _any_ of the cached event counters are <= the remote counterpart, we need
-	// to process the event. Or in other words, if all of the cached event counters are greater than
-	// the counterpart, we can skip the event
-
-	isEqual := len(a) == len(b)
-
-	for id, aDT := range a {
-		if bDT, bCachedExists := b[id]; !bCachedExists || aDT > bDT {
-			return false
-		} else if isEqual && aDT < bDT {
-			isEqual = false
-		}
-	}
-
-	if isEqual {
-		return false
-	}
-
-	return true
-}
-
 func (a *EventLog) before(b EventLog) bool {
-	return vectorClockBefore(a.VectorClock, b.VectorClock)
+	return leftEventOlder == checkEquality(*a, b)
 }
 
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
@@ -599,12 +549,9 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	// Add the event to the cache after the pre-existence checks above
 	eventCache[e.ListItemKey] = e
 
-	// Iterate over all counters in the event clock and update the local vector representation for each newer one
-	// IMPORTANT: this needs to occur **after** the equality check above
-	for id, remoteDT := range e.VectorClock {
-		if localDT, exists := r.getVectorDT(id); !exists || localDT < remoteDT {
-			r.setVectorDT(id, remoteDT)
-		}
+	// Local lamport timestamp is ONLY incremented here
+	if r.currentLamportTimestamp <= e.LamportTimestamp {
+		r.currentLamportTimestamp = e.LamportTimestamp + 1
 	}
 
 	r.generateFriendChangeEvents(e, item)
@@ -681,7 +628,7 @@ func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog,
 		el.EventType = wi.EventType
 		el.ListItemKey = strconv.Itoa(int(wi.UUID)) + ":" + strconv.Itoa(int(wi.ListItemCreationTime))
 		el.TargetListItemKey = strconv.Itoa(int(wi.TargetUUID)) + ":" + strconv.Itoa(int(wi.TargetListItemCreationTime))
-		el.setLocalVectorDT(wi.EventTime)
+		el.LamportTimestamp = wi.EventTime
 
 		line := make([]byte, wi.LineLength)
 		err = binary.Read(r, binary.LittleEndian, &line)
@@ -805,7 +752,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 					emailsMap:   oe.Friends.Emails,
 				},
 			}
-			e.setLocalVectorDT(oe.UnixNanoTime)
+			e.LamportTimestamp = oe.UnixNanoTime
 			for f := range oe.Friends.Emails {
 				e.Friends.Emails = append(e.Friends.Emails, f)
 			}
@@ -832,7 +779,7 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 				Note:              oe.Note,
 				Friends:           oe.Friends,
 			}
-			e.setLocalVectorDT(oe.UnixNanoTime)
+			e.LamportTimestamp = oe.UnixNanoTime
 			el = append(el, e)
 		}
 	case 6:
@@ -855,11 +802,11 @@ const (
 )
 
 func checkEquality(event1 EventLog, event2 EventLog) int {
-	if event1.getLocalVectorDT() < event2.getLocalVectorDT() ||
-		event1.getLocalVectorDT() == event2.getLocalVectorDT() && event1.UUID < event2.UUID {
+	if event1.LamportTimestamp < event2.LamportTimestamp ||
+		event1.LamportTimestamp == event2.LamportTimestamp && event1.UUID < event2.UUID {
 		return leftEventOlder
-	} else if event2.getLocalVectorDT() < event1.getLocalVectorDT() ||
-		event2.getLocalVectorDT() == event1.getLocalVectorDT() && event2.UUID < event1.UUID {
+	} else if event2.LamportTimestamp < event1.LamportTimestamp ||
+		event2.LamportTimestamp == event1.LamportTimestamp && event2.UUID < event1.UUID {
 		return rightEventOlder
 	}
 	return eventsEqual
@@ -1078,13 +1025,13 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan ch
 
 				if len(newWfWal) > 0 {
 					wg.Add(1)
-					go func() {
+					go func(n string, wal []EventLog) {
 						defer wg.Done()
 						replayChan <- namedWal{
-							name: newWal,
-							wal:  newWfWal,
+							name: n,
+							wal:  wal,
 						}
-					}()
+					}(newWal, newWfWal)
 				}
 			}
 		}
@@ -1094,7 +1041,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan ch
 	return nil
 }
 
-func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan chan namedWal) error {
+func (r *DBListRepo) gather(ctx context.Context) error {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	r.syncWalFileMut.RLock()
@@ -1112,9 +1059,11 @@ func (r *DBListRepo) gather(ctx context.Context, runCompaction bool, replayChan 
 	r.syncWalFileMut.RUnlock()
 	r.allWalFileMut.RUnlock()
 
-	if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
-		return err
-	}
+	// DANGER: running a pull here can cause map contention (concurrent iteration and write) in the
+	// crdt caches, namely `positionEventSet` in `generateEvents`
+	//if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
+	//return err
+	//}
 
 	fullWal := r.crdt.generateEvents()
 
@@ -1338,7 +1287,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 	// specified wait duration)
 	syncTriggerChan := make(chan struct{}, 1)
 
-	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
+	gatherTriggerTimer := time.NewTimer(gatherInterval)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
 	// dropped in to the root directory, etc) are flushed
@@ -1358,8 +1307,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 		}
 	}
 	schedulePush := func() {
-		r.pushTriggerTimer.Reset(pushWaitDuration)
-		gatherTriggerTimer.Reset(gatherWaitDuration)
+		r.pushTriggerTimer.Reset(pushInterval)
+		gatherTriggerTimer.Reset(gatherInterval)
 	}
 
 	// Run an initial load from the local walfile
@@ -1369,7 +1318,6 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 
 	// Main sync event loop
 	go func() {
-		reporderInc := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -1391,14 +1339,11 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					}
 					r.hasSyncedRemotes = true
 				case <-gatherTriggerTimer.C:
-					// Runs compaction every Nth gather
-					runCompaction := reporderInc > 0 && reporderInc%compactionGatherMultiple == 0
-					if err = r.gather(ctx, runCompaction, replayChan); err != nil {
+					if err = r.gather(ctx); err != nil {
 						log.Fatal(err)
 					}
-					reporderInc++
 				}
-				time.Sleep(time.Second * time.Duration(pullIntervalSeconds))
+				time.Sleep(pullInterval)
 				scheduleSync()
 			}
 		}
@@ -1481,7 +1426,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 							wsConsChan <- wsEv
 						}
 					}()
-					wsFlushTicker := time.NewTicker(websocketConsumeDuration)
+					wsFlushTicker := time.NewTicker(websocketConsumeInterval)
 					go func() {
 						for {
 							select {
@@ -1549,7 +1494,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 			}
 		}()
 	}
-	wsPublishTicker := time.NewTicker(websocketPublishDuration)
+	wsPublishTicker := time.NewTicker(websocketPublishInterval)
 	go func() {
 		for {
 			// The events chan contains single events. We want to aggregate them between intervals
@@ -1663,13 +1608,12 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 
 		key := strconv.Itoa(int(id)) + ":" + strconv.Itoa(int(lamportTimestamp))
 		e := EventLog{
-			UUID:        id,
-			EventType:   UpdateEvent,
-			ListItemKey: key,
-			Line:        line,
-			VectorClock: make(map[uuid]int64),
+			UUID:             id,
+			EventType:        UpdateEvent,
+			ListItemKey:      key,
+			Line:             line,
+			LamportTimestamp: lamportTimestamp,
 		}
-		e.setLocalVectorDT(lamportTimestamp)
 		el = append(el, e)
 		lamportTimestamp++
 
@@ -1678,9 +1622,8 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 			EventType:         PositionEvent,
 			ListItemKey:       key,
 			TargetListItemKey: prevKey,
-			VectorClock:       make(map[uuid]int64),
+			LamportTimestamp:  lamportTimestamp,
 		}
-		e.setLocalVectorDT(lamportTimestamp)
 		el = append(el, e)
 		lamportTimestamp++
 

@@ -2,6 +2,8 @@ package service
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/xlab/treeprint"
 )
@@ -17,10 +19,11 @@ type crdtTree struct {
 }
 
 type node struct {
-	key                 string
-	parent, left, right *node
-	children            childDll
-	latestVectorClock   map[uuid]int64
+	key                    string
+	originUUID             uuid
+	parent, left, right    *node
+	children               childDll
+	latestLamportTimestamp int64
 }
 
 func (n *node) moreRecentThan(o *node) bool {
@@ -29,7 +32,14 @@ func (n *node) moreRecentThan(o *node) bool {
 	} else if o.key == "_orphan" {
 		return false
 	}
-	return !vectorClockBefore(n.latestVectorClock, o.latestVectorClock)
+	//return n.latestLamportTimestamp > o.latestLamportTimestamp || n.latestLamportTimestamp == o.latestLamportTimestamp && n.originUUID > o.originUUID
+
+	if n.latestLamportTimestamp > o.latestLamportTimestamp {
+		return true
+	} else if n.latestLamportTimestamp < o.latestLamportTimestamp {
+		return false
+	}
+	return n.originUUID > o.originUUID
 }
 
 // Consider using https://pkg.go.dev/container/list
@@ -132,7 +142,7 @@ func newTree() *crdtTree {
 func (crdt *crdtTree) String() string {
 	var addNode func(t treeprint.Tree, n *node)
 	addNode = func(t treeprint.Tree, n *node) {
-		treeNode := t.AddBranch(fmt.Sprintf("%s (%v)", n.key, n.latestVectorClock))
+		treeNode := t.AddBranch(fmt.Sprintf("%s (%v)", n.key, n.latestLamportTimestamp))
 		for c := range n.children.iter() {
 			addNode(treeNode, c)
 		}
@@ -204,9 +214,17 @@ func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 func (crdt *crdtTree) add(e EventLog) {
 	target, exists := crdt.cache[e.TargetListItemKey]
 	if !exists {
+		// TODO centralise
+		// TODO more efficient storage/inferrence of target item uuid/lamport
+		r := strings.Split(e.TargetListItemKey, ":")
+		i, _ := strconv.ParseInt(r[0], 10, 64)
+		originUUID := uuid(i)
+		ts, _ := strconv.ParseInt(r[1], 10, 64)
+
 		target = &node{
-			key:               e.TargetListItemKey,
-			latestVectorClock: e.VectorClock,
+			key:                    e.TargetListItemKey,
+			originUUID:             originUUID,
+			latestLamportTimestamp: ts,
 		}
 		crdt.cache[e.TargetListItemKey] = target
 		orphanParent := crdt.cache[crdtOrphanKey]
@@ -216,14 +234,16 @@ func (crdt *crdtTree) add(e EventLog) {
 	item, exists := crdt.cache[e.ListItemKey]
 	if !exists {
 		item = &node{
-			key: e.ListItemKey,
+			key:                    e.ListItemKey,
+			originUUID:             e.UUID,
+			latestLamportTimestamp: e.LamportTimestamp,
 		}
 		crdt.cache[e.ListItemKey] = item
 	} else {
 		// remove from parent.children if pre-existing
 		item.parent.children.removeChild(item.key)
 	}
-	item.latestVectorClock = e.VectorClock
+	item.latestLamportTimestamp = e.LamportTimestamp
 
 	crdt.addToTargetChildArray(item, target)
 }

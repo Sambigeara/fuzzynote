@@ -41,9 +41,8 @@ type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
 
-	//currentLamportTimestamp int64
-	vectorClock   map[uuid]int64
-	listItemCache map[string]*ListItem
+	currentLamportTimestamp int64
+	listItemCache           map[string]*ListItem
 
 	crdt *crdtTree
 
@@ -99,7 +98,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		// Wal stuff
 		uuid:              generateUUID(),
 		latestWalSchemaID: latestWalSchemaID,
-		vectorClock:       make(map[uuid]int64),
 		listItemCache:     make(map[string]*ListItem),
 
 		crdt: newTree(),
@@ -154,28 +152,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 func (r *DBListRepo) setEmail(email string) {
 	r.email = strings.ToLower(email)
 	r.friends[email] = make(map[string]int64)
-}
-
-func (r *DBListRepo) getVectorDT(id uuid) (int64, bool) {
-	dt, exists := r.vectorClock[id]
-	return dt, exists
-}
-
-func (r *DBListRepo) setVectorDT(id uuid, dt int64) {
-	r.vectorClock[id] = dt
-}
-
-func (r *DBListRepo) getLocalVectorDT() int64 {
-	dt, _ := r.getVectorDT(r.uuid)
-	return dt
-}
-
-func (r *DBListRepo) setLocalVectorDT(dt int64) {
-	r.setVectorDT(r.uuid, dt)
-}
-
-func (r *DBListRepo) incLocalVectorDT() {
-	r.vectorClock[r.uuid]++
 }
 
 // ForceTriggerFlush will zero the flush timer, and block til completion. E.g. this is a synchronous flush
@@ -251,24 +227,24 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	return item, err
 }
 
-func (r *DBListRepo) update(line string, item *ListItem, incrementLocalVector bool) EventLog {
-	e := r.newEventLogFromListItem(UpdateEvent, item, incrementLocalVector)
+func (r *DBListRepo) update(line string, item *ListItem) EventLog {
+	e := r.newEventLogFromListItem(UpdateEvent, item)
 	e.Line = line
 	return e
 }
 
-func (r *DBListRepo) updateNote(note []byte, item *ListItem, incrementLocalVector bool) EventLog {
-	e := r.newEventLogFromListItem(UpdateEvent, item, incrementLocalVector)
+func (r *DBListRepo) updateNote(note []byte, item *ListItem) EventLog {
+	e := r.newEventLogFromListItem(UpdateEvent, item)
 	e.Note = note
 	return e
 }
 
-func (r *DBListRepo) del(item *ListItem, incrementLocalVector bool) EventLog {
-	return r.newEventLogFromListItem(DeleteEvent, item, incrementLocalVector)
+func (r *DBListRepo) del(item *ListItem) EventLog {
+	return r.newEventLogFromListItem(DeleteEvent, item)
 }
 
-func (r *DBListRepo) move(item, targetItem *ListItem, incrementLocalVector bool) EventLog {
-	e := r.newEventLogFromListItem(PositionEvent, item, incrementLocalVector)
+func (r *DBListRepo) move(item, targetItem *ListItem) EventLog {
+	e := r.newEventLogFromListItem(PositionEvent, item)
 	e.TargetListItemKey = ""
 	if targetItem != nil {
 		e.TargetListItemKey = targetItem.key
@@ -281,15 +257,15 @@ func (r *DBListRepo) move(item, targetItem *ListItem, incrementLocalVector bool)
 func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string, error) {
 	var events []EventLog
 
-	e := r.newEventLog(UpdateEvent, true)
-	e.ListItemKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.getLocalVectorDT()))
+	e := r.newEventLog(UpdateEvent)
+	e.ListItemKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
 	e.Line = line
 	e.Note = note
 	newItem, _ := r.addEventLog(e)
-	ue := r.del(newItem, false)
+	ue := r.del(newItem)
 	events = append(events, e)
 
-	posEvent := r.move(newItem, childItem, true)
+	posEvent := r.move(newItem, childItem)
 	r.addEventLog(posEvent)
 	events = append(events, posEvent)
 
@@ -300,8 +276,8 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 
 // Update will update the line or note of an existing ListItem
 func (r *DBListRepo) Update(line string, item *ListItem) error {
-	e := r.update(line, item, true)
-	ue := r.update(item.rawLine, item, false)
+	e := r.update(line, item)
+	ue := r.update(item.rawLine, item)
 
 	r.addEventLog(e)
 	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
@@ -310,8 +286,8 @@ func (r *DBListRepo) Update(line string, item *ListItem) error {
 
 // TODO rethink this interface
 func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
-	e := r.updateNote(note, item, true)
-	ue := r.updateNote(item.Note, item, false)
+	e := r.updateNote(note, item)
+	ue := r.updateNote(item.Note, item)
 
 	r.addEventLog(e)
 	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
@@ -320,8 +296,8 @@ func (r *DBListRepo) UpdateNote(note []byte, item *ListItem) error {
 
 // Delete will remove an existing ListItem
 func (r *DBListRepo) Delete(item *ListItem) (string, error) {
-	e := r.del(item, true)
-	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
+	e := r.del(item)
+	ue := r.newEventLogFromListItem(UpdateEvent, item)
 
 	r.addEventLog(e)
 	events := []EventLog{e}
@@ -345,8 +321,8 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 	// the new child. Only relevant for non-startup case
 	if item.matchChild != nil {
 		var events, undoEvents []EventLog
-		e := r.move(item, item.matchChild.child, true)
-		ue := r.move(item, item.matchChild, false)
+		e := r.move(item, item.matchChild.child)
+		ue := r.move(item, item.matchChild)
 		r.addEventLog(e)
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
@@ -354,8 +330,8 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 		// client is responsible for repointing the parent -
 		// we operate only on true pointers (accounting for hidden items)
 		if item.parent != nil {
-			parentEvent := r.move(item.parent, item.child, true)
-			undoParentEvent := r.move(item.parent, item, false)
+			parentEvent := r.move(item.parent, item.child)
+			undoParentEvent := r.move(item.parent, item)
 			r.addEventLog(parentEvent)
 			events = append(events, parentEvent)
 			undoEvents = append(undoEvents, undoParentEvent)
@@ -370,16 +346,16 @@ func (r *DBListRepo) MoveUp(item *ListItem) error {
 func (r *DBListRepo) MoveDown(item *ListItem) error {
 	if item.matchParent != nil {
 		var events, undoEvents []EventLog
-		e := r.move(item, item.matchParent, true)
-		ue := r.move(item, item.matchChild, false)
+		e := r.move(item, item.matchParent)
+		ue := r.move(item, item.matchChild)
 		r.addEventLog(e)
 		events = append(events, e)
 		undoEvents = append(undoEvents, ue)
 
 		// client is responsible for repointing the parent -
 		// we operate only on true pointers (accounting for hidden items)
-		parentEvent := r.move(item.parent, item.child, true)
-		undoParentEvent := r.move(item.parent, item, false)
+		parentEvent := r.move(item.parent, item.child)
+		undoParentEvent := r.move(item.parent, item)
 		r.addEventLog(parentEvent)
 		events = append(events, parentEvent)
 		undoEvents = append(undoEvents, undoParentEvent)
@@ -407,11 +383,11 @@ func (r *DBListRepo) ToggleVisibility(item *ListItem) (string, error) {
 			focusedItemKey = item.matchChild.key
 		}
 	}
-	e := r.newEventLogFromListItem(UpdateEvent, item, true)
+	e := r.newEventLogFromListItem(UpdateEvent, item)
 	e.IsHidden = newIsHidden
 	r.addEventLog(e)
 
-	ue := r.newEventLogFromListItem(UpdateEvent, item, false)
+	ue := r.newEventLogFromListItem(UpdateEvent, item)
 	ue.IsHidden = !newIsHidden
 	r.addUndoLogs([]EventLog{ue}, []EventLog{e})
 
@@ -423,10 +399,9 @@ func (r *DBListRepo) replayEventsFromUndoLog(events []EventLog) string {
 	// If the oppEvent event type == AddEvent, the event ListItemKey will become inconsistent with the
 	// UUID and LamportTimestamp of the new event. However, we need to maintain the old key in order to map
 	// to the old ListItem in the caches
-	r.incLocalVectorDT() // we increment once, as the events are atomic, and the ListItemKeys are unique, so they can share the VectorClock
 	var key string
 	for i, e := range events {
-		e.VectorClock = r.getLocalVectorClockCopy()
+		e.LamportTimestamp = r.currentLamportTimestamp
 		item, _ := r.addEventLog(e)
 		if i == 0 && item != nil {
 			if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
