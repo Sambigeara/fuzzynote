@@ -380,8 +380,10 @@ func (t *Terminal) HandleEvent(ev interface{}) error {
 		case tcell.KeyCtrlR:
 			interactionEvent.T = service.KeyRedo
 		case tcell.KeyCtrlC:
-			if url := service.MatchFirstURL(t.c.CurItem.Line(), true); url != "" {
-				clipboard.WriteAll(url)
+			if t.c.CurItem != nil {
+				if url := service.MatchFirstURL(t.c.CurItem.Line(), true); url != "" {
+					clipboard.WriteAll(url)
+				}
 			}
 			interactionEvent.T = service.KeyCopy
 		case tcell.KeyCtrlUnderscore:
