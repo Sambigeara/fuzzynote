@@ -38,22 +38,18 @@ func permutationsOfEvents(arr []EventLog) chan []EventLog {
 
 func TestCRDTEventEquality(t *testing.T) {
 	t.Run("Check event comparisons", func(t *testing.T) {
-		var lamport int64
+		var ts int64
 		id := uuid(1)
 		event1 := EventLog{
-			VectorClock: map[uuid]int64{
-				id: lamport,
-			},
-			UUID:      id,
-			EventType: UpdateEvent,
+			LamportTimestamp: ts,
+			UUID:             id,
+			EventType:        UpdateEvent,
 		}
 
 		event2 := EventLog{
-			VectorClock: map[uuid]int64{
-				id: lamport + 1,
-			},
-			UUID:      id,
-			EventType: UpdateEvent,
+			LamportTimestamp: ts + 1,
+			UUID:             id,
+			EventType:        UpdateEvent,
 		}
 
 		equality := checkEquality(event1, event2)
@@ -78,19 +74,17 @@ func TestCRDTProcessEvent(t *testing.T) {
 		repo, clearUp := setupRepo()
 		defer clearUp()
 
-		vc := map[uuid]int64{
-			1: 1,
-		}
+		var ts int64 = 1
 		key := "1"
 		repo.processEventLog(EventLog{
-			VectorClock: vc,
-			EventType:   UpdateEvent,
-			ListItemKey: key,
+			LamportTimestamp: ts,
+			EventType:        UpdateEvent,
+			ListItemKey:      key,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: vc,
-			EventType:   PositionEvent,
-			ListItemKey: key,
+			LamportTimestamp: ts,
+			EventType:        PositionEvent,
+			ListItemKey:      key,
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -111,29 +105,25 @@ func TestCRDTProcessEvent(t *testing.T) {
 
 		nodeKey0 := "1"
 		nodeKey1 := "2"
-		vc0 := map[uuid]int64{
-			1: 1,
-		}
-		vc1 := map[uuid]int64{
-			1: 2,
-		}
+		var ts0 int64 = 1
+		var ts1 int64 = 2
 		repo.processEventLog(EventLog{
-			VectorClock: vc0,
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: vc0,
-			EventType:   PositionEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        PositionEvent,
+			ListItemKey:      nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: vc1,
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey1,
+			LamportTimestamp: ts1,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey1,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock:       vc1,
+			LamportTimestamp:  ts1,
 			EventType:         PositionEvent,
 			ListItemKey:       nodeKey1,
 			TargetListItemKey: nodeKey0,
@@ -162,34 +152,28 @@ func TestCRDTProcessEvent(t *testing.T) {
 		nodeKey0 := "1"
 		nodeKey1 := "2"
 
+		var ts0 int64 = 1
+		var ts1 int64 = 2
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey1,
+			LamportTimestamp: ts1,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey1,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  ts1,
 			EventType:         PositionEvent,
 			ListItemKey:       nodeKey1,
 			TargetListItemKey: nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   PositionEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        PositionEvent,
+			ListItemKey:      nodeKey0,
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -214,33 +198,27 @@ func TestCRDTProcessEvent(t *testing.T) {
 
 		nodeKey0 := "1"
 		nodeKey1 := "2"
+		var ts0 int64 = 1
+		var ts1 int64 = 2
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   PositionEvent,
-			ListItemKey: nodeKey0,
+			LamportTimestamp: ts0,
+			EventType:        PositionEvent,
+			ListItemKey:      nodeKey0,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: nodeKey1,
+			LamportTimestamp: ts1,
+			EventType:        UpdateEvent,
+			ListItemKey:      nodeKey1,
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   PositionEvent,
-			ListItemKey: nodeKey1,
+			LamportTimestamp: ts1,
+			EventType:        PositionEvent,
+			ListItemKey:      nodeKey1,
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -271,128 +249,96 @@ func TestCRDTProcessEvent(t *testing.T) {
 
 		i := int64(1)
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "3",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "3",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "4",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "4",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "4",
 			TargetListItemKey: "3",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "8",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "8",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "8",
 			TargetListItemKey: "7",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "6",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "6",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "6",
 			TargetListItemKey: "5",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "7",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "7",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "7",
 			TargetListItemKey: "6",
 		})
 		i++
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "5",
+			LamportTimestamp: i,
+			EventType:        UpdateEvent,
+			ListItemKey:      "5",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: i,
-			},
+			LamportTimestamp:  i,
 			EventType:         PositionEvent,
 			ListItemKey:       "5",
 			TargetListItemKey: "4",
@@ -416,41 +362,31 @@ func TestCRDTProcessEvent(t *testing.T) {
 		defer clearUp()
 
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
+			LamportTimestamp:  1,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  2,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "2",
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -470,41 +406,31 @@ func TestCRDTProcessEvent(t *testing.T) {
 		defer clearUp()
 
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
+			LamportTimestamp:  1,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  2,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1",
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -524,49 +450,37 @@ func TestCRDTProcessEvent(t *testing.T) {
 		defer clearUp()
 
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
+			LamportTimestamp:  1,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  2,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		// throw a duplicate delete in for good measure
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1",
 		})
 
 		matches, _, _ := repo.Match([][]rune{}, false, "", 0, 0)
@@ -590,61 +504,45 @@ func TestCRDTProcessEvent(t *testing.T) {
 		defer clearUp()
 
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
+			LamportTimestamp:  1,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  2,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "3",
+			LamportTimestamp: 3,
+			EventType:        UpdateEvent,
+			ListItemKey:      "3",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
+			LamportTimestamp:  3,
 			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 4,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 4,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 5,
-			},
+			LamportTimestamp:  5,
 			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "1",
@@ -675,83 +573,61 @@ func TestCRDTProcessEvent(t *testing.T) {
 		defer clearUp()
 
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 1,
-			},
+			LamportTimestamp:  1,
 			EventType:         PositionEvent,
 			ListItemKey:       "1",
 			TargetListItemKey: "",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 2,
-			},
+			LamportTimestamp:  2,
 			EventType:         PositionEvent,
 			ListItemKey:       "2",
 			TargetListItemKey: "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "3",
+			LamportTimestamp: 3,
+			EventType:        UpdateEvent,
+			ListItemKey:      "3",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 3,
-			},
+			LamportTimestamp:  3,
 			EventType:         PositionEvent,
 			ListItemKey:       "3",
 			TargetListItemKey: "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 4,
-			},
-			EventType:   UpdateEvent,
-			ListItemKey: "4",
+			LamportTimestamp: 4,
+			EventType:        UpdateEvent,
+			ListItemKey:      "4",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 4,
-			},
+			LamportTimestamp:  4,
 			EventType:         PositionEvent,
 			ListItemKey:       "4",
 			TargetListItemKey: "3",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 5,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "1",
+			LamportTimestamp: 5,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 6,
-			},
-			EventType:   DeleteEvent,
-			ListItemKey: "2",
+			LamportTimestamp: 6,
+			EventType:        DeleteEvent,
+			ListItemKey:      "2",
 		})
 		repo.processEventLog(EventLog{
-			VectorClock: map[uuid]int64{
-				1: 7,
-			},
+			LamportTimestamp:  7,
 			EventType:         PositionEvent,
 			ListItemKey:       "4",
 			TargetListItemKey: "2",

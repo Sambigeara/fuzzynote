@@ -82,22 +82,9 @@ func setupRepo() (*DBListRepo, func()) {
 	return repo, closeFn
 }
 
-func checkVectorClockEquality(a, b map[uuid]int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
 func checkEventLogEquality(a, b EventLog) bool {
 	if a.UUID != b.UUID ||
-		!checkVectorClockEquality(a.VectorClock, b.VectorClock) ||
-		//a.LamportTimestamp != b.LamportTimestamp ||
+		a.LamportTimestamp != b.LamportTimestamp ||
 		a.EventType != b.EventType ||
 		a.ListItemKey != b.ListItemKey ||
 		a.TargetListItemKey != b.TargetListItemKey ||
@@ -117,20 +104,16 @@ func TestServicePushPull(t *testing.T) {
 		var lamport int64 = 0
 		wal := []EventLog{
 			{
-				UUID: repo.uuid,
-				VectorClock: map[uuid]int64{
-					repo.uuid: lamport,
-				},
-				EventType:   UpdateEvent,
-				ListItemKey: strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
-				Line:        "Old newly created line",
+				UUID:             repo.uuid,
+				LamportTimestamp: lamport,
+				EventType:        UpdateEvent,
+				ListItemKey:      strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
+				Line:             "Old newly created line",
 			},
 		}
 		wal = append(wal, EventLog{
-			UUID: repo.uuid,
-			VectorClock: map[uuid]int64{
-				repo.uuid: lamport,
-			},
+			UUID:              repo.uuid,
+			LamportTimestamp:  lamport,
 			EventType:         UpdateEvent,
 			ListItemKey:       strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport+1)),
 			TargetListItemKey: strconv.Itoa(int(repo.uuid)) + ":" + strconv.Itoa(int(lamport)),
