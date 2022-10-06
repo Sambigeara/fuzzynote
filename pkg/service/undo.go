@@ -1,11 +1,5 @@
 package service
 
-import (
-//"fmt"
-//"runtime"
-//"os"
-)
-
 // oppositeEvent returns the `undoing` event for a given type, e.g. delete an added item
 var oppositeEvent = map[EventType]EventType{
 	AddEvent:      DeleteEvent,
@@ -17,21 +11,9 @@ var oppositeEvent = map[EventType]EventType{
 	HideEvent:     ShowEvent,
 }
 
-type undoEventLog struct {
-	uuid                       uuid
-	targetUUID                 uuid
-	eventType                  EventType
-	listItemCreationTime       int64
-	targetListItemCreationTime int64
-	undoLine                   string
-	undoNote                   *[]byte
-	redoLine                   string
-	redoNote                   *[]byte
-}
-
 type undoLog struct {
-	oppEvent EventLog // The event required to undo the corresponding original event
-	event    EventLog // The original event that was triggered on the client interface call (Add/Update/etc)
+	oppEvents []EventLog // The events required to undo the corresponding original events
+	events    []EventLog // The original events that were triggered on the client interface call (Add/Update/etc)
 }
 
 // DbEventLogger is used for in-mem undo/redo mechanism
@@ -43,21 +25,27 @@ type DbEventLogger struct {
 // NewDbEventLogger Returns a new instance of DbEventLogger
 func NewDbEventLogger() *DbEventLogger {
 	return &DbEventLogger{
-		log: []undoLog{undoLog{
-			oppEvent: EventLog{
-				EventType: NullEvent,
+		log: []undoLog{
+			{
+				oppEvents: []EventLog{
+					{
+						EventType: NullEvent,
+					},
+				},
+				events: []EventLog{
+					{
+						EventType: NullEvent,
+					},
+				},
 			},
-			event: EventLog{
-				EventType: NullEvent,
-			},
-		}},
+		},
 	}
 }
 
-func (r *DBListRepo) addUndoLog(oppEvent EventLog, originalEvent EventLog) error {
+func (r *DBListRepo) addUndoLogs(oppEvents []EventLog, originalEvents []EventLog) error {
 	ul := undoLog{
-		oppEvent: oppEvent,
-		event:    originalEvent,
+		oppEvents: oppEvents,
+		events:    originalEvents,
 	}
 	// Truncate the event log, so when we Undo and then do something new, the previous Redo events
 	// are overwritten

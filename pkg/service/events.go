@@ -5,11 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,44 +29,25 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 6
+const latestWalSchemaID uint16 = 7
 
 // sync intervals
 const (
-	pullIntervalSeconds      = 5
-	pushWaitDuration         = time.Second * time.Duration(5)
-	gatherWaitDuration       = time.Second * time.Duration(10)
-	compactionGatherMultiple = 2
-	websocketConsumeDuration = time.Millisecond * 600
-	websocketPublishDuration = time.Millisecond * 600
+	pullInterval             = time.Second * 5
+	pushInterval             = time.Second * 5
+	gatherInterval           = time.Second * 10
+	websocketConsumeInterval = time.Millisecond * 600
+	websocketPublishInterval = time.Millisecond * 600
 )
 
-var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
 
-type walItemSchema2 struct {
-	UUID                       uuid
-	TargetUUID                 uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	EventTime                  int64
-	EventType                  EventType
-	LineLength                 uint64
-	NoteExists                 bool
-	NoteLength                 uint64
-}
-
-var (
-	errWalIntregrity = errors.New("the wal was forcefully recovered, r.log needs to be purged")
-)
-
 type EventType uint16
 
 // Ordering of these enums are VERY IMPORTANT as they're used for comparisons when resolving WAL merge conflicts
-// (although there has to be nanosecond level collisions in order for this to be relevant)
 const (
 	NullEvent EventType = iota
 	AddEvent
@@ -79,25 +57,8 @@ const (
 	ShowEvent
 	HideEvent
 	DeleteEvent
+	PositionEvent
 )
-
-type LineFriendsSchema4 struct {
-	IsProcessed bool
-	Offset      int
-	Emails      map[string]struct{}
-}
-
-type EventLogSchema4 struct {
-	UUID, TargetUUID           uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	UnixNanoTime               int64
-	EventType                  EventType
-	Line                       string
-	Note                       []byte
-	Friends                    LineFriendsSchema4
-	key, targetKey             string
-}
 
 type LineFriends struct {
 	IsProcessed bool
@@ -106,27 +67,36 @@ type LineFriends struct {
 	emailsMap   map[string]struct{}
 }
 
-type EventLogSchema5 struct {
-	UUID, TargetUUID           uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	UnixNanoTime               int64
-	EventType                  EventType
-	Line                       string
-	Note                       []byte
-	Friends                    LineFriends
-	key, targetKey             string
-}
-
 type EventLog struct {
-	UUID                           uuid
+	UUID                           uuid // origin UUID
 	LamportTimestamp               int64
 	EventType                      EventType
 	ListItemKey, TargetListItemKey string
 	Line                           string
 	Note                           []byte
+	IsHidden                       bool
 	Friends                        LineFriends
 	cachedKey                      string
+}
+
+func (r *DBListRepo) newEventLog(t EventType) EventLog {
+	return EventLog{
+		UUID:             r.uuid,
+		LamportTimestamp: r.currentLamportTimestamp,
+		EventType:        t,
+	}
+}
+
+func (r *DBListRepo) newEventLogFromListItem(t EventType, item *ListItem) EventLog {
+	e := r.newEventLog(t)
+	e.ListItemKey = item.key
+	if item.matchChild != nil {
+		e.TargetListItemKey = item.matchChild.key
+	}
+	e.Line = item.rawLine
+	e.Note = item.Note
+	e.IsHidden = item.IsHidden
+	return e
 }
 
 func (e *EventLog) key() string {
@@ -357,12 +327,12 @@ func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 	} else {
 		// Retrieve existing friends from the item, if it already exists. This prevents the following bug:
 		// - Item is shared with `@foo@bar.com`
-		// - `fzn_cfg:friend foo@bar.com` is removed
+		// - Item `fzn_cfg:friend foo@bar.com` is deleted
 		// - Update is made on previously shared line
 		// - `@foo@bar.com` is appended to the Line() portion of the string, because the friend is no longer present in
 		//   the r.friends cache
 		var existingFriends []string
-		if item, exists := r.listItemTracker[e.ListItemKey]; exists {
+		if item, exists := r.listItemCache[e.ListItemKey]; exists {
 			existingFriends = item.friends.Emails
 		}
 		// If there are no friends, return early
@@ -492,199 +462,94 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 	}()
 }
 
+func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
+	if key == "" {
+		return nil
+	}
+	item, exists := r.listItemCache[key]
+	if exists {
+		return item
+	}
+	item = &ListItem{
+		key: key,
+	}
+	r.listItemCache[key] = item
+	return item
+}
+
+func (a *EventLog) before(b EventLog) bool {
+	return leftEventOlder == checkEquality(*a, b)
+}
+
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
-	item := r.listItemTracker[e.ListItemKey]
-	targetItem := r.listItemTracker[e.TargetListItemKey]
+	item := r.getOrCreateListItem(e.ListItemKey)
 
-	// Skip any events that have already been processed
-	if _, exists := r.processedEventLogCache[e.key()]; exists {
-		return item, nil
+	var eventCache map[string]EventLog
+	switch e.EventType {
+	case UpdateEvent:
+		eventCache = r.crdt.addEventSet
+	case DeleteEvent:
+		eventCache = r.crdt.deleteEventSet
+	case PositionEvent:
+		eventCache = r.crdt.positionEventSet
 	}
-	r.processedEventLogCache[e.key()] = struct{}{}
 
-	// Else, skip any event of equal EventType that is <= the most recently processed for a given ListItem
-	// TODO storing a whole EventLog might be expensive, use a specific/reduced type in the nested map
-	if eventTypeCache, exists := r.listItemProcessedEventLogTypeCache[e.EventType]; exists {
-		if ce, exists := eventTypeCache[e.ListItemKey]; exists {
-			switch checkEquality(ce, e) {
-			// if the new event is older or equal, skip
-			case rightEventOlder, eventsEqual:
-				return item, nil
-			}
+	// Check the event cache and skip if the event is older than the most-recently processed
+	if ce, exists := eventCache[e.ListItemKey]; exists {
+		if e.before(ce) {
+			return item, nil
 		}
-	} else {
-		r.listItemProcessedEventLogTypeCache[e.EventType] = make(map[string]EventLog)
 	}
-	r.listItemProcessedEventLogTypeCache[e.EventType][e.ListItemKey] = e
 
+	// Add the event to the cache after the pre-existence checks above
+	eventCache[e.ListItemKey] = e
+
+	// Local lamport timestamp is ONLY incremented here
 	if r.currentLamportTimestamp <= e.LamportTimestamp {
 		r.currentLamportTimestamp = e.LamportTimestamp + 1
-	}
-
-	// We need to maintain records of deleted items in the cache, but if deleted, want to assign nil ptrs
-	// in the various funcs below, so set to nil
-	if item != nil && item.isDeleted {
-		item = nil
-	}
-	if targetItem != nil && targetItem.isDeleted {
-		targetItem = nil
-	}
-
-	// When we're calling this function on initial WAL merge and load, we may come across
-	// orphaned items. There MIGHT be a valid case to keep events around if the EventType
-	// is Update. Item will obviously never exist for Add. For all other eventTypes,
-	// we should just skip the event and return
-	// TODO remove this AddEvent nil item passthrough
-	if item == nil && e.EventType != AddEvent && e.EventType != UpdateEvent {
-		return item, nil
 	}
 
 	r.generateFriendChangeEvents(e, item)
 
 	var err error
 	switch e.EventType {
-	case AddEvent:
-		if item != nil {
-			// 21/11/21: There was a bug caused when a collaborator `Undo` was carried out on a collaborator origin
-			// `Delete`, when the `Delete` was not picked up by the local. This resulted in an `Add` being carried out
-			// with a duplicate ListItem key, which led to some F'd up behaviour in the match set. This catch covers
-			// this case by doing a dumb "if Add on existing item, change to Update". We need to run two updates, as
-			// Note and Line updates are individual operations.
-			// TODO remove this when `Compact`/wal post-processing is smart enough to iron out these broken logs.
-			err = r.update(item, e.Line, e.Friends, e.Note)
-			err = r.update(item, "", e.Friends, e.Note)
-		} else {
-			item, err = r.add(e.ListItemKey, e.Line, e.Friends, e.Note, targetItem)
-		}
 	case UpdateEvent:
-		// We have to cover an edge case here which occurs when merging two remote WALs. If the following occurs:
-		// - wal1 creates item A
-		// - wal2 copies wal1
-		// - wal2 deletes item A
-		// - wal1 updates item A
-		// - wal1 copies wal2
-		// We will end up with an attempted Update on a nonexistent item.
-		// In this case, we will Add an item back in with the updated content
-		// NOTE A side effect of this will be that the re-added item will be at the top of the list as it
-		// becomes tricky to deal with child IDs
-		if item != nil {
-			err = r.update(item, e.Line, e.Friends, e.Note)
-		} else {
-			item, err = r.add(e.ListItemKey, e.Line, e.Friends, e.Note, targetItem)
-		}
-	case MoveDownEvent:
-		if targetItem == nil {
-			return item, nil
-		}
-		fallthrough
-	case MoveUpEvent:
-		item, err = r.move(item, targetItem)
-	case ShowEvent:
-		err = r.setVisibility(item, true)
-	case HideEvent:
-		err = r.setVisibility(item, false)
-	case DeleteEvent:
-		err = r.del(item)
+		err = updateItemFromEvent(item, e, r.email)
+	case PositionEvent:
+		r.crdt.add(e)
 	}
 
-	if item != nil {
-		r.listItemTracker[e.ListItemKey] = item
-	}
+	r.listItemCache[e.ListItemKey] = item
 
 	return item, err
 }
 
-func (r *DBListRepo) add(key string, line string, friends LineFriends, note []byte, childItem *ListItem) (*ListItem, error) {
-	newItem := &ListItem{
-		key:        key,
-		child:      childItem,
-		rawLine:    line,
-		Note:       note,
-		friends:    friends,
-		localEmail: r.email,
-	}
+func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
+	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
+	item.rawLine = e.Line
+	item.Note = e.Note
+	item.IsHidden = e.IsHidden
 
-	// If `child` is nil, it's the first item in the list so set as root and return
-	if childItem == nil {
-		oldRoot := r.Root
-		r.Root = newItem
-		if oldRoot != nil {
-			newItem.parent = oldRoot
-			oldRoot.child = newItem
+	// item.friends.emails is a map, which we only ever want to OR with to aggregate
+	mergedEmailMap := make(map[string]struct{})
+	for _, e := range item.friends.Emails {
+		mergedEmailMap[e] = struct{}{}
+	}
+	for _, e := range e.Friends.Emails {
+		mergedEmailMap[e] = struct{}{}
+	}
+	item.friends.IsProcessed = e.Friends.IsProcessed
+	item.friends.Offset = e.Friends.Offset
+
+	emails := []string{}
+	for e := range mergedEmailMap {
+		if e != email {
+			emails = append(emails, e)
 		}
-		return newItem, nil
 	}
+	sort.Strings(emails)
+	item.friends.Emails = emails
 
-	if childItem.parent != nil {
-		childItem.parent.child = newItem
-		newItem.parent = childItem.parent
-	}
-	childItem.parent = newItem
-
-	return newItem, nil
-}
-
-func (r *DBListRepo) update(item *ListItem, line string, friends LineFriends, note []byte) error {
-	if len(line) > 0 {
-		item.rawLine = line
-		// item.friends.emails is a map, which we only ever want to OR with to aggregate
-		mergedEmailMap := make(map[string]struct{})
-		for _, e := range item.friends.Emails {
-			mergedEmailMap[e] = struct{}{}
-		}
-		for _, e := range friends.Emails {
-			mergedEmailMap[e] = struct{}{}
-		}
-		item.friends.IsProcessed = friends.IsProcessed
-		item.friends.Offset = friends.Offset
-		emails := []string{}
-		for e := range mergedEmailMap {
-			if e != r.email {
-				emails = append(emails, e)
-			}
-		}
-		sort.Strings(emails)
-		item.friends.Emails = emails
-	} else {
-		item.Note = note
-	}
-
-	// Just in case an Update occurs on a Deleted item (distributed race conditions)
-	item.isDeleted = false
-
-	return nil
-}
-
-func (r *DBListRepo) del(item *ListItem) error {
-	item.isDeleted = true
-
-	if item.child != nil {
-		item.child.parent = item.parent
-	} else {
-		// If the item has no child, it is at the top of the list and therefore we need to update the root
-		r.Root = item.parent
-	}
-
-	if item.parent != nil {
-		item.parent.child = item.child
-	}
-
-	return nil
-}
-
-func (r *DBListRepo) move(item *ListItem, childItem *ListItem) (*ListItem, error) {
-	var err error
-	err = r.del(item)
-	isHidden := item.IsHidden
-	item, err = r.add(item.key, item.rawLine, item.friends, item.Note, childItem)
-	if isHidden {
-		r.setVisibility(item, false)
-	}
-	return item, err
-}
-
-func (r *DBListRepo) setVisibility(item *ListItem, isVisible bool) error {
-	item.IsHidden = !isVisible
 	return nil
 }
 
@@ -700,66 +565,10 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 		r.processEventLog(e)
 	}
 
-	r.log = merge(r.log, partialWal)
-
 	return nil
 }
 
-func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog, error) {
-	el := EventLog{}
-
-	switch schemaVersionID {
-	case 3:
-		wi := walItemSchema2{}
-		err := binary.Read(r, binary.LittleEndian, &wi)
-		if err != nil {
-			return nil, err
-		}
-
-		el.UUID = wi.UUID
-		el.EventType = wi.EventType
-		el.ListItemKey = strconv.Itoa(int(wi.UUID)) + ":" + strconv.Itoa(int(wi.ListItemCreationTime))
-		el.TargetListItemKey = strconv.Itoa(int(wi.TargetUUID)) + ":" + strconv.Itoa(int(wi.TargetListItemCreationTime))
-		el.LamportTimestamp = wi.EventTime
-
-		line := make([]byte, wi.LineLength)
-		err = binary.Read(r, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.Line = string(line)
-
-		if wi.NoteExists {
-			el.Note = []byte{}
-		}
-		if wi.NoteLength > 0 {
-			note := make([]byte, wi.NoteLength)
-			err = binary.Read(r, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.Note = note
-		}
-	default:
-		return nil, errors.New("unrecognised wal schema version")
-	}
-	return &el, nil
-}
-
-func getOldEventLogKeys(i interface{}) (string, string) {
-	var key, targetKey string
-	switch e := i.(type) {
-	case EventLogSchema4:
-		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
-		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
-	case EventLogSchema5:
-		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
-		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
-	}
-	return key, targetKey
-}
-
-func buildFromFile(raw io.Reader) ([]EventLog, error) {
+func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
 	var el []EventLog
 	var walSchemaVersionID uint16
 	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
@@ -793,88 +602,13 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		errChan <- nil
 	}()
 
+	if walSchemaVersionID <= 6 {
+		return r.legacyBuildFromRaw(pr, walSchemaVersionID, errChan)
+	}
+
+	// Schema 7
 	switch walSchemaVersionID {
-	case 1, 2, 3:
-		for {
-			select {
-			case err := <-errChan:
-				if err != nil {
-					return el, err
-				}
-			default:
-				e, err := getNextEventLogFromWalFile(pr, walSchemaVersionID)
-				if err != nil {
-					switch err {
-					case io.EOF:
-						return el, nil
-					case io.ErrUnexpectedEOF:
-						// Given the distributed concurrent nature of this app, we sometimes pick up partially
-						// uploaded files which will fail, but may well be complete later on, therefore just
-						// return for now and attempt again later
-						// TODO implement a decent retry mech here
-						return el, nil
-					default:
-						return el, err
-					}
-				}
-				el = append(el, *e)
-			}
-		}
-	case 4:
-		var oel []EventLogSchema4
-		dec := gob.NewDecoder(pr)
-		if err := dec.Decode(&oel); err != nil {
-			return el, err
-		}
-		if err := <-errChan; err != nil {
-			return el, err
-		}
-		for _, oe := range oel {
-			key, targetKey := getOldEventLogKeys(oe)
-			e := EventLog{
-				UUID:              oe.UUID,
-				ListItemKey:       key,
-				TargetListItemKey: targetKey,
-				LamportTimestamp:  oe.UnixNanoTime,
-				EventType:         oe.EventType,
-				Line:              oe.Line,
-				Note:              oe.Note,
-				Friends: LineFriends{
-					IsProcessed: oe.Friends.IsProcessed,
-					Offset:      oe.Friends.Offset,
-					emailsMap:   oe.Friends.Emails,
-				},
-			}
-			for f := range oe.Friends.Emails {
-				e.Friends.Emails = append(e.Friends.Emails, f)
-			}
-			sort.Strings(e.Friends.Emails)
-			el = append(el, e)
-		}
-	case 5:
-		var oel []EventLogSchema5
-		dec := gob.NewDecoder(pr)
-		if err := dec.Decode(&oel); err != nil {
-			return el, err
-		}
-		if err := <-errChan; err != nil {
-			return el, err
-		}
-		for _, oe := range oel {
-			key, targetKey := getOldEventLogKeys(oe)
-			e := EventLog{
-				UUID:              oe.UUID,
-				ListItemKey:       key,
-				TargetListItemKey: targetKey,
-				LamportTimestamp:  oe.UnixNanoTime,
-				EventType:         oe.EventType,
-				Line:              oe.Line,
-				Note:              oe.Note,
-				Friends:           oe.Friends,
-			}
-			el = append(el, e)
-		}
-	case 6:
+	case 7:
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
@@ -976,105 +710,6 @@ func merge(wal1 []EventLog, wal2 []EventLog) []EventLog {
 	return mergedEl
 }
 
-func areListItemsEqual(a *ListItem, b *ListItem, checkPointers bool) bool {
-	// checkPointers prevents recursion
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	if a.rawLine != b.rawLine ||
-		string(a.Note) != string(b.Note) ||
-		a.IsHidden != b.IsHidden ||
-		a.key != b.key {
-		return false
-	}
-	if checkPointers {
-		if !areListItemsEqual(a.child, b.child, false) ||
-			!areListItemsEqual(a.parent, b.parent, false) ||
-			!areListItemsEqual(a.matchChild, b.matchChild, false) ||
-			!areListItemsEqual(a.matchParent, b.matchParent, false) {
-			return false
-		}
-	}
-	return true
-}
-
-func checkListItemPtrs(listItem *ListItem, matchItems []ListItem) error {
-	if listItem == nil {
-		return nil
-	}
-
-	if listItem.child != nil {
-		return errors.New("list integrity error: root has a child pointer")
-	}
-
-	i := 0
-	processedItems := make(map[string]struct{})
-	var prev *ListItem
-	for listItem.parent != nil {
-		// Ensure current.child points to the previous
-		// TODO check if this is just duplicating a check in areListItemsEqual below
-		if listItem.child != prev {
-			return fmt.Errorf("list integrity error: listItem %s child ptr does not point to the expected item", listItem.key)
-		}
-
-		if !areListItemsEqual(listItem, &matchItems[i], false) {
-			return fmt.Errorf("list integrity error: listItem %s does not match the expected position in the match list", listItem.key)
-		}
-
-		if _, exists := processedItems[listItem.key]; exists {
-			return fmt.Errorf("list integrity error: listItem %s has appeared twice", listItem.key)
-		}
-
-		processedItems[listItem.key] = struct{}{}
-		prev = listItem
-		listItem = listItem.parent
-		i++
-	}
-
-	// Check to see if there are remaining items in the match list
-	// NOTE: `i` will have been incremented one more time beyond the final tested index
-	if i+1 < len(matchItems) {
-		return errors.New("list integrity error: orphaned items in match set")
-	}
-
-	return nil
-}
-
-// listsAreEquivalent traverses both test generated list item linked lists (from full and compacted wals) to
-// check for equality. It returns `true` if they they are identical lists, or `false` otherwise.
-// This is primarily used as a temporary measure to check the correctness of the compaction algo
-func listsAreEquivalent(ptrA *ListItem, ptrB *ListItem) bool {
-	// Return false if only one is nil
-	if (ptrA != nil && ptrB == nil) || (ptrA == nil && ptrB != nil) {
-		return false
-	}
-
-	// Check root equality
-	if !areListItemsEqual(ptrA, ptrB, true) {
-		return false
-	}
-
-	// Return true if both are nil (areListItemsEqual returns true if both nil so only check one)
-	if ptrA == nil {
-		return true
-	}
-
-	// Iterate over both ll's together and check equality of each item. Return `false` as soon as a pair
-	// don't match, or one list is a different length to another
-	for ptrA.parent != nil && ptrB.parent != nil {
-		ptrA = ptrA.parent
-		ptrB = ptrB.parent
-		if !areListItemsEqual(ptrA, ptrB, true) {
-			return false
-		}
-	}
-
-	return areListItemsEqual(ptrA, ptrB, true)
-}
-
 // NOTE: not in use - debug function
 func writePlainWalToFile(wal []EventLog) {
 	f, err := os.Create(fmt.Sprintf("debug_%d", time.Now().UnixNano()))
@@ -1092,278 +727,6 @@ func writePlainWalToFile(wal []EventLog) {
 			return
 		}
 	}
-}
-
-func checkWalIntegrity(wal []EventLog) (*ListItem, []ListItem, error) {
-	// Generate a test repo and use it to generate a match set, then inspect the health
-	// of said match set.
-	testRepo := DBListRepo{
-		log:             []EventLog{},
-		listItemTracker: make(map[string]*ListItem),
-
-		webWalFiles:    make(map[string]WalFile),
-		allWalFiles:    make(map[string]WalFile),
-		syncWalFiles:   make(map[string]WalFile),
-		webWalFileMut:  &sync.RWMutex{},
-		allWalFileMut:  &sync.RWMutex{},
-		syncWalFileMut: &sync.RWMutex{},
-
-		friends:           make(map[string]map[string]int64),
-		friendsUpdateLock: &sync.RWMutex{},
-
-		processedWalChecksums:    make(map[string]struct{}),
-		processedWalChecksumLock: &sync.Mutex{},
-	}
-
-	// Use the Replay function to generate the linked lists
-	if err := testRepo.Replay(wal); err != nil {
-		return nil, nil, err
-	}
-
-	// 22/11/21: The Match() function usually returns a slice of ListItem copies as the first argument, which is fine for
-	// client operation, as we only reference them for the attached Lines/Notes (and any mutations act on a different
-	// slice of ListItem ptrs).
-	// In order to allow us to check the state of the ListItems more explicitly, we reference the testRepo.matchListItems
-	// which are generated in parallel on Match() calls, as we can then check proper equality between the various items.
-	// This isn't ideal as it's not completely consistent with what's returned to the client, but it's a reasonable check
-	// for now (and I intend on centralising the logic anyway so we don't maintain two versions of state).
-	// TODO, remove this comment when logic is centralised
-	matchListItems, _, err := testRepo.Match([][]rune{}, true, "", 0, 0)
-	if err != nil {
-		return nil, nil, errors.New("failed to generate match items for list integrity check")
-	}
-
-	// This check traverses from the root node to the last parent and checks the state of the pointer
-	// relationships between both. There have previously been edge case wal merge/compaction bugs which resulted
-	// in MoveUp events targeting a child, who's child was the original item to be moved (a cyclic pointer bug).
-	// This has since been fixed, but to catch other potential cases, we run this check.
-	if err := checkListItemPtrs(testRepo.Root, matchListItems); err != nil {
-		return nil, matchListItems, err
-	}
-
-	return testRepo.Root, matchListItems, nil
-}
-
-// recoverWal is responsible for recovering Wals that are very broken, in a variety of ways.
-// It collects as much metadata about each item as it can, from both the existing broken wal and the returned
-// match set, and then uses it to rebuild a fresh wal, maintaining as much of the original state as possible -
-// specifically with regards to DTs and ordering.
-func (r *DBListRepo) recoverWal(wal []EventLog, matches []ListItem) []EventLog {
-	acknowledgedItems := make(map[string]ListItem)
-	listOrder := []string{}
-
-	// Iterate over the match items and add all to the map
-	for _, item := range matches {
-		key := item.key
-		if _, exists := acknowledgedItems[key]; !exists {
-			listOrder = append(listOrder, key)
-		}
-		acknowledgedItems[key] = item
-	}
-
-	// Iterate over the wal and collect data, updating the items in the map as we go.
-	// We update metadata based on Updates only (Move*s are unimportant here). We honour deletes, and will remove
-	// then from the map (although any subsequent updates will put them back in)
-	// This cleanup will also dedup Add events if there are cases with duplicates.
-	for _, e := range wal {
-		item, exists := acknowledgedItems[e.ListItemKey]
-		switch e.EventType {
-		case AddEvent:
-			fallthrough
-		case UpdateEvent:
-			if !exists {
-				item = ListItem{
-					rawLine: e.Line,
-					Note:    e.Note,
-					key:     e.ListItemKey,
-				}
-				if e.ListItemKey != item.key {
-					log.Fatal("ListItem key mismatch during recovery")
-				}
-			} else {
-				if e.EventType == AddEvent {
-					item.rawLine = e.Line
-					item.Note = e.Note
-				} else {
-					// Updates handle Line and Note mutations separately
-					if e.Note != nil {
-						item.Note = e.Note
-					} else {
-						item.rawLine = e.Line
-					}
-				}
-			}
-			acknowledgedItems[e.ListItemKey] = item
-		case HideEvent:
-			if exists {
-				item.IsHidden = true
-				acknowledgedItems[e.ListItemKey] = item
-			}
-		case ShowEvent:
-			if exists {
-				item.IsHidden = false
-				acknowledgedItems[e.ListItemKey] = item
-			}
-		case DeleteEvent:
-			delete(acknowledgedItems, e.ListItemKey)
-		}
-	}
-
-	// Now, iterate over the ordered list of item keys in reverse order, and pull the item from the map,
-	// generating an AddEvent for each.
-	newWal := []EventLog{}
-	for i := len(listOrder) - 1; i >= 0; i-- {
-		item := acknowledgedItems[listOrder[i]]
-		el := EventLog{
-			EventType:   AddEvent,
-			ListItemKey: item.key,
-			Line:        item.rawLine,
-			Note:        item.Note,
-		}
-		newWal = append(newWal, el)
-
-		if item.IsHidden {
-			r.currentLamportTimestamp++
-			el := EventLog{
-				EventType:        HideEvent,
-				LamportTimestamp: r.currentLamportTimestamp,
-				ListItemKey:      item.key,
-			}
-			newWal = append(newWal, el)
-		}
-	}
-
-	return newWal
-}
-
-func reorderWal(wal []EventLog) []EventLog {
-	sort.Slice(wal, func(i, j int) bool {
-		return checkEquality(wal[i], wal[j]) == leftEventOlder
-	})
-	return wal
-}
-
-func (r *DBListRepo) compact(wal []EventLog) ([]EventLog, error) {
-	if len(wal) == 0 {
-		return []EventLog{}, nil
-	}
-	// TODO remove both of these checks when(/if) the compact algo becomes bulletproof
-	// We re-order the wal in case any historical bugs caused the log to become
-	// out of order
-	sort.Slice(wal, func(i, j int) bool {
-		return checkEquality(wal[i], wal[j]) == leftEventOlder
-	})
-
-	// Check the integrity of the incoming full wal prior to compaction.
-	// If broken in some way, call the recovery function.
-	testRootA, matchItemsA, err := checkWalIntegrity(wal)
-	if err != nil {
-		// If we get here, shit's on fire. This function is the equivalent of the fire brigade.
-		wal = r.recoverWal(wal, matchItemsA)
-		testRootA, _, err = checkWalIntegrity(wal)
-		if err != nil {
-			log.Fatal("wal recovery failed!")
-		}
-
-		return wal, errWalIntregrity
-	}
-
-	// Traverse from most recent to most distant logs. Omit events in the following scenarios:
-	// NOTE delete event purging is currently disabled
-	// - Delete events, and any events preceding a DeleteEvent
-	// - Update events in the following circumstances
-	//   - Any UpdateEvent with a Note preceding the most recent UpdateEvent with a Note
-	//   - Same without a Note
-	//
-	// Opting to store all Move* events to maintain the most consistent ordering of the output linked list.
-	// e.g. it'll attempt to apply oldest -> newest Move*s until the target pointers don't exist.
-	//
-	// We need to maintain the first of two types of Update events (as per above, separate Line and Note),
-	// so generate a separate set for each to tell us if each has occurred
-	updateWithNote := make(map[string]struct{})
-	updateWithLine := make(map[string]struct{})
-
-	compactedWal := []EventLog{}
-	for i := len(wal) - 1; i >= 0; i-- {
-		e := wal[i]
-
-		// TODO figure out how to reintegrate full purge of deleted events, whilst guaranteeing consistent
-		// state of ListItems. OR purge everything older than X days, so ordering doesn't matter cos users
-		// won't see it??
-		// Add DeleteEvents straight to the purge set, if there's not any newer update events
-		// NOTE it's important that we only continue if ONE OF BOTH UPDATE TYPES IS ALREADY PROCESSED
-		//if e.EventType == DeleteEvent {
-		//    if _, noteExists := updateWithNote[e.ListItemKey]; !noteExists {
-		//        if _, lineExists := updateWithLine[e.ListItemKey]; !lineExists {
-		//            keysToPurge[e.ListItemKey] = struct{}{}
-		//            continue
-		//        }
-		//    }
-		//}
-
-		if e.EventType == UpdateEvent {
-			//Check to see if the UpdateEvent alternative event has occurred
-			// Nil `Note` signifies `Line` update
-			//if e.Note != nil {
-			//    if _, exists := updateWithNote[e.ListItemKey]; exists {
-			//        continue
-			//    }
-			//    updateWithNote[e.ListItemKey] = struct{}{}
-			//} else {
-			//    if _, exists := updateWithLine[e.ListItemKey]; exists {
-			//        continue
-			//    }
-			//    updateWithLine[e.ListItemKey] = struct{}{}
-			//}
-
-			if len(e.Line) > 0 {
-				if _, exists := updateWithLine[e.ListItemKey]; exists {
-					continue
-				}
-				updateWithLine[e.ListItemKey] = struct{}{}
-			} else {
-				if _, exists := updateWithNote[e.ListItemKey]; exists {
-					continue
-				}
-				updateWithNote[e.ListItemKey] = struct{}{}
-			}
-		}
-
-		compactedWal = append(compactedWal, e)
-	}
-	// Reverse
-	for i, j := 0, len(compactedWal)-1; i < j; i, j = i+1, j-1 {
-		compactedWal[i], compactedWal[j] = compactedWal[j], compactedWal[i]
-	}
-
-	// TODO remove this once confidence with compact is there!
-	// This is a circuit breaker which will blow up if compact generates inconsistent results
-	testRootB, _, err := checkWalIntegrity(compactedWal)
-	if err != nil {
-		log.Fatalf("`compact` caused wal to lose integrity: %s", err)
-	}
-
-	if !listsAreEquivalent(testRootA, testRootB) {
-		//sliceA := []ListItem{}
-		//node := testRootA
-		//for node != nil {
-		//    sliceA = append(sliceA, *node)
-		//    node = node.parent
-		//}
-		//generatePlainTextFile(sliceA)
-
-		//sliceB := []ListItem{}
-		//node = testRootB
-		//for node != nil {
-		//    sliceB = append(sliceB, *node)
-		//    node = node.parent
-		//}
-		//generatePlainTextFile(sliceB)
-
-		//return wal, nil
-		log.Fatal("`compact` generated inconsistent results and things blew up!")
-	}
-	return compactedWal, nil
 }
 
 // generatePlainTextFile takes the current matchset, and writes the lines separately to a
@@ -1438,39 +801,37 @@ func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, map[WalFile]map[string]struct{}, error) {
-	// Concurrently gather all new wal UUIDs for all walFiles, tracking each in a map against a walFile key
-	newWalMutex := sync.Mutex{}
-	newWalfileMap := make(map[WalFile]map[string]struct{})
-	var wg sync.WaitGroup
-	for _, wf := range walFiles {
-		wg.Add(1)
-		go func(wf WalFile) {
-			defer wg.Done()
-			filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
-			newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
-			if err != nil {
-				//log.Fatal(err)
-				return
-			}
-			newWalMutex.Lock()
-			defer newWalMutex.Unlock()
-			newWalMap := make(map[string]struct{})
-			for _, f := range newWals {
-				newWalMap[f] = struct{}{}
-			}
-			newWalfileMap[wf] = newWalMap
-		}(wf)
+func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan chan namedWal) error {
+	type wfWalPair struct {
+		wf      WalFile
+		newWals []string
 	}
-	wg.Wait()
 
-	// We then run CPU bound ops in a single thread to mitigate excessive CPU usage (particularly as an N WalFiles
-	// is unbounded)
-	// We merge all wals before publishing to the walchan as each time the main app event loop consumes from walchan,
-	// it blocks user input and creates a poor user experience.
-	mergedWal := []EventLog{}
-	for wf, newWals := range newWalfileMap {
-		for newWal := range newWals {
+	nameChan := make(chan wfWalPair)
+	go func() {
+		var wg sync.WaitGroup
+		for _, wf := range walFiles {
+			wg.Add(1)
+			go func(wf WalFile) {
+				defer wg.Done()
+				filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
+				newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
+				if err != nil {
+					//log.Fatal(err)
+					return
+				}
+				nameChan <- wfWalPair{wf, newWals}
+			}(wf)
+		}
+		wg.Wait()
+		close(nameChan)
+	}()
+
+	var wg sync.WaitGroup
+	for n := range nameChan {
+		wf := n.wf
+		newWals := n.newWals
+		for _, newWal := range newWals {
 			if !r.isWalChecksumProcessed(newWal) {
 				pr, pw := io.Pipe()
 				go func() {
@@ -1482,93 +843,112 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile) ([]EventLog, 
 				}()
 
 				// Build new wals
-				newWfWal, err := buildFromFile(pr)
+				newWfWal, err := r.buildFromFile(pr)
 				if err != nil {
 					// Ignore incompatible files
 					continue
 				}
 
-				mergedWal = merge(mergedWal, newWfWal)
-
-				// Add to the processed cache after we've successfully pulled it
-				// TODO strictly we should only set processed once it's successfull merged and displayed to client
-				r.setProcessedWalChecksum(newWal)
+				if len(newWfWal) > 0 {
+					wg.Add(1)
+					go func(n string, wal []EventLog) {
+						defer wg.Done()
+						replayChan <- namedWal{
+							name: n,
+							wal:  wal,
+						}
+					}(newWal, newWfWal)
+				}
 			}
 		}
 	}
+	wg.Wait()
 
-	return mergedWal, newWalfileMap, nil
+	return nil
 }
 
-func (r *DBListRepo) gather(ctx context.Context, runCompaction bool) ([]EventLog, error) {
+func (r *DBListRepo) gather(ctx context.Context) error {
 	//log.Print("Gathering...")
 	// Create a new list so we don't have to keep the lock on the mutex for too long
 	r.syncWalFileMut.RLock()
-	syncWalFiles := []WalFile{}
+	r.allWalFileMut.RLock()
+	ownedWalFiles := []WalFile{}
+	nonOwnedWalFiles := []WalFile{}
 	for _, wf := range r.syncWalFiles {
-		syncWalFiles = append(syncWalFiles, wf)
+		ownedWalFiles = append(ownedWalFiles, wf)
+	}
+	for k, wf := range r.allWalFiles {
+		if _, exists := r.syncWalFiles[k]; !exists {
+			nonOwnedWalFiles = append(nonOwnedWalFiles, wf)
+		}
 	}
 	r.syncWalFileMut.RUnlock()
-
-	r.allWalFileMut.RLock()
-	allWalFiles := []WalFile{}
-	for _, wf := range r.allWalFiles {
-		allWalFiles = append(allWalFiles, wf)
-	}
 	r.allWalFileMut.RUnlock()
 
-	fullWal, syncWalfileWalNameMap, err := r.pull(ctx, syncWalFiles)
-	if err != nil {
-		return []EventLog{}, err
-	}
+	// DANGER: running a pull here can cause map contention (concurrent iteration and write) in the
+	// crdt caches, namely `positionEventSet` in `generateEvents`
+	//if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
+	//return err
+	//}
 
-	// Merge in the r.log, as local changes would not have propagated out to the local
-	// walfile
-	fullWal = merge(r.log, fullWal)
+	fullWal := r.crdt.generateEvents()
 
 	fullByteWal, err := buildByteWal(fullWal)
 	if err != nil {
-		return []EventLog{}, err
+		return err
 	}
 
 	var wg sync.WaitGroup
-	for _, wf := range allWalFiles {
+	for _, wf := range ownedWalFiles {
+		wg.Add(1)
+		go func(wf WalFile) {
+			defer wg.Done()
+
+			name := fmt.Sprintf("%v%v", r.uuid, generateUUID())
+			err := r.push(ctx, wf, []EventLog{}, fullByteWal, name)
+			if err != nil {
+				return
+			}
+
+			// TODO dedup from `pull` call above
+			// retrieve list of files to delete
+			filesToDelete := []string{}
+			allFiles, err := wf.GetMatchingWals(ctx, path.Join(wf.GetRoot(), "wal_*.db"))
+			if err != nil {
+				return
+			}
+
+			for _, f := range allFiles {
+				if f != name && r.isWalChecksumProcessed(f) {
+					filesToDelete = append(filesToDelete, f)
+				}
+			}
+
+			// Schedule a delete on the files
+			if len(filesToDelete) > 0 {
+				wf.RemoveWals(ctx, filesToDelete)
+			}
+		}(wf)
+	}
+	wg.Wait()
+
+	for _, wf := range nonOwnedWalFiles {
 		wg.Add(1)
 		go func(wf WalFile) {
 			defer wg.Done()
 
 			var byteWal *bytes.Buffer
 
-			walNameMap, isOwned := syncWalfileWalNameMap[wf]
-
-			if isOwned {
-				byteWal = fullByteWal
-			}
-
 			// Push to ALL walFiles
-			checksum, err := r.push(ctx, wf, fullWal, byteWal)
-			if err != nil {
+			// we don't set a common name, as filtering could generate different wals to each walfile
+			if err := r.push(ctx, wf, fullWal, byteWal, ""); err != nil {
 				return
-			}
-
-			// Only delete processed files from syncWalfiles - e.g. walfiles we own
-			if isOwned {
-				delete(walNameMap, checksum)
-
-				filesToDelete := []string{}
-				for f := range walNameMap {
-					filesToDelete = append(filesToDelete, f)
-				}
-				// Schedule a delete on the files
-				if len(filesToDelete) > 0 {
-					wf.RemoveWals(ctx, filesToDelete)
-				}
 			}
 		}(wf)
 	}
 	wg.Wait()
 
-	return fullWal, nil
+	return nil
 }
 
 func buildByteWal(el []EventLog) (*bytes.Buffer, error) {
@@ -1620,34 +1000,39 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 	return filteredWal
 }
 
-func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWal *bytes.Buffer) (string, error) {
+func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWal *bytes.Buffer, name string) error {
 	if byteWal == nil {
 		// Apply any filtering based on Push match configuration
 		el = r.getMatchedWal(el, wf)
 
 		// Return for empty wals
 		if len(el) == 0 {
-			return "", nil
+			return nil
 		}
 
 		var err error
 		if byteWal, err = buildByteWal(el); err != nil {
-			return "", err
+			return err
 		}
 
 	}
-	checksum := fmt.Sprintf("%x", md5.Sum(byteWal.Bytes()))
+
+	if name == "" {
+		name = fmt.Sprintf("%v%v", r.uuid, generateUUID())
+	}
 
 	// Add it straight to the cache to avoid processing it in the future
 	// This needs to be done PRIOR to flushing to avoid race conditions
 	// (as pull is done in a separate thread of control, and therefore we might try
 	// and pull our own pushed wal)
-	r.setProcessedWalChecksum(checksum)
-	if err := wf.Flush(ctx, byteWal, checksum); err != nil {
-		return checksum, err
+	// There is a chance that Flush would fail, but given the names are randomly generated, the impact of caching
+	// the broken name is small.
+	r.setProcessedWalChecksum(name)
+	if err := wf.Flush(ctx, byteWal, name); err != nil {
+		return err
 	}
 
-	return checksum, nil
+	return nil
 }
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
@@ -1671,7 +1056,8 @@ func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitF
 				if waitForCompletion {
 					defer wg.Done()
 				}
-				r.push(ctx, wf, wal, byteWal)
+				// we don't set a common name, as filtering could generate different wals to each walfile
+				r.push(ctx, wf, wal, byteWal, "")
 			}(wf)
 		}
 		if waitForCompletion {
@@ -1722,12 +1108,12 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplayChan chan []EventLog, inputEvtsChan chan interface{}) error {
+func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, inputEvtsChan chan interface{}) error {
 	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
 	// specified wait duration)
 	syncTriggerChan := make(chan struct{}, 1)
 
-	gatherTriggerTimer := time.NewTimer(gatherWaitDuration)
+	gatherTriggerTimer := time.NewTimer(gatherInterval)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
 	// dropped in to the root directory, etc) are flushed
@@ -1747,27 +1133,22 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 		}
 	}
 	schedulePush := func() {
-		r.pushTriggerTimer.Reset(pushWaitDuration)
-		gatherTriggerTimer.Reset(gatherWaitDuration)
+		r.pushTriggerTimer.Reset(pushInterval)
+		gatherTriggerTimer.Reset(gatherInterval)
 	}
 
 	// Run an initial load from the local walfile
-	localWal, _, err := r.pull(ctx, []WalFile{r.LocalWalFile})
-	if err != nil {
+	if err := r.pull(ctx, []WalFile{r.LocalWalFile}, replayChan); err != nil {
 		return err
 	}
-	replayChan <- localWal
 
 	// Main sync event loop
 	go func() {
-		reporderInc := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				var c chan []EventLog
-				var el []EventLog
 				var err error
 				select {
 				case <-syncTriggerChan:
@@ -1779,33 +1160,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 							syncWalFiles = append(syncWalFiles, wf)
 						}
 					}()
-					if el, _, err = r.pull(ctx, syncWalFiles); err != nil {
+					if err = r.pull(ctx, syncWalFiles, replayChan); err != nil {
 						log.Fatal(err)
 					}
 					r.hasSyncedRemotes = true
-					c = replayChan
 				case <-gatherTriggerTimer.C:
-					// Runs compaction every Nth gather
-					runCompaction := reporderInc > 0 && reporderInc%compactionGatherMultiple == 0
-					if el, err = r.gather(ctx, runCompaction); err != nil {
+					if err = r.gather(ctx); err != nil {
 						log.Fatal(err)
 					}
-					reporderInc++
-					c = reorderAndReplayChan
 				}
-
-				// Rather than relying on a ticker (which will trigger the next cycle if processing time is >= the interval)
-				// we set a wait interval from the end of processing. This prevents a vicious circle which could leave the
-				// program with it's CPU constantly tied up, which leads to performance degradation.
-				// Instead, at the end of the processing cycle, we schedule a wait period after which the next event is put
-				// onto the syncTriggerChan
-				go func() {
-					// we block on replayChan publish so it only schedules again after a Replay begins
-					if len(el) > 0 {
-						c <- el
-					}
-				}()
-				time.Sleep(time.Second * time.Duration(pullIntervalSeconds))
+				time.Sleep(pullInterval)
 				scheduleSync()
 			}
 		}
@@ -1853,7 +1217,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 					r.web.isActive = false
 					switch err.(type) {
 					case authFailureError:
-						return // authFailureError signifies incorrect login details, disable web and run local only mode
+						scheduleSync() // still trigger pull cycle for local only sync
+						return         // authFailureError signifies incorrect login details, disable web and run local only mode
 					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
@@ -1887,7 +1252,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 							wsConsChan <- wsEv
 						}
 					}()
-					wsFlushTicker := time.NewTicker(websocketConsumeDuration)
+					wsFlushTicker := time.NewTicker(websocketConsumeInterval)
 					go func() {
 						for {
 							select {
@@ -1895,7 +1260,10 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 								wsConsAgg = merge(wsConsAgg, wsEv)
 							case <-wsFlushTicker.C:
 								if len(wsConsAgg) > 0 {
-									replayChan <- wsConsAgg
+									replayChan <- namedWal{
+										name: "",
+										wal:  wsConsAgg,
+									}
 									wsConsAgg = []EventLog{}
 								}
 							case <-webCtx.Done():
@@ -1940,17 +1308,19 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan, reorderAndReplay
 
 	// Push to all WalFiles
 	var flushAgg, wsPubAgg []EventLog
-	go func() {
-		for {
-			select {
-			case e := <-r.eventsChan:
-				wsPubAgg = merge(wsPubAgg, []EventLog{e})
-			case <-ctx.Done():
-				return
+	if !r.isTest {
+		go func() {
+			for {
+				select {
+				case e := <-r.eventsChan:
+					wsPubAgg = merge(wsPubAgg, []EventLog{e})
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
-	wsPublishTicker := time.NewTicker(websocketPublishDuration)
+		}()
+	}
+	wsPublishTicker := time.NewTicker(websocketPublishInterval)
 	go func() {
 		for {
 			// The events chan contains single events. We want to aggregate them between intervals
@@ -2018,21 +1388,22 @@ func (r *DBListRepo) finish(purge bool) error {
 	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
 	// track if any new wals have been pulled, etc)
 	if !purge {
-		ctx := context.Background()
-		checksum, err := r.push(ctx, r.LocalWalFile, r.log, nil)
-		if err != nil {
-			return err
-		}
-		localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		if len(localFiles) > 0 {
-			filesToDelete := make([]string, len(localFiles)-1)
-			for _, f := range localFiles {
-				if f != checksum {
-					filesToDelete = append(filesToDelete, f)
-				}
-			}
-			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
-		}
+		//ctx := context.Background()
+		// TODO push full representation
+		//checksum, err := r.push(ctx, r.LocalWalFile, []EventLog{}, nil)
+		//if err != nil {
+		//    return err
+		//}
+		//localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+		//if len(localFiles) > 0 {
+		//    filesToDelete := make([]string, len(localFiles)-1)
+		//    for _, f := range localFiles {
+		//        if f != checksum {
+		//            filesToDelete = append(filesToDelete, f)
+		//        }
+		//    }
+		//    r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		//}
 	} else {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
@@ -2052,7 +1423,8 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	el := []EventLog{}
 
 	// any random UUID is fine
-	uuid := generateUUID()
+	id := generateUUID()
+	prevKey := ""
 	var lamportTimestamp int64
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -2060,29 +1432,60 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 			continue
 		}
 
-		key := strconv.Itoa(int(uuid)) + ":" + strconv.Itoa(int(lamportTimestamp))
-		el = append(el, EventLog{
-			UUID:             uuid,
-			EventType:        AddEvent,
-			LamportTimestamp: lamportTimestamp,
+		key := strconv.Itoa(int(id)) + ":" + strconv.Itoa(int(lamportTimestamp))
+		e := EventLog{
+			UUID:             id,
+			EventType:        UpdateEvent,
 			ListItemKey:      key,
 			Line:             line,
-		})
+			LamportTimestamp: lamportTimestamp,
+		}
+		el = append(el, e)
+		lamportTimestamp++
+
+		e = EventLog{
+			UUID:              id,
+			EventType:         PositionEvent,
+			ListItemKey:       key,
+			TargetListItemKey: prevKey,
+			LamportTimestamp:  lamportTimestamp,
+		}
+		el = append(el, e)
 		lamportTimestamp++
 
 		if isHidden {
-			el = append(el, EventLog{
-				UUID:             uuid,
-				EventType:        HideEvent,
-				LamportTimestamp: lamportTimestamp,
-				ListItemKey:      key,
-			})
+			e = EventLog{
+				UUID:        id,
+				EventType:   HideEvent,
+				ListItemKey: key,
+			}
+			el = append(el, e)
 			lamportTimestamp++
 		}
+
+		prevKey = key
 	}
 
 	b, _ := buildByteWal(el)
-	wf.Flush(ctx, b, fmt.Sprintf("%d", uuid))
+	wf.Flush(ctx, b, fmt.Sprintf("%d", id))
 
+	return nil
+}
+
+func (r *DBListRepo) TestPullLocal(c chan namedWal) error {
+	//c := make(chan []EventLog)
+	if err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
+		return err
+	}
+	//go func() {
+	//for {
+	//    wal := <-c
+	//    //s := fmt.Sprintf("%v", wal)
+	//    runtime.Breakpoint()
+	//    //fmt.Printf(s)
+	//    r.Replay(wal)
+	//}
+	//}()
+	//runtime.Breakpoint()
 	return nil
 }

@@ -4,15 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/manifoldco/promptui"
 
 	"github.com/sambigeara/fuzzynote/pkg/service"
 )
 
+var emailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
+
 // isEmailValid checks if the email provided passes the required structure and length.
 func isEmailValid(e string) error {
-	if len(e) < 3 && len(e) > 254 || !service.EmailRegex.MatchString(e) {
+	if len(e) < 3 && len(e) > 254 || !emailRegex.MatchString(e) {
 		return errors.New("Invalid email address")
 	}
 	return nil

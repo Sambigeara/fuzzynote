@@ -188,7 +188,7 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 		}
 
 		buf := bytes.NewBuffer([]byte(strWal))
-		if el, err = buildFromFile(buf); err != nil {
+		if el, err = r.buildFromFile(buf); err != nil {
 			return el, err
 		}
 	case "position":

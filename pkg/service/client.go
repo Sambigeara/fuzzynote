@@ -584,7 +584,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			newLine := []rune(curItem.rawLine)
 			if t.HorizOffset+t.CurX > 0 && len(curItem.Line()) > 0 {
 				newLine = append(newLine[:offsetX-1], newLine[offsetX:]...)
-				err = t.db.Update(string(newLine), nil, curItem)
+				err = t.db.Update(string(newLine), curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -629,7 +629,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			newLine := []rune(curItem.rawLine)
 			if len(curItem.Line()) > 0 && t.HorizOffset+t.CurX+lenHiddenMatchPrefix < len(curItem.Line()) {
 				newLine = append(newLine[:offsetX], newLine[offsetX+1:]...)
-				err = t.db.Update(string(newLine), nil, curItem)
+				err = t.db.Update(string(newLine), curItem)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -702,7 +702,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 			}
 			oldLen := len(newLine)
 			parsedNewLine := ParseOperatorGroups(string(newLine))
-			err = t.db.Update(parsedNewLine, nil, curItem)
+			err = t.db.Update(parsedNewLine, curItem)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -717,7 +717,7 @@ func (t *ClientBase) HandleInteraction(ev InteractionEvent, search [][]rune, sho
 		// friends (the client has no knowledge of the collaborators being stored
 		// within the rawLine). These are appended in the TrimPrefix call below.
 		parsedNewLine := ParseOperatorGroups(string(ev.R)) + strings.TrimPrefix(curItem.rawLine, curItem.Line())
-		err = t.db.Update(parsedNewLine, nil, curItem)
+		err = t.db.Update(parsedNewLine, curItem)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -35,9 +35,7 @@ func main() {
 		Root    string
 		Colour  string `conf:"default:light"`
 		Editor  string `conf:"default:vim"`
-		//SyncFrequencyMs   uint32 `conf:"default:10000"`
-		//GatherFrequencyMs uint32 `conf:"default:30000"`
-		Args conf.Args
+		Args    conf.Args
 	}
 
 	// Pre-instantiate default root direct (can't pass value dynamically to default above)
@@ -143,8 +141,6 @@ func main() {
 	listRepo := service.NewDBListRepo(
 		localWalFile,
 		webTokens,
-		//cfg.SyncFrequencyMs,
-		//cfg.GatherFrequencyMs,
 	)
 
 	s3Remotes := s3.GetS3Config(cfg.Root)

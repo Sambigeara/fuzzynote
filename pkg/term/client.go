@@ -325,7 +325,7 @@ func (t *Terminal) openEditorSession() error {
 		return nil
 	}
 
-	err = t.db.Update("", newDat, t.c.CurItem)
+	err = t.db.UpdateNote(newDat, t.c.CurItem)
 	if err != nil {
 		log.Fatal(err)
 	}
