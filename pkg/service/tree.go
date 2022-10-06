@@ -217,9 +217,15 @@ func (crdt *crdtTree) add(e EventLog) {
 		// TODO centralise
 		// TODO more efficient storage/inferrence of target item uuid/lamport
 		r := strings.Split(e.TargetListItemKey, ":")
-		i, _ := strconv.ParseInt(r[0], 10, 64)
-		originUUID := uuid(i)
-		ts, _ := strconv.ParseInt(r[1], 10, 64)
+		var ts int64
+		var originUUID uuid
+		if len(r) > 0 {
+			i, _ := strconv.ParseInt(r[0], 10, 64)
+			originUUID = uuid(i)
+			if len(r) > 1 {
+				ts, _ = strconv.ParseInt(r[1], 10, 64)
+			}
+		}
 
 		target = &node{
 			key:                    e.TargetListItemKey,
