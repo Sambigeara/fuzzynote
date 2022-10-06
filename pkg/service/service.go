@@ -36,7 +36,6 @@ type Client interface {
 	AwaitEvent() interface{}
 }
 
-// DBListRepo is an implementation of the ListRepo interface
 type DBListRepo struct {
 	eventLogger    *DbEventLogger
 	matchListItems map[string]*ListItem
@@ -240,12 +239,14 @@ func (r *DBListRepo) updateNote(note []byte, item *ListItem) EventLog {
 }
 
 func (r *DBListRepo) del(item *ListItem) EventLog {
-	return r.newEventLogFromListItem(DeleteEvent, item)
+	e := r.newEventLog(DeleteEvent)
+	e.ListItemKey = item.key
+	return e
 }
 
 func (r *DBListRepo) move(item, targetItem *ListItem) EventLog {
-	e := r.newEventLogFromListItem(PositionEvent, item)
-	e.TargetListItemKey = ""
+	e := r.newEventLog(PositionEvent)
+	e.ListItemKey = item.key
 	if targetItem != nil {
 		e.TargetListItemKey = targetItem.key
 	}

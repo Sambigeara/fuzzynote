@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +29,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 6
+const latestWalSchemaID uint16 = 7
 
 // sync intervals
 const (
@@ -42,22 +40,9 @@ const (
 	websocketPublishInterval = time.Millisecond * 600
 )
 
-var EmailRegex = regexp.MustCompile("[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*")
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
-}
-
-type walItemSchema2 struct {
-	UUID                       uuid
-	TargetUUID                 uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	EventTime                  int64
-	EventType                  EventType
-	LineLength                 uint64
-	NoteExists                 bool
-	NoteLength                 uint64
 }
 
 type EventType uint16
@@ -75,41 +60,11 @@ const (
 	PositionEvent
 )
 
-type LineFriendsSchema4 struct {
-	IsProcessed bool
-	Offset      int
-	Emails      map[string]struct{}
-}
-
-type EventLogSchema4 struct {
-	UUID, TargetUUID           uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	UnixNanoTime               int64
-	EventType                  EventType
-	Line                       string
-	Note                       []byte
-	Friends                    LineFriendsSchema4
-	key, targetKey             string
-}
-
 type LineFriends struct {
 	IsProcessed bool
 	Offset      int
 	Emails      []string
 	emailsMap   map[string]struct{}
-}
-
-type EventLogSchema5 struct {
-	UUID, TargetUUID           uuid
-	ListItemCreationTime       int64
-	TargetListItemCreationTime int64
-	UnixNanoTime               int64
-	EventType                  EventType
-	Line                       string
-	Note                       []byte
-	Friends                    LineFriends
-	key, targetKey             string
 }
 
 type EventLog struct {
@@ -372,7 +327,7 @@ func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
 	} else {
 		// Retrieve existing friends from the item, if it already exists. This prevents the following bug:
 		// - Item is shared with `@foo@bar.com`
-		// - `fzn_cfg:friend foo@bar.com` is removed
+		// - Item `fzn_cfg:friend foo@bar.com` is deleted
 		// - Update is made on previously shared line
 		// - `@foo@bar.com` is appended to the Line() portion of the string, because the friend is no longer present in
 		//   the r.friends cache
@@ -613,61 +568,7 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	return nil
 }
 
-func getNextEventLogFromWalFile(r io.Reader, schemaVersionID uint16) (*EventLog, error) {
-	el := EventLog{}
-
-	switch schemaVersionID {
-	case 3:
-		wi := walItemSchema2{}
-		err := binary.Read(r, binary.LittleEndian, &wi)
-		if err != nil {
-			return nil, err
-		}
-
-		el.UUID = wi.UUID
-		el.EventType = wi.EventType
-		el.ListItemKey = strconv.Itoa(int(wi.UUID)) + ":" + strconv.Itoa(int(wi.ListItemCreationTime))
-		el.TargetListItemKey = strconv.Itoa(int(wi.TargetUUID)) + ":" + strconv.Itoa(int(wi.TargetListItemCreationTime))
-		el.LamportTimestamp = wi.EventTime
-
-		line := make([]byte, wi.LineLength)
-		err = binary.Read(r, binary.LittleEndian, &line)
-		if err != nil {
-			return nil, err
-		}
-		el.Line = string(line)
-
-		if wi.NoteExists {
-			el.Note = []byte{}
-		}
-		if wi.NoteLength > 0 {
-			note := make([]byte, wi.NoteLength)
-			err = binary.Read(r, binary.LittleEndian, &note)
-			if err != nil {
-				return nil, err
-			}
-			el.Note = note
-		}
-	default:
-		return nil, errors.New("unrecognised wal schema version")
-	}
-	return &el, nil
-}
-
-func getOldEventLogKeys(i interface{}) (string, string) {
-	var key, targetKey string
-	switch e := i.(type) {
-	case EventLogSchema4:
-		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
-		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
-	case EventLogSchema5:
-		key = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.ListItemCreationTime))
-		targetKey = strconv.Itoa(int(e.TargetUUID)) + ":" + strconv.Itoa(int(e.TargetListItemCreationTime))
-	}
-	return key, targetKey
-}
-
-func buildFromFile(raw io.Reader) ([]EventLog, error) {
+func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
 	var el []EventLog
 	var walSchemaVersionID uint16
 	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
@@ -701,88 +602,13 @@ func buildFromFile(raw io.Reader) ([]EventLog, error) {
 		errChan <- nil
 	}()
 
+	if walSchemaVersionID <= 6 {
+		return r.legacyBuildFromRaw(pr, walSchemaVersionID, errChan)
+	}
+
+	// Schema 7
 	switch walSchemaVersionID {
-	case 1, 2, 3:
-		for {
-			select {
-			case err := <-errChan:
-				if err != nil {
-					return el, err
-				}
-			default:
-				e, err := getNextEventLogFromWalFile(pr, walSchemaVersionID)
-				if err != nil {
-					switch err {
-					case io.EOF:
-						return el, nil
-					case io.ErrUnexpectedEOF:
-						// Given the distributed concurrent nature of this app, we sometimes pick up partially
-						// uploaded files which will fail, but may well be complete later on, therefore just
-						// return for now and attempt again later
-						// TODO implement a decent retry mech here
-						return el, nil
-					default:
-						return el, err
-					}
-				}
-				el = append(el, *e)
-			}
-		}
-	case 4:
-		var oel []EventLogSchema4
-		dec := gob.NewDecoder(pr)
-		if err := dec.Decode(&oel); err != nil {
-			return el, err
-		}
-		if err := <-errChan; err != nil {
-			return el, err
-		}
-		for _, oe := range oel {
-			key, targetKey := getOldEventLogKeys(oe)
-			e := EventLog{
-				UUID:              oe.UUID,
-				ListItemKey:       key,
-				TargetListItemKey: targetKey,
-				EventType:         oe.EventType,
-				Line:              oe.Line,
-				Note:              oe.Note,
-				Friends: LineFriends{
-					IsProcessed: oe.Friends.IsProcessed,
-					Offset:      oe.Friends.Offset,
-					emailsMap:   oe.Friends.Emails,
-				},
-			}
-			e.LamportTimestamp = oe.UnixNanoTime
-			for f := range oe.Friends.Emails {
-				e.Friends.Emails = append(e.Friends.Emails, f)
-			}
-			sort.Strings(e.Friends.Emails)
-			el = append(el, e)
-		}
-	case 5:
-		var oel []EventLogSchema5
-		dec := gob.NewDecoder(pr)
-		if err := dec.Decode(&oel); err != nil {
-			return el, err
-		}
-		if err := <-errChan; err != nil {
-			return el, err
-		}
-		for _, oe := range oel {
-			key, targetKey := getOldEventLogKeys(oe)
-			e := EventLog{
-				UUID:              oe.UUID,
-				ListItemKey:       key,
-				TargetListItemKey: targetKey,
-				EventType:         oe.EventType,
-				Line:              oe.Line,
-				Note:              oe.Note,
-				Friends:           oe.Friends,
-			}
-			e.LamportTimestamp = oe.UnixNanoTime
-			el = append(el, e)
-		}
-	case 6:
+	case 7:
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
 			return el, err
@@ -1017,7 +843,7 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan ch
 				}()
 
 				// Build new wals
-				newWfWal, err := buildFromFile(pr)
+				newWfWal, err := r.buildFromFile(pr)
 				if err != nil {
 					// Ignore incompatible files
 					continue
