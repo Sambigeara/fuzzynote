@@ -41,7 +41,7 @@ func (n *node) moreRecentThan(o *node) bool {
 // Seek out the next node in this precedence:
 // - immediate child
 // - right ptr
-// - next parent which has a right ptr
+// - right ptr of next parent which is not root
 func (n *node) getNext() *node {
 	if n.children.firstChild != nil {
 		return n.children.firstChild
