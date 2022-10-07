@@ -1,11 +1,8 @@
 package service
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/xlab/treeprint"
 )
 
 const (
@@ -42,31 +39,37 @@ func (n *node) moreRecentThan(o *node) bool {
 	return n.originUUID > o.originUUID
 }
 
+// Seek out the next node in this precedence:
+// - immediate child
+// - right ptr
+// Otherwise to go the next parent which has a right ptr
+func (n *node) getNext() *node {
+	if n.children.firstChild != nil {
+		return n.children.firstChild
+	}
+
+	if n.right != nil {
+		return n.right
+	}
+
+	cur := n.parent
+	for cur != nil {
+		if cur.right != nil {
+			return cur.right
+		}
+		cur = cur.parent
+	}
+
+	return nil
+}
+
 // Consider using https://pkg.go.dev/container/list
 type childDll struct {
 	firstChild *node
 }
 
-func (l *childDll) iter() <-chan *node {
-	ch := make(chan *node)
-	go func() {
-		n := l.firstChild
-		for n != nil {
-			ch <- n
-			n = n.right
-		}
-		close(ch)
-	}()
-	return ch
-}
-
 func (l *childDll) insertInPlace(n *node) {
 	right := l.firstChild
-
-	if right == nil {
-		l.firstChild = n
-		return
-	}
 
 	var left *node
 	for right != nil {
@@ -91,30 +94,19 @@ func (l *childDll) insertInPlace(n *node) {
 	n.right = right
 }
 
-func (l *childDll) removeChild(key string) {
-	n := l.firstChild
-
-	if n == nil {
-		return
+func (l *childDll) removeChild(n *node) {
+	if n.left != nil {
+		n.left.right = n.right
+	} else {
+		// node is firstChild, so reset firstChild in dll
+		l.firstChild = n.right
 	}
-
-	for n != nil {
-		if n.key == key {
-			if n.left != nil {
-				n.left.right = n.right
-			} else {
-				// node is firstChild, so reset firstChild in dll
-				l.firstChild = n.right
-			}
-			if r := n.right; r != nil {
-				r.left = n.left
-			}
-			n.left = nil
-			n.right = nil
-			return
-		}
-		n = n.right
+	if r := n.right; r != nil {
+		r.left = n.left
 	}
+	n.left = nil
+	n.right = nil
+	return
 }
 
 func newTree() *crdtTree {
@@ -137,24 +129,6 @@ func newTree() *crdtTree {
 	}
 }
 
-// String implements Stringer so that we can get a nicely printable
-// version of the CRDT internal tree structure.
-func (crdt *crdtTree) String() string {
-	var addNode func(t treeprint.Tree, n *node)
-	addNode = func(t treeprint.Tree, n *node) {
-		treeNode := t.AddBranch(fmt.Sprintf("%s (%v)", n.key, n.latestLamportTimestamp))
-		for c := range n.children.iter() {
-			addNode(treeNode, c)
-		}
-	}
-
-	tree := treeprint.New()
-	rootNode := crdt.cache[crdtRootKey]
-	addNode(tree, rootNode)
-
-	return tree.String()
-}
-
 func (crdt *crdtTree) itemIsLive(key string) bool {
 	latestAddEvent, isAdded := crdt.addEventSet[key]
 	latestDeleteEvent, isDeleted := crdt.deleteEventSet[key]
@@ -164,26 +138,18 @@ func (crdt *crdtTree) itemIsLive(key string) bool {
 	return false
 }
 
-func (crdt *crdtTree) traverse() <-chan string {
-	ch := make(chan string)
-	go func() {
-		root := crdt.cache[crdtRootKey]
-		items := []*node{root}
-		for len(items) > 0 {
-			cur := items[0]
-			items = items[1:]
-			curChildren := []*node{}
-			for c := range cur.children.iter() {
-				curChildren = append(curChildren, c)
-			}
-			items = append(curChildren, items...)
-			if cur.key != crdtRootKey && cur.key != crdtOrphanKey && cur.parent.key != crdtOrphanKey && crdt.itemIsLive(cur.key) {
-				ch <- cur.key
-			}
+func (crdt *crdtTree) traverse(n *node) *node {
+	if n == nil {
+		n = crdt.cache[crdtRootKey]
+	}
+	n = n.getNext()
+	for n != nil {
+		if n.key != crdtRootKey && n.key != crdtOrphanKey && n.parent.key != crdtOrphanKey && crdt.itemIsLive(n.key) {
+			return n
 		}
-		close(ch)
-	}()
-	return ch
+		n = n.getNext()
+	}
+	return nil
 }
 
 func (crdt *crdtTree) generateEvents() []EventLog {
@@ -247,7 +213,7 @@ func (crdt *crdtTree) add(e EventLog) {
 		crdt.cache[e.ListItemKey] = item
 	} else {
 		// remove from parent.children if pre-existing
-		item.parent.children.removeChild(item.key)
+		item.parent.children.removeChild(item)
 	}
 	item.latestLamportTimestamp = e.LamportTimestamp
 

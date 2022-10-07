@@ -454,8 +454,9 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 
 	idx := 0
 	listItemMatchIdx := make(map[string]int)
-	for nodeKey := range r.crdt.traverse() {
-		cur := r.listItemCache[nodeKey]
+	node := r.crdt.traverse(nil)
+	for node != nil {
+		cur := r.listItemCache[node.key]
 		// Nullify match pointers
 		// TODO centralise this logic, it's too closely coupled with the moveItem logic (if match pointers
 		// aren't cleaned up between ANY ops, it can lead to weird behaviour as things operate based on
@@ -522,6 +523,7 @@ func (r *DBListRepo) Match(keys [][]rune, showHidden bool, curKey string, offset
 			last.parent = cur
 		}
 		last = cur
+		node = r.crdt.traverse(node)
 	}
 	newPos := -1
 	if p, exists := listItemMatchIdx[curKey]; exists {
