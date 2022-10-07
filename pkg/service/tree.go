@@ -10,11 +10,6 @@ const (
 	crdtOrphanKey = "_orphan"
 )
 
-type crdtTree struct {
-	cache                                         map[string]*node
-	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
-}
-
 type node struct {
 	key                    string
 	originUUID             uuid
@@ -108,6 +103,11 @@ func (l *childDll) removeChild(n *node) {
 	return
 }
 
+type crdtTree struct {
+	cache                                         map[string]*node
+	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
+}
+
 func newTree() *crdtTree {
 	orphan := &node{
 		key: crdtOrphanKey,
@@ -126,6 +126,30 @@ func newTree() *crdtTree {
 		deleteEventSet:   make(map[string]EventLog),
 		positionEventSet: make(map[string]EventLog),
 	}
+}
+
+func (crdt *crdtTree) skipOrUpdate(e EventLog) bool {
+	var eventCache map[string]EventLog
+	switch e.EventType {
+	case UpdateEvent:
+		eventCache = crdt.addEventSet
+	case DeleteEvent:
+		eventCache = crdt.deleteEventSet
+	case PositionEvent:
+		eventCache = crdt.positionEventSet
+	}
+
+	// If the incoming event is older than the current most recent cached event, return early with true
+	if ce, exists := eventCache[e.ListItemKey]; exists {
+		if e.before(ce) {
+			return true
+		}
+	}
+
+	// Otherwise, update the cache with the newer event and return false
+	eventCache[e.ListItemKey] = e
+
+	return false
 }
 
 func (crdt *crdtTree) itemIsLive(key string) bool {

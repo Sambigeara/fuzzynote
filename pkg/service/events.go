@@ -481,25 +481,10 @@ func (a *EventLog) before(b EventLog) bool {
 func (r *DBListRepo) processEventLog(e EventLog) *ListItem {
 	item := r.getOrCreateListItem(e.ListItemKey)
 
-	var eventCache map[string]EventLog
-	switch e.EventType {
-	case UpdateEvent:
-		eventCache = r.crdt.addEventSet
-	case DeleteEvent:
-		eventCache = r.crdt.deleteEventSet
-	case PositionEvent:
-		eventCache = r.crdt.positionEventSet
+	// Check the event cache and skip if the event is older than the most-recently processed, else update and continue
+	if r.crdt.skipOrUpdate(e) {
+		return item
 	}
-
-	// Check the event cache and skip if the event is older than the most-recently processed
-	if ce, exists := eventCache[e.ListItemKey]; exists {
-		if e.before(ce) {
-			return item
-		}
-	}
-
-	// Add the event to the cache after the pre-existence checks above
-	eventCache[e.ListItemKey] = e
 
 	// Local lamport timestamp is ONLY incremented here
 	if r.currentLamportTimestamp <= e.LamportTimestamp {
