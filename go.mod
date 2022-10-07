@@ -9,7 +9,6 @@ require (
 	github.com/gdamore/tcell/v2 v2.4.0
 	github.com/manifoldco/promptui v0.8.0
 	github.com/mattn/go-runewidth v0.0.13
-	github.com/xlab/treeprint v1.1.0
 	gopkg.in/yaml.v2 v2.4.0
 	mvdan.cc/xurls/v2 v2.3.0
 	nhooyr.io/websocket v1.8.7

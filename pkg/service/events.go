@@ -40,7 +40,6 @@ const (
 	websocketPublishInterval = time.Millisecond * 600
 )
 
-
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
 }
@@ -309,8 +308,6 @@ func (r *DBListRepo) getEmailFromConfigLine(line string) string {
 }
 
 func (r *DBListRepo) repositionActiveFriends(e EventLog) EventLog {
-	// SL 2021-12-30: Recent changes mean that _all_ event logs will now store the current state of the line, so this
-	// check is only relevant to bypass earlier logs which have nothing to process.
 	if len(e.Line) == 0 {
 		return e
 	}
@@ -993,9 +990,10 @@ func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
 			filteredWal = append(filteredWal, e)
 			continue
 		}
-		if e.emailHasAccess(walFileOwnerEmail) {
-			filteredWal = append(filteredWal, e)
-		}
+		// TODO 2022-10-07: I've temporarily disabled per line collab until I can figure how to cleanly share all required PositionEvents as well as UpdateEvents
+		//if e.emailHasAccess(walFileOwnerEmail) {
+		//filteredWal = append(filteredWal, e)
+		//}
 	}
 	return filteredWal
 }
@@ -1338,7 +1336,6 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 						defer r.webWalFileMut.RUnlock()
 						for _, wf := range r.webWalFiles {
 							if matchedEventLog := r.getMatchedWal(wsPubAgg, wf); len(matchedEventLog) > 0 {
-								// There are only single events, so get the zero index
 								b, _ := buildByteWal(matchedEventLog)
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 								go func(uuid string) {
