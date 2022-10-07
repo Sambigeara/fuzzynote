@@ -29,7 +29,6 @@ func (n *node) moreRecentThan(o *node) bool {
 	} else if o.key == "_orphan" {
 		return false
 	}
-	//return n.latestLamportTimestamp > o.latestLamportTimestamp || n.latestLamportTimestamp == o.latestLamportTimestamp && n.originUUID > o.originUUID
 
 	if n.latestLamportTimestamp > o.latestLamportTimestamp {
 		return true
@@ -42,7 +41,7 @@ func (n *node) moreRecentThan(o *node) bool {
 // Seek out the next node in this precedence:
 // - immediate child
 // - right ptr
-// Otherwise to go the next parent which has a right ptr
+// - next parent which has a right ptr
 func (n *node) getNext() *node {
 	if n.children.firstChild != nil {
 		return n.children.firstChild
