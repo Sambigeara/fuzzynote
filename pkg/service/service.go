@@ -211,8 +211,7 @@ func (i *ListItem) Key() string {
 	return i.key
 }
 
-func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
-	var err error
+func (r *DBListRepo) addEventLog(el EventLog) *ListItem {
 	var item *ListItem
 
 	// At this point we inspect the Line in the event log for `@friends`, and if they're present and currently
@@ -221,9 +220,9 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	// the Line() API).
 	el = r.repositionActiveFriends(el)
 
-	item, err = r.processEventLog(el)
+	item = r.processEventLog(el)
 	r.eventsChan <- el
-	return item, err
+	return item
 }
 
 func (r *DBListRepo) update(line string, item *ListItem) EventLog {
@@ -262,7 +261,7 @@ func (r *DBListRepo) Add(line string, note []byte, childItem *ListItem) (string,
 	e.ListItemKey = strconv.Itoa(int(e.UUID)) + ":" + strconv.Itoa(int(e.LamportTimestamp))
 	e.Line = line
 	e.Note = note
-	newItem, _ := r.addEventLog(e)
+	newItem := r.addEventLog(e)
 	ue := r.del(newItem)
 	events = append(events, e)
 
@@ -403,7 +402,7 @@ func (r *DBListRepo) replayEventsFromUndoLog(events []EventLog) string {
 	var key string
 	for i, e := range events {
 		e.LamportTimestamp = r.currentLamportTimestamp
-		item, _ := r.addEventLog(e)
+		item := r.addEventLog(e)
 		if i == 0 && item != nil {
 			if c := item.matchChild; e.EventType == DeleteEvent && c != nil {
 				key = c.key

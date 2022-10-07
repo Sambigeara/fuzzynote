@@ -478,7 +478,7 @@ func (a *EventLog) before(b EventLog) bool {
 	return leftEventOlder == checkEquality(*a, b)
 }
 
-func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
+func (r *DBListRepo) processEventLog(e EventLog) *ListItem {
 	item := r.getOrCreateListItem(e.ListItemKey)
 
 	var eventCache map[string]EventLog
@@ -494,7 +494,7 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if ce, exists := eventCache[e.ListItemKey]; exists {
 		if e.before(ce) {
-			return item, nil
+			return item
 		}
 	}
 
@@ -508,20 +508,19 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 
 	r.generateFriendChangeEvents(e, item)
 
-	var err error
 	switch e.EventType {
 	case UpdateEvent:
-		err = updateItemFromEvent(item, e, r.email)
+		updateItemFromEvent(item, e, r.email)
 	case PositionEvent:
 		r.crdt.add(e)
 	}
 
 	r.listItemCache[e.ListItemKey] = item
 
-	return item, err
+	return item
 }
 
-func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
+func updateItemFromEvent(item *ListItem, e EventLog, email string) {
 	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
 	item.rawLine = e.Line
 	item.Note = e.Note
@@ -546,23 +545,15 @@ func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 	}
 	sort.Strings(emails)
 	item.friends.Emails = emails
-
-	return nil
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list
 // which is attached to DBListRepo.Root
 func (r *DBListRepo) Replay(partialWal []EventLog) error {
-	// No point merging with an empty partialWal
-	if len(partialWal) == 0 {
-		return nil
-	}
-
 	for _, e := range partialWal {
 		r.processEventLog(e)
 	}
-
-	return nil
+	return nil // TODO well this is currently pointless
 }
 
 func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
