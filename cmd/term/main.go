@@ -135,12 +135,22 @@ func main() {
 	}
 
 	// Generate FileWebTokenStore
-	webTokens := service.NewFileWebTokenStore(cfg.Root)
+	webTokens, err := service.NewFileWebTokenStore(cfg.Root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Generate boltStore
+	boltStore, err := service.NewBoltStore(cfg.Root)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Instantiate listRepo
 	listRepo := service.NewDBListRepo(
 		localWalFile,
 		webTokens,
+		boltStore,
 	)
 
 	s3Remotes := s3.GetS3Config(cfg.Root)

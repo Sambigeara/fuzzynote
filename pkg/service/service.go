@@ -43,7 +43,8 @@ type DBListRepo struct {
 	currentLamportTimestamp int64
 	listItemCache           map[string]*ListItem
 
-	crdt *crdtTree
+	crdt  *crdtTree
+	store Store
 
 	// Wal stuff
 	uuid              uuid
@@ -89,7 +90,7 @@ type DBListRepo struct {
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
-func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBListRepo {
+func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore, store Store) *DBListRepo {
 	listRepo := &DBListRepo{
 		// TODO rename this cos it's solely for UNDO/REDO
 		eventLogger: NewDbEventLogger(),
@@ -99,7 +100,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		latestWalSchemaID: latestWalSchemaID,
 		listItemCache:     make(map[string]*ListItem),
 
-		crdt: newTree(),
+		crdt:  newTree(),
+		store: store,
 
 		LocalWalFile: localWalFile,
 		eventsChan:   make(chan EventLog),

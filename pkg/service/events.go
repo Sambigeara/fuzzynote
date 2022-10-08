@@ -486,6 +486,20 @@ func (r *DBListRepo) processEventLog(e EventLog) *ListItem {
 		return item
 	}
 
+	// Update the crdt store if active
+	if r.store != nil {
+		go func() {
+			switch e.EventType {
+			case UpdateEvent:
+				r.store.Update(e)
+			case PositionEvent:
+				r.store.Position(e)
+			case DeleteEvent:
+				r.store.Delete(e)
+			}
+		}()
+	}
+
 	// Local lamport timestamp is ONLY incremented here
 	if r.currentLamportTimestamp <= e.LamportTimestamp {
 		r.currentLamportTimestamp = e.LamportTimestamp + 1
@@ -495,17 +509,15 @@ func (r *DBListRepo) processEventLog(e EventLog) *ListItem {
 
 	switch e.EventType {
 	case UpdateEvent:
-		updateItemFromEvent(item, e, r.email)
+		r.updateItemFromEvent(item, e, r.email)
 	case PositionEvent:
 		r.crdt.add(e)
 	}
 
-	r.listItemCache[e.ListItemKey] = item
-
 	return item
 }
 
-func updateItemFromEvent(item *ListItem, e EventLog, email string) {
+func (r *DBListRepo) updateItemFromEvent(item *ListItem, e EventLog, email string) {
 	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
 	item.rawLine = e.Line
 	item.Note = e.Note
@@ -530,6 +542,9 @@ func updateItemFromEvent(item *ListItem, e EventLog, email string) {
 	}
 	sort.Strings(emails)
 	item.friends.Emails = emails
+
+	// Update in the cache
+	r.listItemCache[e.ListItemKey] = item
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list
@@ -774,7 +789,7 @@ func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
 	return exists
 }
 
-func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan chan namedWal) error {
+func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan chan []EventLog) error {
 	type wfWalPair struct {
 		wf      WalFile
 		newWals []string
@@ -826,10 +841,11 @@ func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan ch
 					wg.Add(1)
 					go func(n string, wal []EventLog) {
 						defer wg.Done()
-						replayChan <- namedWal{
-							name: n,
-							wal:  wal,
-						}
+						//replayChan <- namedWal{
+						//name: n,
+						//wal:  wal,
+						//}
+						replayChan <- wal
 					}(newWal, newWfWal)
 				}
 			}
@@ -1082,16 +1098,18 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, inputEvtsChan chan interface{}) error {
+func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, inputEvtsChan chan interface{}) error {
+	r.store.Load(replayChan)
+
 	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
 	// specified wait duration)
-	syncTriggerChan := make(chan struct{}, 1)
+	//syncTriggerChan := make(chan struct{}, 1)
 
-	gatherTriggerTimer := time.NewTimer(gatherInterval)
+	//gatherTriggerTimer := time.NewTimer(gatherInterval)
 	// Drain the initial push timer, we want to wait for initial user input
 	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
 	// dropped in to the root directory, etc) are flushed
-	<-r.pushTriggerTimer.C
+	//<-r.pushTriggerTimer.C
 
 	webPingTicker := time.NewTicker(webPingInterval)
 	webRefreshTicker := time.NewTicker(webRefreshInterval)
@@ -1100,16 +1118,16 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 
 	websocketPushEvents := make(chan websocketMessage)
 
-	scheduleSync := func() {
-		select {
-		case syncTriggerChan <- struct{}{}:
-		default:
-		}
-	}
-	schedulePush := func() {
-		r.pushTriggerTimer.Reset(pushInterval)
-		gatherTriggerTimer.Reset(gatherInterval)
-	}
+	//scheduleSync := func() {
+	//select {
+	//case syncTriggerChan <- struct{}{}:
+	//default:
+	//}
+	//}
+	//schedulePush := func() {
+	//r.pushTriggerTimer.Reset(pushInterval)
+	//gatherTriggerTimer.Reset(gatherInterval)
+	//}
 
 	// Run an initial load from the local walfile
 	if err := r.pull(ctx, []WalFile{r.LocalWalFile}, replayChan); err != nil {
@@ -1117,37 +1135,37 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 	}
 
 	// Main sync event loop
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				var err error
-				select {
-				case <-syncTriggerChan:
-					syncWalFiles := []WalFile{}
-					func() {
-						r.syncWalFileMut.RLock()
-						defer r.syncWalFileMut.RUnlock()
-						for _, wf := range r.syncWalFiles {
-							syncWalFiles = append(syncWalFiles, wf)
-						}
-					}()
-					if err = r.pull(ctx, syncWalFiles, replayChan); err != nil {
-						log.Fatal(err)
-					}
-					r.hasSyncedRemotes = true
-				case <-gatherTriggerTimer.C:
-					if err = r.gather(ctx); err != nil {
-						log.Fatal(err)
-					}
-				}
-				time.Sleep(pullInterval)
-				scheduleSync()
-			}
-		}
-	}()
+	//go func() {
+	//for {
+	//select {
+	//case <-ctx.Done():
+	//return
+	//default:
+	//var err error
+	//select {
+	//case <-syncTriggerChan:
+	//syncWalFiles := []WalFile{}
+	//func() {
+	//r.syncWalFileMut.RLock()
+	//defer r.syncWalFileMut.RUnlock()
+	//for _, wf := range r.syncWalFiles {
+	//syncWalFiles = append(syncWalFiles, wf)
+	//}
+	//}()
+	//if err = r.pull(ctx, syncWalFiles, replayChan); err != nil {
+	//log.Fatal(err)
+	//}
+	//r.hasSyncedRemotes = true
+	//case <-gatherTriggerTimer.C:
+	//if err = r.gather(ctx); err != nil {
+	//log.Fatal(err)
+	//}
+	//}
+	//time.Sleep(pullInterval)
+	//scheduleSync()
+	//}
+	//}
+	//}()
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
@@ -1191,8 +1209,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					r.web.isActive = false
 					switch err.(type) {
 					case authFailureError:
-						scheduleSync() // still trigger pull cycle for local only sync
-						return         // authFailureError signifies incorrect login details, disable web and run local only mode
+						//scheduleSync() // still trigger pull cycle for local only sync
+						return // authFailureError signifies incorrect login details, disable web and run local only mode
 					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
@@ -1209,7 +1227,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 				}
 				// Trigger web walfile sync (mostly relevant on initial start)
-				scheduleSync()
+				//scheduleSync()
 
 				if r.web.isActive {
 					webCtx, webCancel = context.WithCancel(ctx)
@@ -1234,10 +1252,11 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 								wsConsAgg = merge(wsConsAgg, wsEv)
 							case <-wsFlushTicker.C:
 								if len(wsConsAgg) > 0 {
-									replayChan <- namedWal{
-										name: "",
-										wal:  wsConsAgg,
-									}
+									//replayChan <- namedWal{
+									//name: "",
+									//wal:  wsConsAgg,
+									//}
+									replayChan <- wsConsAgg
 									wsConsAgg = []EventLog{}
 								}
 							case <-webCtx.Done():
@@ -1281,7 +1300,8 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 	}()
 
 	// Push to all WalFiles
-	var flushAgg, wsPubAgg []EventLog
+	//var flushAgg, wsPubAgg []EventLog
+	var wsPubAgg []EventLog
 	if !r.isTest {
 		go func() {
 			for {
@@ -1329,20 +1349,21 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					r.emitRemoteUpdate(inputEvtsChan)
 				}
 				// Add to an ephemeral log
-				flushAgg = merge(flushAgg, wsPubAgg)
-				wsPubAgg = []EventLog{}
+				//flushAgg = merge(flushAgg, wsPubAgg)
+				//wsPubAgg = []EventLog{}
 				// Trigger an aggregated push
-				schedulePush()
+				//schedulePush()
 				inputEvtsChan <- SyncEvent{}
-			case <-r.pushTriggerTimer.C:
-				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
-				// ephemeral log. If empty, skip.
-				r.flushPartialWals(ctx, flushAgg, false)
-				flushAgg = []EventLog{}
-				r.hasUnflushedEvents = false
-				inputEvtsChan <- SyncEvent{}
+			//case <-r.pushTriggerTimer.C:
+			//// On ticks, Flush what we've aggregated to all walfiles, and then reset the
+			//// ephemeral log. If empty, skip.
+			//r.flushPartialWals(ctx, flushAgg, false)
+			//flushAgg = []EventLog{}
+			//r.hasUnflushedEvents = false
+			//inputEvtsChan <- SyncEvent{}
 			case <-ctx.Done():
-				r.flushPartialWals(context.Background(), flushAgg, true)
+				r.store.Close()
+				//r.flushPartialWals(context.Background(), flushAgg, true)
 				go func() {
 					r.finalFlushChan <- struct{}{}
 				}()
@@ -1445,7 +1466,7 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	return nil
 }
 
-func (r *DBListRepo) TestPullLocal(c chan namedWal) error {
+func (r *DBListRepo) TestPullLocal(c chan []EventLog) error {
 	//c := make(chan []EventLog)
 	if err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
 		return err

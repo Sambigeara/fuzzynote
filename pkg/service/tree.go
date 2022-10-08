@@ -104,8 +104,8 @@ func (l *childDll) removeChild(n *node) {
 }
 
 type crdtTree struct {
-	cache                                         map[string]*node
-	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
+	cache                                            map[string]*node
+	updateEventSet, deleteEventSet, positionEventSet map[string]EventLog
 }
 
 func newTree() *crdtTree {
@@ -122,21 +122,34 @@ func newTree() *crdtTree {
 			crdtOrphanKey: orphan,
 			crdtRootKey:   root,
 		},
-		addEventSet:      make(map[string]EventLog),
+		updateEventSet:   make(map[string]EventLog),
 		deleteEventSet:   make(map[string]EventLog),
 		positionEventSet: make(map[string]EventLog),
 	}
+}
+
+func (crdt *crdtTree) getEventCache(t EventType) map[string]EventLog {
+	var eventCache map[string]EventLog
+	switch t {
+	case UpdateEvent:
+		eventCache = crdt.updateEventSet
+	case DeleteEvent:
+		eventCache = crdt.deleteEventSet
+	case PositionEvent:
+		eventCache = crdt.positionEventSet
+	}
+	return eventCache
 }
 
 func (crdt *crdtTree) skipOrUpdate(e EventLog) bool {
 	var eventCache map[string]EventLog
 	switch e.EventType {
 	case UpdateEvent:
-		eventCache = crdt.addEventSet
-	case DeleteEvent:
-		eventCache = crdt.deleteEventSet
+		eventCache = crdt.updateEventSet
 	case PositionEvent:
 		eventCache = crdt.positionEventSet
+	case DeleteEvent:
+		eventCache = crdt.deleteEventSet
 	}
 
 	// If the incoming event is older than the current most recent cached event, return early with true
@@ -153,7 +166,7 @@ func (crdt *crdtTree) skipOrUpdate(e EventLog) bool {
 }
 
 func (crdt *crdtTree) itemIsLive(key string) bool {
-	latestAddEvent, isAdded := crdt.addEventSet[key]
+	latestAddEvent, isAdded := crdt.updateEventSet[key]
 	latestDeleteEvent, isDeleted := crdt.deleteEventSet[key]
 	if isAdded && (!isDeleted || (isAdded && latestDeleteEvent.before(latestAddEvent))) {
 		return true
@@ -185,7 +198,7 @@ func (crdt *crdtTree) generateEvents() []EventLog {
 
 	// Add UpdateEvents for active items (deleted items don't need content state, as any update that overrides deleted state will
 	// come with it's own
-	for k, addEvent := range crdt.addEventSet {
+	for k, addEvent := range crdt.updateEventSet {
 		if crdt.itemIsLive(k) {
 			events = append(events, addEvent)
 		}

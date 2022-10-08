@@ -3,6 +3,7 @@ package prompt
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 
@@ -59,10 +60,13 @@ func Login(root string) {
 		"password": password,
 	}
 
-	wt := service.NewFileWebTokenStore(root)
+	wt, err := service.NewFileWebTokenStore(root)
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = service.Authenticate(wt, body)
 	if err != nil {
-		fmt.Print("Login unsuccessful :(\n")
+		log.Print("Login unsuccessful :(\n")
 		os.Exit(0)
 	}
 

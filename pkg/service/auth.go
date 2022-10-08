@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -34,7 +35,7 @@ type FileWebTokenStore struct {
 	ID      string `yaml:"idToken"`
 }
 
-func NewFileWebTokenStore(root string) *FileWebTokenStore {
+func NewFileWebTokenStore(root string) (*FileWebTokenStore, error) {
 	// Attempt to read from file
 	tokenFile := path.Join(root, webTokensFileName)
 	f, err := os.Open(tokenFile)
@@ -45,12 +46,10 @@ func NewFileWebTokenStore(root string) *FileWebTokenStore {
 		decoder := yaml.NewDecoder(f)
 		err = decoder.Decode(wt)
 		if err != nil {
-			log.Fatalf("main : Parsing Token File : %v", err)
-			// TODO handle with appropriate error message
-			return wt
+			return nil, fmt.Errorf("main : Parsing Token File : %v", err)
 		}
 	}
-	return wt
+	return wt, nil
 }
 
 type authFailureError struct{}

@@ -26,7 +26,7 @@ func (r *DBListRepo) Start(client Client) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	replayChan := make(chan namedWal)
+	replayChan := make(chan []EventLog)
 	//reorderAndReplayChan := make(chan []EventLog)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
@@ -38,15 +38,15 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			select {
-			case n := <-replayChan:
-				name, wal := n.name, n.wal
+			case wal := <-replayChan:
+				//name, wal := n.name, n.wal
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
 				}
-				if name != "" {
-					r.setProcessedWalChecksum(name)
-				}
+				//if name != "" {
+				//r.setProcessedWalChecksum(name)
+				//}
 				changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
 				go func() {
 					inputEvtsChan <- RefreshKey{

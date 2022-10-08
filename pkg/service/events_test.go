@@ -1082,7 +1082,7 @@ func TestCRDTAllPermsDeletes(t *testing.T) {
 //            // We can't rely on fresh repos each iterations here because OS+file management lags behind and
 //            // causes inconsistencies. Therefore, use the same repo and refresh state
 //            repo.listItemCache = make(map[string]*ListItem)
-//            repo.addEventSet = make(map[string]EventLog)
+//            repo.updateEventSet = make(map[string]EventLog)
 //            repo.deleteEventSet = make(map[string]EventLog)
 //            repo.positionEventSet = make(map[string]EventLog)
 //            repo.crdt = newTree()
@@ -1191,7 +1191,7 @@ func TestCRDTAllPermsDeletes(t *testing.T) {
 //            // We can't rely on fresh repos each iterations here because OS+file management lags behind and
 //            // causes inconsistencies. Therefore, use the same repo and refresh state
 //            repo.listItemCache = make(map[string]*ListItem)
-//            repo.addEventSet = make(map[string]EventLog)
+//            repo.updateEventSet = make(map[string]EventLog)
 //            repo.deleteEventSet = make(map[string]EventLog)
 //            repo.positionEventSet = make(map[string]EventLog)
 
@@ -1540,7 +1540,7 @@ func TestCRDTAllPermsDeletes(t *testing.T) {
 //            // We can't rely on fresh repos each iterations here because OS+file management lags behind and
 //            // causes inconsistencies. Therefore, use the same repo and refresh state
 //            repo.listItemCache = make(map[string]*ListItem)
-//            repo.addEventSet = make(map[string]EventLog)
+//            repo.updateEventSet = make(map[string]EventLog)
 //            repo.deleteEventSet = make(map[string]EventLog)
 //            repo.positionEventSet = make(map[string]EventLog)
 
