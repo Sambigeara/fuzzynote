@@ -29,7 +29,8 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-const latestWalSchemaID uint16 = 7
+// IMPORTANT: bump cloud version
+const LatestWalSchemaID uint16 = 7
 
 // sync intervals
 const (
@@ -565,45 +566,26 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 	return nil
 }
 
-func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
+// BuildFromFileTreeSchema parses wals with schema v7 or higher
+func BuildFromFileTreeSchema(walSchemaVersionID uint16, raw io.Reader) ([]EventLog, error) {
 	var el []EventLog
-	var walSchemaVersionID uint16
-	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
-		if err == io.EOF {
-			return el, nil
-		}
-		return el, err
-	}
-
 	pr, pw := io.Pipe()
 	errChan := make(chan error, 1)
 	go func() {
 		defer pw.Close()
-		switch walSchemaVersionID {
-		case 1, 2:
-			if _, err := io.Copy(pw, raw); err != nil {
-				errChan <- err
-			}
-		default:
-			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
-			// prior to passing it to the loop below
-			zr, err := gzip.NewReader(raw)
-			if err != nil {
-				errChan <- err
-			}
-			defer zr.Close()
-			if _, err := io.Copy(pw, zr); err != nil {
-				errChan <- err
-			}
+		// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+		// prior to passing it to the loop below
+		zr, err := gzip.NewReader(raw)
+		if err != nil {
+			errChan <- err
+		}
+		defer zr.Close()
+		if _, err := io.Copy(pw, zr); err != nil {
+			errChan <- err
 		}
 		errChan <- nil
 	}()
 
-	if walSchemaVersionID <= 6 {
-		return r.legacyBuildFromRaw(pr, walSchemaVersionID, errChan)
-	}
-
-	// Schema 7
 	switch walSchemaVersionID {
 	case 7:
 		dec := gob.NewDecoder(pr)
@@ -616,6 +598,22 @@ func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
 	}
 
 	return el, nil
+}
+
+func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
+	var walSchemaVersionID uint16
+	if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
+		if err == io.EOF {
+			return []EventLog{}, nil
+		}
+		return []EventLog{}, err
+	}
+
+	if walSchemaVersionID <= 6 {
+		return r.legacyBuildFromFile(walSchemaVersionID, raw)
+	}
+
+	return BuildFromFileTreeSchema(walSchemaVersionID, raw)
 }
 
 const (
@@ -706,7 +704,7 @@ func generatePlainTextFile(matchItems []ListItem) error {
 //        }
 //    }
 
-//    b, _ := buildByteWal(wal)
+//    b, _ := BuildByteWal(wal)
 //    viewName := fmt.Sprintf(viewFilePattern, time.Now().UnixNano())
 //    r.LocalWalFile.Flush(ctx, b, viewName)
 //    log.Fatalf("N list generated events: %d", len(wal))
@@ -818,7 +816,7 @@ func (r *DBListRepo) gather(ctx context.Context) error {
 
 	fullWal := r.crdt.generateEvents()
 
-	fullByteWal, err := buildByteWal(fullWal)
+	fullByteWal, err := BuildByteWal(fullWal)
 	if err != nil {
 		return err
 	}
@@ -876,11 +874,11 @@ func (r *DBListRepo) gather(ctx context.Context) error {
 	return nil
 }
 
-func buildByteWal(el []EventLog) (*bytes.Buffer, error) {
+func BuildByteWal(el []EventLog) (*bytes.Buffer, error) {
 	var outputBuf bytes.Buffer
 
 	// Write the schema ID
-	if err := binary.Write(&outputBuf, binary.LittleEndian, latestWalSchemaID); err != nil {
+	if err := binary.Write(&outputBuf, binary.LittleEndian, LatestWalSchemaID); err != nil {
 		return nil, err
 	}
 
@@ -937,7 +935,7 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 		}
 
 		var err error
-		if byteWal, err = buildByteWal(el); err != nil {
+		if byteWal, err = BuildByteWal(el); err != nil {
 			return err
 		}
 
@@ -963,7 +961,7 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 
 func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
 	if len(wal) > 0 {
-		fullByteWal, err := buildByteWal(wal)
+		fullByteWal, err := BuildByteWal(wal)
 		if err != nil {
 			return
 		}
@@ -1264,7 +1262,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 						defer r.webWalFileMut.RUnlock()
 						for _, wf := range r.webWalFiles {
 							if matchedEventLog := r.getMatchedWal(wsPubAgg, wf); len(matchedEventLog) > 0 {
-								b, _ := buildByteWal(matchedEventLog)
+								b, _ := BuildByteWal(matchedEventLog)
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 								go func(uuid string) {
 									websocketPushEvents <- websocketMessage{
@@ -1391,7 +1389,7 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 		prevKey = key
 	}
 
-	b, _ := buildByteWal(el)
+	b, _ := BuildByteWal(el)
 	wf.Flush(ctx, b, fmt.Sprintf("%d", id))
 
 	return nil

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
@@ -492,4 +493,32 @@ func (r *DBListRepo) legacyBuildFromRaw(pr *io.PipeReader, walSchemaVersionID ui
 	}
 
 	return el, nil
+}
+
+func (r *DBListRepo) legacyBuildFromFile(walSchemaVersionID uint16, raw io.Reader) ([]EventLog, error) {
+	pr, pw := io.Pipe()
+	errChan := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		switch walSchemaVersionID {
+		case 1, 2:
+			if _, err := io.Copy(pw, raw); err != nil {
+				errChan <- err
+			}
+		default:
+			// Versions >=3 of the wal schema is gzipped after the first 2 bytes. Therefore, unzip those bytes
+			// prior to passing it to the loop below
+			zr, err := gzip.NewReader(raw)
+			if err != nil {
+				errChan <- err
+			}
+			defer zr.Close()
+			if _, err := io.Copy(pw, zr); err != nil {
+				errChan <- err
+			}
+		}
+		errChan <- nil
+	}()
+
+	return r.legacyBuildFromRaw(pr, walSchemaVersionID, errChan)
 }

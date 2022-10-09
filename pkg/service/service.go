@@ -46,10 +46,9 @@ type DBListRepo struct {
 	crdt *crdtTree
 
 	// Wal stuff
-	uuid              uuid
-	eventsChan        chan EventLog
-	web               *Web
-	latestWalSchemaID uint16
+	uuid       uuid
+	eventsChan chan EventLog
+	web        *Web
 
 	remoteCursorMoveChan chan cursorMoveEvent
 	localCursorMoveChan  chan cursorMoveEvent
@@ -95,9 +94,8 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		eventLogger: NewDbEventLogger(),
 
 		// Wal stuff
-		uuid:              generateUUID(),
-		latestWalSchemaID: latestWalSchemaID,
-		listItemCache:     make(map[string]*ListItem),
+		uuid:          generateUUID(),
+		listItemCache: make(map[string]*ListItem),
 
 		crdt: newTree(),
 
