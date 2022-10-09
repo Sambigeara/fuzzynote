@@ -635,78 +635,6 @@ func checkEquality(event1 EventLog, event2 EventLog) int {
 	return eventsEqual
 }
 
-func merge(wal1 []EventLog, wal2 []EventLog) []EventLog {
-	if len(wal1) == 0 && len(wal2) == 0 {
-		return []EventLog{}
-	} else if len(wal1) == 0 {
-		return wal2
-	} else if len(wal2) == 0 {
-		return wal1
-	}
-
-	// Pre-allocate a slice with the maximum possible items (sum of both lens). Although under many circumstances, it's
-	// unlikely we'll fill the capacity, it's far more optimal than each separate append re-allocating to a new slice.
-	mergedEl := make([]EventLog, 0, len(wal1)+len(wal2))
-
-	// Before merging, check to see that the the most recent from one wal isn't older than the oldest from another.
-	// If that is the case, append the newer to the older and return.
-	// We append to the newly allocated mergedEl twice, as we can guarantee that the underlying capacity will be enough
-	// (so no further allocations are needed)
-	if checkEquality(wal1[0], wal2[len(wal2)-1]) == rightEventOlder {
-		mergedEl = append(mergedEl, wal2...)
-		mergedEl = append(mergedEl, wal1...)
-		return mergedEl
-	} else if checkEquality(wal2[0], wal1[len(wal1)-1]) == rightEventOlder {
-		mergedEl = append(mergedEl, wal1...)
-		mergedEl = append(mergedEl, wal2...)
-		return mergedEl
-	}
-
-	// Adopt a two pointer approach
-	i, j := 0, 0
-	// We can use an empty log here because it will never be equal to in the checkEquality calls below
-	lastEvent := EventLog{}
-	for i < len(wal1) || j < len(wal2) {
-		if len(mergedEl) > 0 {
-			lastEvent = mergedEl[len(mergedEl)-1]
-		}
-		if i == len(wal1) {
-			// Ignore duplicates (compare with current head of the array
-			if len(mergedEl) == 0 || checkEquality(wal2[j], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, wal2[j])
-			}
-			j++
-		} else if j == len(wal2) {
-			// Ignore duplicates (compare with current head of the array
-			if len(mergedEl) == 0 || checkEquality(wal1[i], lastEvent) != eventsEqual {
-				mergedEl = append(mergedEl, wal1[i])
-			}
-			i++
-		} else {
-			switch checkEquality(wal1[i], wal2[j]) {
-			case leftEventOlder:
-				if len(mergedEl) == 0 || checkEquality(wal1[i], lastEvent) != eventsEqual {
-					mergedEl = append(mergedEl, wal1[i])
-				}
-				i++
-			case rightEventOlder:
-				if len(mergedEl) == 0 || checkEquality(wal2[j], lastEvent) != eventsEqual {
-					mergedEl = append(mergedEl, wal2[j])
-				}
-				j++
-			case eventsEqual:
-				// At this point, we only want to guarantee an increment on ONE of the two pointers
-				if i < len(wal1) {
-					i++
-				} else {
-					j++
-				}
-			}
-		}
-	}
-	return mergedEl
-}
-
 // NOTE: not in use - debug function
 func writePlainWalToFile(wal []EventLog) {
 	f, err := os.Create(fmt.Sprintf("debug_%d", time.Now().UnixNano()))
@@ -1255,7 +1183,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 						for {
 							select {
 							case wsEv := <-wsConsChan:
-								wsConsAgg = merge(wsConsAgg, wsEv)
+								wsConsAgg = append(wsConsAgg, wsEv...)
 							case <-wsFlushTicker.C:
 								if len(wsConsAgg) > 0 {
 									replayChan <- namedWal{
@@ -1311,7 +1239,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 			for {
 				select {
 				case e := <-r.eventsChan:
-					wsPubAgg = merge(wsPubAgg, []EventLog{e})
+					wsPubAgg = append(wsPubAgg, e)
 				case <-ctx.Done():
 					return
 				}
@@ -1353,7 +1281,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					r.emitRemoteUpdate(inputEvtsChan)
 				}
 				// Add to an ephemeral log
-				flushAgg = merge(flushAgg, wsPubAgg)
+				flushAgg = append(flushAgg, wsPubAgg...)
 				wsPubAgg = []EventLog{}
 				// Trigger an aggregated push
 				schedulePush()
