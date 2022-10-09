@@ -567,7 +567,18 @@ func (r *DBListRepo) Replay(partialWal []EventLog) error {
 }
 
 // BuildFromFileTreeSchema parses wals with schema v7 or higher
-func BuildFromFileTreeSchema(walSchemaVersionID uint16, raw io.Reader) ([]EventLog, error) {
+func BuildFromFileTreeSchema(walSchemaVersionID uint16, raw io.Reader) ([]EventLog, uint16, error) {
+	// passing walSchemaVersionID as 0 tells this function that the ID has yet to be retrieved from the Reader,
+	// and therefore should be here.
+	if walSchemaVersionID == 0 {
+		if err := binary.Read(raw, binary.LittleEndian, &walSchemaVersionID); err != nil {
+			if err == io.EOF {
+				return []EventLog{}, walSchemaVersionID, nil
+			}
+			return []EventLog{}, walSchemaVersionID, err
+		}
+	}
+
 	var el []EventLog
 	pr, pw := io.Pipe()
 	errChan := make(chan error, 1)
@@ -590,14 +601,14 @@ func BuildFromFileTreeSchema(walSchemaVersionID uint16, raw io.Reader) ([]EventL
 	case 7:
 		dec := gob.NewDecoder(pr)
 		if err := dec.Decode(&el); err != nil {
-			return el, err
+			return el, walSchemaVersionID, err
 		}
 		if err := <-errChan; err != nil {
-			return el, err
+			return el, walSchemaVersionID, err
 		}
 	}
 
-	return el, nil
+	return el, walSchemaVersionID, nil
 }
 
 func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
@@ -613,7 +624,8 @@ func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
 		return r.legacyBuildFromFile(walSchemaVersionID, raw)
 	}
 
-	return BuildFromFileTreeSchema(walSchemaVersionID, raw)
+	el, _, err := BuildFromFileTreeSchema(walSchemaVersionID, raw)
+	return el, err
 }
 
 const (
