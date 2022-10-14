@@ -1,6 +1,7 @@
 package service
 
 import (
+	"container/list"
 	"strconv"
 	"strings"
 )
@@ -10,16 +11,40 @@ const (
 	crdtOrphanKey = "_orphan"
 )
 
+const (
+	eventsEqual int = iota
+	leftEventOlder
+	rightEventOlder
+)
+
+func checkEquality(left, right EventLog) int {
+	if left.LamportTimestamp < right.LamportTimestamp ||
+		left.LamportTimestamp == right.LamportTimestamp && left.UUID < right.UUID ||
+		left.LamportTimestamp == right.LamportTimestamp && left.UUID == right.UUID && left.EventType < right.EventType {
+		return leftEventOlder
+	} else if right.LamportTimestamp < left.LamportTimestamp ||
+		right.LamportTimestamp == left.LamportTimestamp && right.UUID < left.UUID ||
+		right.LamportTimestamp == left.LamportTimestamp && right.UUID == left.UUID && right.EventType < left.EventType {
+		return rightEventOlder
+	}
+	return eventsEqual
+}
+
+func (a *EventLog) before(b EventLog) bool {
+	return leftEventOlder == checkEquality(*a, b)
+}
+
 type crdtTree struct {
 	cache                                         map[string]*node
 	addEventSet, deleteEventSet, positionEventSet map[string]EventLog
+	log                                           *list.List // A time ordered DLL of events
 }
 
 type node struct {
 	key                    string
 	originUUID             uuid
 	parent, left, right    *node
-	children               childDll
+	children               nodeDll
 	latestLamportTimestamp int64
 }
 
@@ -43,8 +68,8 @@ func (n *node) moreRecentThan(o *node) bool {
 // - right ptr
 // - right ptr of next parent which is not root
 func (n *node) getNext() *node {
-	if n.children.firstChild != nil {
-		return n.children.firstChild
+	if n.children.front != nil {
+		return n.children.front
 	}
 
 	if n.right != nil {
@@ -63,12 +88,12 @@ func (n *node) getNext() *node {
 }
 
 // Consider using https://pkg.go.dev/container/list
-type childDll struct {
-	firstChild *node
+type nodeDll struct {
+	front *node
 }
 
-func (l *childDll) insertInPlace(n *node) {
-	right := l.firstChild
+func (l *nodeDll) insertInPlace(n *node) {
+	right := l.front
 
 	var left *node
 	for right != nil {
@@ -83,9 +108,8 @@ func (l *childDll) insertInPlace(n *node) {
 	if left != nil {
 		left.right = n
 	} else {
-		l.firstChild = n
+		l.front = n
 	}
-	// If we traversed to the end
 	if right != nil {
 		right.left = n
 	}
@@ -93,12 +117,12 @@ func (l *childDll) insertInPlace(n *node) {
 	n.right = right
 }
 
-func (l *childDll) removeChild(n *node) {
+func (l *nodeDll) remove(n *node) {
 	if n.left != nil {
 		n.left.right = n.right
 	} else {
-		// node is firstChild, so reset firstChild in dll
-		l.firstChild = n.right
+		// node is front, so reset front in dll
+		l.front = n.right
 	}
 	if r := n.right; r != nil {
 		r.left = n.left
@@ -114,7 +138,7 @@ func newTree() *crdtTree {
 	}
 	root := &node{
 		key:      crdtRootKey,
-		children: childDll{orphan},
+		children: nodeDll{orphan},
 	}
 	orphan.parent = root
 	return &crdtTree{
@@ -125,6 +149,7 @@ func newTree() *crdtTree {
 		addEventSet:      make(map[string]EventLog),
 		deleteEventSet:   make(map[string]EventLog),
 		positionEventSet: make(map[string]EventLog),
+		log:              list.New(),
 	}
 }
 
@@ -151,20 +176,12 @@ func (crdt *crdtTree) traverse(n *node) *node {
 	return nil
 }
 
-func (crdt *crdtTree) generateEvents() []EventLog {
-	events := []EventLog{}
+func (crdt *crdtTree) getEventLog() []EventLog {
+	events := make([]EventLog, crdt.log.Len())
 
-	// Add all PositionEvents
-	for _, e := range crdt.positionEventSet {
+	for i := crdt.log.Front(); i != nil; i = i.Next() {
+		e := i.Value.(EventLog)
 		events = append(events, e)
-	}
-
-	// Add UpdateEvents for active items (deleted items don't need content state, as any update that overrides deleted state will
-	// come with it's own
-	for k, addEvent := range crdt.addEventSet {
-		if crdt.itemIsLive(k) {
-			events = append(events, addEvent)
-		}
 	}
 
 	return events
@@ -174,6 +191,59 @@ func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 	item.parent = target
 
 	target.children.insertInPlace(item)
+}
+
+func (crdt *crdtTree) updateCacheOrSkip(e EventLog) bool {
+	var eventCache map[string]EventLog
+	switch e.EventType {
+	case UpdateEvent:
+		eventCache = crdt.addEventSet
+	case DeleteEvent:
+		eventCache = crdt.deleteEventSet
+	case PositionEvent:
+		eventCache = crdt.positionEventSet
+	}
+
+	// Check the event cache and skip if the event is older than the most-recently processed
+	if ce, exists := eventCache[e.ListItemKey]; exists {
+		if e.before(ce) {
+			return true
+		}
+	}
+
+	// Add the event to the cache after the pre-existence checks above
+	eventCache[e.ListItemKey] = e
+
+	return false
+}
+
+func (crdt *crdtTree) updateLog(e EventLog) {
+	for i := crdt.log.Front(); i != nil; i = i.Next() {
+		curEvent := i.Value.(EventLog)
+
+		comp := checkEquality(curEvent, e)
+
+		// same ListItemKey:EventType mapping
+		if curEvent.EventType == e.EventType && curEvent.ListItemKey == e.ListItemKey {
+			switch comp {
+			case eventsEqual:
+				// the events are equal, return early
+				return
+			case leftEventOlder:
+				// if ListItemKey is equal, and curEvent is older, remove
+				crdt.log.Remove(i)
+				continue
+			}
+		}
+
+		// if curEvent is more recent than the new one, insert new one before
+		if comp == rightEventOlder {
+			crdt.log.InsertBefore(e, i)
+			return
+		}
+	}
+
+	crdt.log.PushBack(e)
 }
 
 func (crdt *crdtTree) add(e EventLog) {
@@ -212,7 +282,7 @@ func (crdt *crdtTree) add(e EventLog) {
 		crdt.cache[e.ListItemKey] = item
 	} else {
 		// remove from parent.children if pre-existing
-		item.parent.children.removeChild(item)
+		item.parent.children.remove(item)
 	}
 	item.latestLamportTimestamp = e.LamportTimestamp
 

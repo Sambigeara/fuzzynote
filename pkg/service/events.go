@@ -475,53 +475,6 @@ func (r *DBListRepo) getOrCreateListItem(key string) *ListItem {
 	return item
 }
 
-func (a *EventLog) before(b EventLog) bool {
-	return leftEventOlder == checkEquality(*a, b)
-}
-
-func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
-	item := r.getOrCreateListItem(e.ListItemKey)
-
-	var eventCache map[string]EventLog
-	switch e.EventType {
-	case UpdateEvent:
-		eventCache = r.crdt.addEventSet
-	case DeleteEvent:
-		eventCache = r.crdt.deleteEventSet
-	case PositionEvent:
-		eventCache = r.crdt.positionEventSet
-	}
-
-	// Check the event cache and skip if the event is older than the most-recently processed
-	if ce, exists := eventCache[e.ListItemKey]; exists {
-		if e.before(ce) {
-			return item, nil
-		}
-	}
-
-	// Add the event to the cache after the pre-existence checks above
-	eventCache[e.ListItemKey] = e
-
-	// Local lamport timestamp is ONLY incremented here
-	if r.currentLamportTimestamp <= e.LamportTimestamp {
-		r.currentLamportTimestamp = e.LamportTimestamp + 1
-	}
-
-	r.generateFriendChangeEvents(e, item)
-
-	var err error
-	switch e.EventType {
-	case UpdateEvent:
-		err = updateItemFromEvent(item, e, r.email)
-	case PositionEvent:
-		r.crdt.add(e)
-	}
-
-	r.listItemCache[e.ListItemKey] = item
-
-	return item, err
-}
-
 func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 	// TODO migration no longer splits updates for Line/Note, HANDLE BACKWARDS COMPATIBILITY
 	item.rawLine = e.Line
@@ -549,6 +502,35 @@ func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 	item.friends.Emails = emails
 
 	return nil
+}
+
+func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
+	item := r.getOrCreateListItem(e.ListItemKey)
+
+	if skipEvent := r.crdt.updateCacheOrSkip(e); skipEvent {
+		return item, nil
+	}
+
+	// Local lamport timestamp is ONLY incremented here
+	if r.currentLamportTimestamp <= e.LamportTimestamp {
+		r.currentLamportTimestamp = e.LamportTimestamp + 1
+	}
+
+	r.generateFriendChangeEvents(e, item)
+
+	var err error
+	switch e.EventType {
+	case UpdateEvent:
+		err = updateItemFromEvent(item, e, r.email)
+	case PositionEvent:
+		r.crdt.add(e)
+	}
+
+	r.crdt.updateLog(e)
+
+	r.listItemCache[e.ListItemKey] = item
+
+	return item, err
 }
 
 // Replay updates listItems based on the current state of the local WAL logs. It generates or updates the linked list
@@ -626,23 +608,6 @@ func (r *DBListRepo) buildFromFile(raw io.Reader) ([]EventLog, error) {
 
 	el, _, err := BuildFromFileTreeSchema(walSchemaVersionID, raw)
 	return el, err
-}
-
-const (
-	eventsEqual int = iota
-	leftEventOlder
-	rightEventOlder
-)
-
-func checkEquality(event1 EventLog, event2 EventLog) int {
-	if event1.LamportTimestamp < event2.LamportTimestamp ||
-		event1.LamportTimestamp == event2.LamportTimestamp && event1.UUID < event2.UUID {
-		return leftEventOlder
-	} else if event2.LamportTimestamp < event1.LamportTimestamp ||
-		event2.LamportTimestamp == event1.LamportTimestamp && event2.UUID < event1.UUID {
-		return rightEventOlder
-	}
-	return eventsEqual
 }
 
 // NOTE: not in use - debug function
@@ -821,12 +786,12 @@ func (r *DBListRepo) gather(ctx context.Context) error {
 	r.allWalFileMut.RUnlock()
 
 	// DANGER: running a pull here can cause map contention (concurrent iteration and write) in the
-	// crdt caches, namely `positionEventSet` in `generateEvents`
+	// crdt caches, namely `positionEventSet` in `getEventLog`
 	//if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
 	//return err
 	//}
 
-	fullWal := r.crdt.generateEvents()
+	fullWal := r.crdt.getEventLog()
 
 	fullByteWal, err := BuildByteWal(fullWal)
 	if err != nil {
