@@ -177,11 +177,67 @@ func (crdt *crdtTree) traverse(n *node) *node {
 }
 
 func (crdt *crdtTree) getEventLog() []EventLog {
-	events := make([]EventLog, crdt.log.Len())
-
+	events := []EventLog{}
 	for i := crdt.log.Front(); i != nil; i = i.Next() {
 		e := i.Value.(EventLog)
 		events = append(events, e)
+	}
+	return events
+}
+
+// sync is used to generate events to pass to remotes which may not have them.
+// The passed in event is from the remote. If it exists locally, we only return all following events (including
+// those which have the same lamport, in case of collisions).
+// If we don't have the local event, we can't guarantee that the remote has local events, so it's safer to replay all
+// TODO - optimise
+func (crdt *crdtTree) sync(e EventLog) []EventLog {
+	// iterate backwards until we find the matching event, or reach the beginning, then iterate forwards again to build
+	// the resultant eventlog
+	// `i.Next()` will be the first returned event in the log
+	i := crdt.log.Back()
+
+	events := []EventLog{}
+
+	if i == nil {
+		return events
+	}
+
+	// return empty if local "head" == incoming events (remote is already in sync)
+	if head := i.Value.(EventLog); checkEquality(head, e) == eventsEqual {
+		return events
+	}
+
+	// Otherwise iterate backwards until `i` is the matching event, or nil
+	for i = i.Prev(); i != nil; i = i.Prev() {
+		curEvent := i.Value.(EventLog)
+		if checkEquality(curEvent, e) == eventsEqual {
+			// If we find the match:
+			// Check for lamport collisions - we continue to iterate until the "earlier" event with the same lamport timestamp,
+			// as we can't guarantee that the remote has all of the events with the shared lamport.
+
+			// If there are _any_ more events with the same lamport, we include all of them, so we need to manually step
+			// left once more if we end up traversing through lamport collisions
+			includeFirstLamport := false
+			for i.Prev() != nil && i.Prev().Value.(EventLog).LamportTimestamp == e.LamportTimestamp {
+				i = i.Prev()
+				includeFirstLamport = true
+			}
+			if includeFirstLamport {
+				i = i.Prev()
+			}
+			break
+		}
+	}
+
+	if i == nil {
+		i = crdt.log.Front()
+	} else {
+		i = i.Next()
+	}
+
+	// And back fowards again
+	for ; i != nil; i = i.Next() {
+		events = append(events, i.Value.(EventLog))
 	}
 
 	return events
