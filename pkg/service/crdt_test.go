@@ -321,9 +321,287 @@ func TestCRDTLog(t *testing.T) {
 
 		generated := repo.crdt.getEventLog()
 
-		expectedLen := 5
+		expectedLen := len(expected)
 		if l := len(generated); l != expectedLen {
 			t.Fatalf("log should have len %d but has %d", expectedLen, l)
+		}
+
+		if checkEquality(expected[0], generated[0]) != eventsEqual {
+			t.Fatalf("items should be equal")
+		}
+	})
+	t.Run("Test delete removes update before position", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1:2",
+		})
+
+		expected := []EventLog{
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        UpdateEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 2,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:2",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 3,
+				EventType:        DeleteEvent,
+				ListItemKey:      "1:2",
+			},
+		}
+
+		generated := repo.crdt.getEventLog()
+
+		expectedLen := len(expected)
+		if l := len(generated); l != expectedLen {
+			t.Fatalf("log should have len %d but has %d", expectedLen, l)
+		}
+
+		if checkEquality(expected[0], generated[0]) != eventsEqual {
+			t.Fatalf("items should be equal")
+		}
+	})
+	t.Run("Test delete removes update after position", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 3,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 4,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1:2",
+		})
+
+		expected := []EventLog{
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        UpdateEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 2,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:2",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 3,
+				EventType:        DeleteEvent,
+				ListItemKey:      "1:2",
+			},
+		}
+
+		generated := repo.crdt.getEventLog()
+
+		expectedLen := len(expected)
+		if l := len(generated); l != expectedLen {
+			t.Fatalf("log should have len %d but has %d", expectedLen, l)
+		}
+
+		if checkEquality(expected[0], generated[0]) != eventsEqual {
+			t.Fatalf("items should be equal")
+		}
+	})
+	t.Run("Test old delete ignored", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 1,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:1",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 2,
+			EventType:        PositionEvent,
+			ListItemKey:      "1:2",
+		})
+		// Different client UUID which will resolve as later
+		repo.processEventLog(EventLog{
+			UUID:             2,
+			LamportTimestamp: 3,
+			EventType:        UpdateEvent,
+			ListItemKey:      "1:2",
+		})
+		repo.processEventLog(EventLog{
+			UUID:             1,
+			LamportTimestamp: 3,
+			EventType:        DeleteEvent,
+			ListItemKey:      "1:2",
+		})
+
+		expected := []EventLog{
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        UpdateEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 2,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:2",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 3,
+				EventType:        DeleteEvent,
+				ListItemKey:      "1:2",
+			},
+			{
+				UUID:             2,
+				LamportTimestamp: 3,
+				EventType:        UpdateEvent,
+				ListItemKey:      "1:2",
+			},
+		}
+
+		generated := repo.crdt.getEventLog()
+
+		expectedLen := len(expected)
+		if l := len(generated); l != expectedLen {
+			t.Fatalf("log should have len %d but has %d", expectedLen, l)
+		}
+
+		if checkEquality(expected[0], generated[0]) != eventsEqual {
+			t.Fatalf("items should be equal")
+		}
+	})
+	t.Run("Test old updates after deletes", func(t *testing.T) {
+		repo, clearUp := setupRepo()
+		defer clearUp()
+
+		el := []EventLog{
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        PositionEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 2,
+				EventType:        DeleteEvent,
+				ListItemKey:      "1:1",
+			},
+			{
+				UUID:             1,
+				LamportTimestamp: 1,
+				EventType:        UpdateEvent,
+				ListItemKey:      "1:1",
+			},
+		}
+
+		//runtime.Breakpoint()
+		repo.Replay(el)
+
+		expected := el[:2]
+		generated := repo.crdt.getEventLog()
+
+		expectedLen := len(expected)
+		if l := len(generated); l != expectedLen {
+			t.Fatalf("log should have len %d bue has %d", expectedLen, l)
 		}
 
 		if checkEquality(expected[0], generated[0]) != eventsEqual {

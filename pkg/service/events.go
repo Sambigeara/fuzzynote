@@ -507,7 +507,8 @@ func updateItemFromEvent(item *ListItem, e EventLog, email string) error {
 func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 	item := r.getOrCreateListItem(e.ListItemKey)
 
-	if skipEvent := r.crdt.updateCacheOrSkip(e); skipEvent {
+	a := r.crdt.updateCacheOrSkip(e)
+	if a == eventSkipped {
 		return item, nil
 	}
 
@@ -526,7 +527,9 @@ func (r *DBListRepo) processEventLog(e EventLog) (*ListItem, error) {
 		r.crdt.add(e)
 	}
 
-	r.crdt.updateLog(e)
+	// If the event was newly created, we bypass delete in the updateLog step
+	// to avoid pointless/expensive full list traversals.
+	r.crdt.updateLog(e, a == eventCreated)
 
 	r.listItemCache[e.ListItemKey] = item
 

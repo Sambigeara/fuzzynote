@@ -249,7 +249,15 @@ func (crdt *crdtTree) addToTargetChildArray(item, target *node) {
 	target.children.insertInPlace(item)
 }
 
-func (crdt *crdtTree) updateCacheOrSkip(e EventLog) bool {
+type eventCacheAction int
+
+const (
+	eventCreated eventCacheAction = iota
+	eventOverridden
+	eventSkipped
+)
+
+func (crdt *crdtTree) updateCacheOrSkip(e EventLog) eventCacheAction {
 	var eventCache map[string]EventLog
 	switch e.EventType {
 	case UpdateEvent:
@@ -260,46 +268,71 @@ func (crdt *crdtTree) updateCacheOrSkip(e EventLog) bool {
 		eventCache = crdt.positionEventSet
 	}
 
+	action := eventCreated
+
 	// Check the event cache and skip if the event is older than the most-recently processed
 	if ce, exists := eventCache[e.ListItemKey]; exists {
-		if e.before(ce) {
-			return true
+		if checkEquality(ce, e) != leftEventOlder {
+			return eventSkipped
+		}
+		action = eventOverridden
+	}
+
+	if e.EventType == UpdateEvent {
+		// Also skip if the event is an UpdateEvent, and there is a newer DeleteEvent that exists
+		if de, exists := crdt.deleteEventSet[e.ListItemKey]; exists && checkEquality(de, e) != leftEventOlder {
+			return eventSkipped
+		}
+	} else if e.EventType == DeleteEvent {
+		// We need to trigger a search through the linked list log if an update event exists (inferring that this
+		// delete occurred during normal operation, rather than at startup)
+		if _, exists := crdt.addEventSet[e.ListItemKey]; exists {
+			action = eventOverridden
 		}
 	}
 
 	// Add the event to the cache after the pre-existence checks above
 	eventCache[e.ListItemKey] = e
 
-	return false
+	return action
 }
 
-func (crdt *crdtTree) updateLog(e EventLog) {
-	for i := crdt.log.Front(); i != nil; i = i.Next() {
+func (crdt *crdtTree) updateLog(e EventLog, bypassDelete bool) {
+	// Traverse from the end of the list, backwards. Under the majority of cases, this is much more efficient.
+	// We only continue to seek for duplicate listItemKey:EventType combos if we know that a previous event exists
+	// in the log (inferred from bypassDelete).
+	// If the incoming event is a DeleteEvent (and bypassDelete is false), we also traverse back to remove any UpdateEvent
+	// for the matching ListItemKey (but maintain the PositionEvent for referential data).
+
+	isInserted := false
+
+	for i := crdt.log.Back(); i != nil; i = i.Prev() {
 		curEvent := i.Value.(EventLog)
-
 		comp := checkEquality(curEvent, e)
-
-		// same ListItemKey:EventType mapping
-		if curEvent.EventType == e.EventType && curEvent.ListItemKey == e.ListItemKey {
-			switch comp {
-			case eventsEqual:
-				// the events are equal, return early
+		if !isInserted && comp == leftEventOlder {
+			crdt.log.InsertAfter(e, i)
+			if bypassDelete {
 				return
-			case leftEventOlder:
-				// if ListItemKey is equal, and curEvent is older, remove
-				crdt.log.Remove(i)
-				continue
 			}
+			isInserted = true
 		}
-
-		// if curEvent is more recent than the new one, insert new one before
-		if comp == rightEventOlder {
-			crdt.log.InsertBefore(e, i)
-			return
+		if !bypassDelete && curEvent.ListItemKey == e.ListItemKey {
+			if e.EventType == DeleteEvent {
+				if curEvent.EventType == UpdateEvent && comp == leftEventOlder {
+					crdt.log.Remove(i)
+				}
+			} else if curEvent.EventType == e.EventType {
+				if comp != eventsEqual {
+					crdt.log.Remove(i)
+				}
+				return
+			}
 		}
 	}
 
-	crdt.log.PushBack(e)
+	if !isInserted {
+		crdt.log.PushFront(e)
+	}
 }
 
 func (crdt *crdtTree) add(e EventLog) {
