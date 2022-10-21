@@ -740,33 +740,8 @@ func BuildByteWal(el []EventLog) (*bytes.Buffer, error) {
 	return &outputBuf, nil
 }
 
-func (r *DBListRepo) getMatchedWal(el []EventLog, wf WalFile) []EventLog {
-	walFileOwnerEmail := wf.GetUUID()
-	_, isWebRemote := wf.(*WebWalFile)
-	isWalFileOwner := !isWebRemote || (r.email != "" && r.email == walFileOwnerEmail)
-
-	// Only include those events which are/have been shared (this is handled via the event processed
-	// cache elsewhere)
-	filteredWal := []EventLog{}
-	for _, e := range el {
-		// Separate conditional here to prevent the need for e.getKeys lookup if not necessary
-		if isWalFileOwner {
-			filteredWal = append(filteredWal, e)
-			continue
-		}
-		// TODO 2022-10-07: I've temporarily disabled per line collab until I can figure how to cleanly share all required PositionEvents as well as UpdateEvents
-		//if e.emailHasAccess(walFileOwnerEmail) {
-		//filteredWal = append(filteredWal, e)
-		//}
-	}
-	return filteredWal
-}
-
 func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWal *bytes.Buffer, name string) error {
 	if byteWal == nil {
-		// Apply any filtering based on Push match configuration
-		el = r.getMatchedWal(el, wf)
-
 		// Return for empty wals
 		if len(el) == 0 {
 			return nil
@@ -972,22 +947,15 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 							if right > len(el) {
 								right = len(el)
 							}
-							// TODO remove getMatchedWal as sharing will be inferred in the cloud from friends passed in
-							// the event.Friends list
-							if matchedEventLog := r.getMatchedWal(el[left:right], r.webWalFile); len(matchedEventLog) > 0 {
-								//if len(matchedEventLog) > 1 {
-								//log.Fatalf("%v", matchedEventLog)
-								//}
-								b, _ := BuildByteWal(matchedEventLog)
-								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-								go func(w string) {
-									r.websocketPushEvents <- websocketMessage{
-										Action: websocketActionWal,
-										UUID:   r.webWalFile.GetUUID(),
-										Wal:    b64Wal,
-									}
-								}(b64Wal)
-							}
+							b, _ := BuildByteWal(el[left:right])
+							b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
+							go func(w string) {
+								r.websocketPushEvents <- websocketMessage{
+									Action: websocketActionWal,
+									UUID:   r.webWalFile.GetUUID(),
+									Wal:    b64Wal,
+								}
+							}(b64Wal)
 						}
 					}
 
