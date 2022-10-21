@@ -215,14 +215,15 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 			return el, err
 		}
 		e := el[0]
-		if syncLog, eventKnown := r.crdt.sync(e); len(syncLog) > 0 {
+		syncLog, eventKnown := r.crdt.sync(e)
+		if len(syncLog) > 0 {
 			go func() {
 				r.eventsChan <- syncLog
 			}()
 			// if event is not recognised, requests a sync in the reverse direction
-			if !eventKnown {
-				r.requestSync()
-			}
+		}
+		if !eventKnown {
+			r.requestSync()
 		}
 		return []EventLog{}, nil
 	}
