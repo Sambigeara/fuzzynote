@@ -119,8 +119,16 @@ func (w *Web) ping() (pong, error) {
 	return p, nil
 }
 
+type websocketAction string
+
+const (
+	websocketActionWal      websocketAction = "wal"
+	websocketActionPosition websocketAction = "position"
+	websocketActionSync     websocketAction = "sync"
+)
+
 type websocketMessage struct {
-	Action string `json:"action"`
+	Action websocketAction `json:"action"`
 
 	// `wal` events
 	UUID string `json:"uuid"`
@@ -138,7 +146,7 @@ type cursorMoveEvent struct {
 	unixNanoTime int64
 }
 
-func (w *Web) pushWebsocket(m websocketMessage) error {
+func (w *Web) publishWebsocket(m websocketMessage) error {
 	marshalData, err := json.Marshal(m)
 	if err != nil {
 		//log.Fatal("Json marshal: malformed WAL data on websocket push")
@@ -180,23 +188,43 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 	}
 
 	switch m.Action {
-	case "wal":
+	case websocketActionWal:
 		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
 		if err != nil {
 			// TODO proper handling
 			return el, nil
 		}
-
 		buf := bytes.NewBuffer([]byte(strWal))
 		if el, err = r.buildFromFile(buf); err != nil {
 			return el, err
 		}
-	case "position":
+	case websocketActionPosition:
 		r.remoteCursorMoveChan <- cursorMoveEvent{
 			email:        m.Email,
 			listItemKey:  m.Key,
 			unixNanoTime: m.UnixNanoTime,
 		}
+	case websocketActionSync:
+		strWal, err := base64.StdEncoding.DecodeString(m.Wal)
+		if err != nil {
+			// TODO proper handling
+			return el, nil
+		}
+		buf := bytes.NewBuffer([]byte(strWal))
+		if el, err = r.buildFromFile(buf); err != nil {
+			return el, err
+		}
+		e := el[0]
+		if syncLog, eventKnown := r.crdt.sync(e); len(syncLog) > 0 {
+			go func() {
+				r.eventsChan <- syncLog
+			}()
+			// if event is not recognised, requests a sync in the reverse direction
+			if !eventKnown {
+				r.requestSync()
+			}
+		}
+		return []EventLog{}, nil
 	}
 
 	// TODO proper handling

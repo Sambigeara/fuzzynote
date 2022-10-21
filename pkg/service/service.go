@@ -47,11 +47,12 @@ type DBListRepo struct {
 
 	// Wal stuff
 	uuid       uuid
-	eventsChan chan EventLog
+	eventsChan chan []EventLog
 	web        *Web
 
 	remoteCursorMoveChan chan cursorMoveEvent
 	localCursorMoveChan  chan cursorMoveEvent
+	websocketPushEvents  chan websocketMessage
 	collabPositions      map[string]cursorMoveEvent
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
@@ -67,22 +68,8 @@ type DBListRepo struct {
 	friendsLastPushDT             int64
 
 	// TODO better naming convention
-	LocalWalFile   LocalWalFile
-	webWalFiles    map[string]WalFile
-	allWalFiles    map[string]WalFile
-	syncWalFiles   map[string]WalFile
-	webWalFileMut  *sync.RWMutex
-	allWalFileMut  *sync.RWMutex
-	syncWalFileMut *sync.RWMutex
-
-	processedWalChecksums    map[string]struct{}
-	processedWalChecksumLock *sync.Mutex
-
-	pushTriggerTimer   *time.Timer
-	hasUnflushedEvents bool
-	finalFlushChan     chan struct{}
-
-	hasSyncedRemotes bool
+	LocalWalFile LocalWalFile
+	webWalFile   WalFile
 
 	isTest bool
 }
@@ -100,32 +87,14 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 		crdt: newTree(),
 
 		LocalWalFile: localWalFile,
-		eventsChan:   make(chan EventLog),
+		eventsChan:   make(chan []EventLog),
 
 		collabMapLock: &sync.Mutex{},
-
-		webWalFiles:    make(map[string]WalFile),
-		allWalFiles:    make(map[string]WalFile),
-		syncWalFiles:   make(map[string]WalFile),
-		webWalFileMut:  &sync.RWMutex{},
-		allWalFileMut:  &sync.RWMutex{},
-		syncWalFileMut: &sync.RWMutex{},
-
-		processedWalChecksums:    make(map[string]struct{}),
-		processedWalChecksumLock: &sync.Mutex{},
 
 		friends:              make(map[string]map[string]int64),
 		friendsUpdateLock:    &sync.RWMutex{},
 		activeFriendsMapLock: &sync.RWMutex{},
-
-		pushTriggerTimer: time.NewTimer(time.Second * 0),
-		finalFlushChan:   make(chan struct{}),
 	}
-
-	// The localWalFile gets attached to the Wal independently (there are certain operations
-	// that require us to only target the local walfile rather than all). We still need to register
-	// it as we call all walfiles in the next line.
-	listRepo.AddWalFile(localWalFile, true)
 
 	if webTokenStore.Email() != "" {
 		listRepo.setEmail(webTokenStore.Email())
@@ -139,8 +108,9 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 	listRepo.web = NewWeb(webTokenStore)
 
 	// Establish the chan used to track and display collaborator cursor positions
-	listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent)  // incoming events
-	listRepo.localCursorMoveChan = make(chan cursorMoveEvent)   // outgoing events
+	listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent) // incoming events
+	listRepo.localCursorMoveChan = make(chan cursorMoveEvent)  // outgoing events
+	listRepo.websocketPushEvents = make(chan websocketMessage)
 	listRepo.collabPositions = make(map[string]cursorMoveEvent) // map[collaboratorEmail]currentKey
 
 	return listRepo
@@ -149,19 +119,6 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 func (r *DBListRepo) setEmail(email string) {
 	r.email = strings.ToLower(email)
 	r.friends[email] = make(map[string]int64)
-}
-
-// ForceTriggerFlush will zero the flush timer, and block til completion. E.g. this is a synchronous flush
-func (r *DBListRepo) ForceTriggerFlush() {
-	go func() {
-		r.pushTriggerTimer.Reset(time.Millisecond * 1)
-	}()
-}
-
-// IsSynced is a boolean value defining whether or now there are currently events held in memory that are yet to be
-// flushed to local storage
-func (r *DBListRepo) IsSynced() bool {
-	return !r.hasUnflushedEvents
 }
 
 // ListItem is a mergeable data structure which represents a single item in the main list. It maintains record of the
@@ -220,7 +177,7 @@ func (r *DBListRepo) addEventLog(el EventLog) (*ListItem, error) {
 	el = r.repositionActiveFriends(el)
 
 	item, err = r.processEventLog(el)
-	r.eventsChan <- el
+	r.eventsChan <- []EventLog{el}
 	return item, err
 }
 
@@ -557,27 +514,7 @@ func (r *DBListRepo) GetFriendState(f string) FriendState {
 	return FriendNull
 }
 
-type SyncState int
-
-const (
-	SyncOffline SyncState = iota
-	SyncSyncing
-	SyncSynced
-)
-
 type SyncEvent struct{}
-
-func (r *DBListRepo) GetSyncState() SyncState {
-	if !r.web.isActive {
-		return SyncOffline
-	}
-
-	if !r.hasSyncedRemotes || r.hasUnflushedEvents {
-		return SyncSyncing
-	}
-
-	return SyncSynced
-}
 
 func (r *DBListRepo) GetListItem(key string) (ListItem, bool) {
 	itemPtr, exists := r.listItemCache[key]

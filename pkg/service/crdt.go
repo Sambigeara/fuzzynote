@@ -190,21 +190,22 @@ func (crdt *crdtTree) getEventLog() []EventLog {
 // those which have the same lamport, in case of collisions).
 // If we don't have the local event, we can't guarantee that the remote has local events, so it's safer to replay all
 // TODO - optimise
-func (crdt *crdtTree) sync(e EventLog) []EventLog {
+func (crdt *crdtTree) sync(e EventLog) ([]EventLog, bool) {
 	// iterate backwards until we find the matching event, or reach the beginning, then iterate forwards again to build
 	// the resultant eventlog
 	// `i.Next()` will be the first returned event in the log
 	i := crdt.log.Back()
 
+	var eventKnown bool
 	events := []EventLog{}
 
 	if i == nil {
-		return events
+		return events, eventKnown
 	}
 
 	// return empty if local "head" == incoming events (remote is already in sync)
 	if head := i.Value.(EventLog); checkEquality(head, e) == eventsEqual {
-		return events
+		return events, true
 	}
 
 	// Otherwise iterate backwards until `i` is the matching event, or nil
@@ -225,6 +226,7 @@ func (crdt *crdtTree) sync(e EventLog) []EventLog {
 			if includeFirstLamport {
 				i = i.Prev()
 			}
+			eventKnown = true
 			break
 		}
 	}
@@ -240,7 +242,7 @@ func (crdt *crdtTree) sync(e EventLog) []EventLog {
 		events = append(events, i.Value.(EventLog))
 	}
 
-	return events
+	return events, eventKnown
 }
 
 func (crdt *crdtTree) addToTargetChildArray(item, target *node) {

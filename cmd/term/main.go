@@ -12,7 +12,6 @@ import (
 	"github.com/ardanlabs/conf"
 
 	"github.com/sambigeara/fuzzynote/pkg/prompt"
-	"github.com/sambigeara/fuzzynote/pkg/s3"
 	"github.com/sambigeara/fuzzynote/pkg/service"
 	"github.com/sambigeara/fuzzynote/pkg/term"
 )
@@ -142,14 +141,6 @@ func main() {
 		localWalFile,
 		webTokens,
 	)
-
-	s3Remotes := s3.GetS3Config(cfg.Root)
-	for _, r := range s3Remotes {
-		// centralise this logic across different remote types when relevant
-		// TODO gracefully deal with missing config
-		s3FileWal := s3.NewS3WalFile(r, cfg.Root)
-		listRepo.AddWalFile(s3FileWal, true)
-	}
 
 	// Create term client
 	client := term.NewTerm(listRepo, cfg.Colour, cfg.Editor)

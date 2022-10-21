@@ -15,19 +15,13 @@ func (e FinishWithPurgeError) Error() string {
 	return ""
 }
 
-type namedWal struct {
-	name string
-	wal  []EventLog
-}
-
 // Start begins push/pull for all WalFiles
 func (r *DBListRepo) Start(client Client) error {
 	inputEvtsChan := make(chan interface{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	replayChan := make(chan namedWal)
-	//reorderAndReplayChan := make(chan []EventLog)
+	replayChan := make(chan []EventLog)
 
 	// We need atomicity between wal pull/replays and handling of keypress events, as we need
 	// events to operate on a predictable state (rather than a keypress being applied to state
@@ -38,15 +32,13 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			select {
-			case n := <-replayChan:
-				name, wal := n.name, n.wal
+			case wal := <-replayChan:
+				//t1 := time.Now()
 				if err := r.Replay(wal); err != nil {
 					errChan <- err
 					return
 				}
-				if name != "" {
-					r.setProcessedWalChecksum(name)
-				}
+				//log.Fatalln(time.Now().Sub(t1))
 				changedKeys, allowOverride := getChangedListItemKeysFromWal(wal)
 				go func() {
 					inputEvtsChan <- RefreshKey{
@@ -65,7 +57,6 @@ func (r *DBListRepo) Start(client Client) error {
 			case ev := <-inputEvtsChan:
 				if err := client.HandleEvent(ev); err != nil {
 					cancel()
-					<-r.finalFlushChan
 					_, isPurge := err.(FinishWithPurgeError)
 					if finishErr := r.finish(isPurge); finishErr != nil {
 						errChan <- finishErr
@@ -119,44 +110,10 @@ func (r *DBListRepo) registerWeb() error {
 		}
 	}
 
-	r.DeleteWalFile(string(r.email))
-	r.AddWalFile(
-		&WebWalFile{
-			uuid: string(r.email),
-			web:  r.web,
-		},
-		true,
-	)
+	r.webWalFile = &WebWalFile{
+		uuid: string(r.email),
+		web:  r.web,
+	}
 
 	return nil
-}
-
-func (r *DBListRepo) AddWalFile(wf WalFile, hasFullAccess bool) {
-	r.allWalFileMut.Lock()
-	r.allWalFiles[wf.GetUUID()] = wf
-	r.allWalFileMut.Unlock()
-
-	if hasFullAccess {
-		r.syncWalFileMut.Lock()
-		r.syncWalFiles[wf.GetUUID()] = wf
-		r.syncWalFileMut.Unlock()
-	}
-
-	if _, ok := wf.(*WebWalFile); ok {
-		r.webWalFileMut.Lock()
-		r.webWalFiles[wf.GetUUID()] = wf
-		r.webWalFileMut.Unlock()
-	}
-}
-
-func (r *DBListRepo) DeleteWalFile(name string) {
-	r.allWalFileMut.Lock()
-	r.syncWalFileMut.Lock()
-	r.webWalFileMut.Lock()
-	defer r.allWalFileMut.Unlock()
-	defer r.syncWalFileMut.Unlock()
-	defer r.webWalFileMut.Unlock()
-	delete(r.allWalFiles, name)
-	delete(r.syncWalFiles, name)
-	delete(r.webWalFiles, name)
 }

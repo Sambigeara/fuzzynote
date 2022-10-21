@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -32,13 +31,13 @@ func init() {
 // IMPORTANT: bump cloud version
 const LatestWalSchemaID uint16 = 7
 
-// sync intervals
 const (
-	pullInterval             = time.Second * 5
-	pushInterval             = time.Second * 5
-	gatherInterval           = time.Second * 10
+	// sync intervals
 	websocketConsumeInterval = time.Millisecond * 600
 	websocketPublishInterval = time.Millisecond * 600
+
+	// websocket event page size
+	websocketPageSize = 100
 )
 
 func generateUUID() uuid {
@@ -425,13 +424,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 
 			if dtLastChange, exists := friendItems[e.ListItemKey]; !exists || e.LamportTimestamp > dtLastChange {
 				r.friends[friendToAdd][e.ListItemKey] = e.LamportTimestamp
-				r.AddWalFile(
-					&WebWalFile{
-						uuid: friendToAdd,
-						web:  r.web,
-					},
-					false,
-				)
 			}
 		}
 		if friendToRemove != "" && friendToRemove != r.email {
@@ -449,7 +441,6 @@ func (r *DBListRepo) generateFriendChangeEvents(e EventLog, item *ListItem) {
 								break
 							}
 						}
-						r.DeleteWalFile(friendToRemove)
 					}
 				}
 			}
@@ -691,165 +682,32 @@ func generatePlainTextFile(matchItems []ListItem) error {
 //    return nil
 //}
 
-func (r *DBListRepo) setProcessedWalChecksum(checksum string) {
-	r.processedWalChecksumLock.Lock()
-	defer r.processedWalChecksumLock.Unlock()
-	r.processedWalChecksums[checksum] = struct{}{}
-}
-
-func (r *DBListRepo) isWalChecksumProcessed(checksum string) bool {
-	r.processedWalChecksumLock.Lock()
-	defer r.processedWalChecksumLock.Unlock()
-	_, exists := r.processedWalChecksums[checksum]
-	return exists
-}
-
-func (r *DBListRepo) pull(ctx context.Context, walFiles []WalFile, replayChan chan namedWal) error {
-	type wfWalPair struct {
-		wf      WalFile
-		newWals []string
-	}
-
-	nameChan := make(chan wfWalPair)
-	go func() {
-		var wg sync.WaitGroup
-		for _, wf := range walFiles {
-			wg.Add(1)
-			go func(wf WalFile) {
-				defer wg.Done()
-				filePathPattern := path.Join(wf.GetRoot(), "wal_*.db")
-				newWals, err := wf.GetMatchingWals(ctx, filePathPattern)
-				if err != nil {
-					//log.Fatal(err)
-					return
-				}
-				nameChan <- wfWalPair{wf, newWals}
-			}(wf)
-		}
-		wg.Wait()
-		close(nameChan)
-	}()
-
-	var wg sync.WaitGroup
-	for n := range nameChan {
-		wf := n.wf
-		newWals := n.newWals
-		for _, newWal := range newWals {
-			if !r.isWalChecksumProcessed(newWal) {
-				pr, pw := io.Pipe()
-				go func() {
-					defer pw.Close()
-					if err := wf.GetWalBytes(ctx, pw, newWal); err != nil {
-						// TODO handle
-						//log.Fatal(err)
-					}
-				}()
-
-				// Build new wals
-				newWfWal, err := r.buildFromFile(pr)
-				if err != nil {
-					// Ignore incompatible files
-					continue
-				}
-
-				if len(newWfWal) > 0 {
-					wg.Add(1)
-					go func(n string, wal []EventLog) {
-						defer wg.Done()
-						replayChan <- namedWal{
-							name: n,
-							wal:  wal,
-						}
-					}(newWal, newWfWal)
-				}
-			}
-		}
-	}
-	wg.Wait()
-
-	return nil
-}
-
-func (r *DBListRepo) gather(ctx context.Context) error {
-	//log.Print("Gathering...")
-	// Create a new list so we don't have to keep the lock on the mutex for too long
-	r.syncWalFileMut.RLock()
-	r.allWalFileMut.RLock()
-	ownedWalFiles := []WalFile{}
-	nonOwnedWalFiles := []WalFile{}
-	for _, wf := range r.syncWalFiles {
-		ownedWalFiles = append(ownedWalFiles, wf)
-	}
-	for k, wf := range r.allWalFiles {
-		if _, exists := r.syncWalFiles[k]; !exists {
-			nonOwnedWalFiles = append(nonOwnedWalFiles, wf)
-		}
-	}
-	r.syncWalFileMut.RUnlock()
-	r.allWalFileMut.RUnlock()
-
-	// DANGER: running a pull here can cause map contention (concurrent iteration and write) in the
-	// crdt caches, namely `positionEventSet` in `getEventLog`
-	//if err := r.pull(ctx, ownedWalFiles, replayChan); err != nil {
-	//return err
-	//}
-
-	fullWal := r.crdt.getEventLog()
-
-	fullByteWal, err := BuildByteWal(fullWal)
+func (r *DBListRepo) pull(ctx context.Context, walFile WalFile, replayChan chan []EventLog) error {
+	fileNames, err := walFile.GetMatchingWals(ctx, path.Join(walFile.GetRoot(), "wal_*.db"))
 	if err != nil {
-		return err
+		return nil
 	}
 
-	var wg sync.WaitGroup
-	for _, wf := range ownedWalFiles {
-		wg.Add(1)
-		go func(wf WalFile) {
-			defer wg.Done()
-
-			name := fmt.Sprintf("%v%v", r.uuid, generateUUID())
-			err := r.push(ctx, wf, []EventLog{}, fullByteWal, name)
-			if err != nil {
-				return
+	// Under normal circumstances, there'll only be a single file
+	for _, newWal := range fileNames {
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			if err := walFile.GetWalBytes(ctx, pw, newWal); err != nil {
 			}
+		}()
 
-			// TODO dedup from `pull` call above
-			// retrieve list of files to delete
-			filesToDelete := []string{}
-			allFiles, err := wf.GetMatchingWals(ctx, path.Join(wf.GetRoot(), "wal_*.db"))
-			if err != nil {
-				return
-			}
+		// Build new wals
+		newWfWal, err := r.buildFromFile(pr)
+		if err != nil {
+			// Ignore incompatible files
+			continue
+		}
 
-			for _, f := range allFiles {
-				if f != name && r.isWalChecksumProcessed(f) {
-					filesToDelete = append(filesToDelete, f)
-				}
-			}
-
-			// Schedule a delete on the files
-			if len(filesToDelete) > 0 {
-				wf.RemoveWals(ctx, filesToDelete)
-			}
-		}(wf)
+		if len(newWfWal) > 0 {
+			replayChan <- newWfWal
+		}
 	}
-	wg.Wait()
-
-	for _, wf := range nonOwnedWalFiles {
-		wg.Add(1)
-		go func(wf WalFile) {
-			defer wg.Done()
-
-			var byteWal *bytes.Buffer
-
-			// Push to ALL walFiles
-			// we don't set a common name, as filtering could generate different wals to each walfile
-			if err := r.push(ctx, wf, fullWal, byteWal, ""); err != nil {
-				return
-			}
-		}(wf)
-	}
-	wg.Wait()
 
 	return nil
 }
@@ -925,49 +783,11 @@ func (r *DBListRepo) push(ctx context.Context, wf WalFile, el []EventLog, byteWa
 		name = fmt.Sprintf("%v%v", r.uuid, generateUUID())
 	}
 
-	// Add it straight to the cache to avoid processing it in the future
-	// This needs to be done PRIOR to flushing to avoid race conditions
-	// (as pull is done in a separate thread of control, and therefore we might try
-	// and pull our own pushed wal)
-	// There is a chance that Flush would fail, but given the names are randomly generated, the impact of caching
-	// the broken name is small.
-	r.setProcessedWalChecksum(name)
 	if err := wf.Flush(ctx, byteWal, name); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (r *DBListRepo) flushPartialWals(ctx context.Context, wal []EventLog, waitForCompletion bool) {
-	if len(wal) > 0 {
-		fullByteWal, err := BuildByteWal(wal)
-		if err != nil {
-			return
-		}
-		var wg sync.WaitGroup
-		r.allWalFileMut.RLock()
-		defer r.allWalFileMut.RUnlock()
-		for _, wf := range r.allWalFiles {
-			if waitForCompletion {
-				wg.Add(1)
-			}
-			var byteWal *bytes.Buffer
-			if _, isOwned := r.syncWalFiles[wf.GetUUID()]; isOwned {
-				byteWal = fullByteWal
-			}
-			go func(wf WalFile) {
-				if waitForCompletion {
-					defer wg.Done()
-				}
-				// we don't set a common name, as filtering could generate different wals to each walfile
-				r.push(ctx, wf, wal, byteWal, "")
-			}(wf)
-		}
-		if waitForCompletion {
-			wg.Wait()
-		}
-	}
 }
 
 func (r *DBListRepo) updateActiveFriendsMap(activeFriends, pendingFriends []string, updateChan chan interface{}) {
@@ -1012,72 +832,32 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 	}
 }
 
-func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, inputEvtsChan chan interface{}) error {
-	// syncTriggerChan is buffered, as the producer is called in the same thread as the consumer (to ensure a minimum of the
-	// specified wait duration)
-	syncTriggerChan := make(chan struct{}, 1)
+func (r *DBListRepo) requestSync() {
+	var syncEvent EventLog
+	if b := r.crdt.log.Back(); b != nil {
+		syncEvent = b.Value.(EventLog)
+	}
+	// blank event will sync all
+	b, _ := BuildByteWal([]EventLog{syncEvent})
+	go func() {
+		r.websocketPushEvents <- websocketMessage{
+			Action: websocketActionSync,
+			UUID:   r.webWalFile.GetUUID(),
+			Wal:    base64.StdEncoding.EncodeToString(b.Bytes()),
+		}
+	}()
+}
 
-	gatherTriggerTimer := time.NewTimer(gatherInterval)
-	// Drain the initial push timer, we want to wait for initial user input
-	// We do however schedule an initial iteration of a gather to ensure all local state (including any files manually
-	// dropped in to the root directory, etc) are flushed
-	<-r.pushTriggerTimer.C
-
+func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, inputEvtsChan chan interface{}) error {
 	webPingTicker := time.NewTicker(webPingInterval)
 	webRefreshTicker := time.NewTicker(webRefreshInterval)
 	// We set the interval to 0 because we want the initial connection establish attempt to occur ASAP
 	webRefreshTicker.Reset(time.Millisecond * 1)
 
-	websocketPushEvents := make(chan websocketMessage)
-
-	scheduleSync := func() {
-		select {
-		case syncTriggerChan <- struct{}{}:
-		default:
-		}
-	}
-	schedulePush := func() {
-		r.pushTriggerTimer.Reset(pushInterval)
-		gatherTriggerTimer.Reset(gatherInterval)
-	}
-
 	// Run an initial load from the local walfile
-	if err := r.pull(ctx, []WalFile{r.LocalWalFile}, replayChan); err != nil {
+	if err := r.pull(ctx, r.LocalWalFile, replayChan); err != nil {
 		return err
 	}
-
-	// Main sync event loop
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				var err error
-				select {
-				case <-syncTriggerChan:
-					syncWalFiles := []WalFile{}
-					func() {
-						r.syncWalFileMut.RLock()
-						defer r.syncWalFileMut.RUnlock()
-						for _, wf := range r.syncWalFiles {
-							syncWalFiles = append(syncWalFiles, wf)
-						}
-					}()
-					if err = r.pull(ctx, syncWalFiles, replayChan); err != nil {
-						log.Fatal(err)
-					}
-					r.hasSyncedRemotes = true
-				case <-gatherTriggerTimer.C:
-					if err = r.gather(ctx); err != nil {
-						log.Fatal(err)
-					}
-				}
-				time.Sleep(pullInterval)
-				scheduleSync()
-			}
-		}
-	}()
 
 	// Prioritise async web start-up to minimise wait time before websocket instantiation
 	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
@@ -1099,12 +879,11 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 						r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 					}
 				}
-			case m := <-websocketPushEvents:
+			case m := <-r.websocketPushEvents:
 				if r.web.isActive {
-					r.web.pushWebsocket(m)
+					r.web.publishWebsocket(m)
 				}
 			case <-webRefreshTicker.C:
-				r.hasSyncedRemotes = false
 				if webCancel != nil {
 					webCancel()
 				}
@@ -1121,8 +900,7 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					r.web.isActive = false
 					switch err.(type) {
 					case authFailureError:
-						scheduleSync() // still trigger pull cycle for local only sync
-						return         // authFailureError signifies incorrect login details, disable web and run local only mode
+						return // authFailureError signifies incorrect login details, disable web and run local only mode
 					default:
 						waitInterval = expBackoffInterval
 						if expBackoffInterval < webRefreshInterval {
@@ -1138,13 +916,9 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 					pong, _ := r.web.ping()
 					r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
 				}
-				// Trigger web walfile sync (mostly relevant on initial start)
-				scheduleSync()
 
 				if r.web.isActive {
 					webCtx, webCancel = context.WithCancel(ctx)
-					wsConsAgg := []EventLog{}
-					wsConsChan := make(chan []EventLog)
 					go func() {
 						for {
 							wsEv, err := r.consumeWebsocket(webCtx)
@@ -1153,28 +927,12 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 								// to avoid haywire goroutines with infinite loops and CPU destruction
 								return
 							}
-							wsConsChan <- wsEv
+							replayChan <- wsEv
 						}
 					}()
-					wsFlushTicker := time.NewTicker(websocketConsumeInterval)
-					go func() {
-						for {
-							select {
-							case wsEv := <-wsConsChan:
-								wsConsAgg = append(wsConsAgg, wsEv...)
-							case <-wsFlushTicker.C:
-								if len(wsConsAgg) > 0 {
-									replayChan <- namedWal{
-										name: "",
-										wal:  wsConsAgg,
-									}
-									wsConsAgg = []EventLog{}
-								}
-							case <-webCtx.Done():
-								return
-							}
-						}
-					}()
+
+					// Send initial sync event to websocket
+					r.requestSync()
 				}
 
 				webRefreshTicker.Reset(waitInterval)
@@ -1184,130 +942,80 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan namedWal, in
 		}
 	}()
 
-	// Create a loop to deal with any collaborator cursor move events
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				e := <-r.localCursorMoveChan
-				func() {
-					r.webWalFileMut.RLock()
-					defer r.webWalFileMut.RUnlock()
-					for _, wf := range r.webWalFiles {
-						go func(uuid string) {
-							websocketPushEvents <- websocketMessage{
-								Action:       "position",
-								UUID:         uuid,
-								Key:          e.listItemKey,
-								UnixNanoTime: e.unixNanoTime,
-							}
-						}(wf.GetUUID())
-					}
-				}()
-			}
-		}
-	}()
-
-	// Push to all WalFiles
-	var flushAgg, wsPubAgg []EventLog
 	if !r.isTest {
+		// Create a loop to deal with any collaborator cursor move events
 		go func() {
 			for {
 				select {
-				case e := <-r.eventsChan:
-					wsPubAgg = append(wsPubAgg, e)
+				case e := <-r.localCursorMoveChan:
+					if r.web.isActive {
+						r.websocketPushEvents <- websocketMessage{
+							Action:       websocketActionPosition,
+							UUID:         r.webWalFile.GetUUID(),
+							Key:          e.listItemKey,
+							UnixNanoTime: e.unixNanoTime,
+						}
+					}
 				case <-ctx.Done():
 					return
 				}
 			}
 		}()
-	}
-	wsPublishTicker := time.NewTicker(websocketPublishInterval)
-	go func() {
-		for {
-			// The events chan contains single events. We want to aggregate them between intervals
-			// and then emit them in batches, for great efficiency gains.
-			select {
-			case <-wsPublishTicker.C:
-				if len(wsPubAgg) == 0 {
-					continue
-				}
-				r.hasUnflushedEvents = true
-				// Write in real time to the websocket, if present
-				if r.web.isActive {
-					func() {
-						r.webWalFileMut.RLock()
-						defer r.webWalFileMut.RUnlock()
-						for _, wf := range r.webWalFiles {
-							if matchedEventLog := r.getMatchedWal(wsPubAgg, wf); len(matchedEventLog) > 0 {
+		go func() {
+			for {
+				select {
+				case el := <-r.eventsChan:
+					if r.web.isActive {
+						// apply pagination
+						for left := 0; left < len(el); left += websocketPageSize {
+							right := left + websocketPageSize
+							if right > len(el) {
+								right = len(el)
+							}
+							// TODO remove getMatchedWal as sharing will be inferred in the cloud from friends passed in
+							// the event.Friends list
+							if matchedEventLog := r.getMatchedWal(el[left:right], r.webWalFile); len(matchedEventLog) > 0 {
+								//if len(matchedEventLog) > 1 {
+								//log.Fatalf("%v", matchedEventLog)
+								//}
 								b, _ := BuildByteWal(matchedEventLog)
 								b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-								go func(uuid string) {
-									websocketPushEvents <- websocketMessage{
-										Action: "wal",
-										UUID:   uuid,
+								go func(w string) {
+									r.websocketPushEvents <- websocketMessage{
+										Action: websocketActionWal,
+										UUID:   r.webWalFile.GetUUID(),
 										Wal:    b64Wal,
 									}
-								}(wf.GetUUID())
+								}(b64Wal)
 							}
 						}
-					}()
+					}
 
 					// Emit any remote updates if web active and local changes have occurred
 					r.emitRemoteUpdate(inputEvtsChan)
+				case <-ctx.Done():
+					//r.push(ctx, r.LocalWalFile, r.crdt.getEventLog(), nil, "")
+					return
 				}
-				// Add to an ephemeral log
-				flushAgg = append(flushAgg, wsPubAgg...)
-				wsPubAgg = []EventLog{}
-				// Trigger an aggregated push
-				schedulePush()
-				inputEvtsChan <- SyncEvent{}
-			case <-r.pushTriggerTimer.C:
-				// On ticks, Flush what we've aggregated to all walfiles, and then reset the
-				// ephemeral log. If empty, skip.
-				r.flushPartialWals(ctx, flushAgg, false)
-				flushAgg = []EventLog{}
-				r.hasUnflushedEvents = false
-				inputEvtsChan <- SyncEvent{}
-			case <-ctx.Done():
-				r.flushPartialWals(context.Background(), flushAgg, true)
-				go func() {
-					r.finalFlushChan <- struct{}{}
-				}()
-				return
 			}
-		}
-	}()
+		}()
+	}
 
 	return nil
 }
 
 func (r *DBListRepo) finish(purge bool) error {
-	// When we pull wals from remotes, we merge into our in-mem logs, but will only flush to local walfile
-	// on gather. To ensure we store all logs locally, for now, we can just push the entire in-mem log to
-	// the local walfile. We can remove any other files to avoid overuse of local storage.
-	// TODO this can definitely be optimised (e.g. only flush a partial log of unpersisted changes, or perhaps
-	// track if any new wals have been pulled, etc)
-	if !purge {
-		//ctx := context.Background()
-		// TODO push full representation
-		//checksum, err := r.push(ctx, r.LocalWalFile, []EventLog{}, nil)
-		//if err != nil {
-		//    return err
-		//}
-		//localFiles, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
-		//if len(localFiles) > 0 {
-		//    filesToDelete := make([]string, len(localFiles)-1)
-		//    for _, f := range localFiles {
-		//        if f != checksum {
-		//            filesToDelete = append(filesToDelete, f)
-		//        }
-		//    }
-		//    r.LocalWalFile.RemoveWals(ctx, filesToDelete)
-		//}
-	} else {
+	ctx := context.Background()
+
+	filesToDelete, _ := r.LocalWalFile.GetMatchingWals(ctx, fmt.Sprintf(path.Join(r.LocalWalFile.GetRoot(), walFilePattern), "*"))
+
+	if err := r.push(ctx, r.LocalWalFile, r.crdt.getEventLog(), nil, ""); err == nil {
+		if len(filesToDelete) > 0 {
+			r.LocalWalFile.RemoveWals(ctx, filesToDelete)
+		}
+	}
+
+	if purge {
 		// If purge is set, we delete everything in the local walfile. This is used primarily in the wasm browser app on logout
 		r.LocalWalFile.Purge()
 	}
@@ -1375,9 +1083,9 @@ func BuildWalFromPlainText(ctx context.Context, wf WalFile, r io.Reader, isHidde
 	return nil
 }
 
-func (r *DBListRepo) TestPullLocal(c chan namedWal) error {
+func (r *DBListRepo) TestPullLocal(c chan []EventLog) error {
 	//c := make(chan []EventLog)
-	if err := r.pull(context.Background(), []WalFile{r.LocalWalFile}, c); err != nil {
+	if err := r.pull(context.Background(), r.LocalWalFile, c); err != nil {
 		return err
 	}
 	//go func() {
