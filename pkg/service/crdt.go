@@ -208,9 +208,6 @@ func (crdt *crdtTree) sync(e EventLog) ([]EventLog, bool) {
 		return events, true
 	}
 
-	// Add first, as the initial iteration is the penultimate event
-	events = append(events, i.Value.(EventLog))
-
 	// Otherwise iterate backwards until `i` is the matching event, or nil
 	for i = i.Prev(); i != nil; i = i.Prev() {
 		curEvent := i.Value.(EventLog)
@@ -218,20 +215,32 @@ func (crdt *crdtTree) sync(e EventLog) ([]EventLog, bool) {
 			// If we find the match:
 			// Check for lamport collisions - we continue to iterate until the "earlier" event with the same lamport timestamp,
 			// as we can't guarantee that the remote has all of the events with the shared lamport.
+
 			// If there are _any_ more events with the same lamport, we include all of them, so we need to manually step
 			// left once more if we end up traversing through lamport collisions
-			// NOTE: we don't include the matching event
+			includeFirstLamport := false
 			for i.Prev() != nil && i.Prev().Value.(EventLog).LamportTimestamp == e.LamportTimestamp {
 				i = i.Prev()
-				events = append(events, i.Value.(EventLog))
+				includeFirstLamport = true
+			}
+			if includeFirstLamport {
+				i = i.Prev()
 			}
 			eventKnown = true
 			break
 		}
-		events = append(events, curEvent)
 	}
 
+	if i == nil {
+		i = crdt.log.Front()
+	} else {
+		i = i.Next()
+	}
 
+	// And back fowards again
+	for ; i != nil; i = i.Next() {
+		events = append(events, i.Value.(EventLog))
+	}
 
 	return events, eventKnown
 }

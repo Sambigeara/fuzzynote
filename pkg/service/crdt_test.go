@@ -647,22 +647,6 @@ func getLog() []EventLog {
 	}
 }
 
-// Sync logs are returned in reverse order, without the matching event (only matching in the case of colliding
-// lamport clocks). This function is to make result set comparisons easier
-func reverseLogRemoveDuplicate(el []EventLog, m EventLog) []EventLog {
-	r := []EventLog{}
-	for i := len(el) - 1; i >= 0; i-- {
-		if i < 0 {
-			break
-		}
-		e := el[i]
-		if checkEquality(e, m) != eventsEqual {
-			r = append(r, e)
-		}
-	}
-	return r
-}
-
 func TestCRDTSync(t *testing.T) {
 	t.Run("Test events after known", func(t *testing.T) {
 		repo, clearUp := setupRepo()
@@ -675,7 +659,7 @@ func TestCRDTSync(t *testing.T) {
 		}
 
 		syncEvent := log[3]
-		expected := reverseLogRemoveDuplicate(log[4:], syncEvent)
+		expected := log[4:]
 
 		generated, _ := repo.crdt.sync(syncEvent)
 
@@ -725,7 +709,7 @@ func TestCRDTSync(t *testing.T) {
 			EventType:        UpdateEvent,
 			ListItemKey:      "5",
 		}
-		expected := reverseLogRemoveDuplicate(log, syncEvent)
+		expected := log
 
 		generated, _ := repo.crdt.sync(syncEvent)
 
@@ -756,7 +740,7 @@ func TestCRDTSync(t *testing.T) {
 			EventType:        UpdateEvent,
 			ListItemKey:      "3:5",
 		}
-		expected := reverseLogRemoveDuplicate(log, syncEvent)
+		expected := log
 
 		generated, _ := repo.crdt.sync(syncEvent)
 
@@ -782,7 +766,7 @@ func TestCRDTSync(t *testing.T) {
 		}
 
 		syncEvent := log[2]
-		expected := reverseLogRemoveDuplicate(log[1:], syncEvent) // it'll traverse backwards until the lamport changes
+		expected := log[1:] // it'll traverse backwards until the lamport changes
 
 		generated, _ := repo.crdt.sync(syncEvent)
 
