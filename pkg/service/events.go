@@ -856,7 +856,9 @@ func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, 
 				}
 			case m := <-r.websocketPushEvents:
 				if r.web.isActive {
-					r.web.publishWebsocket(m)
+					if err := r.web.publishWebsocket(m); err != nil {
+						log.Fatal(err)
+					}
 				}
 			case <-webRefreshTicker.C:
 				if webCancel != nil {

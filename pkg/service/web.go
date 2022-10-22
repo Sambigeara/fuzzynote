@@ -157,7 +157,7 @@ func (w *Web) publishWebsocket(m websocketMessage) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	return w.wsConn.Write(ctx, websocket.MessageText, []byte(marshalData))
+	return w.wsConn.Write(ctx, websocket.MessageText, marshalData)
 	//if err != nil {
 	//    // Re-establish websocket connection on error
 	//    // TODO currently attempting to re-establish connection on ANY error - do better at
