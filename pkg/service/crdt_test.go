@@ -661,7 +661,7 @@ func TestCRDTSync(t *testing.T) {
 		syncEvent := log[3]
 		expected := log[4:]
 
-		generated := repo.crdt.sync(syncEvent)
+		generated, _ := repo.crdt.sync(syncEvent)
 
 		expectedLen := len(expected)
 		if l := len(generated); l != expectedLen {
@@ -686,7 +686,7 @@ func TestCRDTSync(t *testing.T) {
 
 		syncEvent := log[len(log)-1]
 
-		generated := repo.crdt.sync(syncEvent)
+		generated, _ := repo.crdt.sync(syncEvent)
 
 		expectedLen := 0
 		if l := len(generated); l != expectedLen {
@@ -711,7 +711,7 @@ func TestCRDTSync(t *testing.T) {
 		}
 		expected := log
 
-		generated := repo.crdt.sync(syncEvent)
+		generated, _ := repo.crdt.sync(syncEvent)
 
 		expectedLen := len(expected)
 		if l := len(generated); l != expectedLen {
@@ -742,7 +742,7 @@ func TestCRDTSync(t *testing.T) {
 		}
 		expected := log
 
-		generated := repo.crdt.sync(syncEvent)
+		generated, _ := repo.crdt.sync(syncEvent)
 
 		expectedLen := len(expected)
 		if l := len(generated); l != expectedLen {
@@ -768,7 +768,7 @@ func TestCRDTSync(t *testing.T) {
 		syncEvent := log[2]
 		expected := log[1:] // it'll traverse backwards until the lamport changes
 
-		generated := repo.crdt.sync(syncEvent)
+		generated, _ := repo.crdt.sync(syncEvent)
 
 		expectedLen := len(expected)
 		if l := len(generated); l != expectedLen {

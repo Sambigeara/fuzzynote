@@ -668,7 +668,7 @@ func TestCRDTAllPermsMix(t *testing.T) {
 		for {
 			select {
 			case e := <-repo.eventsChan:
-				el = append(el, e)
+				el = append(el, e...)
 			case <-exit:
 				elChan <- el
 				return
@@ -770,7 +770,7 @@ func TestCRDTAllPermsMoves(t *testing.T) {
 		for {
 			select {
 			case e := <-repo.eventsChan:
-				el = append(el, e)
+				el = append(el, e...)
 			case <-exit:
 				elChan <- el
 				return
@@ -877,7 +877,7 @@ func TestCRDTAllPermsDeletes(t *testing.T) {
 		for {
 			select {
 			case e := <-repo.eventsChan:
-				el = append(el, e)
+				el = append(el, e...)
 			case <-exit:
 				elChan <- el
 				return
