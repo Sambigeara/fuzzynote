@@ -6,34 +6,40 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"path"
-	"strings"
 	"time"
 
 	"nhooyr.io/websocket"
 )
 
 const (
-	websocketURL = "wss://ws.fuzzynote.co.uk/v1"
-	apiURL       = "https://api.fuzzynote.co.uk/v1"
-
+	websocketURL               = "wss://ws.fuzzynote.co.uk/v1"
+	apiURL                     = "https://api.fuzzynote.co.uk/v1"
 	walSyncAuthorizationHeader = "Authorization"
-
-	webPingInterval    = time.Second * 30       // lower ping intervals (5s has been tested) cause performance degradation in the wasm app
-	webRefreshInterval = time.Second * (2 << 6) // 128 seconds ~= 2 minutes, because we use exponential backoffs
+	webPingInterval            = time.Second * 30
+	websocketPageSize          = 500
+	websocketMaxPageSizeBytes  = 32768
 )
 
-type WebWalFile struct {
-	// TODO rename uuid to email
-	uuid string
-	web  *Web
-	mode string
+const ()
+
+type Web struct {
+	client   *http.Client
+	wsConn   *websocket.Conn
+	tokens   WebTokenStore
+	isActive bool
+}
+
+func NewWeb(webTokens WebTokenStore) *Web {
+	return &Web{
+		client: &http.Client{
+			Timeout: 3 * time.Second,
+		},
+		tokens: webTokens,
+	}
 }
 
 func (w *Web) establishWebSocketConnection() error {
@@ -146,7 +152,14 @@ type cursorMoveEvent struct {
 	unixNanoTime int64
 }
 
-func (w *Web) publishWebsocket(m websocketMessage) error {
+type messageTooBigError struct {
+}
+
+func (e messageTooBigError) Error() string { return "fail" }
+
+//type messageTooBigError error
+
+func (w *Web) publishWebsocket(ctx context.Context, m websocketMessage) error {
 	marshalData, err := json.Marshal(m)
 	if err != nil {
 		//log.Fatal("Json marshal: malformed WAL data on websocket push")
@@ -154,8 +167,10 @@ func (w *Web) publishWebsocket(m websocketMessage) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
+	//log.Println("LEN: ", len(marshalData))
+	if len(marshalData) >= websocketMaxPageSizeBytes {
+		return messageTooBigError{}
+	}
 
 	return w.wsConn.Write(ctx, websocket.MessageText, marshalData)
 	//if err != nil {
@@ -232,159 +247,154 @@ func (r *DBListRepo) consumeWebsocket(ctx context.Context) ([]EventLog, error) {
 	return el, nil
 }
 
-func (wf *WebWalFile) getPresignedURLForWal(ctx context.Context, owner string, checksum string, method string) (string, error) {
-	u, _ := url.Parse(apiURL)
-	q, _ := url.ParseQuery(u.RawQuery)
-	q.Add("method", method)
-	q.Add("owner", owner)
-	q.Add("checksum", checksum)
-	u.RawQuery = q.Encode()
+func (r *DBListRepo) publishEventLog(ctx context.Context, el []EventLog, email string) error {
+	if r.web.isActive {
+		for left := 0; left < len(el); left += websocketPageSize {
+			right := left + websocketPageSize
+			if right > len(el) {
+				right = len(el)
+			}
+			page := el[left:right]
+			b, _ := BuildByteWal(page)
+			b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
 
-	u.Path = path.Join(u.Path, "wal", "presigned")
-
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return "", err
+			m := websocketMessage{
+				Action: websocketActionWal,
+				UUID:   email,
+				Wal:    b64Wal,
+			}
+			if err := r.web.publishWebsocket(ctx, m); err != nil {
+				if _, ok := err.(messageTooBigError); ok {
+					mid := len(page) / 2
+					if mid == 0 {
+						return err
+					}
+					go func() {
+						r.eventsChan <- page[:mid]
+						r.eventsChan <- page[mid:]
+					}()
+					continue
+				}
+				//log.Fatalln(err, "CODE: ", websocket.CloseStatus(err))
+				//websocket.CloseStatus(err) == websocket.StatusMessageTooBig
+				return err
+			}
+		}
 	}
-
-	req = req.WithContext(ctx)
-
-	resp, err := wf.web.CallWithReAuth(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Unable to generate presigned `put` url: %s", body)
-	}
-
-	// The response body will contain the presigned URL we will use to actually retrieve the wal
-	if err != nil {
-		return "", fmt.Errorf("Error parsing presigned url from response: %s", err)
-	}
-
-	return string(body), nil
-}
-
-func (wf *WebWalFile) GetUUID() string {
-	return wf.uuid
-}
-
-func (wf *WebWalFile) GetRoot() string { return "" }
-
-func (wf *WebWalFile) GetMatchingWals(ctx context.Context, pattern string) ([]string, error) {
-	u, _ := url.Parse(apiURL)
-	// we now pass emails as `wf.uuid`, so escape it here
-	escapedEmail := url.PathEscape(wf.uuid)
-	u.Path = path.Join(u.Path, "wal", "list", escapedEmail)
-
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		log.Fatalf("Error creating wal list request: %v", err)
-	}
-
-	req = req.WithContext(ctx)
-
-	resp, err := wf.web.CallWithReAuth(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		//log.Printf("Error retrieving wal list: %v", err)
-		return nil, nil
-	}
-
-	byteUUIDs, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil
-	}
-
-	var uuids []string
-	err = json.Unmarshal(byteUUIDs, &uuids)
-	if err != nil {
-		return nil, err
-	}
-
-	return uuids, nil
-}
-
-func (wf *WebWalFile) GetWalBytes(ctx context.Context, w io.Writer, fileName string) error {
-	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), fileName, "get")
-	if err != nil {
-		//log.Printf("Error retrieving wal %s: %s", fileName, err)
-		return err
-	}
-
-	req, err := http.NewRequest("GET", presignedURL, nil)
-	req = req.WithContext(ctx)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	dec := base64.NewDecoder(base64.StdEncoding, resp.Body)
-
-	io.Copy(w, dec)
-
 	return nil
 }
 
-func (wf *WebWalFile) RemoveWals(ctx context.Context, fileNames []string) error {
-	var uuids []string
-	for _, f := range fileNames {
-		uuids = append(uuids, f)
+func (w *Web) publishPosition(ctx context.Context, e cursorMoveEvent, email string) error {
+	if w.isActive {
+		m := websocketMessage{
+			Action:       websocketActionPosition,
+			UUID:         email,
+			Key:          e.listItemKey,
+			UnixNanoTime: e.unixNanoTime,
+		}
+		if err := w.publishWebsocket(ctx, m); err != nil {
+			return err
+		}
 	}
-
-	u, _ := url.Parse(apiURL)
-	escapedEmail := url.PathEscape(wf.uuid)
-	u.Path = path.Join(u.Path, "wal", "delete", escapedEmail)
-
-	marshalNames, err := json.Marshal(fileNames)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", u.String(), strings.NewReader(string(marshalNames)))
-	if err != nil {
-		return err
-	}
-
-	req = req.WithContext(ctx)
-
-	resp, err := wf.web.CallWithReAuth(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
 	return nil
 }
 
-func (wf *WebWalFile) Flush(ctx context.Context, b *bytes.Buffer, checksum string) error {
-	// TODO refactor to pass only UUID, rather than full path (currently blocked by all WalFile != WebWalFile
-	//tempUUID := strings.Split(strings.Split(fileName, "_")[1], ".")[0]
-
-	presignedURL, err := wf.getPresignedURLForWal(ctx, wf.GetUUID(), checksum, "put")
-	if err != nil || presignedURL == "" {
-		return nil
+func (w *Web) publishSync(ctx context.Context, b []byte, email string) error {
+	m := websocketMessage{
+		Action: websocketActionSync,
+		UUID:   email,
+		Wal:    base64.StdEncoding.EncodeToString(b),
 	}
+	if err := w.publishWebsocket(ctx, m); err != nil {
+		return err
+	}
+	return nil
+}
 
-	b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
+func (r *DBListRepo) startWeb(ctx context.Context, replayChan chan []EventLog, inputEvtsChan chan interface{}) {
+	webPingTicker := time.NewTicker(webPingInterval)
 
-	req, err := http.NewRequest("PUT", presignedURL, strings.NewReader(b64Wal))
-	if err != nil {
+	connectChan := make(chan struct{})
+	go func() {
+		connectChan <- struct{}{}
+	}()
+
+	var wsCtx context.Context
+	var wsCancel context.CancelFunc
+
+	// Prioritise async web start-up to minimise wait time before websocket instantiation
+	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
+	go func() {
+		for {
+			select {
+			case <-webPingTicker.C:
+				// is !isActive, we've already entered the exponential retry backoff below
+				if r.web.isActive {
+					if pong, err := r.web.ping(); err != nil {
+					} else {
+						r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
+					}
+				}
+			case <-connectChan:
+				if wsCancel != nil {
+					wsCancel()
+				}
+				wsCtx, wsCancel = context.WithCancel(ctx)
+				err := r.registerWeb(inputEvtsChan)
+				if err != nil {
+					r.web.isActive = false
+					switch err.(type) {
+					case authFailureError:
+						return // authFailureError signifies incorrect login details, disable web and run local only mode
+					default:
+						go func() {
+							time.Sleep(webPingInterval)
+							connectChan <- struct{}{}
+						}()
+						continue
+					}
+				}
+
+				r.web.isActive = true
+
+				go func() {
+					for {
+						wsEv, err := r.consumeWebsocket(wsCtx)
+						if err != nil {
+							//if websocket.CloseStatus(err) == websocket.StatusMessageTooBig {
+							////r.web.connectChan <- struct{}{}
+							//}
+							return
+						}
+						replayChan <- wsEv
+					}
+				}()
+
+				// Send initial sync event to websocket
+				r.requestSync()
+			case <-ctx.Done():
+				if r.web.wsConn != nil {
+					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
+				}
+				return
+			}
+		}
+	}()
+}
+
+func (r *DBListRepo) registerWeb(inputEvtsChan chan interface{}) error {
+	if err := r.web.establishWebSocketConnection(); err != nil {
 		return err
 	}
 
-	req = req.WithContext(ctx)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
+	if r.email == "" {
+		if pong, err := r.web.ping(); err == nil {
+			r.setEmail(pong.User)
+			r.web.tokens.SetEmail(pong.User)
+			r.web.tokens.Flush()
+			r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
+		}
 	}
-	resp.Body.Close()
+
 	return nil
 }

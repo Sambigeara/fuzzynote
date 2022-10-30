@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -30,15 +29,6 @@ func init() {
 
 // IMPORTANT: bump cloud version
 const LatestWalSchemaID uint16 = 7
-
-const (
-	// sync intervals
-	websocketConsumeInterval = time.Millisecond * 600
-	websocketPublishInterval = time.Millisecond * 600
-
-	// websocket event page size
-	websocketPageSize = 100
-)
 
 func generateUUID() uuid {
 	return uuid(rand.Uint32())
@@ -808,168 +798,54 @@ func (r *DBListRepo) emitRemoteUpdate(updateChan chan interface{}) {
 }
 
 func (r *DBListRepo) requestSync() {
-	var syncEvent EventLog
-	if b := r.crdt.log.Back(); b != nil {
-		syncEvent = b.Value.(EventLog)
-	}
-	// blank event will sync all
-	b, _ := BuildByteWal([]EventLog{syncEvent})
-	go func() {
-		r.websocketPushEvents <- websocketMessage{
-			Action: websocketActionSync,
-			UUID:   r.webWalFile.GetUUID(),
-			Wal:    base64.StdEncoding.EncodeToString(b.Bytes()),
-		}
-	}()
+	r.websocketSyncEvents <- struct{}{}
 }
 
 func (r *DBListRepo) startSync(ctx context.Context, replayChan chan []EventLog, inputEvtsChan chan interface{}) error {
-	webPingTicker := time.NewTicker(webPingInterval)
-	webRefreshTicker := time.NewTicker(webRefreshInterval)
-	// We set the interval to 0 because we want the initial connection establish attempt to occur ASAP
-	webRefreshTicker.Reset(time.Millisecond * 1)
-
 	// Run an initial load from the local walfile
 	if err := r.pull(ctx, r.LocalWalFile, replayChan); err != nil {
 		return err
 	}
 
-	// Prioritise async web start-up to minimise wait time before websocket instantiation
-	// Create a loop responsible for periodic refreshing of web connections and web walfiles.
-	// TODO only start this goroutine if there is actually a configured web
+	r.startWeb(ctx, replayChan, inputEvtsChan)
+
+	// websocket ops
 	go func() {
-		expBackoffInterval := time.Second * 1
-		var waitInterval time.Duration
-		var webCtx context.Context
-		var webCancel context.CancelFunc
 		for {
 			select {
-			case <-webPingTicker.C:
-				// is !isActive, we've already entered the exponential retry backoff below
-				if r.web.isActive {
-					if pong, err := r.web.ping(); err != nil {
-						r.web.isActive = false
-						webRefreshTicker.Reset(time.Millisecond * 1)
-					} else {
-						r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
+			case el := <-r.eventsChan:
+				var err error
+				for {
+					if err = r.publishEventLog(ctx, el, r.email); err != nil {
+						//log.Fatal("error publishing websocket event: ", err)
+						// TODO handle re-connect (ensure all events are queued)
+						return
 					}
-				}
-			case m := <-r.websocketPushEvents:
-				if r.web.isActive {
-					if err := r.web.publishWebsocket(m); err != nil {
-						log.Fatal(err)
-					}
-				}
-			case <-webRefreshTicker.C:
-				if webCancel != nil {
-					webCancel()
-				}
-				// Close off old websocket connection
-				// Nil check because initial instantiation also occurs async in this loop (previous it was sync on startup)
-				if r.web.wsConn != nil {
-					r.web.wsConn.Close(websocket.StatusNormalClosure, "")
-				}
-				// Send a state update here to ensure "offline" state is displayed if relevant
-				inputEvtsChan <- SyncEvent{}
-				// Start new one
-				err := r.registerWeb()
-				if err != nil {
-					r.web.isActive = false
-					switch err.(type) {
-					case authFailureError:
-						return // authFailureError signifies incorrect login details, disable web and run local only mode
-					default:
-						waitInterval = expBackoffInterval
-						if expBackoffInterval < webRefreshInterval {
-							expBackoffInterval *= 2
-						}
-					}
-				} else {
-					r.web.isActive = true
-					expBackoffInterval = time.Second * 1
-					waitInterval = webRefreshInterval
-
-					// Send immediate `ping` to populate ActiveFriends prior to initial sync
-					pong, _ := r.web.ping()
-					r.updateActiveFriendsMap(pong.ActiveFriends, pong.PendingFriends, inputEvtsChan)
+					break
 				}
 
-				if r.web.isActive {
-					webCtx, webCancel = context.WithCancel(ctx)
-					go func() {
-						for {
-							wsEv, err := r.consumeWebsocket(webCtx)
-							if err != nil {
-								// webCancel() triggers error which we need to handle and return
-								// to avoid haywire goroutines with infinite loops and CPU destruction
-								return
-							}
-							replayChan <- wsEv
-						}
-					}()
-
-					// Send initial sync event to websocket
-					r.requestSync()
+				// Emit any remote updates if web active and local changes have occurred
+				r.emitRemoteUpdate(inputEvtsChan)
+			case e := <-r.localCursorMoveChan:
+				if err := r.web.publishPosition(ctx, e, r.email); err != nil {
+					log.Fatal(err)
 				}
+			case <-r.websocketSyncEvents:
+				var syncEvent EventLog
+				if b := r.crdt.log.Back(); b != nil {
+					syncEvent = b.Value.(EventLog)
+				}
+				// blank event will sync all
+				b, _ := BuildByteWal([]EventLog{syncEvent})
 
-				webRefreshTicker.Reset(waitInterval)
+				if err := r.web.publishSync(ctx, b.Bytes(), r.email); err != nil {
+					log.Fatal(err)
+				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-
-	if !r.isTest {
-		// Create a loop to deal with any collaborator cursor move events
-		go func() {
-			for {
-				select {
-				case e := <-r.localCursorMoveChan:
-					if r.web.isActive {
-						r.websocketPushEvents <- websocketMessage{
-							Action:       websocketActionPosition,
-							UUID:         r.webWalFile.GetUUID(),
-							Key:          e.listItemKey,
-							UnixNanoTime: e.unixNanoTime,
-						}
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-		go func() {
-			for {
-				select {
-				case el := <-r.eventsChan:
-					if r.web.isActive {
-						// apply pagination
-						for left := 0; left < len(el); left += websocketPageSize {
-							right := left + websocketPageSize
-							if right > len(el) {
-								right = len(el)
-							}
-							b, _ := BuildByteWal(el[left:right])
-							b64Wal := base64.StdEncoding.EncodeToString(b.Bytes())
-							go func(w string) {
-								r.websocketPushEvents <- websocketMessage{
-									Action: websocketActionWal,
-									UUID:   r.webWalFile.GetUUID(),
-									Wal:    b64Wal,
-								}
-							}(b64Wal)
-						}
-					}
-
-					// Emit any remote updates if web active and local changes have occurred
-					r.emitRemoteUpdate(inputEvtsChan)
-				case <-ctx.Done():
-					//r.push(ctx, r.LocalWalFile, r.crdt.getEventLog(), nil, "")
-					return
-				}
-			}
-		}()
-	}
 
 	return nil
 }

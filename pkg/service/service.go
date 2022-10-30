@@ -52,7 +52,7 @@ type DBListRepo struct {
 
 	remoteCursorMoveChan chan cursorMoveEvent
 	localCursorMoveChan  chan cursorMoveEvent
-	websocketPushEvents  chan websocketMessage
+	websocketSyncEvents  chan struct{}
 	collabPositions      map[string]cursorMoveEvent
 	collabMapLock        *sync.Mutex
 	previousListItemKey  string
@@ -69,9 +69,6 @@ type DBListRepo struct {
 
 	// TODO better naming convention
 	LocalWalFile LocalWalFile
-	webWalFile   WalFile
-
-	isTest bool
 }
 
 // NewDBListRepo returns a pointer to a new instance of DBListRepo
@@ -110,7 +107,7 @@ func NewDBListRepo(localWalFile LocalWalFile, webTokenStore WebTokenStore) *DBLi
 	// Establish the chan used to track and display collaborator cursor positions
 	listRepo.remoteCursorMoveChan = make(chan cursorMoveEvent) // incoming events
 	listRepo.localCursorMoveChan = make(chan cursorMoveEvent)  // outgoing events
-	listRepo.websocketPushEvents = make(chan websocketMessage)
+	listRepo.websocketSyncEvents = make(chan struct{})
 	listRepo.collabPositions = make(map[string]cursorMoveEvent) // map[collaboratorEmail]currentKey
 
 	return listRepo

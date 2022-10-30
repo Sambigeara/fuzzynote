@@ -96,24 +96,3 @@ func (r *DBListRepo) Start(client Client) error {
 	}()
 	return <-errChan
 }
-
-func (r *DBListRepo) registerWeb() error {
-	if err := r.web.establishWebSocketConnection(); err != nil {
-		return err
-	}
-
-	if r.email == "" {
-		if pong, err := r.web.ping(); err == nil {
-			r.setEmail(pong.User)
-			r.web.tokens.SetEmail(pong.User)
-			r.web.tokens.Flush()
-		}
-	}
-
-	r.webWalFile = &WebWalFile{
-		uuid: string(r.email),
-		web:  r.web,
-	}
-
-	return nil
-}

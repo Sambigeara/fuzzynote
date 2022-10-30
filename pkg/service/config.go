@@ -7,26 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
-
-	"nhooyr.io/websocket"
 )
-
-type Web struct {
-	client   *http.Client
-	wsConn   *websocket.Conn
-	tokens   WebTokenStore
-	isActive bool
-}
-
-func NewWeb(webTokens WebTokenStore) *Web {
-	return &Web{
-		client: &http.Client{
-			Timeout: 3 * time.Second,
-		},
-		tokens: webTokens,
-	}
-}
 
 type WebRemote struct {
 	Emails       []string
