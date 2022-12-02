@@ -167,6 +167,11 @@ func (crdt *crdtTree) generateEvents() []EventLog {
 		}
 	}
 
+	// Add DeleteEvents
+	for _, e := range crdt.deleteEventSet {
+		events = append(events, e)
+	}
+
 	return events
 }
 
