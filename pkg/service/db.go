@@ -98,9 +98,7 @@ func (r *DBListRepo) Start(client Client) error {
 	go func() {
 		for {
 			ev := client.AwaitEvent()
-			go func() {
-				inputEvtsChan <- ev
-			}()
+			inputEvtsChan <- ev
 		}
 	}()
 	return <-errChan
