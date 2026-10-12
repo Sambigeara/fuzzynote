@@ -1,0 +1,15 @@
+[package]
+name = "fzn"
+description = "fuzzynote: a blank page that remembers what you wrote."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fzn-engine = { path = "../fzn-engine", features = ["serde"] }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml = "1"
+ratatui = "0.30"

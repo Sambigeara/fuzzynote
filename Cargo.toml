@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["crates/fzn-engine", "crates/fzn"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/Sambigeara/fuzzynote"
+
+[workspace.dependencies]
+unicode-segmentation = "1.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
