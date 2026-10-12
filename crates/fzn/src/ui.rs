@@ -1,17 +1,19 @@
-//! The terminal face: one input, one list, one preview. Modal, in the vim sense.
+//! The terminal face: one input, one list, one preview, with the original fzn keys.
 //!
-//! Insert mode is typing: the list shows recent notes while the input is empty and what the
-//! engine finds as you type, each with its reasons; Enter creates a note from the input. Normal
-//! mode moves and acts: pick, look around a note (its neighbourhood: links in and out, shared
-//! tags and people, shared words), edit, archive, delete. Notes are edited in your editor.
+//! The input is the top line. Below it the list shows recent notes while the input is empty and
+//! what the engine finds as you type, each with its reasons. Down moves onto the list, Up and
+//! Escape come back to the top line, and typing always goes to the top line. A chord acts on the
+//! top line when the cursor is there and on the selected note otherwise, as it did in fzn.
+//! Notes are edited in your editor.
 
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
 use anyhow::{Context as _, Result};
-use fzn_engine::{Engine, Note, NoteId, SearchOptions, time};
+use fzn_engine::{Engine, Note, NoteId, SearchOptions, text, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Style, Stylize};
@@ -24,14 +26,7 @@ use crate::store::{Record, Store, new_id, now_secs};
 const RECENT_LIMIT: usize = 500;
 const RELATED_LIMIT: usize = 60;
 const AROUND_LIMIT: usize = 200;
-const KEYS_INSERT: &str = "Enter new · Esc normal · ↑↓ pick · Tab look around";
-const KEYS_NORMAL: &str = "j/k pick · Enter look around · h back · i type · e edit · y link · x archive · dd delete · ga archived · gs scores · q quit";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode {
-    Insert,
-    Normal,
-}
+const KEYS: &str = "Enter new, zoom · ^D delete · ^O edit · ^V archive · ^U undo · ^R redo · ^P link · ^C copy · ^_ open URL · ^B scores · Esc back, twice quits";
 
 /// A note being looked around. The list shows its neighbourhood.
 struct Pivot {
@@ -63,11 +58,13 @@ pub struct App {
     show_archived: bool,
     show_scores: bool,
     status: String,
-    mode: Mode,
     /// Notes being looked around, innermost last.
     pivots: Vec<Pivot>,
-    /// The first key of a two-key command such as `dd` or `gg`.
-    pending: Option<char>,
+    /// Whether the previous key was Escape, which makes a second one quit.
+    escaped: bool,
+    /// Versions to restore, newest last: what a note was before a change, and what it became.
+    undo: Vec<(Option<Record>, Record)>,
+    redo: Vec<(Option<Record>, Record)>,
 }
 
 enum Flow {
@@ -132,6 +129,26 @@ fn sanitise(id: &str) -> String {
         .collect()
 }
 
+/// Standard base64 with padding, for the OSC 52 clipboard sequence.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 fn run_editor(editor: &str, path: &Path) -> Result<ExitStatus> {
     let mut parts = editor.split_whitespace();
     let program = parts.next().context("empty editor command")?;
@@ -162,9 +179,10 @@ impl App {
             show_archived: false,
             show_scores: false,
             status,
-            mode: Mode::Insert,
             pivots: Vec::new(),
-            pending: None,
+            escaped: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
         };
         app.refresh(true);
         app
@@ -191,95 +209,80 @@ impl App {
 
     fn handle(&mut self, key: KeyEvent, terminal: &mut DefaultTerminal) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let pending = self.pending.take();
+        let escaped = std::mem::take(&mut self.escaped);
+        let on_top = self.list.selected().is_none();
         let end = self.input.chars().count();
-        match (self.mode, key.code, ctrl) {
-            (_, KeyCode::Char('c'), true) => return Ok(Flow::Quit),
-            (_, KeyCode::Up, _) | (_, KeyCode::Char('p'), true) => self.step(-1),
-            (_, KeyCode::Down, _) | (_, KeyCode::Char('n'), true) => self.step(1),
-            (_, KeyCode::PageUp, _) => self.step(-10),
-            (_, KeyCode::PageDown, _) => self.step(10),
-            (_, KeyCode::Tab, _) => self.look_around(),
-            (_, KeyCode::BackTab, _) => self.back(),
-
-            (Mode::Insert, KeyCode::Esc, _) => self.mode = Mode::Normal,
-            (Mode::Insert, KeyCode::Enter, _) => self.create()?,
-            (Mode::Insert, KeyCode::Char('u'), true) => self.set_input(String::new()),
-            (Mode::Insert, KeyCode::Char('w'), true) => self.delete_word(),
-            (Mode::Insert, KeyCode::Home, _) => self.cursor = 0,
-            (Mode::Insert, KeyCode::End, _) => self.cursor = end,
-            (Mode::Insert, KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
-            (Mode::Insert, KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(end),
-            (Mode::Insert, KeyCode::Backspace, _) => {
+        match (key.code, ctrl) {
+            (KeyCode::Esc, _) => {
+                if !on_top {
+                    self.list.select(None);
+                } else if !self.pivots.is_empty() {
+                    self.back();
+                } else if escaped {
+                    return Ok(Flow::Quit);
+                } else {
+                    self.escaped = true;
+                    self.status = "Escape again to quit".into();
+                }
+            }
+            (KeyCode::Char('q'), true) => return Ok(Flow::Quit),
+            (KeyCode::Enter, _) => {
+                if on_top {
+                    self.create()?;
+                } else {
+                    self.look_around();
+                }
+            }
+            (KeyCode::Char('d'), true) => {
+                if on_top {
+                    self.set_input(String::new());
+                } else {
+                    self.delete()?;
+                }
+            }
+            (KeyCode::Char('v'), true) => {
+                if on_top {
+                    self.show_archived = !self.show_archived;
+                    self.refresh(false);
+                } else {
+                    self.toggle_archive()?;
+                }
+            }
+            (KeyCode::Char('o'), true) => self.edit(terminal)?,
+            (KeyCode::Char('u'), true) => self.undo()?,
+            (KeyCode::Char('r'), true) => self.redo()?,
+            (KeyCode::Char('p'), true) => self.link(),
+            (KeyCode::Char('c'), true) => self.copy(),
+            (KeyCode::Char('_' | '/'), true) => self.open_url(),
+            (KeyCode::Char('b'), true) => self.show_scores = !self.show_scores,
+            (KeyCode::Up, _) => self.step(-1),
+            (KeyCode::Down, _) => self.step(1),
+            (KeyCode::PageUp, _) => self.step(-10),
+            (KeyCode::PageDown, _) => self.step(10),
+            (KeyCode::Char('a'), true) | (KeyCode::Home, _) => self.cursor = 0,
+            (KeyCode::Char('e'), true) | (KeyCode::End, _) => self.cursor = end,
+            (KeyCode::Char('w'), true) => self.delete_word(),
+            (KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
+            (KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(end),
+            (KeyCode::Backspace, _) => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     self.remove_char(self.cursor);
                 }
             }
-            (Mode::Insert, KeyCode::Delete, _) => {
+            (KeyCode::Delete, _) => {
                 if self.cursor < end {
                     self.remove_char(self.cursor);
                 }
             }
-            (Mode::Insert, KeyCode::Char(c), false) => self.insert_char(c),
-
-            (Mode::Normal, KeyCode::Char('q'), false) => return Ok(Flow::Quit),
-            (Mode::Normal, KeyCode::Esc, _) => {
-                if !self.pivots.is_empty() {
-                    self.back();
-                } else if !self.input.is_empty() {
-                    self.set_input(String::new());
-                }
-            }
-            (Mode::Normal, KeyCode::Char('j'), false) => self.step(1),
-            (Mode::Normal, KeyCode::Char('k'), false) => self.step(-1),
-            (Mode::Normal, KeyCode::Char('d'), true) => self.step(10),
-            (Mode::Normal, KeyCode::Char('u'), true) => self.step(-10),
-            (Mode::Normal, KeyCode::Char('G'), false) => self.step(i64::MAX / 2),
-            (Mode::Normal, KeyCode::Char('g'), false) if pending == Some('g') => {
-                self.step(i64::MIN / 2);
-            }
-            (Mode::Normal, KeyCode::Char('a'), false) if pending == Some('g') => {
-                self.show_archived = !self.show_archived;
-                self.refresh(false);
-            }
-            (Mode::Normal, KeyCode::Char('s'), false) if pending == Some('g') => {
-                self.show_scores = !self.show_scores;
-            }
-            (Mode::Normal, KeyCode::Char('d'), false) if pending == Some('d') => self.delete()?,
-            (Mode::Normal, KeyCode::Char('c'), false) if pending == Some('c') => {
-                self.set_input(String::new());
-                self.mode = Mode::Insert;
-            }
-            (Mode::Normal, KeyCode::Char(c @ ('g' | 'd' | 'c')), false) => {
-                self.pending = Some(c);
-                self.status = match c {
-                    'd' => "dd deletes the selected note",
-                    'c' => "cc clears the input and types",
-                    _ => "gg top · ga archived · gs scores",
-                }
-                .into();
-            }
-            (Mode::Normal, KeyCode::Char('i'), false) => self.mode = Mode::Insert,
-            (Mode::Normal, KeyCode::Char('a'), false) => {
-                self.cursor = end;
-                self.mode = Mode::Insert;
-            }
-            (Mode::Normal, KeyCode::Char('/'), false) => {
-                self.set_input(String::new());
-                self.mode = Mode::Insert;
-            }
-            (Mode::Normal, KeyCode::Enter | KeyCode::Char('l'), _) => self.look_around(),
-            (Mode::Normal, KeyCode::Char('h') | KeyCode::Backspace, _) => self.back(),
-            (Mode::Normal, KeyCode::Char('e'), false) => self.edit(terminal)?,
-            (Mode::Normal, KeyCode::Char('y'), false) => self.link(),
-            (Mode::Normal, KeyCode::Char('x'), false) => self.toggle_archive()?,
+            (KeyCode::Tab, _) => self.insert_char(' '),
+            (KeyCode::Char(c), false) => self.insert_char(c),
             _ => {}
         }
         Ok(Flow::Continue)
     }
 
-    /// Makes the selected note the context: the list becomes its neighbourhood.
+    /// Zooms on the selected note: the list becomes its neighbourhood.
     fn look_around(&mut self) {
         let Some(row) = self.selected() else {
             return;
@@ -348,13 +351,12 @@ impl App {
             (None, false) => self.related(query),
         };
         self.rows = rows;
-        let selected = if reset {
-            0
-        } else {
-            self.list.selected().unwrap_or(0)
-        };
-        self.list
-            .select((!self.rows.is_empty()).then(|| selected.min(self.rows.len() - 1)));
+        let selected = if reset { None } else { self.list.selected() };
+        self.list.select(
+            selected
+                .filter(|_| !self.rows.is_empty())
+                .map(|i| i.min(self.rows.len() - 1)),
+        );
     }
 
     fn recent(&self) -> Vec<Row> {
@@ -434,13 +436,21 @@ impl App {
         }
     }
 
+    /// Moves the cursor between the top line (no selection) and the list.
     fn step(&mut self, delta: i64) {
         if self.rows.is_empty() {
+            self.list.select(None);
             return;
         }
-        let current = self.list.selected().unwrap_or(0) as i64;
-        let next = (current + delta).clamp(0, self.rows.len() as i64 - 1);
-        self.list.select(Some(next as usize));
+        let next = match self.list.selected() {
+            None if delta > 0 => Some((delta - 1).min(self.rows.len() as i64 - 1)),
+            None => None,
+            Some(i) => {
+                let n = i as i64 + delta;
+                (n >= 0).then(|| n.min(self.rows.len() as i64 - 1))
+            }
+        };
+        self.list.select(next.map(|n| n as usize));
     }
 
     fn selected(&self) -> Option<&Row> {
@@ -453,10 +463,64 @@ impl App {
         }
     }
 
-    /// Writes a version to the store and the engine.
+    /// Writes a version to the store and the engine, remembering what it replaced for undo.
     fn commit(&mut self, record: Record) -> Result<()> {
-        self.engine.upsert(note_from(&record));
-        self.store.put(record)
+        let before = self.store.version(record.id.as_str()).cloned();
+        self.write(&record)?;
+        self.undo.push((before, record));
+        self.redo.clear();
+        Ok(())
+    }
+
+    fn write(&mut self, record: &Record) -> Result<()> {
+        if record.deleted {
+            self.engine.remove(&NoteId::new(record.id.clone()));
+        } else {
+            self.engine.upsert(note_from(record));
+        }
+        self.store.put(record.clone())
+    }
+
+    /// Puts a note back to a version, stamped now so that it wins across devices.
+    fn restore(&mut self, version: Option<&Record>, fallback: &Record) -> Result<String> {
+        let record = match version {
+            Some(v) => Record {
+                updated: Some(now_secs()),
+                ..v.clone()
+            },
+            None => Record {
+                deleted: true,
+                updated: Some(now_secs()),
+                ..fallback.clone()
+            },
+        };
+        let id = record.id.clone();
+        self.write(&record)?;
+        self.refresh(false);
+        self.reselect(&id);
+        Ok(id)
+    }
+
+    fn undo(&mut self) -> Result<()> {
+        let Some((before, after)) = self.undo.pop() else {
+            self.status = "nothing to undo".into();
+            return Ok(());
+        };
+        self.restore(before.as_ref(), &after)?;
+        self.status = format!("undid: {}", fit(head_of(&after.text), 40));
+        self.redo.push((before, after));
+        Ok(())
+    }
+
+    fn redo(&mut self) -> Result<()> {
+        let Some((before, after)) = self.redo.pop() else {
+            self.status = "nothing to redo".into();
+            return Ok(());
+        };
+        self.restore(Some(&after), &after)?;
+        self.status = format!("redid: {}", fit(head_of(&after.text), 40));
+        self.undo.push((before, after));
+        Ok(())
     }
 
     fn create(&mut self) -> Result<()> {
@@ -510,7 +574,7 @@ impl App {
         if edited == record.text {
             self.status = "unchanged".into();
         } else if edited.trim().is_empty() {
-            self.status = "empty, so left unchanged; x archives".into();
+            self.status = "empty, so left unchanged; ^V archives".into();
         } else {
             self.commit(Record {
                 text: edited,
@@ -550,15 +614,58 @@ impl App {
         let Some(record) = self.store.get(&id).cloned() else {
             return Ok(());
         };
-        self.engine.remove(&NoteId::new(id));
-        self.store.put(Record {
+        self.commit(Record {
             deleted: true,
             updated: Some(now_secs()),
             ..record
         })?;
-        self.status = "deleted".into();
+        self.status = "deleted · ^U undoes".into();
         self.refresh(false);
         Ok(())
+    }
+
+    /// Copies the selected note's first URL, or its head, to the clipboard via OSC 52.
+    fn copy(&mut self) {
+        let Some(record) = self.selected().and_then(|r| self.store.get(r.id.as_str())) else {
+            return;
+        };
+        let (what, payload) = match text::facts(&record.text).urls.first() {
+            Some(url) => ("URL", url.clone()),
+            None => ("head", head_of(&record.text).to_owned()),
+        };
+        let mut out = std::io::stdout();
+        let ok = write!(out, "\x1b]52;c;{}\x07", base64(payload.as_bytes())).is_ok()
+            && out.flush().is_ok();
+        self.status = if ok {
+            format!("copied {what}: {}", fit(&payload, 50))
+        } else {
+            "could not write to the terminal".into()
+        };
+    }
+
+    fn open_url(&mut self) {
+        let Some(record) = self.selected().and_then(|r| self.store.get(r.id.as_str())) else {
+            return;
+        };
+        let Some(url) = text::facts(&record.text).urls.first().cloned() else {
+            self.status = "no URL in that note".into();
+            return;
+        };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        self.status = match Command::new(opener)
+            .arg(&url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => format!("opened {}", fit(&url, 60)),
+            Err(e) => format!("{opener}: {e}"),
+        };
     }
 
     fn link(&mut self) {
@@ -599,12 +706,10 @@ impl App {
             None => " fzn ".to_owned(),
         }));
         frame.render_widget(input, input_area);
-        if self.mode == Mode::Insert {
-            frame.set_cursor_position((
-                input_area.x + 3 + (self.cursor - scroll) as u16,
-                input_area.y + 1,
-            ));
-        }
+        frame.set_cursor_position((
+            input_area.x + 3 + (self.cursor - scroll) as u16,
+            input_area.y + 1,
+        ));
 
         let searching = !self.input.trim().is_empty();
         let title = if let Some(p) = self.pivots.last() {
@@ -665,17 +770,23 @@ impl App {
             .highlight_symbol("▶ ");
         frame.render_stateful_widget(list, list_area, &mut self.list);
 
-        let (title, body) = match self.selected().and_then(|r| self.store.get(r.id.as_str())) {
+        let shown = self.selected().or(self.rows.first());
+        let (title, body) = match shown.and_then(|r| self.store.get(r.id.as_str())) {
             Some(record) => (
                 format!(
-                    " created {} · updated {}{} ",
+                    " {}created {} · updated {}{} ",
+                    if self.selected().is_none() {
+                        "top of list · "
+                    } else {
+                        ""
+                    },
                     format_secs(record.created),
                     format_secs(record.updated),
                     if record.archived { " · archived" } else { "" }
                 ),
                 record.text.clone(),
             ),
-            None => (" nothing selected ".to_owned(), String::new()),
+            None => (" nothing to show ".to_owned(), String::new()),
         };
         frame.render_widget(
             Paragraph::new(body)
@@ -684,14 +795,9 @@ impl App {
             preview_area,
         );
 
-        let (mode, keys) = match self.mode {
-            Mode::Insert => ("INSERT", KEYS_INSERT),
-            Mode::Normal => ("NORMAL", KEYS_NORMAL),
-        };
         let status = Line::from(vec![
-            Span::raw(format!(" {mode} ")).bold().reversed(),
-            Span::raw(format!(" {} · {} notes · ", self.status, self.store.len())),
-            Span::raw(keys).dim(),
+            Span::raw(format!("{} · {} notes · ", self.status, self.store.len())),
+            Span::raw(KEYS).dim(),
         ]);
         frame.render_widget(Paragraph::new(status), status_area);
     }
@@ -712,6 +818,15 @@ mod tests {
             Some("swings today [[Kettlebells]]")
         );
         assert_eq!(add_link("see [[kettlebells]]", "Kettlebells"), None);
+    }
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"https://a.b/c?d=e"), "aHR0cHM6Ly9hLmIvYz9kPWU=");
     }
 
     #[test]

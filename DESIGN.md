@@ -99,17 +99,19 @@ until daily use asks for it.
   Obsidian or Silverbullet. The mirror is derived, never the source of truth.
 
 ## Clients
-- **Terminal**: Rust and ratatui, modal in the vim sense. One input on top; one list below it;
-  a preview of the selected note. Insert mode is typing: the list shows recent notes when the
-  input is empty and related notes with reasons as you type; Enter creates. Esc enters normal
-  mode: `j`/`k` pick, `gg`/`G`, `i`/`a`/`cc` return to typing, `e` opens the note in your editor
-  as fzn always did, `x` archives, `dd` deletes, `y` yanks a `[[link]]` to the selected note into
-  the input, `ga` shows archived, `gs` shows scores, `q` quits. No Ctrl chords: they collide with
-  tmux and vim. No inline multi-line editor in v1.
-- **Looking around.** Enter (or Tab, in either mode) on a note makes it the context: the list
-  becomes its neighbourhood, links in and out, shared tags and people, shared words, shared
-  dates, each with its reason. Enter again walks a hop further; `h` steps back to where you came
-  from, with the input you had restored. Typing inside a context narrows the neighbourhood, and
+- **Terminal**: Rust and ratatui, with the original fzn keys, because that is where the muscle
+  memory is. The input is the top line; Down moves onto the list, Up and Escape come back, and
+  typing always goes to the top line. A chord acts on the top line when the cursor is there and on
+  the selected note otherwise: Enter creates or zooms, Ctrl-D clears or deletes, Ctrl-V shows
+  archived or archives. Ctrl-O opens the note in your editor, Ctrl-U and Ctrl-R undo and redo any
+  change, Ctrl-P pastes a `[[link]]` to the selected note into the input, Ctrl-C copies its first
+  URL (or its head) to the clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores, Escape twice
+  quits. No inline multi-line editor in v1. Not yet reinstated: Ctrl-S multi-select with Enter
+  zooming on what the selection shares, Tab search groups, Ctrl-^ export.
+- **Zoom.** Enter on a note makes it the context: the list becomes its neighbourhood, links in
+  and out, shared tags and people, shared words, shared dates, each with its reason. Enter again
+  walks a hop further; Escape steps back to where you came from, with the input you had
+  restored. Typing inside a context narrows the neighbourhood, and
   a note created inside one links back to it, which is context inheritance in its simplest form.
   This is the ego graph as a flat list; following a link is picking its target here.
 - **Browser**: the same core compiled to wasm32 via wasm-bindgen, with a thin DOM renderer. The
