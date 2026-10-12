@@ -2,7 +2,7 @@
 //! matching, and a label index for explicit structure.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::score::Label;
 use crate::text;
@@ -20,6 +20,8 @@ struct Term {
 #[derive(Default)]
 pub struct Index {
     term_ids: HashMap<String, TermId>,
+    /// The vocabulary in order, for prefix lookups.
+    sorted_terms: BTreeMap<String, TermId>,
     terms: Vec<Term>,
     trigram_terms: HashMap<String, Vec<TermId>>,
     /// Per doc: `(term, tf)`, sorted by term. Needed for removal and for "more like this".
@@ -55,6 +57,7 @@ impl Index {
             postings: Vec::new(),
         });
         self.term_ids.insert(name.to_owned(), t);
+        self.sorted_terms.insert(name.to_owned(), t);
         for g in grams {
             self.trigram_terms.entry(g).or_default().push(t);
         }
@@ -185,6 +188,24 @@ impl Index {
         self.labels.get(label).map_or(&[], Vec::as_slice)
     }
 
+    /// Vocabulary terms starting with `prefix`, most common first, at most `limit`.
+    pub fn prefix_terms(&self, prefix: &str, limit: usize) -> Vec<TermId> {
+        let mut out: Vec<TermId> = self
+            .sorted_terms
+            .range(prefix.to_owned()..)
+            .take_while(|(name, _)| name.starts_with(prefix))
+            .map(|(_, &t)| t)
+            .filter(|&t| !self.terms[t as usize].postings.is_empty())
+            .collect();
+        out.sort_by(|&a, &b| {
+            self.df(b)
+                .cmp(&self.df(a))
+                .then_with(|| self.term_name(a).cmp(self.term_name(b)))
+        });
+        out.truncate(limit);
+        out
+    }
+
     /// Vocabulary terms that look like `query`, by trigram Jaccard similarity, best first.
     pub fn fuzzy_terms(
         &self,
@@ -259,6 +280,32 @@ mod tests {
         assert_eq!(ix.live_docs(), 2);
         assert_eq!(ix.total_tokens(), 4);
         assert!(ix.doc_terms(0).is_empty());
+    }
+
+    #[test]
+    fn prefix_terms_complete_the_word_being_typed() {
+        let mut ix = Index::default();
+        ix.add(0, &toks("kettlebells kettle kettlebell"), &[]);
+        ix.add(1, &toks("kettlebells keg"), &[]);
+        let names: Vec<&str> = ix
+            .prefix_terms("kett", 10)
+            .into_iter()
+            .map(|t| ix.term_name(t))
+            .collect();
+        assert_eq!(
+            names,
+            ["kettlebells", "kettle", "kettlebell"],
+            "most common first"
+        );
+        assert_eq!(ix.prefix_terms("kett", 1).len(), 1);
+        assert!(ix.prefix_terms("zzz", 10).is_empty());
+        ix.remove(0);
+        let names: Vec<&str> = ix
+            .prefix_terms("kett", 10)
+            .into_iter()
+            .map(|t| ix.term_name(t))
+            .collect();
+        assert_eq!(names, ["kettlebells"], "dead terms are not completions");
     }
 
     #[test]

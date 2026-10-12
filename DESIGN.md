@@ -45,7 +45,7 @@ other people when you choose.
   plain text; the words in them still count, the hierarchy does not.
 - **Context inheritance**: a note created while a context is active (tags, people, a zoomed
   neighbourhood) inherits that context. This is what prefix prepending used to do, without a
-  tree.
+  tree. Built for the simplest case: a note created while looking around another links to it.
 
 ## Engine
 The engine is a library with three parts. It owns no UI and makes no network calls.
@@ -62,6 +62,9 @@ and a human-readable reason. Cheapest first:
    one-liner that merely mentions it; BM25's length normalisation would otherwise bury long
    notes).
 2. *Lexical*: BM25 over the inverted index. Rare shared words count far more than common ones.
+   The word under the cursor is a prefix, not a word: it stands for every vocabulary word it
+   starts, in the word scorer and in the head signal, and a note earns credit for its best
+   completion only. This is what makes results right while a word is still being typed.
 3. *Fuzzy*: trigram overlap, so a misspelling still finds its note.
 4. *Temporal*: created or edited close in time; dates written in the text.
 5. *Structural*: notes that sat adjacent in the list, notes you navigated between.
@@ -96,11 +99,19 @@ until daily use asks for it.
   Obsidian or Silverbullet. The mirror is derived, never the source of truth.
 
 ## Clients
-- **Terminal**: Rust and ratatui. One input on top; one list below it that shows recent notes
-  when the input is empty and related notes with reasons as you type; a preview of the selected
-  note. Enter creates, Ctrl-O opens the note in your editor as fzn always did, Ctrl-V archives,
-  Ctrl-D twice deletes, Ctrl-L locks a link into what you are writing. No inline multi-line
-  editor in v1.
+- **Terminal**: Rust and ratatui, modal in the vim sense. One input on top; one list below it;
+  a preview of the selected note. Insert mode is typing: the list shows recent notes when the
+  input is empty and related notes with reasons as you type; Enter creates. Esc enters normal
+  mode: `j`/`k` pick, `gg`/`G`, `i`/`a`/`cc` return to typing, `e` opens the note in your editor
+  as fzn always did, `x` archives, `dd` deletes, `y` yanks a `[[link]]` to the selected note into
+  the input, `ga` shows archived, `gs` shows scores, `q` quits. No Ctrl chords: they collide with
+  tmux and vim. No inline multi-line editor in v1.
+- **Looking around.** Enter (or Tab, in either mode) on a note makes it the context: the list
+  becomes its neighbourhood, links in and out, shared tags and people, shared words, shared
+  dates, each with its reason. Enter again walks a hop further; `h` steps back to where you came
+  from, with the input you had restored. Typing inside a context narrows the neighbourhood, and
+  a note created inside one links back to it, which is context inheritance in its simplest form.
+  This is the ego graph as a flat list; following a link is picking its target here.
 - **Browser**: the same core compiled to wasm32 via wasm-bindgen, with a thin DOM renderer. The
   graph view lives here as an ego graph of the current note, one or two hops out.
 

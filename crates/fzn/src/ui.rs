@@ -1,8 +1,11 @@
-//! The terminal face: one input, one list, one preview.
+//! The terminal face: one input, one list, one preview. Modal, in the vim sense.
 //!
-//! With the input empty the list shows recent notes. As you type it shows what the engine finds,
-//! each with its reasons. Enter creates a note from the input. Notes are edited in your editor.
+//! Insert mode is typing: the list shows recent notes while the input is empty and what the
+//! engine finds as you type, each with its reasons; Enter creates a note from the input. Normal
+//! mode moves and acts: pick, look around a note (its neighbourhood: links in and out, shared
+//! tags and people, shared words), edit, archive, delete. Notes are edited in your editor.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
@@ -20,7 +23,23 @@ use crate::store::{Record, Store, new_id, now_secs};
 
 const RECENT_LIMIT: usize = 500;
 const RELATED_LIMIT: usize = 60;
-const KEYS: &str = "Enter new · ↑↓ pick · ^O edit · ^V archive · ^D delete · ^L link · ^R archived · ^B scores · Esc clear, twice to quit";
+const AROUND_LIMIT: usize = 200;
+const KEYS_INSERT: &str = "Enter new · Esc normal · ↑↓ pick · Tab look around";
+const KEYS_NORMAL: &str = "j/k pick · Enter look around · h back · i type · e edit · y link · x archive · dd delete · ga archived · gs scores · q quit";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Insert,
+    Normal,
+}
+
+/// A note being looked around. The list shows its neighbourhood.
+struct Pivot {
+    id: String,
+    head: String,
+    /// The input as it was when the note was entered, restored on the way back out.
+    input: String,
+}
 
 struct Row {
     id: NoteId,
@@ -44,8 +63,11 @@ pub struct App {
     show_archived: bool,
     show_scores: bool,
     status: String,
-    /// A key that needs a second press to act.
-    armed: Option<KeyCode>,
+    mode: Mode,
+    /// Notes being looked around, innermost last.
+    pivots: Vec<Pivot>,
+    /// The first key of a two-key command such as `dd` or `gg`.
+    pending: Option<char>,
 }
 
 enum Flow {
@@ -140,7 +162,9 @@ impl App {
             show_archived: false,
             show_scores: false,
             status,
-            armed: None,
+            mode: Mode::Insert,
+            pivots: Vec::new(),
+            pending: None,
         };
         app.refresh(true);
         app
@@ -167,63 +191,117 @@ impl App {
 
     fn handle(&mut self, key: KeyEvent, terminal: &mut DefaultTerminal) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let armed = self.armed.take() == Some(key.code);
-        match (key.code, ctrl) {
-            (KeyCode::Char('c' | 'q'), true) => return Ok(Flow::Quit),
-            (KeyCode::Esc, _) => {
-                if !self.input.is_empty() {
-                    self.set_input(String::new());
-                } else if armed {
-                    return Ok(Flow::Quit);
-                } else {
-                    self.armed = Some(KeyCode::Esc);
-                    self.status = "Escape again to quit".into();
-                }
-            }
-            (KeyCode::Enter, _) => self.create()?,
-            (KeyCode::Char('d'), true) => {
-                if armed {
-                    self.delete()?;
-                } else if self.selected().is_some() {
-                    self.armed = Some(key.code);
-                    self.status = "Ctrl-D again to delete the selected note".into();
-                }
-            }
-            (KeyCode::Up, _) => self.step(-1),
-            (KeyCode::Down, _) => self.step(1),
-            (KeyCode::PageUp, _) => self.step(-10),
-            (KeyCode::PageDown, _) => self.step(10),
-            (KeyCode::Char('o'), true) => self.edit(terminal)?,
-            (KeyCode::Char('v'), true) => self.toggle_archive()?,
-            (KeyCode::Char('l'), true) => self.link(),
-            (KeyCode::Char('r'), true) => {
-                self.show_archived = !self.show_archived;
-                self.refresh(false);
-            }
-            (KeyCode::Char('b'), true) => self.show_scores = !self.show_scores,
-            (KeyCode::Char('a'), true) | (KeyCode::Home, _) => self.cursor = 0,
-            (KeyCode::Char('e'), true) | (KeyCode::End, _) => {
-                self.cursor = self.input.chars().count()
-            }
-            (KeyCode::Char('u'), true) => self.set_input(String::new()),
-            (KeyCode::Char('w'), true) => self.delete_word(),
-            (KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
-            (KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(self.input.chars().count()),
-            (KeyCode::Backspace, _) => {
+        let pending = self.pending.take();
+        let end = self.input.chars().count();
+        match (self.mode, key.code, ctrl) {
+            (_, KeyCode::Char('c'), true) => return Ok(Flow::Quit),
+            (_, KeyCode::Up, _) | (_, KeyCode::Char('p'), true) => self.step(-1),
+            (_, KeyCode::Down, _) | (_, KeyCode::Char('n'), true) => self.step(1),
+            (_, KeyCode::PageUp, _) => self.step(-10),
+            (_, KeyCode::PageDown, _) => self.step(10),
+            (_, KeyCode::Tab, _) => self.look_around(),
+            (_, KeyCode::BackTab, _) => self.back(),
+
+            (Mode::Insert, KeyCode::Esc, _) => self.mode = Mode::Normal,
+            (Mode::Insert, KeyCode::Enter, _) => self.create()?,
+            (Mode::Insert, KeyCode::Char('u'), true) => self.set_input(String::new()),
+            (Mode::Insert, KeyCode::Char('w'), true) => self.delete_word(),
+            (Mode::Insert, KeyCode::Home, _) => self.cursor = 0,
+            (Mode::Insert, KeyCode::End, _) => self.cursor = end,
+            (Mode::Insert, KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
+            (Mode::Insert, KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(end),
+            (Mode::Insert, KeyCode::Backspace, _) => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     self.remove_char(self.cursor);
                 }
             }
-            (KeyCode::Delete, _) => {
-                if self.cursor < self.input.chars().count() {
+            (Mode::Insert, KeyCode::Delete, _) => {
+                if self.cursor < end {
                     self.remove_char(self.cursor);
                 }
             }
-            (KeyCode::Char(c), false) => self.insert_char(c),
+            (Mode::Insert, KeyCode::Char(c), false) => self.insert_char(c),
+
+            (Mode::Normal, KeyCode::Char('q'), false) => return Ok(Flow::Quit),
+            (Mode::Normal, KeyCode::Esc, _) => {
+                if !self.pivots.is_empty() {
+                    self.back();
+                } else if !self.input.is_empty() {
+                    self.set_input(String::new());
+                }
+            }
+            (Mode::Normal, KeyCode::Char('j'), false) => self.step(1),
+            (Mode::Normal, KeyCode::Char('k'), false) => self.step(-1),
+            (Mode::Normal, KeyCode::Char('d'), true) => self.step(10),
+            (Mode::Normal, KeyCode::Char('u'), true) => self.step(-10),
+            (Mode::Normal, KeyCode::Char('G'), false) => self.step(i64::MAX / 2),
+            (Mode::Normal, KeyCode::Char('g'), false) if pending == Some('g') => {
+                self.step(i64::MIN / 2);
+            }
+            (Mode::Normal, KeyCode::Char('a'), false) if pending == Some('g') => {
+                self.show_archived = !self.show_archived;
+                self.refresh(false);
+            }
+            (Mode::Normal, KeyCode::Char('s'), false) if pending == Some('g') => {
+                self.show_scores = !self.show_scores;
+            }
+            (Mode::Normal, KeyCode::Char('d'), false) if pending == Some('d') => self.delete()?,
+            (Mode::Normal, KeyCode::Char('c'), false) if pending == Some('c') => {
+                self.set_input(String::new());
+                self.mode = Mode::Insert;
+            }
+            (Mode::Normal, KeyCode::Char(c @ ('g' | 'd' | 'c')), false) => {
+                self.pending = Some(c);
+                self.status = match c {
+                    'd' => "dd deletes the selected note",
+                    'c' => "cc clears the input and types",
+                    _ => "gg top · ga archived · gs scores",
+                }
+                .into();
+            }
+            (Mode::Normal, KeyCode::Char('i'), false) => self.mode = Mode::Insert,
+            (Mode::Normal, KeyCode::Char('a'), false) => {
+                self.cursor = end;
+                self.mode = Mode::Insert;
+            }
+            (Mode::Normal, KeyCode::Char('/'), false) => {
+                self.set_input(String::new());
+                self.mode = Mode::Insert;
+            }
+            (Mode::Normal, KeyCode::Enter | KeyCode::Char('l'), _) => self.look_around(),
+            (Mode::Normal, KeyCode::Char('h') | KeyCode::Backspace, _) => self.back(),
+            (Mode::Normal, KeyCode::Char('e'), false) => self.edit(terminal)?,
+            (Mode::Normal, KeyCode::Char('y'), false) => self.link(),
+            (Mode::Normal, KeyCode::Char('x'), false) => self.toggle_archive()?,
             _ => {}
         }
         Ok(Flow::Continue)
+    }
+
+    /// Makes the selected note the context: the list becomes its neighbourhood.
+    fn look_around(&mut self) {
+        let Some(row) = self.selected() else {
+            return;
+        };
+        if self.pivots.last().is_some_and(|p| p.id == row.id.as_str()) {
+            return;
+        }
+        let pivot = Pivot {
+            id: row.id.as_str().to_owned(),
+            head: row.head.clone(),
+            input: std::mem::take(&mut self.input),
+        };
+        self.pivots.push(pivot);
+        self.set_input(String::new());
+    }
+
+    /// Steps back out to where the current context was entered from.
+    fn back(&mut self) {
+        if let Some(p) = self.pivots.pop() {
+            self.set_input(p.input);
+            self.reselect(&p.id);
+        }
     }
 
     fn set_input(&mut self, input: String) {
@@ -260,13 +338,14 @@ impl App {
         self.refresh(true);
     }
 
-    /// Recomputes the list from the input. `reset` moves the selection back to the top.
+    /// Recomputes the list from the input and the context. `reset` moves the selection back to
+    /// the top.
     fn refresh(&mut self, reset: bool) {
         let query = self.input.trim();
-        let rows = if query.is_empty() {
-            self.recent()
-        } else {
-            self.related(query)
+        let rows = match (self.pivots.last(), query.is_empty()) {
+            (Some(p), _) => self.around(&p.id, query),
+            (None, true) => self.recent(),
+            (None, false) => self.related(query),
         };
         self.rows = rows;
         let selected = if reset {
@@ -309,21 +388,50 @@ impl App {
         self.engine
             .search(query, &opts)
             .into_iter()
-            .map(|hit| Row {
-                id: hit.note.id.clone(),
-                head: hit.note.head().to_owned(),
-                archived: hit.note.archived,
-                has_body: has_body(&hit.note.text),
-                reasons: hit
-                    .reasons
-                    .iter()
-                    .map(|r| format!("{}: {}", r.scorer, r.text))
-                    .collect::<Vec<_>>()
-                    .join(" · "),
-                score: Some(hit.score),
-                updated: self.store.get(hit.note.id.as_str()).and_then(|r| r.updated),
-            })
+            .map(|hit| self.row(&hit))
             .collect()
+    }
+
+    /// The neighbourhood of one note, narrowed by the input when there is one.
+    fn around(&self, id: &str, query: &str) -> Vec<Row> {
+        let opts = SearchOptions {
+            limit: AROUND_LIMIT,
+            include_archived: true,
+            today: None,
+        };
+        let near = self.engine.related(&NoteId::new(id.to_owned()), &opts);
+        if query.is_empty() {
+            return near.iter().map(|hit| self.row(hit)).collect();
+        }
+        let ids: HashSet<&str> = near.iter().map(|hit| hit.note.id.as_str()).collect();
+        let opts = SearchOptions {
+            limit: RECENT_LIMIT,
+            include_archived: true,
+            today: Some(time::day_from_unix_secs(now_secs())),
+        };
+        self.engine
+            .search(query, &opts)
+            .iter()
+            .filter(|hit| ids.contains(hit.note.id.as_str()))
+            .map(|hit| self.row(hit))
+            .collect()
+    }
+
+    fn row(&self, hit: &fzn_engine::Hit<'_>) -> Row {
+        Row {
+            id: hit.note.id.clone(),
+            head: hit.note.head().to_owned(),
+            archived: hit.note.archived,
+            has_body: has_body(&hit.note.text),
+            reasons: hit
+                .reasons
+                .iter()
+                .map(|r| format!("{}: {}", r.scorer, r.text))
+                .collect::<Vec<_>>()
+                .join(" · "),
+            score: Some(hit.score),
+            updated: self.store.get(hit.note.id.as_str()).and_then(|r| r.updated),
+        }
     }
 
     fn step(&mut self, delta: i64) {
@@ -352,9 +460,14 @@ impl App {
     }
 
     fn create(&mut self) -> Result<()> {
-        let text = self.input.trim().to_owned();
+        let mut text = self.input.trim().to_owned();
         if text.is_empty() {
             return Ok(());
+        }
+        if let Some(p) = self.pivots.last()
+            && let Some(linked) = add_link(&text, &p.head)
+        {
+            text = linked;
         }
         let now = now_secs();
         self.commit(Record {
@@ -397,7 +510,7 @@ impl App {
         if edited == record.text {
             self.status = "unchanged".into();
         } else if edited.trim().is_empty() {
-            self.status = "empty, so left unchanged; ^V archives".into();
+            self.status = "empty, so left unchanged; x archives".into();
         } else {
             self.commit(Record {
                 text: edited,
@@ -481,15 +594,27 @@ impl App {
             Span::raw(self.input.as_str()),
         ]))
         .scroll((0, scroll as u16))
-        .block(Block::bordered().title(" fzn "));
+        .block(Block::bordered().title(match self.pivots.last() {
+            Some(p) => format!(" fzn · new notes link [[{}]] ", p.head),
+            None => " fzn ".to_owned(),
+        }));
         frame.render_widget(input, input_area);
-        frame.set_cursor_position((
-            input_area.x + 3 + (self.cursor - scroll) as u16,
-            input_area.y + 1,
-        ));
+        if self.mode == Mode::Insert {
+            frame.set_cursor_position((
+                input_area.x + 3 + (self.cursor - scroll) as u16,
+                input_area.y + 1,
+            ));
+        }
 
         let searching = !self.input.trim().is_empty();
-        let title = if searching {
+        let title = if let Some(p) = self.pivots.last() {
+            format!(
+                " around {} · {}{} ",
+                fit(&p.head, 40),
+                self.rows.len(),
+                if searching { " matching" } else { "" }
+            )
+        } else if searching {
             format!(" related · {} ", self.rows.len())
         } else {
             format!(
@@ -559,9 +684,14 @@ impl App {
             preview_area,
         );
 
+        let (mode, keys) = match self.mode {
+            Mode::Insert => ("INSERT", KEYS_INSERT),
+            Mode::Normal => ("NORMAL", KEYS_NORMAL),
+        };
         let status = Line::from(vec![
-            Span::raw(format!("{} · {} notes · ", self.status, self.store.len())),
-            Span::raw(KEYS).dim(),
+            Span::raw(format!(" {mode} ")).bold().reversed(),
+            Span::raw(format!(" {} · {} notes · ", self.status, self.store.len())),
+            Span::raw(keys).dim(),
         ]);
         frame.render_widget(Paragraph::new(status), status_area);
     }

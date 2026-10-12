@@ -127,13 +127,23 @@ impl Engine {
         self.docs[d as usize].take().map(|doc| doc.note)
     }
 
-    /// What the input relates to, as it is being typed.
+    /// What the input relates to, as it is being typed. The last word counts as a prefix unless
+    /// the input ends in whitespace.
     pub fn search(&self, text: &str, opts: &SearchOptions) -> Vec<Hit<'_>> {
-        let terms = text::tokens(text);
+        let mut terms = text::tokens(text);
+        let prefix = if text.ends_with(char::is_whitespace) {
+            None
+        } else {
+            terms.pop()
+        };
         let facts = text::facts(text);
-        let labels = query_labels(&terms, &facts, None);
+        let mut labels = query_labels(&terms, &facts, None);
+        if let Some(p) = &prefix {
+            labels.push(QueryLabel::HeadPrefix(p.clone()));
+        }
         let ctx = Context {
             terms: &terms,
+            prefix: prefix.as_deref(),
             labels: &labels,
             dates: &facts.dates,
             day: opts.today,
@@ -154,6 +164,7 @@ impl Engine {
         let labels = query_labels(&terms, &doc.facts, Some(doc.note.head()));
         let ctx = Context {
             terms: &terms,
+            prefix: None,
             labels: &labels,
             dates: &doc.facts.dates,
             day: doc.note.day(),
@@ -368,6 +379,30 @@ mod tests {
             "explicit",
             "in head: horticultural, trials"
         ));
+    }
+
+    #[test]
+    fn the_word_being_typed_matches_as_a_prefix() {
+        let long_body = "lorem ipsum dolor sit amet ".repeat(400);
+        let e = engine(&[
+            ("page", &format!("House/Event Publication\n{long_body}")),
+            ("other", "events are fun"),
+            ("kb", "kettlebells log"),
+        ]);
+        let hits = e.search("event publicatio", &SearchOptions::default());
+        assert_eq!(ids(&hits)[0], "page");
+        assert!(
+            has_reason(&hits[0], "explicit", "in head: event, publication"),
+            "{:?}",
+            hits[0].reasons
+        );
+        assert!(has_reason(&hits[0], "words", "publication"));
+        let hits = e.search("kettl", &SearchOptions::default());
+        assert_eq!(ids(&hits), ["kb"]);
+        assert!(
+            e.search("kettl ", &SearchOptions::default()).is_empty(),
+            "a trailing space makes it a whole word"
+        );
     }
 
     #[test]

@@ -33,6 +33,8 @@ pub(crate) enum QueryLabel {
     LinksTo(String),
     /// Notes with this word in their head.
     HeadTerm(String),
+    /// Notes whose head has a word starting with this, the word still being typed.
+    HeadPrefix(String),
 }
 
 /// Tunable weights. The defaults are a starting point, not a conclusion.
@@ -100,7 +102,10 @@ impl Candidates {
 }
 
 pub(crate) struct Context<'a> {
+    /// Complete query words.
     pub terms: &'a [String],
+    /// The word still being typed, if any. It matches every vocabulary word it starts.
+    pub prefix: Option<&'a str>,
     pub labels: &'a [QueryLabel],
     pub dates: &'a [Day],
     /// The day to measure proximity from: today when typing, the note's own day for `related`.
@@ -108,59 +113,118 @@ pub(crate) struct Context<'a> {
     pub exclude: Option<DocId>,
 }
 
-/// BM25 over exact query terms plus fuzzy expansions, normalised so that a note matching every
-/// term strongly scores about 1.
+/// How many completions a prefix may expand to. Rare completions carry the most information,
+/// so the cap is generous; a note earns credit for its best completion only.
+pub(crate) const PREFIX_EXPANSIONS: usize = 512;
+
+/// A vocabulary term standing in for a query word, with the credit it earns relative to an
+/// exact match and the text that explains it.
+struct Member {
+    term: TermId,
+    weight: f32,
+    label: String,
+}
+
+/// One query word and everything it may stand for: itself, its completions if it is still
+/// being typed, and words that look like it. A note earns credit for the best member only.
+fn group(index: &Index, word: &str, is_prefix: bool, w: &Weights) -> Vec<Member> {
+    let mut members = Vec::new();
+    let exact = index.term_id(word);
+    if let Some(t) = exact {
+        members.push(Member {
+            term: t,
+            weight: 1.0,
+            label: word.to_owned(),
+        });
+    }
+    if is_prefix && word.chars().count() >= 2 {
+        for t in index.prefix_terms(word, PREFIX_EXPANSIONS) {
+            if exact != Some(t) {
+                members.push(Member {
+                    term: t,
+                    weight: 1.0,
+                    label: index.term_name(t).to_owned(),
+                });
+            }
+        }
+    }
+    if word.chars().count() >= 4 {
+        for (t, sim) in index.fuzzy_terms(word, 3, w.fuzzy_min_similarity) {
+            if exact != Some(t) && !members.iter().any(|m| m.term == t) {
+                members.push(Member {
+                    term: t,
+                    weight: w.fuzzy * sim,
+                    label: format!("{word}≈{}", index.term_name(t)),
+                });
+            }
+        }
+    }
+    members
+}
+
+/// BM25 over query words, each standing for its exact term, completions and look-alikes,
+/// normalised so that a note matching every word strongly scores about 1.
 pub(crate) fn lexical(index: &Index, ctx: &Context, w: &Weights, c: &mut Candidates) {
     let mut seen: Vec<&str> = Vec::new();
-    let mut qterms: Vec<(TermId, f32, String)> = Vec::new();
-    for q in ctx.terms {
-        if seen.contains(&q.as_str()) {
+    let mut groups: Vec<Vec<Member>> = Vec::new();
+    let words = ctx
+        .terms
+        .iter()
+        .map(|t| (t.as_str(), false))
+        .chain(ctx.prefix.map(|p| (p, true)));
+    for (word, is_prefix) in words {
+        if seen.contains(&word) {
             continue;
         }
-        seen.push(q);
-        let exact = index.term_id(q);
-        if let Some(t) = exact {
-            qterms.push((t, 1.0, q.clone()));
-        }
-        if q.chars().count() >= 4 {
-            for (t, sim) in index.fuzzy_terms(q, 3, w.fuzzy_min_similarity) {
-                if exact != Some(t) {
-                    qterms.push((t, w.fuzzy * sim, format!("{q}≈{}", index.term_name(t))));
-                }
-            }
+        seen.push(word);
+        let members = group(index, word, is_prefix, w);
+        if !members.is_empty() {
+            groups.push(members);
         }
     }
     let (k1, b) = (w.bm25_k1, w.bm25_b);
     let avg = index.avg_doc_len().max(1.0);
-    let max_possible: f32 = qterms
+    let max_possible: f32 = groups
         .iter()
-        .map(|(t, wt, _)| wt * index.idf(*t) * (k1 + 1.0))
+        .map(|g| {
+            g.iter()
+                .map(|m| m.weight * index.idf(m.term) * (k1 + 1.0))
+                .fold(0.0, f32::max)
+        })
         .sum();
     if max_possible <= 0.0 {
         return;
     }
-    let mut matched: HashMap<DocId, Vec<(f32, usize)>> = HashMap::new();
-    for (qi, (t, wt, _)) in qterms.iter().enumerate() {
-        let idf = index.idf(*t);
-        for &(doc, tf) in index.postings(*t) {
-            if Some(doc) == ctx.exclude {
-                continue;
+    let mut matched: HashMap<DocId, Vec<(f32, String)>> = HashMap::new();
+    for members in &groups {
+        let mut best: HashMap<DocId, (f32, usize)> = HashMap::new();
+        for (mi, m) in members.iter().enumerate() {
+            let idf = index.idf(m.term);
+            for &(doc, tf) in index.postings(m.term) {
+                if Some(doc) == ctx.exclude {
+                    continue;
+                }
+                let tf = tf as f32;
+                let dl = index.doc_len(doc) as f32;
+                let s = m.weight * idf * tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * dl / avg));
+                let e = best.entry(doc).or_insert((0.0, mi));
+                if s > e.0 {
+                    *e = (s, mi);
+                }
             }
-            let tf = tf as f32;
-            let dl = index.doc_len(doc) as f32;
-            let s = idf * tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * dl / avg));
-            let contribution = wt * s / max_possible;
+        }
+        for (doc, (s, mi)) in best {
+            let contribution = s / max_possible;
             c.entry(doc).lexical += contribution;
-            matched.entry(doc).or_default().push((contribution, qi));
+            matched
+                .entry(doc)
+                .or_default()
+                .push((contribution, members[mi].label.clone()));
         }
     }
     for (doc, mut m) in matched {
         m.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
-        let names: Vec<&str> = m
-            .iter()
-            .take(3)
-            .map(|&(_, qi)| qterms[qi].2.as_str())
-            .collect();
+        let names: Vec<&str> = m.iter().take(3).map(|(_, label)| label.as_str()).collect();
         let more = m.len().saturating_sub(3);
         let text = if more > 0 {
             format!("{} +{more}", names.join(", "))
@@ -214,6 +278,34 @@ pub(crate) fn explicit(index: &Index, ctx: &Context, c: &mut Candidates) {
                     let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
                     e.0 += weight;
                     e.1.push(t.clone());
+                }
+            }
+            QueryLabel::HeadPrefix(p) => {
+                // One credit for the word being typed: the best completion found in each head.
+                let completions = index.prefix_terms(p, PREFIX_EXPANSIONS);
+                let Some(group_weight) = completions.iter().map(|&t| index.idf(t)).reduce(f32::max)
+                else {
+                    continue;
+                };
+                query_weight += group_weight;
+                let mut best: HashMap<DocId, (f32, &str)> = HashMap::new();
+                for &t in &completions {
+                    let name = index.term_name(t);
+                    let weight = index.idf(t);
+                    for &d in index.docs_with(&Label::HeadTerm(name.to_owned())) {
+                        if Some(d) == ctx.exclude {
+                            continue;
+                        }
+                        let e = best.entry(d).or_insert((0.0, name));
+                        if weight > e.0 {
+                            *e = (weight, name);
+                        }
+                    }
+                }
+                for (d, (weight, name)) in best {
+                    let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
+                    e.0 += weight;
+                    e.1.push(name.to_owned());
                 }
             }
             QueryLabel::Tag(t) => add_explicit(
@@ -272,7 +364,9 @@ fn describe_gap(days: i32) -> String {
         0 => "same day".into(),
         1 => "a day apart".into(),
         d if d < 31 => format!("{d} days apart"),
+        d if d < 60 => "a month apart".into(),
         d if d < 365 => format!("{} months apart", d / 30),
+        d if d < 730 => "a year apart".into(),
         d => format!("{} years apart", d / 365),
     }
 }
@@ -285,10 +379,16 @@ pub(crate) fn temporal(
     w: &Weights,
     c: &mut Candidates,
 ) {
+    // A date shared with the query that is also the query's own day is one coincidence, not two:
+    // such a note gets the shared-date credit and not the proximity bonus as well.
+    let mut same_day: Vec<DocId> = Vec::new();
     for &d in ctx.dates {
         for &doc in index.docs_with(&Label::Date(d)) {
             if Some(doc) == ctx.exclude {
                 continue;
+            }
+            if Some(d) == ctx.day && day_of(doc) == Some(d) {
+                same_day.push(doc);
             }
             let p = c.entry(doc);
             p.temporal += 0.5;
@@ -299,7 +399,11 @@ pub(crate) fn temporal(
         }
     }
     if let Some(day) = ctx.day {
+        same_day.sort_unstable();
         for (&doc, p) in c.0.iter_mut() {
+            if same_day.binary_search(&doc).is_ok() {
+                continue;
+            }
             let Some(d) = day_of(doc) else { continue };
             let delta = (d - day).abs();
             let bonus = 0.5 * 0.5f32.powf(delta as f32 / w.halflife_days.max(1.0));
@@ -348,7 +452,9 @@ mod tests {
         assert_eq!(describe_gap(0), "same day");
         assert_eq!(describe_gap(1), "a day apart");
         assert_eq!(describe_gap(12), "12 days apart");
+        assert_eq!(describe_gap(40), "a month apart");
         assert_eq!(describe_gap(100), "3 months apart");
+        assert_eq!(describe_gap(400), "a year apart");
         assert_eq!(describe_gap(800), "2 years apart");
     }
 }
