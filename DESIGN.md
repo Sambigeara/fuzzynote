@@ -165,9 +165,6 @@ Nothing is added to the engine until daily use asks for it.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
   CRDT updates instead of snapshots and nothing above the store module changes. In the browser
   the same log lives in IndexedDB or OPFS.
-- Sync is "send me every line since the last one I have". The relay is a single self-hosted
-  binary that stores and fans out opaque lines per space over a websocket. It never decodes
-  them, so end-to-end encryption is a client-side concern and needs no relay changes.
 - Sharing is sharing a subset of updates. Deferred, but nothing above prevents it.
 - **The snapshot line is the way in and out, for good.** `fzn export` writes every live note
   as one such line, and a file of them put in a space's directory is read as one more log.
@@ -177,6 +174,72 @@ Nothing is added to the engine until daily use asks for it.
   survives on 7% of its notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
+
+## Sync
+A space gets from one device to another by each side sending the other the rest of each log.
+That is the whole of it. It is in the engine as `Replica`, with no I/O, so a device, a browser
+tab and the relay all run the same code.
+
+- **A space is a set of logs, and a log has one writer.** The writer only ever adds lines to
+  the end, so any copy of a log is the start of the writer's own. A *replica* is one place's
+  copy of a space. What it holds of a log is one number, and what a peer lacks is the rest.
+  Which log a line sits in is bookkeeping: the notes are what all the lines add up to, the
+  newest version of each, whatever order the lines come in and however many times.
+- **A mark is a point in a log**: how many lines in, and a digest of those lines. The digest
+  is FNV-1a, 64 bits, over each line and its newline, written as sixteen hex digits. It is a
+  check against accidents, not a defence against anyone.
+- **Three messages**, each one JSON object.
+  - `{"have":{"3f9a01c2":{"lines":293,"digest":"…"}}}` is every log the sender holds and its
+    mark in each. Said on connecting.
+  - `{"lines":{"log":"3f9a01c2","after":{"lines":293,"digest":"…"},"lines":["…"]}}` is lines
+    of a log, and the mark they come straight after.
+  - `{"forked":"3f9a01c2"}` says that the sender's log of this name and the receiver's are
+    not one log.
+- **Four rules.**
+  1. Told what a peer has, send it the rest of every log it holds less of, having checked its
+     mark against the same point in your own.
+  2. Add lines only where they continue exactly what you hold, which the mark they come after
+     says. Lines you hold already are passed over. Lines from further on than you hold are
+     answered with `have`, and the peer sends from there.
+  3. Lines you add, pass on to every other peer that lacks them. This is all a relay does.
+  4. Where a mark does not match, the two are different logs with one name: a fork. Nothing
+     of that log passes between the two, both are told, neither is changed, and every other
+     log goes on as before.
+- **Nothing else is state.** No cursors, no acknowledgements, no sequence numbers in the
+  lines. What a replica holds is all it knows, so a new device says it has nothing and is sent
+  everything, and a relay that has lost its disk is filled again by the next device to
+  connect.
+- **Lines are never read on the way.** They are copied byte for byte. A line from a later
+  format, or an encrypted one, passes through a replica that cannot read it. This is what lets
+  the text CRDT and end-to-end encryption arrive later without the relay changing.
+- **A connection** is a websocket to `/1/main` on the relay: the version of this exchange,
+  then the space. Each end pings a quiet peer and gives up on one silent for 45 seconds.
+- **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves
+  every space under its root and keeps each as the same files a device keeps, so the root of a
+  relay can be opened with fzn like any other, and what is written there goes out too. It
+  listens on `127.0.0.1:3960` until told otherwise, because it has no password and no
+  encryption yet: it is for a network where everyone who can connect may read the notes.
+  Until it has a password of its own, what keeps it private is the address it listens on and
+  whom the machine lets reach it. As a systemd service, `IPAddressAllow=` says whom, and a
+  private network that other people's devices are on needs that as well.
+- **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with
+  `--relay`. There is no command for it. While the app is open a thread keeps the space's
+  logs in step with the relay, and the status row says how that is going. With no relay
+  named, nothing leaves the machine.
+- **The files are where sync and the app meet.** The thread tells the app nothing. What
+  arrives is added to the logs, and the app finds it there as it finds what another instance
+  wrote; what the app writes, the thread finds in the logs and sends. One process at a time
+  syncs a directory, settled by a lock on a file in it: a second window leaves it to the
+  first and takes over when the first is gone. A log is locked for each write to it. If the
+  logs stop being what the replica holds, because one was replaced or something else wrote
+  to one, the replica is opened again from what is on disk.
+- **A fork is how a mistake shows.** The one that will happen is a device's id copied to a
+  second machine along with the rest of a home directory, so that two machines write different
+  logs under one name. Without the digest neither would send, each believing the other had its
+  lines, and notes would stay on one machine with nothing to say so.
+- Not covered yet: who may connect to a relay, encryption, putting a fork right other than
+  by hand, and history. Every version ever written is kept and a new device is sent all of
+  it, which today is 416K for `main` and 3.0M for the 2022 space.
 
 ## Clients
 - **Terminal**: Rust and ratatui, with the original fzn keys where they still earn their place,
@@ -193,9 +256,10 @@ Nothing is added to the engine until daily use asks for it.
   opens the URL, Ctrl-B shows scores, Escape twice quits. A date word on the top line has the
   date it stands for shown beside the line, dimmed. The title is a breadcrumb saying where
   you are, and the footer lists only the keys that apply to where the cursor is: on the top
-  line, on a note, inside a zoom. No inline multi-line editor in v1. Not yet reinstated: Ctrl-S
-  multi-select with Enter zooming on what the selection shares, Tab search groups, Ctrl-^
-  export.
+  line, on a note, inside a zoom. Above the keys is what just happened, how many notes there
+  are and, with a relay named, how sync is going. No inline multi-line editor in v1. Not yet
+  reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, Tab search
+  groups, Ctrl-^ export.
 - **Zoom.** Enter on a note makes it the context, and the breadcrumb grows by one. The list
   becomes its neighbourhood, in two parts. What is linked to or from it comes first, newest on
   top: a link is a fact, and this part is a list you keep. What the engine finds besides follows,
@@ -318,7 +382,24 @@ Nothing is added to the engine until daily use asks for it.
   Silverbullet are left out. Importing again brings a note up to date with its page unless its
   text was changed here since, and keeps what was done to it here: its links, whether it is
   archived, that it was deleted.
-- **Dumb relay, self-hosted, after the browser build exists.**
+- **A space is its logs, and sync is the rest of each.** Decided 2026-10-13. The other way
+  is for the relay to keep one journal in the order things arrive and each device a cursor
+  into it. That is less to build, but the cursor is state beside the data: lose the relay's
+  journal, or put a device back from a backup, and the two no longer agree about what was
+  sent. Here there is nothing beside the data to disagree about. It also makes every replica
+  the same, so two devices can sync with no relay between them, and the relay has no logic of
+  its own to get wrong. The cost is a rule that has to hold, one writer to a log, and the
+  digest is there to notice when it does not. Merging is per note for now: two edits of one
+  note made apart leave the newer one showing and the other in the log.
+- **Sync is part of opening the app.** Decided 2026-10-13, at Sam's suggestion, over an
+  `fzn sync` to be run beside it. A second thing to run is a second thing to remember, and
+  one that fails without being seen. What it cost was two things to get right: only one of
+  two open windows may sync, and a device syncs only while the app is open, which is when it
+  is read and written anyway. The relay is one command for the same reason, and the same
+  binary.
+- **Dumb relay, self-hosted, before the browser.** Decided 2026-10-13, reversing the order.
+  A tab needs its notes from somewhere, and a tab is one more device, so what syncs two
+  machines is also what gives a browser its notes.
 - **Same repository.** The Go implementation is tagged and kept reachable; the Rust workspace
   takes over the root. History is part of the project.
 
@@ -336,9 +417,10 @@ Nothing is added to the engine until daily use asks for it.
   mean that the one-liners set, so a long document earns almost nothing for its own words. Its
   name now finds it; part of its name, or what it says, may not. Left until use shows it
   matters. `bm25_b` is the knob, and no setting of it was right on its own.
-- How notes reach a browser. The session runs in a tab and needs its lines from somewhere, and
-  the relay comes after the browser in the milestones. Something has to hand a tab the lines of
-  a space and take back the ones it writes. Not settled.
+- Putting a fork right. The notes do not depend on which log a line is in, so the safe move is
+  for a writer to take a new name for its log. For now a fork is reported, and `fzn --help`
+  says how to do that by hand: rename the log and delete the device id. The case to expect
+  is a machine put back from a backup that writes a note before it has synced.
 - What the browser's keys are, and what stands in for Escape, Control and the arrows on a
   phone. Each is an ergonomics question of its own.
 - Editing a note in the page. The terminal hands the text to your editor; a browser has none.
@@ -354,12 +436,15 @@ Nothing is added to the engine until daily use asks for it.
    app: config, per-device log store, importers, terminal UI). The Silverbullet pages are the
    `main` space and the 2022 corpus is the `fzn-2022` space. Daily use from here; tuning follows
    use. Then the Go code is removed in one commit.
-2. **Same core in the browser.** WASM build, DOM renderer, ego graph. First step done
-   2026-10-13: the app moved out of the terminal into the engine as a session, and the engine
-   builds for wasm32 as it stands. `crates/fzn-engine` is now the index, the scorers, the note
-   as it is kept, and the session; `crates/fzn` is the terminal face, the log files, the system
-   clock, config and the importers.
-3. **Relay and sync.** Single binary, opaque lines, multiple devices. Until then, Syncthing on
-   the notes directory.
+2. **Relay and sync.** Single binary, opaque lines, multiple devices. Built 2026-10-13: the
+   exchange is in the engine as `Replica`, `fzn relay` is the relay, and fzn syncs with one
+   whenever one is named. Running since 2026-10-13 as a system service on a machine that is
+   always on, reached over a private network, where a note takes about a second to get from
+   one window to another.
+3. **Same core in the browser**, as one more device on the relay. WASM build, DOM renderer,
+   ego graph. First step done 2026-10-13: the app moved out of the terminal into the engine as
+   a session, and the engine builds for wasm32 as it stands. `crates/fzn-engine` is now the
+   index, the scorers, the note as it is kept, the session and the replica; `crates/fzn` is
+   the terminal face, the log files, the system clock, config and the importers.
 4. **Text CRDT per note.** Behind the store module.
 5. **Sharing and collaboration.**

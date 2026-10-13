@@ -8,11 +8,15 @@
 //!
 //! Under the session is the part that finds things: an incrementally maintained index and the
 //! scorers over it, in [`Engine`]. Every answer carries its reasons.
+//!
+//! Beside it is the part that gets a space from one device to another, in [`replica`]: the same
+//! shape, with messages in and out in place of files and sockets.
 
 mod engine;
 mod index;
 mod note;
 mod record;
+pub mod replica;
 mod score;
 mod session;
 pub mod text;

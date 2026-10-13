@@ -65,13 +65,17 @@ impl Logs {
         Ok(records)
     }
 
-    /// Appends a version to this device's log.
+    /// Appends a version to this device's log. The log is locked for the write, as sync locks
+    /// it to add what a relay sends back, so that neither lands in the middle of the other.
     pub fn append(&mut self, record: &Record) -> Result<()> {
-        self.log
-            .write_all(record.line()?.as_bytes())
-            .with_context(|| format!("append to {}", self.device))?;
-        self.log.flush()?;
-        Ok(())
+        let line = record.line()?;
+        self.log.lock()?;
+        let written = self
+            .log
+            .write_all(line.as_bytes())
+            .and_then(|()| self.log.flush());
+        let _ = self.log.unlock();
+        written.with_context(|| format!("append to {}", self.device))
     }
 
     /// Lines that could not be read.

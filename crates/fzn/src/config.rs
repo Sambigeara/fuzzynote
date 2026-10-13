@@ -27,6 +27,8 @@ pub struct Config {
     pub space: Option<String>,
     /// Editor for Ctrl-O. Defaults to `$VISUAL`, then `$EDITOR`, then `vi`.
     pub editor: Option<String>,
+    /// A relay to sync with. With none, nothing leaves this machine.
+    pub relay: Option<String>,
     pub weights: Weights,
 }
 
@@ -43,6 +45,11 @@ pub const TEMPLATE: &str = r#"# fzn configuration.
 
 # Editor opened by Ctrl-O. Falls back to $VISUAL, then $EDITOR, then vi.
 # editor = "vim"
+
+# A relay to sync with: a machine running `fzn relay` that your devices can reach. With this
+# set, fzn syncs whichever space it opens for as long as it is open, and works as before when
+# the relay is out of reach. Leave it out and nothing leaves this machine.
+# relay = "ws://nas.local:3960"
 
 [weights]
 lexical = 1.0              # words in common, weighted by how rare they are
@@ -122,6 +129,17 @@ pub fn resolve_root(cli: Option<&str>, env: Option<&str>, cfg: &Config) -> PathB
         .unwrap_or_else(|| home().join(".fzn"))
 }
 
+/// Relay precedence: command line, then `$FZN_RELAY`, then the config file. With none of them,
+/// there is no sync.
+pub fn resolve_relay(cli: Option<&str>, env: Option<&str>, cfg: &Config) -> Option<String> {
+    [cli, env, cfg.relay.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
 /// Space precedence: command line, then the config file, then `main`. A space is one directory
 /// under the root, so its name has to be a single plain path component.
 pub fn resolve_space(cli: Option<&str>, cfg: &Config) -> Result<String> {
@@ -194,6 +212,26 @@ mod tests {
             home().join(".fzn")
         );
         assert_eq!(expand_tilde("~/x"), home().join("x"));
+    }
+
+    #[test]
+    fn relay_precedence() {
+        let cfg = Config {
+            relay: Some("ws://cfg".into()),
+            ..Config::default()
+        };
+        let relay = |cli, env| resolve_relay(cli, env, &cfg);
+        assert_eq!(
+            relay(Some("ws://cli"), Some("ws://env")).unwrap(),
+            "ws://cli"
+        );
+        assert_eq!(relay(None, Some("ws://env")).unwrap(), "ws://env");
+        assert_eq!(relay(Some(" "), Some("")).unwrap(), "ws://cfg");
+        assert_eq!(
+            resolve_relay(None, None, &Config::default()),
+            None,
+            "and with none, nothing leaves this machine"
+        );
     }
 
     #[test]

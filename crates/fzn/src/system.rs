@@ -46,7 +46,8 @@ pub fn on(day: Day, secs_into_day: i64) -> Moment {
 #[cfg(unix)]
 fn local_offset(secs: i64) -> i32 {
     let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
-    let t = secs as libc::time_t;
+    // Whatever the system counts seconds in, which the call below says and this does not name.
+    let t = secs as _;
     // SAFETY: localtime_r reads `t` and fills the whole of `tm` through the pointers it is given,
     // and keeps neither. `tm` is read only once it has said it succeeded.
     let tm = unsafe {

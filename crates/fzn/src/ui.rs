@@ -11,11 +11,16 @@
 //! or deletes, Ctrl-V shows archived notes or archives. Escape steps back out of a note, and
 //! outside any note two of them quit. Notes are edited in your editor. The footer shows only the
 //! keys that apply where the cursor is.
+//!
+//! With a relay named, the status row says how sync is going. Sync itself is not here: a thread
+//! keeps the logs in step with the relay, and what it brings is found in the logs like anything
+//! another instance wrote.
 
 use std::fs;
 use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -29,6 +34,7 @@ use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::store::Logs;
+use crate::sync::News;
 
 /// How long the keyboard has to be idle before the logs are checked for news.
 const RELOAD_EVERY: Duration = Duration::from_secs(1);
@@ -47,6 +53,10 @@ pub struct App {
     list: ListState,
     /// Whether the previous key was Escape, which makes a second one quit.
     escaped: bool,
+    /// The relay this space syncs with, and what is heard of how that is going.
+    sync: Option<(String, Receiver<News>)>,
+    /// How sync is going, for the status row.
+    synced: String,
 }
 
 enum Flow {
@@ -280,8 +290,34 @@ fn dates_shown(dates: &[Day]) -> String {
     }
 }
 
+/// The first footer row, in at most `width` characters: what just happened, how many notes
+/// there are, and how sync is going when there is a relay to sync with. What just happened is
+/// the part that gives way when there is not room, so the rest is always there to be read.
+fn status_row(status: &str, notes: usize, synced: &str, width: usize) -> String {
+    let notes = match notes {
+        1 => "1 note".to_owned(),
+        n => format!("{n} notes"),
+    };
+    let standing = if synced.is_empty() {
+        notes
+    } else {
+        format!("{notes} · {synced}")
+    };
+    if status.is_empty() {
+        return standing;
+    }
+    let room = width.saturating_sub(standing.chars().count() + 3);
+    format!("{} · {standing}", fit(status, room))
+}
+
 impl App {
-    pub fn new(session: Session, logs: Logs, editor: String, title: String) -> Self {
+    pub fn new(
+        session: Session,
+        logs: Logs,
+        editor: String,
+        title: String,
+        sync: Option<(String, Receiver<News>)>,
+    ) -> Self {
         Self {
             session,
             logs,
@@ -290,6 +326,8 @@ impl App {
             cursor: 0,
             list: ListState::default(),
             escaped: false,
+            sync,
+            synced: String::new(),
         }
     }
 
@@ -384,17 +422,43 @@ impl App {
         Ok(flow)
     }
 
-    /// Takes in what other devices and other instances have written. Says whether anything
-    /// on screen may have changed.
+    /// Takes in what other devices and other instances have written, and what there is to say
+    /// about sync. Says whether anything on screen may have changed.
     fn reload(&mut self) -> bool {
+        let heard = self.hear_of_sync();
         match self.logs.read() {
-            Ok(records) => self.session.absorb(records),
+            Ok(records) => self.session.absorb(records) || heard,
             Err(e) => {
                 self.session
                     .say(format!("could not reread the notes: {e:#}"));
                 true
             }
         }
+    }
+
+    /// Takes in what the sync thread has said since it was last asked. How sync is going stays
+    /// on the status row. Why a relay cannot be reached, and a fork, are said once.
+    fn hear_of_sync(&mut self) -> bool {
+        let Some((relay, news)) = &self.sync else {
+            return false;
+        };
+        let mut heard = false;
+        for news in news.try_iter() {
+            heard = true;
+            match news {
+                News::Connected => self.synced = format!("syncing with {relay}"),
+                News::Elsewhere => self.synced = "another fzn here is syncing".to_owned(),
+                News::Unreachable(why) => {
+                    self.synced = "not syncing".to_owned();
+                    self.session.say(format!("{relay}: {why}"));
+                }
+                News::Forked(log) => self.session.say(format!(
+                    "the log {log} here is not the {log} on {relay}, so it is not syncing: \
+                     see fzn --help"
+                )),
+            }
+        }
+        heard
     }
 
     /// Gives the terminal over to the editor, and saves what it leaves.
@@ -539,17 +603,13 @@ impl App {
         );
 
         // Two rows, each clipped at the edge: what happened, then the keys that apply.
-        let notes = match view.notes {
-            1 => "1 note".to_owned(),
-            n => format!("{n} notes"),
-        };
-        let status = if view.status.is_empty() {
-            notes
-        } else {
-            format!("{} · {notes}", view.status)
-        };
         let footer = Text::from(vec![
-            Line::from(status),
+            Line::from(status_row(
+                view.status,
+                view.notes,
+                &self.synced,
+                usize::from(status_area.width),
+            )),
             Line::from(footer(&view.hints)).dim(),
         ]);
         frame.render_widget(Paragraph::new(footer), status_area);
@@ -568,7 +628,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fzn-ui-test-{:x}", system::random_u64()));
         let (notes, logs) = Store::open(&dir, "dev").unwrap().into_parts();
         let session = Session::new(Box::new(System), "dev", Weights::default(), notes);
-        (App::new(session, logs, "true".into(), "fzn".into()), dir)
+        let app = App::new(session, logs, "true".into(), "fzn".into(), None);
+        (app, dir)
     }
 
     /// Presses a key, with Control held when `ctrl` is set.
@@ -955,6 +1016,59 @@ mod tests {
         assert!(view.rows[0].has_body);
         let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
         assert_eq!(written.lines().count(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_status_row_says_how_sync_is_going_when_there_is_a_relay() {
+        assert_eq!(status_row("", 0, "", 80), "0 notes");
+        assert_eq!(status_row("saved", 1, "", 80), "saved · 1 note");
+        assert_eq!(
+            status_row("saved", 4, "syncing with nas.local", 80),
+            "saved · 4 notes · syncing with nas.local"
+        );
+        // What just happened gives way, so that the count and the sync are always there.
+        let long = "/a/long/path/to/where/the/notes/are/kept/on/this/machine/main";
+        let row = status_row(long, 152, "not syncing", 50);
+        assert_eq!(row, "/a/long/path/to/where/t… · 152 notes · not syncing");
+        assert_eq!(row.chars().count(), 50);
+
+        let (mut app, dir) = app();
+        assert!(!app.reload(), "with no relay there is nothing to hear");
+        let (tell, news) = std::sync::mpsc::channel();
+        app.sync = Some(("nas.local".into(), news));
+        assert!(!app.reload(), "nor until something is said");
+
+        tell.send(News::Connected).unwrap();
+        assert!(app.reload());
+        assert_eq!(app.synced, "syncing with nas.local");
+        tell.send(News::Unreachable("connection refused".into()))
+            .unwrap();
+        assert!(app.reload());
+        assert_eq!(app.synced, "not syncing");
+        assert_eq!(
+            app.session.view().status,
+            "nas.local: connection refused",
+            "why is said once, and the row goes on saying that it is not"
+        );
+        tell.send(News::Connected).unwrap();
+        tell.send(News::Forked("3f9a01c2".into())).unwrap();
+        assert!(app.reload());
+        assert_eq!(
+            app.synced, "syncing with nas.local",
+            "every other log goes on"
+        );
+        assert!(
+            app.session
+                .view()
+                .status
+                .starts_with("the log 3f9a01c2 here is not the 3f9a01c2 on nas.local"),
+            "{}",
+            app.session.view().status
+        );
+        tell.send(News::Elsewhere).unwrap();
+        assert!(app.reload());
+        assert_eq!(app.synced, "another fzn here is syncing");
         fs::remove_dir_all(&dir).unwrap();
     }
 
