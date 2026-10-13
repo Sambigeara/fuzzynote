@@ -277,10 +277,26 @@ tab and the relay all run the same code.
   on a note already on the path goes back to it, so the path never repeats; Escape steps back one
   hop, onto the top line. This is the ego graph as a flat list; following a link is picking its
   target here.
-- **Browser**: the same session compiled to wasm32 via wasm-bindgen, with a thin DOM renderer.
-  Its keys are its own: a browser keeps Ctrl-W, Ctrl-R, Ctrl-L and most of the terminal's
-  chords for itself, and a phone has none. Its line is an ordinary text field. The graph view
-  lives here as an ego graph of the current note, one or two hops out.
+- **Browser**: the same session and replica compiled to wasm32 via wasm-bindgen, with a page
+  of plain JavaScript and CSS to drive them: no framework and no build step but the engine's.
+  A tab is one more device. It has an id and a log of its own, keeps every log of the space
+  in the browser between visits, and syncs with the relay it was loaded from, so there is one
+  address to open and nothing to set up. A relay hands the page out when it is pointed at the
+  `web` directory with `--web`.
+  - *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
+    terminal's chords are not here, because a browser keeps most of them for itself. Every
+    other thing that can be asked for is a button at the foot of the page, the footer of the
+    terminal made pressable, and Tab reaches them. Only what applies where the cursor is gets
+    one.
+  - *The line* is an ordinary text field, so the phone's keyboard and the browser's own
+    editing work in it. A cross clears it.
+  - *Reading and editing.* The note under the cursor is beside the list, or under its own row
+    on a narrow screen. Editing swaps it for a plain text box: Ctrl-Enter saves and Escape
+    leaves it as it was.
+  - *One tab at a time* is the device. A tab that opens says so and the older one stands
+    down, since two of them writing one log would fork it.
+  - Not yet: the page itself needs the relay to load, the graph view, and anything a browser
+    only allows a page served over TLS, which a relay does not do.
 
 ## Decisions
 - **Rust, not Go and not Zig.** One codebase must run natively and in WASM with small binaries
@@ -397,6 +413,16 @@ tab and the relay all run the same code.
   two open windows may sync, and a device syncs only while the app is open, which is when it
   is read and written anyway. The relay is one command for the same reason, and the same
   binary.
+- **The page crosses to the engine as text.** Decided 2026-10-13. An action goes in as JSON
+  and the view comes back as JSON, with a hint's action being exactly what to send back to
+  ask for it, so the buttons at the foot of the page are the view's hints and nothing more.
+  The alternative was a typed binding for every part of the view. Text keeps the boundary to
+  seven calls, makes the page readable without the engine's types, and costs a parse that is
+  far below a frame.
+- **The relay hands out the page.** Decided 2026-10-13. A page loaded from the relay knows
+  where its relay is, is covered by whatever lets a device reach the relay, and needs no
+  second server. The page is a directory the relay is pointed at, not something built into
+  the binary, so that changing how the page looks is a reload.
 - **Dumb relay, self-hosted, before the browser.** Decided 2026-10-13, reversing the order.
   A tab needs its notes from somewhere, and a tab is one more device, so what syncs two
   machines is also what gives a browser its notes.
@@ -421,9 +447,12 @@ tab and the relay all run the same code.
   for a writer to take a new name for its log. For now a fork is reported, and `fzn --help`
   says how to do that by hand: rename the log and delete the device id. The case to expect
   is a machine put back from a backup that writes a note before it has synced.
-- What the browser's keys are, and what stands in for Escape, Control and the arrows on a
-  phone. Each is an ergonomics question of its own.
-- Editing a note in the page. The terminal hands the text to your editor; a browser has none.
+- The browser's keys past the four. Buttons reached with Tab are a start: nothing to
+  remember, but slower than a chord for archiving ten notes in a row. Clearing the line and
+  undo have no key at all yet.
+- Touch. A tap puts the cursor on a note and a second goes in, and the path at the top is the
+  way back. Whether that is right is for use on a phone to say.
+- Editing a note in the page is a plain text box. A long document wants more than that.
 - A summon key. Starting should feel like switching a window, so the terminal build wants a
   keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
 - Name. `fzn` stays unless something better appears.
@@ -442,9 +471,10 @@ tab and the relay all run the same code.
    always on, reached over a private network, where a note takes about a second to get from
    one window to another.
 3. **Same core in the browser**, as one more device on the relay. WASM build, DOM renderer,
-   ego graph. First step done 2026-10-13: the app moved out of the terminal into the engine as
-   a session, and the engine builds for wasm32 as it stands. `crates/fzn-engine` is now the
-   index, the scorers, the note as it is kept, the session and the replica; `crates/fzn` is
-   the terminal face, the log files, the system clock, config and the importers.
+   ego graph. Built 2026-10-13 without the graph: `crates/fzn-web` is a tab as a device, and
+   `web` is the page. Before that, the same day, the app moved out of the terminal into the
+   engine as a session. `crates/fzn-engine` is now the index, the scorers, the note as it is
+   kept, the session and the replica; `crates/fzn` is the terminal face, the log files, the
+   relay, the system clock, config and the importers.
 4. **Text CRDT per note.** Behind the store module.
 5. **Sharing and collaboration.**

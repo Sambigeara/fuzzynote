@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>fzn</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <nav id="path" aria-label="Where you are"></nav>
+    <label id="top">
+      <span class="prompt" aria-hidden="true">›</span>
+      <input id="line" type="text" autocomplete="off" autocapitalize="sentences" spellcheck="false"
+             enterkeyhint="enter" aria-label="Type to find or to write" autofocus>
+      <span id="dates"></span>
+      <button id="clear" type="button" tabindex="-1" aria-label="Clear the line" hidden>×</button>
+    </label>
+  </header>
+  <section id="found">
+    <h2 id="title"></h2>
+    <ol id="list" role="listbox" aria-label="Notes"></ol>
+  </section>
+  <article id="note"></article>
+</main>
+<footer>
+  <div id="hints"></div>
+  <div id="state"><span id="status"></span><span id="count"></span><span id="sync"></span></div>
+</footer>
+<div id="elsewhere" hidden>
+  <p>fzn is open in another tab, and that one has these notes now.</p>
+  <button id="here" type="button">Use fzn here</button>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -30,6 +30,8 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::engine::{Engine, Hit, SearchOptions};
 use crate::note::NoteId;
 use crate::record::{Notes, Record, links_on_save};
@@ -51,8 +53,10 @@ pub trait Host {
 }
 
 /// Everything that can be asked of a session. One that does not apply where the cursor is does
-/// nothing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// nothing. As JSON an action is its name in snake case, with what it carries where it carries
+/// something: `"write"`, `{"type":"a line"}`, `{"select":null}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Action {
     /// The line now reads this. The cursor goes to the line.
     Type(String),
@@ -93,7 +97,8 @@ pub enum Action {
 }
 
 /// What a face has to do about an action. The session has already done its part.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Effect {
     /// A version of a note to keep, as one more line of this device's log.
     Keep(Record),
@@ -108,14 +113,14 @@ pub enum Effect {
 
 /// Something that can be asked for where the cursor is, and what to call it there. A face puts
 /// its own key or control beside the label.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Hint {
     pub action: Action,
     pub label: &'static str,
 }
 
 /// A note on the list.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Row {
     pub id: String,
     pub head: String,
@@ -134,7 +139,7 @@ pub struct Row {
 }
 
 /// What to show.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct View<'a> {
     /// Where you are: the heads of the notes gone into, outermost first.
     pub path: Vec<&'a str>,
@@ -1699,6 +1704,55 @@ mod tests {
         assert_eq!(s.view().notes, 3, "archived notes are still notes");
         s.act(Action::Type("swi".into()));
         assert_eq!(heads(&s), ["kettlebell swings"], "and they are indexed");
+    }
+
+    #[test]
+    fn actions_and_the_view_go_over_a_wire_as_json() {
+        for (action, json) in [
+            (Action::Write, r#""write""#),
+            (Action::GoIn, r#""go_in""#),
+            (Action::ShowArchived, r#""show_archived""#),
+            (Action::Type("a line".into()), r#"{"type":"a line"}"#),
+            (Action::Move(-1), r#"{"move":-1}"#),
+            (Action::Select(None), r#"{"select":null}"#),
+            (Action::Select(Some(3)), r#"{"select":3}"#),
+            (
+                Action::Save {
+                    id: "n1".into(),
+                    text: "a\nb".into(),
+                },
+                r#"{"save":{"id":"n1","text":"a\nb"}}"#,
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&action).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Action>(json).unwrap(), action);
+        }
+
+        let mut s = session();
+        put(&mut s, "hub", "Boiler\nthe plan", &[], 3_000);
+        s.act(Action::Move(1));
+        let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
+        assert_eq!(view["line"], "");
+        assert_eq!(view["cursor"], 0);
+        assert_eq!(view["rows"][0]["head"], "Boiler");
+        assert_eq!(view["rows"][0]["has_body"], true);
+        assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00Z");
+        assert_eq!(view["preview"]["text"], "Boiler\nthe plan");
+        assert_eq!(view["notes"], 1);
+        // A hint's action is what to send back to ask for it.
+        assert_eq!(view["hints"][0]["label"], "opens");
+        assert_eq!(view["hints"][0]["action"], "go_in");
+        let last = view["hints"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["action"], serde_json::json!({"select": null}));
+
+        let effect = Effect::Edit {
+            id: "hub".into(),
+            text: "Boiler".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&effect).unwrap(),
+            r#"{"edit":{"id":"hub","text":"Boiler"}}"#
+        );
     }
 
     #[test]

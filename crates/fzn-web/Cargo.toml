@@ -1,0 +1,18 @@
+[package]
+name = "fzn-web"
+description = "fuzzynote in a browser tab: the engine as WebAssembly, for the page to drive."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fzn-engine = { path = "../fzn-engine" }
+serde.workspace = true
+serde_json.workspace = true
+# The command line tool that prepares the module for the browser has to be this version too.
+wasm-bindgen = "=0.2.129"
+js-sys = "0.3"

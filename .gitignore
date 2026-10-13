@@ -26,3 +26,6 @@ debug/
 
 # Rust
 /target/
+
+# The engine built for the browser, by web/build.sh
+/web/pkg/

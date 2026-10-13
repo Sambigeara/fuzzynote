@@ -6,6 +6,10 @@
 //! [`Shelf`] is a replica kept as the logs in one directory, the app puts one on the end of a
 //! connection to a relay, and a relay puts one on the end of every connection that comes in.
 //!
+//! A relay can also hand out the pages of the web app, from a directory it is pointed at, so
+//! that a browser has one address to open: the page comes from the relay and connects back to
+//! it.
+//!
 //! The app does this on a thread of its own and tells the session nothing. What arrives is
 //! added to the files, and the app finds it there the way it finds what another instance
 //! wrote. Only one process at a time syncs a directory, which a lock on a file in it settles:
@@ -48,6 +52,11 @@ const RETRY_MOST: Duration = Duration::from_secs(30);
 const LOCK_FILE: &str = ".sync.lock";
 /// The relay, as the app numbers its one peer.
 const RELAY: Peer = 0;
+/// What a page of the web app may do: load its own files and its own WebAssembly, and talk to
+/// a relay. Nothing from anywhere else, and nothing written into the page as markup.
+const PAGE_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
+    connect-src 'self' ws: wss:; img-src 'self' data:; base-uri 'none'; form-action 'none'; \
+    frame-ancestors 'none'";
 
 /// A replica kept as the logs in one directory. While it lives, no other process syncs that
 /// directory.
@@ -470,6 +479,8 @@ pub struct Relay {
 
 struct Hub {
     root: PathBuf,
+    /// Where the pages of the web app are, if this relay hands them out.
+    web: Option<PathBuf>,
     spaces: Mutex<HashMap<String, Space>>,
     peers: AtomicU32,
 }
@@ -512,13 +523,15 @@ fn asked_for(path: &str) -> Result<&str, StatusCode> {
 }
 
 impl Relay {
-    /// Starts listening. Nothing is served until [`Relay::serve`].
-    pub fn bind(root: PathBuf, listen: &str) -> Result<Self> {
+    /// Starts listening. Nothing is served until [`Relay::serve`]. With a directory for `web`,
+    /// the relay hands out the files in it to a browser that asks.
+    pub fn bind(root: PathBuf, listen: &str, web: Option<PathBuf>) -> Result<Self> {
         let listener = TcpListener::bind(listen).with_context(|| format!("listen on {listen}"))?;
         Ok(Self {
             listener,
             hub: Arc::new(Hub {
                 root,
+                web,
                 spaces: Mutex::new(HashMap::new()),
                 peers: AtomicU32::new(1),
             }),
@@ -560,6 +573,100 @@ impl Relay {
     }
 }
 
+/// The head of the request a connection opens with, looked at without taking it off the socket,
+/// so that a request for a websocket can still be handed whole to the websocket library.
+fn opening(stream: &TcpStream) -> Result<Vec<u8>> {
+    let mut seen = vec![0u8; 16 * 1024];
+    let deadline = Instant::now() + GREETING;
+    loop {
+        let so_far = stream.peek(&mut seen)?;
+        if let Some(end) = seen[..so_far].windows(4).position(|w| w == b"\r\n\r\n") {
+            seen.truncate(end + 4);
+            return Ok(seen);
+        }
+        if so_far == 0 || so_far == seen.len() || Instant::now() > deadline {
+            bail!("not a request");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Whether a request asks for a websocket, and not for a page.
+fn asks_for_a_socket(head: &str) -> bool {
+    head.lines().skip(1).any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("upgrade")
+                && value.trim().eq_ignore_ascii_case("websocket")
+        })
+    })
+}
+
+/// The file of the web app that a request names, if it names one plainly: every part of its
+/// path a plain name, as a log's is, so that nothing outside the directory can be asked for.
+fn file_asked_for(web: &Path, target: &str) -> Option<PathBuf> {
+    let path = target.split(['?', '#']).next()?.strip_prefix('/')?;
+    if path.is_empty() {
+        return Some(web.join("index.html"));
+    }
+    let mut file = web.to_owned();
+    for part in path.split('/') {
+        if !names_a_log(part) {
+            return None;
+        }
+        file.push(part);
+    }
+    Some(file)
+}
+
+/// What kind of thing a file is, for the browser, going by its name.
+fn kind_of(file: &Path) -> &'static str {
+    match file.extension().and_then(|x| x.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("json" | "webmanifest") => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Answers a request for a page of the web app, and closes.
+fn page(hub: &Hub, mut stream: TcpStream, head: &[u8]) -> Result<()> {
+    // The request is taken off the socket before it is answered, or closing with it unread
+    // would cut the answer short.
+    let mut taken = vec![0u8; head.len()];
+    stream.read_exact(&mut taken)?;
+    let head = String::from_utf8_lossy(head);
+    let mut request = head.lines().next().unwrap_or_default().split(' ');
+    let method = request.next().unwrap_or_default();
+    let target = request.next().unwrap_or_default();
+    let found = hub
+        .web
+        .as_deref()
+        .filter(|_| method == "GET")
+        .and_then(|web| file_asked_for(web, target))
+        .and_then(|file| fs::read(&file).ok().map(|body| (kind_of(&file), body)));
+    let plain = "text/plain; charset=utf-8";
+    let (status, kind, body) = match found {
+        Some((kind, body)) => ("200 OK", kind, body),
+        None if method != "GET" => ("405 Method Not Allowed", plain, b"only GET\n".to_vec()),
+        None => ("404 Not Found", plain, b"nothing here\n".to_vec()),
+    };
+    let answer = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\
+         Cache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n\
+         Referrer-Policy: no-referrer\r\nContent-Security-Policy: {PAGE_POLICY}\r\n\
+         Connection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(answer.as_bytes())?;
+    stream.write_all(&body)?;
+    stream.flush()?;
+    Ok(())
+}
+
 /// One connection to a relay, from its greeting to its end.
 // The refusal a greeting can end in is the websocket library's type, and it is a large one.
 #[allow(clippy::result_large_err)]
@@ -567,6 +674,10 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(GREETING))?;
     stream.set_write_timeout(Some(GREETING))?;
+    let head = opening(&stream)?;
+    if !asks_for_a_socket(&String::from_utf8_lossy(&head)) {
+        return page(hub, stream, &head);
+    }
     let mut name = String::new();
     let socket =
         tungstenite::accept_hdr(
@@ -794,7 +905,11 @@ mod tests {
 
     /// A relay on a port of its own choosing, serving a root, and where to find it.
     fn relay(root: &Path) -> String {
-        let relay = Relay::bind(root.to_owned(), "127.0.0.1:0").unwrap();
+        relay_with(root, None)
+    }
+
+    fn relay_with(root: &Path, web: Option<PathBuf>) -> String {
+        let relay = Relay::bind(root.to_owned(), "127.0.0.1:0", web).unwrap();
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         address
@@ -861,6 +976,79 @@ mod tests {
         thread::sleep(LOOK * 2);
         assert_eq!(read(&other, "dev-b"), "", "and nothing of main comes to it");
         assert!(news_a.try_recv().is_err() && news_b.try_recv().is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Asks a relay for something as a browser would, and gives the answer's head and body.
+    fn ask(address: &str, request: &str) -> (String, Vec<u8>) {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).unwrap();
+        let end = answer.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&answer[..end]).into_owned();
+        (head, answer[end + 4..].to_vec())
+    }
+
+    fn get(address: &str, path: &str) -> (String, Vec<u8>) {
+        ask(
+            address,
+            &format!("GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n"),
+        )
+    }
+
+    #[test]
+    fn a_relay_hands_out_the_pages_of_the_web_app() {
+        let root = temp_dir();
+        let (web, hub, a) = (root.join("web"), root.join("relay"), root.join("a"));
+        fs::create_dir_all(web.join("pkg")).unwrap();
+        fs::create_dir_all(&hub).unwrap();
+        fs::write(web.join("index.html"), "<!doctype html><title>fzn</title>").unwrap();
+        fs::write(web.join("app.js"), "export {};").unwrap();
+        fs::write(web.join("pkg").join("fzn_web_bg.wasm"), [0u8, 97, 115, 109]).unwrap();
+        fs::write(web.join(".secret"), "no").unwrap();
+        fs::write(root.join("outside"), "no").unwrap();
+        let address = relay_with(&hub, Some(web));
+
+        let (head, body) = get(&address, "/");
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(head.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(head.contains("Content-Security-Policy: default-src 'self'"));
+        assert_eq!(body, b"<!doctype html><title>fzn</title>");
+        let (head, body) = get(&address, "/app.js?v=2");
+        assert!(head.contains("Content-Type: text/javascript"), "{head}");
+        assert_eq!(body, b"export {};");
+        let (head, body) = get(&address, "/pkg/fzn_web_bg.wasm");
+        assert!(head.contains("Content-Type: application/wasm"), "{head}");
+        assert!(head.contains("Content-Length: 4"));
+        assert_eq!(body, [0u8, 97, 115, 109]);
+
+        for path in [
+            "/missing.js",
+            "/../outside",
+            "/pkg/../../outside",
+            "/.secret",
+            "//app.js",
+        ] {
+            let (head, _) = get(&address, path);
+            assert!(head.starts_with("HTTP/1.1 404"), "{path}: {head}");
+        }
+        let post = format!("POST / HTTP/1.1\r\nHost: {address}\r\nContent-Length: 0\r\n\r\n");
+        assert!(ask(&address, &post).0.starts_with("HTTP/1.1 405"));
+
+        // And it is still a relay, on the same address.
+        fs::create_dir_all(&a).unwrap();
+        write(&a, "dev-a", "a1\n");
+        let news = start(a.clone(), address.clone(), "main".into());
+        assert_eq!(
+            news.recv_timeout(Duration::from_secs(10)),
+            Ok(News::Connected)
+        );
+        assert!(eventually(|| read(&hub.join("main"), "dev-a") == "a1\n"));
+
+        // A relay that was given no pages has none to hand out.
+        let bare = relay(&hub.join("elsewhere-root"));
+        assert!(get(&bare, "/").0.starts_with("HTTP/1.1 404"));
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -17,7 +17,7 @@ fzn [--space NAME]                      open your notes
 fzn [--space NAME] export               write every note to standard output, one to a line
 fzn [--space NAME] import-jsonl FILE    import a fuzzynote 2022 export (made by the Go cmd/export tool)
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
-fzn relay [--listen ADDRESS]            pass notes between your devices
+fzn relay [--listen ADDRESS] [--web DIR]  pass notes between your devices
 fzn --help
 
 Notes live in spaces: separate sets of notes, one directory each under the root. Plain fzn opens
@@ -36,7 +36,9 @@ syncs whichever space it opens for as long as it is open, and works as before wh
 out of reach. A relay serves every space under its root and keeps them as the same files, so
 its root can be opened with fzn too. It listens on 127.0.0.1:3960 unless --listen says
 otherwise. It has no password and no encryption yet, so only let it listen where everyone who
-can connect may read your notes.
+can connect may read your notes. With --web DIR it also hands out the web app from that
+directory, the web directory of this repository once built, so that a browser can open the
+relay's address and be one more device.
 
 If fzn says a log has forked, two machines have been writing under one device id. On one of
 them, quit fzn, rename that log in the space's directory (ID.jsonl to ID-old.jsonl, say) and
@@ -60,6 +62,7 @@ struct Args {
     space: Option<String>,
     relay: Option<String>,
     listen: Option<String>,
+    web: Option<PathBuf>,
     cmd: Cmd,
 }
 
@@ -69,6 +72,7 @@ fn parse_args() -> Result<Args> {
     let mut space = None;
     let mut relay = None;
     let mut listen = None;
+    let mut web = None;
     let mut cmd = Cmd::Open;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -100,6 +104,13 @@ fn parse_args() -> Result<Args> {
                         .ok_or_else(|| anyhow::anyhow!("--listen needs an address"))?,
                 )
             }
+            "--web" => {
+                web = Some(
+                    args.next()
+                        .map(PathBuf::from)
+                        .ok_or_else(|| anyhow::anyhow!("--web needs a directory"))?,
+                )
+            }
             "relay" => cmd = Cmd::Relay,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -128,6 +139,7 @@ fn parse_args() -> Result<Args> {
         space,
         relay,
         listen,
+        web,
         cmd,
     })
 }
@@ -138,6 +150,7 @@ fn main() -> Result<()> {
         space: space_flag,
         relay: relay_flag,
         listen,
+        web,
         cmd,
     } = parse_args()?;
     let config_dir = config::config_dir();
@@ -147,12 +160,19 @@ fn main() -> Result<()> {
     if let Cmd::Relay = cmd {
         // A relay is nobody's device: it writes nothing of its own, so it has no id.
         let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", sync::PORT));
-        let relay = sync::Relay::bind(root.clone(), &listen)?;
+        let relay = sync::Relay::bind(root.clone(), &listen, web.clone())?;
         println!(
             "fzn relay: passing on the spaces under {} to whoever connects to {}",
             root.display(),
             relay.address()?
         );
+        if let Some(web) = &web {
+            println!(
+                "fzn relay: the web app in {} is at http://{}/",
+                web.display(),
+                relay.address()?
+            );
+        }
         println!(
             "fzn relay: there is no password and no encryption yet, so anyone who can reach \
              that address can read and write these notes"

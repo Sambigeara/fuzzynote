@@ -507,6 +507,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fzn-web"
+version = "0.1.0"
+dependencies = [
+ "fzn-engine",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

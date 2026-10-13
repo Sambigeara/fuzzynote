@@ -1,0 +1,648 @@
+/* fzn in a browser: a line, a list and a note, on paper. */
+
+:root {
+  --paper: #fbfaf6;
+  --ink: #1e1c19;
+  --soft: #6e6960;
+  --faint: #a8a298;
+  --rule: #e7e2d8;
+  --wash: #f2eee5;
+  --accent: #b24e1a;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --edge: 2rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #141312;
+    --ink: #e9e5dd;
+    --soft: #9d978d;
+    --faint: #69645c;
+    --rule: #2a2825;
+    --wash: #1f1d1b;
+    --accent: #ea8f58;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The page: the line across the top, the list under it, the note beside the list. */
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: 3.5rem;
+  width: 100%;
+  max-width: 78rem;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 2.25rem var(--edge) 0;
+}
+
+header {
+  grid-column: 1 / -1;
+  padding-bottom: 1.5rem;
+}
+
+/* Where you are. */
+
+#path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-height: 1.5rem;
+  font-size: 0.85rem;
+  color: var(--soft);
+  letter-spacing: 0.01em;
+}
+
+#path button {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 4px;
+}
+
+#path button:hover,
+#path button:focus-visible {
+  color: var(--ink);
+}
+
+#path button[aria-current] {
+  color: var(--ink);
+  font-weight: 600;
+  cursor: default;
+}
+
+#path .sep {
+  color: var(--faint);
+}
+
+/* The line. */
+
+#top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin-top: 0.35rem;
+  padding: 0.3rem 0 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  transition: border-color 120ms;
+}
+
+#top:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.prompt {
+  color: var(--accent);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  user-select: none;
+}
+
+#line {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: inherit;
+  caret-color: var(--accent);
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+#line::placeholder {
+  color: var(--faint);
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+#dates {
+  color: var(--soft);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#clear {
+  align-self: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  color: var(--faint);
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+#clear:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+#clear[hidden] {
+  display: none;
+}
+
+/* The list. */
+
+#found,
+#note {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 2rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+
+#title {
+  margin: 0 0 0.6rem;
+  padding-left: 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+#list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  position: relative;
+  padding: 0.42rem 0.75rem;
+  border-radius: 7px;
+  cursor: default;
+}
+
+.row:hover {
+  background: color-mix(in srgb, var(--wash) 55%, transparent);
+}
+
+.row[aria-selected="true"] {
+  background: var(--wash);
+}
+
+.row[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* What the engine only suggests starts a little way off from what is linked. */
+.row.suggested {
+  margin-top: 0.9rem;
+}
+
+.row.suggested::after {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  top: -0.45rem;
+  border-top: 1px dashed var(--rule);
+}
+
+.main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.mark {
+  flex: none;
+  width: 0.8rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--soft);
+}
+
+.head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.links {
+  flex: 1 2 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--soft);
+}
+
+.score {
+  flex: none;
+  font: 0.75rem var(--mono);
+  color: var(--faint);
+}
+
+.row time {
+  flex: none;
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.why {
+  padding-left: 1.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+
+.row.archived .head,
+.row.archived .links {
+  color: var(--faint);
+}
+
+/* The note. */
+
+#note {
+  padding-left: 0.25rem;
+  transition: opacity 120ms;
+}
+
+/* With the cursor on the line, the note beside the list is only the first one, at a glance. */
+#note.glance {
+  opacity: 0.55;
+}
+
+.meta {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+#note h1 {
+  margin: 0.5rem 0 0.75rem;
+  font-size: 1.3rem;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.body {
+  max-width: 68ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--ink) 88%, var(--paper));
+}
+
+.editor {
+  display: block;
+  width: 100%;
+  height: calc(100% - 3.25rem);
+  min-height: 12rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: 0;
+  resize: none;
+  background: color-mix(in srgb, var(--wash) 45%, var(--paper));
+  color: inherit;
+  caret-color: var(--accent);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.editor:focus {
+  border-color: var(--accent);
+}
+
+.editing {
+  display: flex;
+  gap: 1.25rem;
+  padding-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--soft);
+}
+
+.editing button {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.editing button:hover,
+.editing button:focus-visible {
+  color: var(--ink);
+  outline: 0;
+}
+
+/* The foot: what can be asked for here, and what just happened. */
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 2rem;
+  width: 100%;
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 0.6rem var(--edge) calc(0.7rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--rule);
+  font-size: 0.82rem;
+  color: var(--soft);
+}
+
+#hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.35rem;
+  margin-left: -0.45rem;
+}
+
+#hints button {
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+#hints button:hover,
+#hints button:focus-visible {
+  background: var(--wash);
+  color: var(--ink);
+  outline: 0;
+}
+
+#hints button:focus-visible {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+kbd {
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.32rem;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font: 0.72rem var(--mono);
+  color: var(--ink);
+}
+
+#state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+#state span:empty {
+  display: none;
+}
+
+#state span + span::before {
+  content: "·";
+  margin-right: 0.5rem;
+  color: var(--faint);
+}
+
+#status {
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+#sync[data-state="syncing"]::after,
+#sync[data-state="not syncing"]::after,
+#sync[data-state="connecting"]::after {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-left: 0.45rem;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+#sync[data-state="syncing"]::after {
+  background: #4f9a5d;
+}
+
+#sync[data-state="not syncing"]::after {
+  background: var(--accent);
+}
+
+/* Another tab has these notes now. */
+
+#elsewhere {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1rem;
+  padding: 2rem;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  backdrop-filter: blur(3px);
+  text-align: center;
+}
+
+#elsewhere[hidden] {
+  display: none;
+}
+
+#elsewhere p {
+  margin: 0;
+  max-width: 30ch;
+  color: var(--soft);
+}
+
+#elsewhere button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  color: var(--accent);
+}
+
+.scratch {
+  position: fixed;
+  left: -100rem;
+  top: 0;
+}
+
+/* A narrow screen: one column, the note under the list, the foot always in reach. */
+
+@media (max-width: 820px) {
+  :root {
+    --edge: 1.1rem;
+  }
+
+  body {
+    grid-template-rows: auto auto;
+    align-content: start;
+    height: auto;
+    min-height: 100%;
+  }
+
+  main {
+    display: block;
+    padding-top: 1.1rem;
+    padding-bottom: 5.5rem;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 0 calc(-1 * var(--edge));
+    padding: 0.6rem var(--edge) 0.9rem;
+    background: var(--paper);
+  }
+
+  #found,
+  #note {
+    overflow: visible;
+    padding-bottom: 1.25rem;
+  }
+
+  /* There is no room beside the list. The note under the cursor opens under its own row, and
+     a note being edited takes the whole screen. */
+  #note {
+    display: none;
+  }
+
+  .reading {
+    margin: 0.5rem 0 0.2rem 1.3rem;
+    padding-left: 0.85rem;
+    border-left: 1px solid var(--rule);
+  }
+
+  .reading .body {
+    margin-top: 0.35rem;
+    font-size: 0.95rem;
+  }
+
+  .editing-now #note {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    padding: 1rem var(--edge) calc(1rem + env(safe-area-inset-bottom));
+    background: var(--paper);
+  }
+
+  .editor {
+    height: calc(100% - 3.5rem);
+  }
+
+  .row {
+    padding-top: 0.6rem;
+    padding-bottom: 0.6rem;
+  }
+
+  /* A head is read whole here, on as many lines as it takes, with what it is linked to under
+     it and the date kept to the corner. */
+  .main {
+    display: grid;
+    grid-template-columns: 0.8rem minmax(0, 1fr) auto;
+    column-gap: 0.5rem;
+  }
+
+  .head {
+    grid-column: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .links {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .row time {
+    grid-column: 3;
+    grid-row: 1;
+    padding-left: 0;
+    font-size: 0.72rem;
+  }
+
+  .why {
+    white-space: normal;
+  }
+
+  footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    gap: 0.3rem;
+    background: var(--paper);
+  }
+
+  #hints {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  #hints button {
+    padding: 0.4rem 0.6rem;
+  }
+
+  #state {
+    margin-left: 0;
+    font-size: 0.75rem;
+  }
+}
