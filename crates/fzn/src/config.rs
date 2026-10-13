@@ -1,13 +1,14 @@
-//! Configuration: where notes live, which editor to use, and the engine weights.
+//! Configuration: where notes live, which space to open, which editor to use, and the engine
+//! weights.
 //!
 //! The config directory also holds this device's id. It must never be synced between machines,
 //! which is why it is separate from the notes directory.
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fzn_engine::Weights;
 use serde::{Deserialize, Serialize};
 
@@ -15,12 +16,15 @@ use crate::store::random_u64;
 
 pub const CONFIG_FILE: &str = "config.toml";
 pub const DEVICE_FILE: &str = "device";
+pub const DEFAULT_SPACE: &str = "main";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Where the note logs live. Defaults to `~/.fzn`.
+    /// Where the spaces live, one directory each. Defaults to `~/.fzn`.
     pub root: Option<String>,
+    /// The space opened when none is named. Defaults to `main`.
+    pub space: Option<String>,
     /// Editor for Ctrl-O. Defaults to `$VISUAL`, then `$EDITOR`, then `vi`.
     pub editor: Option<String>,
     pub weights: Weights,
@@ -30,8 +34,12 @@ pub struct Config {
 pub const TEMPLATE: &str = r#"# fzn configuration.
 # The weights tune the relevance engine: change a number and restart.
 
-# Where the note logs live. Point Syncthing, or anything that copies files, at this directory.
+# Where your spaces live, one directory each. Point Syncthing, or anything that copies files,
+# at this directory.
 # root = "~/.fzn"
+
+# The space that plain `fzn` opens. `fzn --space NAME` opens another.
+# space = "main"
 
 # Editor opened by Ctrl-O. Falls back to $VISUAL, then $EDITOR, then vi.
 # editor = "vim"
@@ -42,6 +50,7 @@ explicit = 0.8             # shared #tags, @people and [[links]]
 temporal = 0.3             # shared dates and closeness in time
 fuzzy = 0.7                # how much a misspelt word counts relative to an exact one
 fuzzy_min_similarity = 0.5 # how close a misspelling has to be to count
+about = 0.8                # how much the name of a note counts for the notes linked to it
 bm25_k1 = 1.2
 bm25_b = 0.75
 halflife_days = 30.0       # the closeness-in-time bonus halves every this many days
@@ -113,6 +122,22 @@ pub fn resolve_root(cli: Option<&str>, env: Option<&str>, cfg: &Config) -> PathB
         .unwrap_or_else(|| home().join(".fzn"))
 }
 
+/// Space precedence: command line, then the config file, then `main`. A space is one directory
+/// under the root, so its name has to be a single plain path component.
+pub fn resolve_space(cli: Option<&str>, cfg: &Config) -> Result<String> {
+    let name = [cli, cfg.space.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_SPACE);
+    let mut parts = Path::new(name).components();
+    match (parts.next(), parts.next()) {
+        (Some(Component::Normal(_)), None) => Ok(name.to_owned()),
+        _ => bail!("{name:?} cannot name a space"),
+    }
+}
+
 /// Editor precedence: the config file, then `$VISUAL`, then `$EDITOR`, then `vi`.
 pub fn editor(cfg: &Config) -> String {
     cfg.editor
@@ -169,6 +194,21 @@ mod tests {
             home().join(".fzn")
         );
         assert_eq!(expand_tilde("~/x"), home().join("x"));
+    }
+
+    #[test]
+    fn space_precedence_and_names() {
+        let cfg = Config {
+            space: Some("work".into()),
+            ..Config::default()
+        };
+        assert_eq!(resolve_space(Some("old"), &cfg).unwrap(), "old");
+        assert_eq!(resolve_space(None, &cfg).unwrap(), "work");
+        assert_eq!(resolve_space(Some(" "), &cfg).unwrap(), "work");
+        assert_eq!(resolve_space(None, &Config::default()).unwrap(), "main");
+        for bad in ["..", ".", "a/b", "/abs"] {
+            assert!(resolve_space(Some(bad), &cfg).is_err(), "{bad}");
+        }
     }
 
     #[test]

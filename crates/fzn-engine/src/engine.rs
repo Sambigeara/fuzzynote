@@ -49,6 +49,10 @@ pub struct Hit<'a> {
     pub note: &'a Note,
     pub score: f32,
     pub reasons: Vec<Reason>,
+    /// Whether the note is linked to or from the one being looked around. That is a fact, where
+    /// the rest is a guess, and such notes are returned whatever they score and whatever the
+    /// limit.
+    pub linked: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -128,19 +132,17 @@ impl Engine {
     }
 
     /// What the input relates to, as it is being typed. The last word counts as a prefix unless
-    /// the input ends in whitespace.
+    /// the input ends in whitespace. A note headed with what was typed is the note being named,
+    /// and comes first whatever it scores and whatever the limit.
     pub fn search(&self, text: &str, opts: &SearchOptions) -> Vec<Hit<'_>> {
-        let mut terms = text::tokens(text);
-        let prefix = if text.ends_with(char::is_whitespace) {
-            None
-        } else {
-            terms.pop()
-        };
+        let (terms, prefix) = typed_words(text);
         let facts = text::facts(text);
-        let mut labels = query_labels(&terms, &facts, None);
+        let mut labels = query_labels(&terms, &facts);
         if let Some(p) = &prefix {
             labels.push(QueryLabel::HeadPrefix(p.clone()));
         }
+        // A note is found by the name of a note it links to, as it is by its own words.
+        let named = |d: DocId| self.named(d);
         let ctx = Context {
             terms: &terms,
             prefix: prefix.as_deref(),
@@ -148,11 +150,86 @@ impl Engine {
             dates: &facts.dates,
             day: opts.today,
             exclude: None,
+            links_in: &[],
+            links_out: &[],
+            named: Some(&named),
         };
-        self.run(&ctx, opts)
+        self.run(&ctx, opts, &self.headed(text))
     }
 
-    /// The neighbourhood of an existing note.
+    /// The notes whose head is what was typed, sorted: every word of the head was typed and no
+    /// other word was. The last word typed stands for the one head word it starts, unless
+    /// whitespace follows it.
+    fn headed(&self, text: &str) -> Vec<DocId> {
+        let mut words = text::tokens(text);
+        let last = if text.ends_with(char::is_whitespace) {
+            None
+        } else {
+            words.pop()
+        };
+        words.sort_unstable();
+        words.dedup();
+        let called = |words: &[String]| self.index.docs_with(&Label::Name(words.join(" ")));
+        let mut found: Vec<DocId> = match &last {
+            None => called(&words).to_vec(),
+            // One name for each word the unfinished one may be.
+            Some(start) => self
+                .index
+                .terms_starting(start)
+                .flat_map(|word| {
+                    let mut all = words.clone();
+                    if let Err(at) = all.binary_search_by(|w| w.as_str().cmp(word)) {
+                        all.insert(at, word.to_owned());
+                    }
+                    called(&all)
+                })
+                .copied()
+                .collect(),
+        };
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// Whether a note is named by what was typed: every word of it is in the note's head or in
+    /// the head of a note it links to, the word still being typed as the start of one, and every
+    /// date is a day the note mentions or was written on. The app asks this to tell a search
+    /// that found the note from something to be written in it.
+    pub fn named_by(&self, id: &NoteId, text: &str) -> bool {
+        let Some(doc) = self
+            .by_id
+            .get(id)
+            .and_then(|&d| self.docs[d as usize].as_ref())
+        else {
+            return false;
+        };
+        let (terms, prefix) = typed_words(text);
+        if terms.is_empty() && prefix.is_none() {
+            return false;
+        }
+        let mut names = text::tokens(doc.note.head());
+        for target in doc.note.links.iter().filter_map(|l| self.get(l)) {
+            names.extend(text::tokens(target.head()));
+        }
+        terms.iter().all(|t| names.contains(t))
+            && prefix.is_none_or(|p| names.iter().any(|n| n.starts_with(&p)))
+            && text::facts(text)
+                .dates
+                .iter()
+                .all(|day| doc.facts.dates.contains(day) || doc.note.created == Some(*day))
+    }
+
+    /// A note's head and the notes that link to it.
+    fn named(&self, d: DocId) -> Option<(&str, &[DocId])> {
+        let doc = self.docs.get(d as usize)?.as_ref()?;
+        let linked = self
+            .index
+            .docs_with(&Label::Link(doc.note.id.as_str().to_owned()));
+        Some((doc.note.head(), linked))
+    }
+
+    /// The neighbourhood of an existing note: what is linked to or from it, marked as such, and
+    /// what the engine finds besides.
     pub fn related(&self, id: &NoteId, opts: &SearchOptions) -> Vec<Hit<'_>> {
         let Some(&d) = self.by_id.get(id) else {
             return Vec::new();
@@ -160,8 +237,34 @@ impl Engine {
         let Some(doc) = self.docs[d as usize].as_ref() else {
             return Vec::new();
         };
+        let mut links_in = self
+            .index
+            .docs_with(&Label::Link(id.as_str().to_owned()))
+            .to_vec();
+        let mut links_out: Vec<DocId> = doc
+            .note
+            .links
+            .iter()
+            .filter_map(|l| self.by_id.get(l).copied())
+            .collect();
+        for docs in [&mut links_in, &mut links_out] {
+            docs.sort_unstable();
+            docs.dedup();
+            docs.retain(|&other| other != d);
+        }
+
         let terms = self.top_terms(d, 20);
-        let labels = query_labels(&terms, &doc.facts, Some(doc.note.head()));
+        let mut labels = query_labels(&terms, &doc.facts);
+        // Notes linked to the same things this one is are its siblings: a suggestion.
+        labels.extend(
+            links_out
+                .iter()
+                .filter_map(|&t| self.docs[t as usize].as_ref())
+                .map(|target| QueryLabel::LinksTo {
+                    id: target.note.id.as_str().to_owned(),
+                    head: target.note.head().to_owned(),
+                }),
+        );
         let ctx = Context {
             terms: &terms,
             prefix: None,
@@ -169,8 +272,51 @@ impl Engine {
             dates: &doc.facts.dates,
             day: doc.note.day(),
             exclude: Some(d),
+            links_in: &links_in,
+            links_out: &links_out,
+            named: None,
         };
-        self.run(&ctx, opts)
+        self.run(&ctx, opts, &[])
+    }
+
+    /// The notes a text names in `[[brackets]]`, by their heads. Brackets are a way of typing a
+    /// link and nothing more: the link itself is the id, held on the note that was saved.
+    pub fn named_in(&self, text: &str) -> Vec<NoteId> {
+        let mut named = Vec::new();
+        for head in text::facts(text).links {
+            for &d in self.index.docs_with(&Label::Head(head.clone())) {
+                if let Some(doc) = self.docs[d as usize].as_ref()
+                    && !named.contains(&doc.note.id)
+                {
+                    named.push(doc.note.id.clone());
+                }
+            }
+        }
+        named
+    }
+
+    /// The links a note holds once its text is saved. Every note the new text names in brackets
+    /// is linked, a link whose brackets were taken out of the text is dropped, and links made
+    /// any other way are kept. A note does not link to itself.
+    pub fn links_on_save(
+        &self,
+        id: &NoteId,
+        old: &str,
+        new: &str,
+        links: &[NoteId],
+    ) -> Vec<NoteId> {
+        let (before, after) = (self.named_in(old), self.named_in(new));
+        let mut links: Vec<NoteId> = links
+            .iter()
+            .filter(|l| !before.contains(l) || after.contains(l))
+            .cloned()
+            .collect();
+        for l in after {
+            if l != *id && !links.contains(&l) {
+                links.push(l);
+            }
+        }
+        links
     }
 
     pub fn stats(&self) -> Stats {
@@ -187,10 +333,20 @@ impl Engine {
         }
     }
 
-    fn run(&self, ctx: &Context, opts: &SearchOptions) -> Vec<Hit<'_>> {
+    /// Scores the candidates and lists them best first, after the notes in `first`, which is
+    /// sorted: those are the notes being named, and they are listed whatever they score.
+    fn run<'a: 'c, 'c>(
+        &'a self,
+        ctx: &Context<'c>,
+        opts: &SearchOptions,
+        first: &[DocId],
+    ) -> Vec<Hit<'a>> {
         let mut c = Candidates::default();
+        for &d in first {
+            c.include(d);
+        }
         score::lexical(&self.index, ctx, &self.weights, &mut c);
-        score::explicit(&self.index, ctx, &mut c);
+        score::explicit(&self.index, ctx, &self.weights, &mut c);
         let day_of = |d: DocId| {
             self.docs
                 .get(d as usize)
@@ -198,20 +354,64 @@ impl Engine {
                 .and_then(|doc| doc.note.day())
         };
         score::temporal(&self.index, &day_of, ctx, &self.weights, &mut c);
-        score::combine(c, &self.weights)
+        let link = |d: DocId| {
+            let (to_here, from_here) = (
+                ctx.links_in.binary_search(&d).is_ok(),
+                ctx.links_out.binary_search(&d).is_ok(),
+            );
+            match (to_here, from_here) {
+                (true, true) => Some("linked both ways"),
+                (true, false) => Some("links here"),
+                (false, true) => Some("linked from here"),
+                (false, false) => None,
+            }
+        };
+        let named = |d: DocId| first.binary_search(&d).is_ok();
+        let mut ranked = score::combine(c, &self.weights, &|d| link(d).is_some() || named(d));
+        // A stable sort, so the notes being named and the rest each keep their order.
+        ranked.sort_by_key(|&(d, ..)| !named(d));
+        let mut suggestions = 0;
+        ranked
             .into_iter()
-            .filter_map(|(d, score, reasons)| {
+            .filter_map(|(d, score, mut reasons)| {
                 let doc = self.docs.get(d as usize)?.as_ref()?;
                 if !opts.include_archived && doc.note.archived {
                     return None;
+                }
+                let link = link(d);
+                match link {
+                    Some(text) => reasons.insert(
+                        0,
+                        Reason {
+                            scorer: "link",
+                            text: text.to_owned(),
+                        },
+                    ),
+                    None if named(d) => {}
+                    // The limit is on suggestions. What is linked or named is always there.
+                    None => {
+                        suggestions += 1;
+                        if suggestions > opts.limit {
+                            return None;
+                        }
+                    }
+                }
+                if named(d) {
+                    reasons.insert(
+                        0,
+                        Reason {
+                            scorer: "name",
+                            text: "its name".to_owned(),
+                        },
+                    );
                 }
                 Some(Hit {
                     note: &doc.note,
                     score,
                     reasons,
+                    linked: link.is_some(),
                 })
             })
-            .take(opts.limit)
             .collect()
     }
 
@@ -241,7 +441,11 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     let mut labels: Vec<Label> = Vec::new();
     labels.extend(facts.tags.iter().cloned().map(Label::Tag));
     labels.extend(facts.mentions.iter().cloned().map(Label::Mention));
-    labels.extend(facts.links.iter().cloned().map(Label::Link));
+    labels.extend(
+        note.links
+            .iter()
+            .map(|l| Label::Link(l.as_str().to_owned())),
+    );
     let head = text::normalise_head(note.head());
     if !head.is_empty() {
         labels.push(Label::Head(head));
@@ -249,6 +453,9 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     let mut head_terms = text::tokens(note.head());
     head_terms.sort_unstable();
     head_terms.dedup();
+    if !head_terms.is_empty() {
+        labels.push(Label::Name(head_terms.join(" ")));
+    }
     labels.extend(head_terms.into_iter().map(Label::HeadTerm));
     labels.extend(facts.dates.iter().copied().map(Label::Date));
     if let Some(d) = note.created
@@ -259,7 +466,22 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     labels
 }
 
-fn query_labels(terms: &[String], facts: &Facts, backlinks_to: Option<&str>) -> Vec<QueryLabel> {
+/// What was typed, as the words that are complete and the word still being typed. The last word
+/// is still being typed unless whitespace follows it. A date counts as a date, which the time
+/// scorer reads, and not as the numbers in it, which would find every note with a 16 in it.
+fn typed_words(text: &str) -> (Vec<String>, Option<String>) {
+    let words = text::without_dates(text);
+    let mut terms = text::tokens(&words);
+    let prefix = if words.ends_with(char::is_whitespace) {
+        None
+    } else {
+        terms.pop()
+    };
+    (terms, prefix)
+}
+
+/// The head words, tags and mentions a query asks for.
+fn query_labels(terms: &[String], facts: &Facts) -> Vec<QueryLabel> {
     let mut labels: Vec<QueryLabel> = Vec::new();
     let mut distinct = terms.to_vec();
     distinct.sort_unstable();
@@ -267,16 +489,6 @@ fn query_labels(terms: &[String], facts: &Facts, backlinks_to: Option<&str>) -> 
     labels.extend(distinct.into_iter().map(QueryLabel::HeadTerm));
     labels.extend(facts.tags.iter().cloned().map(QueryLabel::Tag));
     labels.extend(facts.mentions.iter().cloned().map(QueryLabel::Mention));
-    for l in &facts.links {
-        labels.push(QueryLabel::LinkTarget(l.clone()));
-        labels.push(QueryLabel::LinksTo(l.clone()));
-    }
-    if let Some(head) = backlinks_to {
-        let head = text::normalise_head(head);
-        if !head.is_empty() {
-            labels.push(QueryLabel::LinksTo(head));
-        }
-    }
     labels
 }
 
@@ -342,26 +554,236 @@ mod tests {
     }
 
     #[test]
-    fn wikilinks_resolve_to_heads_and_back() {
-        let e = engine(&[
+    fn brackets_are_a_way_of_typing_a_link() {
+        let mut e = engine(&[
             ("prog", "Kettlebell Programme\nweek one: swings"),
-            ("mon", "Monday\nfollow [[kettlebell programme]]"),
+            (
+                "mon",
+                "Monday\nfollow [[kettlebell programme]] and [[Nowhere]]",
+            ),
             ("tue", "Tuesday\nrest"),
         ]);
-        let hits = e.search("[[Kettlebell Programme]]", &SearchOptions::default());
-        assert_eq!(ids(&hits)[0], "prog");
+        let id = NoteId::new;
+        assert_eq!(
+            e.named_in("see [[Kettlebell Programme|the plan]]"),
+            [id("prog")]
+        );
+        assert!(e.named_in("[[Nowhere]] and no brackets").is_empty());
+        assert!(
+            e.related(&id("prog"), &SearchOptions::default())
+                .iter()
+                .all(|h| !h.linked),
+            "nothing is linked until a note is saved with its links"
+        );
+
+        // Saving links what the text names and keeps what was linked some other way.
+        let text = "Monday\nfollow [[kettlebell programme]] and [[Nowhere]]";
+        let links = e.links_on_save(&id("mon"), "", text, &[id("tue")]);
+        assert_eq!(links, [id("tue"), id("prog")]);
+        // Taking the brackets out takes that link away, and no other.
+        let plain = "Monday\nfollow the programme";
+        assert_eq!(
+            e.links_on_save(&id("mon"), text, plain, &links),
+            [id("tue")]
+        );
+        // A link whose target was since renamed is no longer named by the text, so it stays.
+        e.upsert(Note::new("prog", "Strength Programme\nweek one: swings"));
+        assert_eq!(e.links_on_save(&id("mon"), text, text, &links), links);
+        // A note does not link to itself.
+        assert!(
+            e.links_on_save(&id("tue"), "", "[[Tuesday]]", &[])
+                .is_empty()
+        );
+    }
+
+    fn linked_to(id: &str, text: &str, target: &str) -> Note {
+        let mut n = Note::new(id, text);
+        n.links.push(NoteId::new(target));
+        n
+    }
+
+    #[test]
+    fn links_by_id_are_facts_that_survive_a_rename() {
+        let mut e = engine(&[
+            ("profile", "Profile\ntrainingapp numbers"),
+            ("near", "trainingapp ideas and plan"),
+            ("far", "cake recipe"),
+        ]);
+        e.upsert(linked_to("hub", "trainingapp\nthe plan", "profile"));
+        e.upsert(linked_to("child", "some new note", "hub"));
+        e.upsert(linked_to("sibling", "another one", "hub"));
+        let no_suggestions = SearchOptions {
+            limit: 0,
+            ..Default::default()
+        };
+        let linked = |e: &Engine, id: &str| -> Vec<String> {
+            let mut ids: Vec<String> = e
+                .related(&NoteId::new(id), &no_suggestions)
+                .iter()
+                .inspect(|h| assert!(h.linked))
+                .map(|h| h.note.id.to_string())
+                .collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            linked(&e, "hub"),
+            ["child", "profile", "sibling"],
+            "linked notes are there whatever the limit, and share no words with the hub"
+        );
+        let around = e.related(&NoteId::new("hub"), &SearchOptions::default());
+        let hit = |id: &str| around.iter().find(|h| h.note.id.as_str() == id).unwrap();
+        assert!(has_reason(hit("child"), "link", "links here"));
+        assert!(has_reason(hit("profile"), "link", "linked from here"));
+        assert!(!hit("near").linked, "shared words are a suggestion");
+        assert!(around.iter().all(|h| h.note.id.as_str() != "far"));
+
+        // From a child, the hub is linked and the other child is a suggestion with its reason.
+        let around = e.related(&NoteId::new("child"), &SearchOptions::default());
+        assert_eq!(ids(&around), ["hub", "sibling"]);
+        assert!(around[0].linked && !around[1].linked);
+        assert!(has_reason(&around[1], "explicit", "also links trainingapp"));
+        assert!(
+            around.iter().all(|h| !has_reason(h, "explicit", "about ")),
+            "in a neighbourhood what is linked is listed already"
+        );
+
+        e.upsert(linked_to("hub", "Training App\nrenamed", "profile"));
+        assert_eq!(linked(&e, "hub"), ["child", "profile", "sibling"]);
+        e.upsert(Note::new("child", "some new note"));
+        assert_eq!(linked(&e, "hub"), ["profile", "sibling"], "unlinked");
+    }
+
+    #[test]
+    fn a_note_is_found_by_the_name_of_a_note_it_links_to() {
+        let mut e = engine(&[
+            ("house", "House"),
+            ("says", "Called the plumber about the boiler"),
+            ("far", "cake recipe"),
+        ]);
+        e.upsert(linked_to("boiler", "Boiler", "house"));
+        e.upsert(linked_to("pressure", "pressure dropped again", "boiler"));
+        e.upsert(linked_to("quote", "engineer quoted 240", "boiler"));
+        let opts = SearchOptions::default();
+
+        // The name finds the note itself first, and then what was written about it.
+        let found = e.search("boiler ", &opts);
+        assert_eq!(found[0].note.id.as_str(), "boiler");
+        let mut all = ids(&found);
+        all.sort_unstable();
+        assert_eq!(all, ["boiler", "pressure", "quote", "says"]);
+        let hit = |id: &str| found.iter().find(|h| h.note.id.as_str() == id).unwrap();
+        assert!(has_reason(hit("pressure"), "explicit", "about Boiler"));
+        assert!(has_reason(hit("boiler"), "explicit", "in head: boiler"));
+        assert!(!has_reason(hit("says"), "explicit", "about"));
+
+        // A word of the note and the name of what it is about find it together.
+        let found = e.search("boiler quoted ", &opts);
+        assert_eq!(found[0].note.id.as_str(), "quote");
         assert!(has_reason(
-            &hits[0],
+            &found[0],
             "explicit",
-            "is [[kettlebell programme]]"
+            "in head: quoted, about Boiler"
         ));
-        let related = e.related(&NoteId::new("prog"), &SearchOptions::default());
-        assert_eq!(ids(&related), ["mon"]);
-        assert!(has_reason(
-            &related[0],
-            "explicit",
-            "links [[kettlebell programme]]"
+
+        // The word still being typed stands for the name it starts.
+        assert!(ids(&e.search("boi", &opts)).contains(&"pressure"));
+
+        // One hop: the house finds the boiler, and not what was written about the boiler.
+        assert_eq!(ids(&e.search("house ", &opts)), ["house", "boiler"]);
+
+        // The name is read when it is asked for, so a rename is followed.
+        e.upsert(linked_to("boiler", "Heating", "house"));
+        assert!(ids(&e.search("heating ", &opts)).contains(&"pressure"));
+        assert_eq!(ids(&e.search("boiler ", &opts)), ["says"]);
+    }
+
+    #[test]
+    fn the_note_headed_with_what_was_typed_comes_first() {
+        let long_body = "what was checked and what to watch before next winter ".repeat(300);
+        let mut e = engine(&[
+            ("doc", &format!("Boiler Service\n{long_body}")),
+            ("ideas", "ideas"),
+            ("other", "identity papers for the service"),
+        ]);
+        e.upsert(linked_to("a", "continuing with [[Boiler Service]]", "doc"));
+        e.upsert(linked_to("b", "boiler service follow up", "doc"));
+        let opts = SearchOptions::default();
+        let first = |typed: &str| e.search(typed, &opts)[0].note.id.to_string();
+        let named = |typed: &str| -> Vec<String> {
+            e.search(typed, &opts)
+                .iter()
+                .filter(|h| has_reason(h, "name", "its name"))
+                .map(|h| h.note.id.to_string())
+                .collect()
+        };
+
+        let found = e.search("boiler service", &opts);
+        assert_eq!(ids(&found)[0], "doc");
+        assert!(
+            found[0].score < found[1].score,
+            "first for its name, where its score would not put it"
+        );
+        assert_eq!(found[0].reasons[0].scorer, "name");
+        assert_eq!(named("boiler service"), ["doc"]);
+
+        // However it is typed, and with its last word unfinished.
+        assert_eq!(first("Service  BOILER "), "doc");
+        assert_eq!(first("boiler se"), "doc");
+        assert_eq!(named("id"), ["ideas"], "a head of one word, from its start");
+
+        // Part of the name is not the name, and nor is more than the name.
+        assert!(named("boiler").is_empty());
+        assert!(named("boiler service follow").is_empty());
+        assert!(named("boiler service winter").is_empty());
+        assert_eq!(named("boiler service follow up"), ["b"]);
+
+        // It is there whatever the limit, and hidden with the archived like any other note.
+        let none = SearchOptions {
+            limit: 0,
+            ..Default::default()
+        };
+        assert_eq!(ids(&e.search("boiler service", &none)), ["doc"]);
+        let mut doc = e.get(&NoteId::new("doc")).unwrap().clone();
+        doc.archived = true;
+        e.upsert(doc);
+        let live = SearchOptions {
+            include_archived: false,
+            ..Default::default()
+        };
+        assert!(!ids(&e.search("boiler service", &live)).contains(&"doc"));
+
+        // A neighbourhood has no name in it to go first.
+        let around = e.related(&NoteId::new("a"), &opts);
+        assert!(around.iter().all(|h| !has_reason(h, "name", "")));
+    }
+
+    #[test]
+    fn what_was_typed_names_a_note_by_its_head_or_by_what_it_links_to() {
+        let mut e = engine(&[("house", "House"), ("far", "cake recipe")]);
+        e.upsert(linked_to(
+            "boiler",
+            "Boiler\nserviced in the spring",
+            "house",
         ));
+        let mut quote = linked_to("quote", "engineer quoted 240", "boiler");
+        quote.created = Some(time::day_from_civil(2026, 10, 13));
+        e.upsert(quote);
+        let named = |id: &str, typed: &str| e.named_by(&NoteId::new(id), typed);
+
+        assert!(named("quote", "boiler"));
+        assert!(named("quote", "boi"), "the word still being typed");
+        assert!(named("quote", "boiler quoted"));
+        assert!(named("quote", "Quoted BOILER"));
+        assert!(!named("quote", "boi quoted"), "a finished word is whole");
+        assert!(!named("quote", "boiler valve"));
+        assert!(!named("quote", "house"), "one hop");
+        assert!(!named("boiler", "quoted"), "the name goes one way");
+        assert!(!named("boiler", "spring"), "the head, and not the body");
+        assert!(named("quote", "boiler 2026-10-13"), "written that day");
+        assert!(!named("quote", "boiler 2026-10-14"));
+        assert!(!named("quote", ""));
+        assert!(!named("gone", "boiler"));
     }
 
     #[test]
@@ -422,8 +844,9 @@ mod tests {
         let mut c = Note::new("c", "written that day");
         c.created = Some(time::day_from_civil(2026, 9, 5));
         e.upsert(c);
+        e.upsert(Note::new("d", "05 things to do in 2026, on the 09 bus"));
         let hits = e.search("2026-09-05", &SearchOptions::default());
-        assert_eq!(ids(&hits).len(), 2);
+        assert_eq!(ids(&hits).len(), 2, "the numbers in a date are not words");
         assert!(
             hits.iter()
                 .all(|h| has_reason(h, "time", "same date 2026-09-05"))

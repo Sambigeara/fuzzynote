@@ -188,6 +188,14 @@ impl Index {
         self.labels.get(label).map_or(&[], Vec::as_slice)
     }
 
+    /// Every vocabulary term starting with `prefix`, in alphabetical order.
+    pub fn terms_starting<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> {
+        self.sorted_terms
+            .range(prefix.to_owned()..)
+            .map(|(name, _)| name.as_str())
+            .take_while(move |name| name.starts_with(prefix))
+    }
+
     /// Vocabulary terms starting with `prefix`, most common first, at most `limit`.
     pub fn prefix_terms(&self, prefix: &str, limit: usize) -> Vec<TermId> {
         let mut out: Vec<TermId> = self

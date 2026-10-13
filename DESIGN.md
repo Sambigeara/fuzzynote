@@ -2,8 +2,9 @@
 
 ## Vision
 A blank page with a single blinking cursor. You type a thought, a note, a TODO. As you type, the
-engine finds what you have already written that belongs with it and shows you why. You can lock
-the link in, follow it, or ignore it. Everything is local, private and instant. The same engine
+engine finds what you have already written that belongs with it and shows you why. Go into one of
+those and write there, and what you write belongs to it: where you are is what you are talking
+about. Everything is local, private and instant. The same engine
 runs in a terminal and in a browser, syncs seamlessly between your devices, and can be shared with
 other people when you choose.
 
@@ -20,6 +21,11 @@ other people when you choose.
 - Converge, never conflict. Every change is an event; devices merge; nothing is lost.
 - One core, thin faces. The engine is a library with no UI. Terminal and browser are renderers.
 - Keyboard first, almost no chrome.
+- Ergonomics is a primary goal, and it has two halves: nothing visible ever waits, and there is
+  almost nothing to remember. The whole app fits in one sentence: type to find or to write; Enter
+  goes into the note under the cursor, or writes the line; Esc comes back; and where you are is
+  what you are talking about. Every other key is maintenance, and the footer shows only the ones
+  that apply right now. A key is justified by the flow it sits in, never inherited.
 - Archived is not forgotten. The list hides archived notes; the engine still remembers them.
 
 ## What stays from the original fzn (the soul)
@@ -28,24 +34,48 @@ other people when you choose.
 - Zoom on what is shared: select notes, press Enter, and whatever they have in common becomes
   the context: tags, people, rare words. The old common-prefix zoom is the special case.
 - Search groups: Tab-separated terms, `~` fuzzy, `!` inverse, substring by default.
-- Hashtags, @mentions, `{d}` date expansion, URLs opened or copied with one key.
+- Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key; show/hide archived globally.
 - Undo/redo, move up/down, copy/paste of whole notes.
 - Local-first, remote-second. Offline is the normal case.
 
 ## Model
-- **Space**: a set of notes plus explicit links. One space per person for now; sharing is later.
-- **Note**: stable id; text (a text CRDT); created and updated times; archived flag; pinned
-  flag. No manual position. Derived, never stored: head (first line), body, tags, mentions,
-  wikilinks, dates, URLs.
-- **Link**: from, to, kind, created. Only explicit links are stored (the user locked them in, or
-  wrote `[[head]]` or `@person`). Everything else is recomputed on demand.
-- **Syntax that the engine understands**: `#tag`, `@person`, `[[note head]]`, `{d}` expanding to
-  a date on entry, URLs. Nothing else is special. In particular the old ` >> ` prefix paths are
-  plain text; the words in them still count, the hierarchy does not.
-- **Context inheritance**: a note created while a context is active (tags, people, a zoomed
-  neighbourhood) inherits that context. This is what prefix prepending used to do, without a
-  tree. Built for the simplest case: a note created while looking around another links to it.
+- **Space**: a set of notes plus explicit links, kept apart from every other space. On disk a
+  space is one directory of logs under the root. Plain `fzn` opens the space named in the config
+  file (`main` to begin with) and `--space NAME` opens another. Sharing a space is later.
+- **Note**: stable id; text (a text CRDT); links; created and updated times; archived flag;
+  pinned flag. No manual position. Derived, never stored: head (first line), body, tags,
+  mentions, dates, URLs.
+- **Link**: from one note to another, held on the note as the target's id. There is one kind.
+  It survives a rename and adds no words to the text. Links are made by position: a note
+  written while looking around another is about it, and links to it. Nobody has to say "link".
+  Brackets are the way of typing one from inside the editor: when a note is saved, each
+  `[[head]]` that names an existing note becomes a link, and a link whose brackets were taken
+  out is dropped. The one explicit gesture is a correction: a chord on a note in a zoom links it
+  or unlinks it, for when the engine was wrong or the note was written in the wrong place. The
+  engine does not read brackets when it searches. A link adds no words, and still a note is
+  found by the name of what it is about: when you type, the head of a note that a note links to
+  counts as its own head does, one hop and no further. Only explicit links are stored;
+  everything else is recomputed on demand.
+- **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, and `[[note head]]`
+  as a way of typing a link. Nothing else is special. In particular the old ` >> ` prefix paths
+  are plain text; the words in them still count, the hierarchy does not.
+- **Date**: plain text in the note, written `2026-10-16`, and never stored apart from it. The
+  engine reads it on load, as it reads tags. A link is held as an id because a note's head can
+  change; a date's name cannot, so it lives in the text. The day a note was written is not
+  typed at all: it is the note's `created`. `/today`, `/tomorrow`, `/yesterday`, a day of the
+  week (`/fri` is the next Friday, never today) and `/+3` or `/-2` are quicker ways of typing a
+  date, and any beginning that only one of them has will do (`/tom`, `/f`). Any other slash is
+  left alone. The top line shows the date a word stands for and searches with it. Saving a
+  note, from the top line or from the editor, writes the date in its place, at the moment a
+  `[[head]]` becomes a link. A date typed as a search finds the notes that mention the day and
+  the notes written on it, and counts as a date and not as the numbers in it. The old
+  `Mon, Jan 2, 2006` form is still read.
+- **Context inheritance**: where you are is what you are talking about. A note created while a
+  context is active (tags, people, a zoomed neighbourhood) inherits that context. This is what
+  prefix prepending used to do, without a tree and without the typing: the old ` >> ` prefix was
+  this context written by hand on every line, and Ctrl-P pasted it. Built for the simplest case:
+  a note created while looking around another links to it.
 
 ## Engine
 The engine is a library with three parts. It owns no UI and makes no network calls.
@@ -57,10 +87,12 @@ terms; the index for a space ten times that size fits comfortably in memory.
 
 **Scorers.** Each takes the current input plus context and returns candidate notes with a score
 and a human-readable reason. Cheapest first:
-1. *Explicit*: shared tags, mentions, wikilinks, locked links, and words of the query that appear
-   in a note's head (weighted by rarity, so a note titled with what you typed outranks a
+1. *Explicit*: shared tags, mentions, link targets, and words of the query that appear in a
+   note's head (weighted by rarity, so a note titled with what you typed outranks a
    one-liner that merely mentions it; BM25's length normalisation would otherwise bury long
-   notes).
+   notes). For what is typed, a word in the head of a note that a note links to counts too, at
+   a little less than a word in its own (`about` in the weights), with the reason
+   `about Boiler`.
 2. *Lexical*: BM25 over the inverted index. Rare shared words count far more than common ones.
    The word under the cursor is a prefix, not a word: it stands for every vocabulary word it
    starts, in the word scorer and in the head signal, and a note earns credit for its best
@@ -72,22 +104,39 @@ and a human-readable reason. Cheapest first:
 7. *Reserved*: a local embedding scorer, on device, if semantic similarity is ever wanted. It is
    another scorer, not a dependency.
 
-**Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. Budget: under five
-milliseconds per keystroke for ten thousand notes.
+**Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. Two facts come
+before any score: what is linked to the note being looked around, and the note headed with
+what was typed. Budget: under five milliseconds per keystroke for ten thousand notes.
 
-**Tuning happens in the product.** Every suggestion shows its reasons; a key locks a link, which
-is stored as `[[head]]` in the note's own text; the weights live in a config file; a toggle shows
-scores. There is no evaluation harness and no labelling step. Nothing is added to the engine
-until daily use asks for it.
+**Tuning happens in the product.** Every suggestion shows its reasons; writing where you are
+makes a link, and a chord corrects one, stored on the note as the target's id; the weights live
+in a config file; a toggle shows scores. There is no evaluation harness and no labelling step.
+Nothing is added to the engine until daily use asks for it.
 
 ## Storage and sync
-- **v1: one append-only log per device.** Each line is a full snapshot of one note: id, text,
-  created, updated, archived, device. Loading replays every log in the directory and the newest
-  version of each id wins, ties broken by device id. A device only ever writes its own file, so
-  the directory can be synced by anything that copies files, Syncthing included, with no
-  conflicts. Last-writer-wins on a whole note is the known limitation, accepted for now.
-  Deletion is a tombstone line, kept so an older version arriving later cannot resurrect the
-  note.
+- **The note is plain text; what holds it need not be.** All of a note's meaning is in its
+  characters, in forms people already know: `#tag`, `@person`, `2026-10-16`, a URL, a first
+  line. That is the agreed structure, and the test for adding to it is whether the note still
+  reads right on paper. Beside the text go the facts it cannot carry: id, links, times,
+  archived, deleted. What you said goes in the text; what happened to the note goes beside it.
+  A file per note is not the store: files cannot merge two devices' edits, and most notes are
+  one line.
+- **v1: one append-only log per device, per space.** Each line is a full snapshot of one note
+  as JSON: `v`, the version of the line format, then id, text, links, created, updated, stamp,
+  archived, deleted, device. Times are RFC 3339 with the offset of the clock that wrote them,
+  `2026-10-13T10:12:56+01:00`, so a line reads without the app, and a note keeps the day it
+  was written on wherever it is read. Lines from before versions hold unix seconds and are
+  still read; a line with a later version than the build knows is left alone, not misread.
+  `updated` is when the text last changed, so archiving a note does not re-date it. `stamp` is when the version was written,
+  and a local change is always stamped past the version it replaces. Loading replays every log
+  in the space and the version with the newest stamp wins, ties broken by device id. A device
+  only ever writes its own file, so the root can be synced by anything that copies files,
+  Syncthing included, with no conflicts. Last-writer-wins on a whole note is the known
+  limitation, accepted for now. Deletion is a tombstone line, kept so an older version arriving
+  later cannot resurrect the note.
+- **Logs are reread as they grow.** Whenever the keyboard has been idle for a second the app
+  replays what has been appended since it last looked, so a second instance or a file-sync
+  delivery shows up without a restart. The relay will feed the same path.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
   CRDT updates instead of snapshots and nothing above the store module changes. In the browser
   the same log lives in IndexedDB or OPFS.
@@ -95,25 +144,47 @@ until daily use asks for it.
   binary that stores and fans out opaque lines per space over a websocket. It never decodes
   them, so end-to-end encryption is a client-side concern and needs no relay changes.
 - Sharing is sharing a subset of updates. Deferred, but nothing above prevents it.
-- Optional plain-text mirror: export the space as a directory of markdown files for grep,
-  Obsidian or Silverbullet. The mirror is derived, never the source of truth.
+- **The snapshot line is the way in and out, for good.** `fzn export` writes every live note
+  as one such line, and a file of them put in a space's directory is read as one more log.
+  When the logs carry CRDT updates, or are encrypted, this format stays, so notes can always be
+  read and taken away without the app. It carries the facts beside the text as well as the
+  text: the 2022 corpus is what it looks like when only the text gets out (creation time
+  survives on 7% of its notes).
+- A directory of markdown files for grep or Obsidian is a possible second export. It would be
+  derived, never the source of truth.
 
 ## Clients
-- **Terminal**: Rust and ratatui, with the original fzn keys, because that is where the muscle
-  memory is. The input is the top line; Down moves onto the list, Up and Escape come back, and
-  typing always goes to the top line. A chord acts on the top line when the cursor is there and on
-  the selected note otherwise: Enter creates or zooms, Ctrl-D clears or deletes, Ctrl-V shows
-  archived or archives. Ctrl-O opens the note in your editor, Ctrl-U and Ctrl-R undo and redo any
-  change, Ctrl-P pastes a `[[link]]` to the selected note into the input, Ctrl-C copies its first
-  URL (or its head) to the clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores, Escape twice
-  quits. No inline multi-line editor in v1. Not yet reinstated: Ctrl-S multi-select with Enter
-  zooming on what the selection shares, Tab search groups, Ctrl-^ export.
-- **Zoom.** Enter on a note makes it the context: the list becomes its neighbourhood, links in
-  and out, shared tags and people, shared words, shared dates, each with its reason. Enter again
-  walks a hop further; Escape steps back to where you came from, with the input you had
-  restored. Typing inside a context narrows the neighbourhood, and
-  a note created inside one links back to it, which is context inheritance in its simplest form.
-  This is the ego graph as a flat list; following a link is picking its target here.
+- **Terminal**: Rust and ratatui, with the original fzn keys where they still earn their place,
+  because that is where the muscle memory is. The input is the top line; Down moves onto the
+  list, Up and Escape come back, and typing always goes to the top line. A chord acts on the top
+  line when the cursor is there and on the selected note otherwise: Enter writes or goes in,
+  Ctrl-D clears or deletes, Ctrl-V shows archived or archives. Archived notes are out of every
+  list, typed results included, until Ctrl-V on the top line asks for them. Ctrl-O opens the
+  note in your editor, Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L links or unlinks the
+  selected note (see Zoom), Ctrl-C copies its first URL (or its head) to the clipboard, Ctrl-_
+  opens the URL, Ctrl-B shows scores, Escape twice quits. A date word on the top line has the
+  date it stands for shown beside the line, dimmed. The title is a breadcrumb saying where
+  you are, and the footer lists only the keys that apply to where the cursor is: on the top
+  line, on a note, inside a zoom. No inline multi-line editor in v1. Not yet reinstated: Ctrl-S
+  multi-select with Enter zooming on what the selection shares, Tab search groups, Ctrl-^
+  export.
+- **Zoom.** Enter on a note makes it the context, and the breadcrumb grows by one. The list
+  becomes its neighbourhood, in two parts. What is linked to or from it comes first, newest on
+  top: a link is a fact, and this part is a list you keep. What the engine finds besides follows,
+  best first: shared tags and people, shared words, shared dates, each with its reason. The line
+  comes with you, under one rule: if the note you went into contains what you typed, or its
+  head and the heads of the notes it links to have every word of it, you were searching for it,
+  so the line clears and Escape brings it back; otherwise you were writing, and the draft is
+  carried in to be written here. Escape never throws away what you typed: a line
+  written inside stays on the way out, and the search comes back only to an empty line. Either
+  way, what you write inside is about the note
+  and links to it, and lands at the top of the linked part; this is context inheritance in its
+  simplest form. Typing inside a context narrows the neighbourhood and ranks what is left. Ctrl-L
+  moves a note between the two parts by linking or unlinking it; it is a correction, not the
+  mechanism, and outside a zoom it has nothing to do. Enter again walks a hop further, and Enter
+  on a note already on the path goes back to it, so the path never repeats; Escape steps back one
+  hop, onto the top line. This is the ego graph as a flat list; following a link is picking its
+  target here.
 - **Browser**: the same core compiled to wasm32 via wasm-bindgen, with a thin DOM renderer. The
   graph view lives here as an ego graph of the current note, one or two hops out.
 
@@ -128,10 +199,75 @@ until daily use asks for it.
 - **CRDT from a library, behind a narrow trait.** Last-writer-wins on whole notes is not
   acceptable once notes are texts edited on two devices offline.
 - **Graph, not tree.** Prefix paths are not syntax. Explicit structure is flat labels and links:
-  tags, people, wikilinks, locked links. No note contains another. The old ` >> ` convention
+  tags, people, links. No note contains another. The old ` >> ` convention
   imports as plain text and is found by the lexical scorer.
 - **No manual ordering (provisional).** The list is recency plus pins, so the position CRDT
   goes. Sam to confirm.
+- **A link is a fact, not a score, and there is one kind.** Every link is the target's id held
+  on the note, however it was made. Linked notes are listed ahead of suggestions, and no weight
+  can bury one.
+- **A name is a fact too.** Decided 2026-10-13. The note whose head is what you typed comes
+  first, whatever it scores and whatever the limit, and says `its name`. That means every word
+  of its head typed and no other, in any order and case, with the last word allowed to be
+  unfinished: `boiler se` puts Boiler Service first, and `boiler` alone does not. The
+  scores could not be made to do this. In `main` the median note is 23 words and the longest is
+  7,493, so a document earns almost nothing for its own words and the notes that say its name
+  outrank it: one document was fifth for its own name and another note eighth. Three settings
+  of `bm25_b` across five names got none of them all right, the wins were by hundredths, and
+  with no length penalty long documents turn up for searches that are not about them. A rule
+  is also what lets "type the name, Down, Enter" be done without reading the list. Notes that
+  share a head all come first, in the order of their scores.
+- **Position is the link.** Writing inside a note's zoom is how one note comes to be about
+  another; nothing is typed and no key is pressed for it. The explicit chord is a correction.
+  There is no marking of links while drafting: to put a draft somewhere, go there and write it,
+  and the line comes with you. A Tab-to-link was considered and dropped, because it was one more
+  thing to remember for a flow position already covers.
+- **A name finds what was written in it.** Decided 2026-10-13. Typing `boiler` lists Boiler
+  and the notes written in it, each saying `about Boiler`, and `boiler quoted` finds the one
+  note among them that says "quoted". So typing a note's name shows what going into it shows,
+  and the names after the arrow on a row count as words of that row. In 2022 this was the main
+  way of finding: 85% of notes carried a ` >> ` path, most of them three to six labels deep,
+  and any label gathered its group. Position now makes the link without the typing, so without
+  this every note written in place would be out of reach of the word it was filed under, and
+  a link would be a folder that has to be opened. The name is read when the search is made and
+  not copied onto the note, so a rename is followed and the text stays as it was written. It
+  goes one hop: `house` finds Boiler and not what was written in Boiler, which is what going
+  into House shows and what the row says. A neighbourhood is not widened this way; what is
+  linked is listed there already. The carry rule reads the same names, or a note found by one
+  would take the search in with it as a draft. Measured on the 2022 notes with a hub made for
+  every first label: up to a fifth more time per keystroke, and every keystroke under 3 ms.
+- **The engine sees only what the text carries, plus where you were.** Words, tags, dates and
+  position are the free signals. The paths you walk between notes are the next one: going from A
+  to B again and again is a relation expressed without saying so, and a scorer that reads it can
+  still give its reason ("you came here from A"). Embeddings come after that, if ever. Neither
+  before daily use shows the gap.
+- **Archived is hidden until asked for.** Everywhere, typed results included. The engine still
+  indexes archived notes; the lists leave them out.
+- **Spaces, not one pile.** Notes that do not belong together live in separate spaces, and one
+  of them is home.
+- **A date is text, and `/fri` is a way of typing one.** Decided 2026-10-13, replacing `{d}`.
+  The old token only wrote today, and that is what it was used for in the 2022 corpus. A note now records the
+  day it was written, so the mechanism is for the days that are not today. There is no `/d`,
+  which would be a code to remember. The word becomes the date when the note is saved and not
+  as it is typed, so no key does anything unusual and the editor works the same way. There is
+  no general slash-command system: one trigger, one job, until a second expansion is wanted.
+- **Days are local.** A note's day is the day it was where it was written, kept by the offset
+  in its times, and today is this machine's today. The offset comes from the system through
+  one libc call, the only unsafe code in the app.
+- **Imported pages become the notes they would have been.** A page named only for a date or a
+  time, a journal page say, is not a note: each thing written on it becomes a note of that day.
+  A page that is nothing but a list becomes a note, with each item a note about it. Any other
+  page is a document and stays whole, headed by its name. On the first two kinds a task is a
+  note at any depth, archived if it was ticked and linked to the note it sat under; other
+  nested lines are the body; a bullet holding only tags hands them down. A note carries the
+  tags in force where it was written, on the line under its head, and the tags its own line
+  started with go there too: a head is what was said, not how it was filed. A line of nothing
+  but tags does not count as a body in the list. Folders and front-matter tags are tags, except a folder
+  that only holds dates, which is a calendar and not a subject. A `[[page]]` is rewritten to
+  the head its page has now, or to the date if the page was a day. Pages that are programs for
+  Silverbullet are left out. Importing again brings a note up to date with its page unless its
+  text was changed here since, and keeps what was done to it here: its links, whether it is
+  archived, that it was deleted.
 - **Dumb relay, self-hosted, after the browser build exists.**
 - **Same repository.** The Go implementation is tagged and kept reachable; the Rust workspace
   takes over the root. History is part of the project.
@@ -139,10 +275,19 @@ until daily use asks for it.
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document.
-- Should related-notes search include archived notes by default? The old corpus is 97% archived,
-  so almost certainly yes, shown dimmed.
-- How do `[[head]]` links survive a head being edited? Resolve by id at lock-in time, display by
-  current head.
+- Brackets that name a note which does not exist yet stay plain text until the note is saved
+  again. Should creating the target link the notes that were waiting for it?
+- The carry rule ("the note contains what you typed" means it was a search) is a heuristic. Its
+  bad case is clearing a one-word draft, which costs one word to retype; the case it must never
+  produce is a note called `trai` under `trainingapp`. Daily use decides whether the rule holds.
+- One hop or the whole path? With House › Boiler › a draft, `house` finds Boiler and not the draft.
+  The 2022 habit was the whole path. One hop is what the row shows; use decides.
+- Documents and one-liners share one ranking, and BM25 measures a document's length against a
+  mean that the one-liners set, so a long document earns almost nothing for its own words. Its
+  name now finds it; part of its name, or what it says, may not. Left until use shows it
+  matters. `bm25_b` is the knob, and no setting of it was right on its own.
+- A summon key. Starting should feel like switching a window, so the terminal build wants a
+  keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones
@@ -150,8 +295,9 @@ until daily use asks for it.
    in `~/fzn-corpus/`, outside this repo.
 1. **The simplest live version, in the terminal.** Built 2026-10-12 as a Cargo workspace beside
    the Go code: `crates/fzn-engine` (model, index, three scorers, no I/O) and `crates/fzn` (the
-   app: config, per-device log store, importers, terminal UI). Both corpora imported. Daily use
-   from here; tuning follows use. Then the Go code is removed in one commit.
+   app: config, per-device log store, importers, terminal UI). The Silverbullet pages are the
+   `main` space and the 2022 corpus is the `fzn-2022` space. Daily use from here; tuning follows
+   use. Then the Go code is removed in one commit.
 2. **Same core in the browser.** WASM build, DOM renderer, ego graph.
 3. **Relay and sync.** Single binary, opaque lines, multiple devices. Until then, Syncthing on
    the notes directory.

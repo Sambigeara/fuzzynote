@@ -38,6 +38,12 @@ pub fn day_from_unix_nanos(nanos: i64) -> Day {
     day_from_unix_secs(nanos.div_euclid(1_000_000_000))
 }
 
+/// The day of the week, counting from Monday as 0.
+pub fn weekday(day: Day) -> usize {
+    // 1970-01-01 was a Thursday.
+    (i64::from(day) + 3).rem_euclid(7) as usize
+}
+
 /// Formats a day as `YYYY-MM-DD`.
 pub fn format_day(day: Day) -> String {
     let (y, m, d) = civil_from_day(day);
@@ -78,5 +84,13 @@ mod tests {
             day_from_civil(2022, 1, 12)
         );
         assert_eq!(format_day(day_from_civil(2026, 9, 5)), "2026-09-05");
+    }
+
+    #[test]
+    fn weekdays_count_from_monday() {
+        assert_eq!(weekday(0), 3);
+        assert_eq!(weekday(-1), 2);
+        assert_eq!(weekday(day_from_civil(2026, 10, 12)), 0);
+        assert_eq!(weekday(day_from_civil(2026, 10, 18)), 6);
     }
 }

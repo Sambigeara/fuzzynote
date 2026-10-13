@@ -13,3 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 toml = "1"
 ratatui = "0.30"
+
+# For the offset of the local clock from UTC, which the standard library cannot say.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -27,6 +27,9 @@ impl std::fmt::Display for NoteId {
 pub struct Note {
     pub id: NoteId,
     pub text: String,
+    /// Notes this one is linked to, by id. A link held here survives its target being renamed
+    /// and adds no words to the text, unlike a `[[head]]` written into it.
+    pub links: Vec<NoteId>,
     pub created: Option<Day>,
     pub updated: Option<Day>,
     pub archived: bool,
@@ -37,6 +40,7 @@ impl Note {
         Self {
             id: NoteId::new(id),
             text: text.into(),
+            links: Vec::new(),
             created: None,
             updated: None,
             archived: false,

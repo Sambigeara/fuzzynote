@@ -12,12 +12,16 @@ use crate::time::{self, Day};
 pub enum Label {
     Tag(String),
     Mention(String),
-    /// A wikilink target the note points at, normalised.
+    /// The id of a note this one is linked to.
     Link(String),
-    /// The note's own head, normalised, so wikilinks can resolve to it.
+    /// The note's own head, normalised, so that a `[[head]]` typed into a text can be resolved
+    /// to it when the text is saved.
     Head(String),
     /// A word in the note's head.
     HeadTerm(String),
+    /// The words of the note's head, in alphabetical order with a space between: what the note
+    /// is called, in whatever order and case that is typed.
+    Name(String),
     /// A day the note was created on or mentions.
     Date(Day),
 }
@@ -27,10 +31,11 @@ pub enum Label {
 pub(crate) enum QueryLabel {
     Tag(String),
     Mention(String),
-    /// Notes whose head is this.
-    LinkTarget(String),
-    /// Notes that link to this.
-    LinksTo(String),
+    /// Notes linked to the note with this id. The head says which one in the reason.
+    LinksTo {
+        id: String,
+        head: String,
+    },
     /// Notes with this word in their head.
     HeadTerm(String),
     /// Notes whose head has a word starting with this, the word still being typed.
@@ -53,6 +58,9 @@ pub struct Weights {
     pub temporal: f32,
     /// Multiplier on a fuzzy term expansion relative to an exact term.
     pub fuzzy: f32,
+    /// Multiplier on a word found in the head of a note that a note links to, relative to one
+    /// found in its own head. Below 1, so that a name finds the note it belongs to first.
+    pub about: f32,
     /// Minimum trigram similarity for a vocabulary term to count as a fuzzy match.
     pub fuzzy_min_similarity: f32,
     pub bm25_k1: f32,
@@ -68,6 +76,7 @@ impl Default for Weights {
             explicit: 0.8,
             temporal: 0.3,
             fuzzy: 0.7,
+            about: 0.8,
             fuzzy_min_similarity: 0.5,
             bm25_k1: 1.2,
             bm25_b: 0.75,
@@ -79,7 +88,9 @@ impl Default for Weights {
 /// Why a note was suggested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reason {
-    /// The scorer that produced it: `words`, `explicit` or `time`.
+    /// The scorer that produced it: `words`, `explicit` or `time`. Or `link`, for a note linked
+    /// to or from the one being looked around, or `name`, for a note headed with what was typed:
+    /// those are facts and not scores.
     pub scorer: &'static str,
     pub text: String,
 }
@@ -99,6 +110,11 @@ impl Candidates {
     fn entry(&mut self, doc: DocId) -> &mut Partial {
         self.0.entry(doc).or_default()
     }
+
+    /// Makes a note a candidate whatever it goes on to score.
+    pub(crate) fn include(&mut self, doc: DocId) {
+        self.entry(doc);
+    }
 }
 
 pub(crate) struct Context<'a> {
@@ -111,7 +127,18 @@ pub(crate) struct Context<'a> {
     /// The day to measure proximity from: today when typing, the note's own day for `related`.
     pub day: Option<Day>,
     pub exclude: Option<DocId>,
+    /// Notes that link to the note being looked around, sorted.
+    pub links_in: &'a [DocId],
+    /// Notes it links to, sorted.
+    pub links_out: &'a [DocId],
+    /// Where this is given, a note is found by the head of a note it links to as it is by its
+    /// own. It is given for what is typed, and not for a neighbourhood, where what is linked is
+    /// listed already.
+    pub named: Option<&'a Named<'a>>,
 }
+
+/// For a note, its head and the notes that link to it.
+pub(crate) type Named<'a> = dyn Fn(DocId) -> Option<(&'a str, &'a [DocId])> + 'a;
 
 /// How many completions a prefix may expand to. Rare completions carry the most information,
 /// so the cap is generous; a note earns credit for its best completion only.
@@ -255,15 +282,57 @@ fn add_explicit(
     }
 }
 
-/// Shared tags, mentions, wikilinks and head words. Three shared labels saturate the score. Head
+/// Where a query word was found for a note.
+#[derive(Clone, Copy)]
+enum InHead<'a> {
+    /// In its own head: the word.
+    Own(&'a str),
+    /// In the head of a note it links to: that head.
+    Of(&'a str),
+}
+
+/// Offers the credit for one query word to every note with `word` in its head and, where the
+/// query asks for it, a share of it to every note linked to one of those. A note keeps the best
+/// credit it is offered for a query word.
+fn offer_head<'a>(
+    index: &Index,
+    ctx: &Context<'a>,
+    word: &'a str,
+    weight: f32,
+    about: f32,
+    best: &mut HashMap<DocId, (f32, InHead<'a>)>,
+) {
+    let mut offer = |doc: DocId, weight: f32, found: InHead<'a>| {
+        let held = best.get(&doc).map_or(0.0, |&(held, _)| held);
+        if Some(doc) != ctx.exclude && weight > held {
+            best.insert(doc, (weight, found));
+        }
+    };
+    for &d in index.docs_with(&Label::HeadTerm(word.to_owned())) {
+        offer(d, weight, InHead::Own(word));
+        if let Some((head, linked)) = ctx.named.and_then(|named| named(d)) {
+            for &other in linked {
+                if other != d {
+                    offer(other, weight * about, InHead::Of(head));
+                }
+            }
+        }
+    }
+}
+
+/// Shared tags, mentions, link targets and head words. Three shared labels saturate the score. Head
 /// words count as the fraction of the query, by rarity, that appears in the head, scaled by how
 /// specific the query is, so a note titled with the query outranks a one-liner that mentions it.
-pub(crate) fn explicit(index: &Index, ctx: &Context, c: &mut Candidates) {
+/// Where the query asks for it, the head of a note that a note links to counts nearly as its own
+/// does: a note written about another is found by that note's name without having to say it.
+pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: &mut Candidates) {
     let mut hits: HashMap<DocId, (f32, Vec<String>)> = HashMap::new();
-    let mut head_hits: HashMap<DocId, (f32, Vec<String>)> = HashMap::new();
+    let mut head_hits: HashMap<DocId, (f32, Vec<InHead>)> = HashMap::new();
     let idf_max = ((index.live_docs() as f32) + 1.0).ln().max(f32::EPSILON);
     let mut query_weight = 0.0;
     for l in ctx.labels {
+        // What each note earns for this query word, if it is one.
+        let mut best: HashMap<DocId, (f32, InHead)> = HashMap::new();
         match l {
             QueryLabel::HeadTerm(t) => {
                 let Some(term) = index.term_id(t) else {
@@ -271,41 +340,25 @@ pub(crate) fn explicit(index: &Index, ctx: &Context, c: &mut Candidates) {
                 };
                 let weight = index.idf(term);
                 query_weight += weight;
-                for &d in index.docs_with(&Label::HeadTerm(t.clone())) {
-                    if Some(d) == ctx.exclude {
-                        continue;
-                    }
-                    let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
-                    e.0 += weight;
-                    e.1.push(t.clone());
-                }
+                offer_head(index, ctx, t, weight, w.about, &mut best);
             }
             QueryLabel::HeadPrefix(p) => {
-                // One credit for the word being typed: the best completion found in each head.
+                // One credit for the word being typed: the best completion found for each note.
                 let completions = index.prefix_terms(p, PREFIX_EXPANSIONS);
                 let Some(group_weight) = completions.iter().map(|&t| index.idf(t)).reduce(f32::max)
                 else {
                     continue;
                 };
                 query_weight += group_weight;
-                let mut best: HashMap<DocId, (f32, &str)> = HashMap::new();
                 for &t in &completions {
-                    let name = index.term_name(t);
-                    let weight = index.idf(t);
-                    for &d in index.docs_with(&Label::HeadTerm(name.to_owned())) {
-                        if Some(d) == ctx.exclude {
-                            continue;
-                        }
-                        let e = best.entry(d).or_insert((0.0, name));
-                        if weight > e.0 {
-                            *e = (weight, name);
-                        }
-                    }
-                }
-                for (d, (weight, name)) in best {
-                    let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
-                    e.0 += weight;
-                    e.1.push(name.to_owned());
+                    offer_head(
+                        index,
+                        ctx,
+                        index.term_name(t),
+                        index.idf(t),
+                        w.about,
+                        &mut best,
+                    );
                 }
             }
             QueryLabel::Tag(t) => add_explicit(
@@ -322,24 +375,31 @@ pub(crate) fn explicit(index: &Index, ctx: &Context, c: &mut Candidates) {
                 1.0,
                 &format!("@{m}"),
             ),
-            QueryLabel::LinkTarget(x) => add_explicit(
+            QueryLabel::LinksTo { id, head } => add_explicit(
                 &mut hits,
                 ctx.exclude,
-                index.docs_with(&Label::Head(x.clone())),
-                2.0,
-                &format!("is [[{x}]]"),
-            ),
-            QueryLabel::LinksTo(x) => add_explicit(
-                &mut hits,
-                ctx.exclude,
-                index.docs_with(&Label::Link(x.clone())),
+                index.docs_with(&Label::Link(id.clone())),
                 1.0,
-                &format!("links [[{x}]]"),
+                &format!("also links {head}"),
             ),
+        }
+        for (d, (weight, found)) in best {
+            let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
+            e.0 += weight;
+            e.1.push(found);
+        }
+    }
+    // What is linked to or from the note being looked around. The engine states it as a
+    // reason of its own, so it carries weight here and no text.
+    for (docs, weight) in [(ctx.links_out, 2.0), (ctx.links_in, 1.0)] {
+        for &d in docs {
+            if Some(d) != ctx.exclude {
+                hits.entry(d).or_insert_with(|| (0.0, Vec::new())).0 += weight;
+            }
         }
     }
     let specificity = (query_weight / idf_max).min(1.0);
-    for (doc, (sum, words)) in head_hits {
+    for (doc, (sum, found)) in head_hits {
         let fraction = if query_weight > 0.0 {
             sum / query_weight
         } else {
@@ -347,15 +407,28 @@ pub(crate) fn explicit(index: &Index, ctx: &Context, c: &mut Candidates) {
         };
         let e = hits.entry(doc).or_insert_with(|| (0.0, Vec::new()));
         e.0 += 3.0 * fraction * specificity;
-        e.1.push(format!("in head: {}", words.join(", ")));
+        let (mut own, mut of): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+        for f in found {
+            match f {
+                InHead::Own(word) => own.push(word),
+                InHead::Of(head) if !of.contains(&head) => of.push(head),
+                InHead::Of(_) => {}
+            }
+        }
+        if !own.is_empty() {
+            e.1.push(format!("in head: {}", own.join(", ")));
+        }
+        e.1.extend(of.iter().map(|head| format!("about {head}")));
     }
     for (doc, (sum, texts)) in hits {
         let p = c.entry(doc);
         p.explicit += (sum / 3.0).min(1.0);
-        p.reasons.push(Reason {
-            scorer: "explicit",
-            text: texts.join(", "),
-        });
+        if !texts.is_empty() {
+            p.reasons.push(Reason {
+                scorer: "explicit",
+                text: texts.join(", "),
+            });
+        }
     }
 }
 
@@ -422,8 +495,13 @@ pub(crate) fn temporal(
     }
 }
 
-/// Weighted sum, best first, ties broken by doc id for determinism.
-pub(crate) fn combine(c: Candidates, w: &Weights) -> Vec<(DocId, f32, Vec<Reason>)> {
+/// Weighted sum, best first, ties broken by doc id for determinism. A note that scores nothing
+/// is dropped unless `keep` vouches for it.
+pub(crate) fn combine(
+    c: Candidates,
+    w: &Weights,
+    keep: &dyn Fn(DocId) -> bool,
+) -> Vec<(DocId, f32, Vec<Reason>)> {
     let mut out: Vec<(DocId, f32, Vec<Reason>)> =
         c.0.into_iter()
             .map(|(d, p)| {
@@ -433,7 +511,7 @@ pub(crate) fn combine(c: Candidates, w: &Weights) -> Vec<(DocId, f32, Vec<Reason
                     p.reasons,
                 )
             })
-            .filter(|x| x.1 > 0.0)
+            .filter(|x| x.1 > 0.0 || keep(x.0))
             .collect();
     out.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)

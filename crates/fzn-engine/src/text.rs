@@ -135,6 +135,42 @@ pub fn facts(text: &str) -> Facts {
     f
 }
 
+/// Whether a line says nothing but tags.
+pub fn only_tags(line: &str) -> bool {
+    let mut words = line.split_whitespace().peekable();
+    words.peek().is_some() && words.all(|w| w.starts_with('#') && facts(w).tags.len() == 1)
+}
+
+/// The text with each date written in it blanked out, for when a date is to count as a date
+/// and not as the numbers in it.
+pub fn without_dates(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let boundary = i == 0 || !is_word_char(chars[i - 1]);
+        let date = if boundary && c.is_ascii_digit() {
+            take_iso_date(&chars, i)
+        } else if boundary && c.is_ascii_alphabetic() {
+            take_fzn_date(&chars, i)
+        } else {
+            None
+        };
+        match date {
+            Some((_, end)) => {
+                out.push(' ');
+                i = end;
+            }
+            None => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
@@ -294,9 +330,139 @@ fn take_fzn_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
     Some((civil(year, month, day)?, i + 6))
 }
 
+/// A word that stands for a date, and where it is in the text, slash included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DateWord {
+    pub start: usize,
+    pub end: usize,
+    pub day: Day,
+}
+
+const DATE_NAMES: [&str; 10] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "today",
+    "tomorrow",
+    "yesterday",
+];
+
+/// Finds the words that stand for a date: a slash at the start of a word, then `today`,
+/// `tomorrow`, `yesterday`, a day of the week (the next one after today), or a number of days
+/// from today as `+3` or `-2`. Any beginning of a name that only one name has will do: `/tom`,
+/// `/f`. Anything else after a slash is left alone, a path included.
+pub fn date_words(text: &str, today: Day) -> Vec<DateWord> {
+    let mut found = Vec::new();
+    let mut at_word_start = true;
+    for (start, c) in text.char_indices() {
+        if c == '/' && at_word_start {
+            let rest = &text[start + 1..];
+            let word = rest.split(char::is_whitespace).next().unwrap_or("");
+            let word = word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')']);
+            if let Some(day) = date_named(word, today) {
+                found.push(DateWord {
+                    start,
+                    end: start + 1 + word.len(),
+                    day,
+                });
+            }
+        }
+        at_word_start = c.is_whitespace() || c == '(';
+    }
+    found
+}
+
+/// Writes out the date each date word stands for, as `2026-10-16`.
+pub fn expand_date_words(text: &str, today: Day) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    for word in date_words(text, today) {
+        out.push_str(&text[from..word.start]);
+        out.push_str(&time::format_day(word.day));
+        from = word.end;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+fn date_named(word: &str, today: Day) -> Option<Day> {
+    if let Some(days) = word.strip_prefix('+').or_else(|| word.strip_prefix('-')) {
+        if !(1..=4).contains(&days.len()) || !days.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let days: Day = days.parse().ok()?;
+        return Some(if word.starts_with('-') {
+            today - days
+        } else {
+            today + days
+        });
+    }
+    if word.is_empty() || !word.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let word = word.to_ascii_lowercase();
+    let mut named = (0..DATE_NAMES.len()).filter(|&i| DATE_NAMES[i].starts_with(&word));
+    let (name, None) = (named.next()?, named.next()) else {
+        return None;
+    };
+    Some(match DATE_NAMES[name] {
+        "today" => today,
+        "tomorrow" => today + 1,
+        "yesterday" => today - 1,
+        // A day of the week is the next one, so never today: that is what `/today` is for.
+        _ => today + ((name + 6 - time::weekday(today)) % 7) as Day + 1,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_words_stand_for_dates() {
+        // A Tuesday.
+        let today = time::day_from_civil(2026, 10, 13);
+        let expand = |text: &str| expand_date_words(text, today);
+        assert_eq!(expand("/today"), "2026-10-13");
+        assert_eq!(
+            expand("dentist /fri, then /tomorrow and (/yesterday)"),
+            "dentist 2026-10-16, then 2026-10-14 and (2026-10-12)"
+        );
+        assert_eq!(expand("call back /yesterday."), "call back 2026-10-12.");
+        assert_eq!(expand("/+3 /-2 /+10"), "2026-10-16 2026-10-11 2026-10-23");
+        assert_eq!(
+            expand("/tue /wed /Monday"),
+            "2026-10-20 2026-10-14 2026-10-19",
+            "a day of the week is the next one, never today"
+        );
+        assert_eq!(
+            expand("/tod /tom /y /f /sa /su /m /w /th /tu"),
+            "2026-10-13 2026-10-14 2026-10-12 2026-10-16 2026-10-17 2026-10-18 2026-10-19 \
+             2026-10-14 2026-10-15 2026-10-20"
+        );
+        for untouched in [
+            "/t /to /s",
+            "/home/sam and/or w/friday",
+            "/friday/night /fridays /fr1 / /+ /+12345 /-",
+            "https://example.com/today x/tomorrow",
+            "/network/events /feeds",
+        ] {
+            assert_eq!(expand(untouched), untouched);
+            assert!(date_words(untouched, today).is_empty());
+        }
+        assert_eq!(
+            date_words("é /fri", today),
+            [DateWord {
+                start: 3,
+                end: 7,
+                day: today + 3
+            }]
+        );
+    }
 
     #[test]
     fn tokens_are_lowercased_words() {
@@ -345,6 +511,15 @@ mod tests {
     }
 
     #[test]
+    fn a_line_of_nothing_but_tags() {
+        assert!(only_tags("#house"));
+        assert!(only_tags("  #house #a/b-c "));
+        for line in ["", "  ", "# Heading", "#house today", "today #house", "#"] {
+            assert!(!only_tags(line), "{line:?}");
+        }
+    }
+
+    #[test]
     fn wikilinks_normalise_and_strip_aliases_and_sections() {
         let f = facts("see [[Some  Page|alias]] and [[Other#Section]] and [[]] and [[broken\n]]");
         assert_eq!(f.links, ["other", "some page"]);
@@ -354,6 +529,15 @@ mod tests {
     fn urls_keep_case_and_drop_trailing_punctuation() {
         let f = facts("read https://Example.com/A?b=1, then www.foo.org. not http:// alone");
         assert_eq!(f.urls, ["https://Example.com/A?b=1", "www.foo.org"]);
+    }
+
+    #[test]
+    fn dates_can_be_blanked_out() {
+        assert_eq!(
+            without_dates("dentist 2026-09-05, 16 teeth; Mon, Jan 02, 2006 x 2026-09"),
+            "dentist  , 16 teeth;   x 2026-09"
+        );
+        assert_eq!(without_dates("2026-09-05"), " ");
     }
 
     #[test]
