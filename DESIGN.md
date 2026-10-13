@@ -19,7 +19,9 @@ other people when you choose.
   that cannot read them.
 - Explainable relevance. Every suggestion carries its reason. No black box in the loop by default.
 - Converge, never conflict. Every change is an event; devices merge; nothing is lost.
-- One core, thin faces. The engine is a library with no UI. Terminal and browser are renderers.
+- One core, thin faces. The engine is the whole app with no screen and no keyboard: a face says
+  what was asked for and paints what it is told to show. Its keys, its gestures and its pixels
+  are all a face owns, so no rule of the app can differ between a terminal and a browser.
 - Keyboard first, almost no chrome.
 - Ergonomics is a primary goal, and it has two halves: nothing visible ever waits, and there is
   almost nothing to remember. The whole app fits in one sentence: type to find or to write; Enter
@@ -78,7 +80,28 @@ other people when you choose.
   a note created while looking around another links to it.
 
 ## Engine
-The engine is a library with three parts. It owns no UI and makes no network calls.
+The engine is a library, and it is the app. It owns no UI, opens no file, reads no clock and
+makes no network call, so the same code runs in a terminal, in a browser tab and in a test.
+
+**Session.** What a face drives, one per person per space. Three things go in and two come
+out.
+- In: an *action*, which is what was asked for and never which key asked: the line now reads
+  this, move the cursor, write the line, go into the note, step back, archive, delete, link,
+  undo, the text of a note as it was edited. An action that does not apply where the cursor is
+  does nothing.
+- In: versions of notes written elsewhere, by another device or another face on this one.
+- In, from the host: the time, and an id for a new note.
+- Out: *effects*, which are what the face has to do about an action: keep this version, put
+  this note in front of the person to edit, copy this, open this URL. The session has already
+  done its own part, so an effect that fails costs a message and nothing else.
+- Out: the *view*, which is everything there is to paint: the path, the line and the dates its
+  date words stand for, the rows with their reasons, where the cursor is, the note to read,
+  what just happened, and what can be asked for where the cursor is, each with what to call it
+  there. A face puts its own key or button beside each.
+
+Everything decided about how the app behaves lives here: what going into a note does with the
+line, what is listed first, what a note written in place links to, what is offered where. Under
+the session is the part that finds things, in three parts.
 
 **Index.** Unicode-aware tokeniser, lowercased, light stemming optional. An inverted index with
 term frequencies and document lengths, and a trigram index for fuzzy matching. Both update
@@ -133,7 +156,9 @@ Nothing is added to the engine until daily use asks for it.
   only ever writes its own file, so the root can be synced by anything that copies files,
   Syncthing included, with no conflicts. Last-writer-wins on a whole note is the known
   limitation, accepted for now. Deletion is a tombstone line, kept so an older version arriving
-  later cannot resurrect the note.
+  later cannot resurrect the note. What a line says, and which of two versions is the newer,
+  is the engine's to settle, so that every device agrees. Where the lines are kept is the
+  face's: files under the terminal.
 - **Logs are reread as they grow.** Whenever the keyboard has been idle for a second the app
   replays what has been appended since it last looked, so a second instance or a file-sync
   delivery shows up without a restart. The relay will feed the same path.
@@ -155,7 +180,10 @@ Nothing is added to the engine until daily use asks for it.
 
 ## Clients
 - **Terminal**: Rust and ratatui, with the original fzn keys where they still earn their place,
-  because that is where the muscle memory is. The input is the top line; Down moves onto the
+  because that is where the muscle memory is. It is a face on the session and adds four things:
+  its key table, the editing of the top line, the painting, and carrying out the effects, which
+  here means a log file, your editor, the clipboard and the system's way of opening a URL. The
+  input is the top line; Down moves onto the
   list, Up and Escape come back, and typing always goes to the top line. A chord acts on the top
   line when the cursor is there and on the selected note otherwise: Enter writes or goes in,
   Ctrl-D clears or deletes, Ctrl-V shows archived or archives. Archived notes are out of every
@@ -185,8 +213,10 @@ Nothing is added to the engine until daily use asks for it.
   on a note already on the path goes back to it, so the path never repeats; Escape steps back one
   hop, onto the top line. This is the ego graph as a flat list; following a link is picking its
   target here.
-- **Browser**: the same core compiled to wasm32 via wasm-bindgen, with a thin DOM renderer. The
-  graph view lives here as an ego graph of the current note, one or two hops out.
+- **Browser**: the same session compiled to wasm32 via wasm-bindgen, with a thin DOM renderer.
+  Its keys are its own: a browser keeps Ctrl-W, Ctrl-R, Ctrl-L and most of the terminal's
+  chords for itself, and a phone has none. Its line is an ordinary text field. The graph view
+  lives here as an ego graph of the current note, one or two hops out.
 
 ## Decisions
 - **Rust, not Go and not Zig.** One codebase must run natively and in WASM with small binaries
@@ -236,6 +266,26 @@ Nothing is added to the engine until daily use asks for it.
   linked is listed there already. The carry rule reads the same names, or a note found by one
   would take the search in with it as a draft. Measured on the 2022 notes with a hub made for
   every first label: up to a fifth more time per keystroke, and every keystroke under 3 ms.
+- **The app is headless.** Decided 2026-10-13. Until then the engine was the part that finds
+  things, and the app was the terminal: the carry rule, the path, what Escape does and what the
+  footer offers were written against one terminal library's keys and widgets. A second face
+  would have copied all of it and the copies would have drifted. Now the session is the app and
+  a face cannot reach around it. Four calls shaped the interface.
+  - *Actions, not keys.* The terminal's chords cannot be a browser's, and touch has none, so
+    the session is never told which key was pressed. "A chord acts on the top line or on the
+    selected note" is the terminal's way of saving keys and lives in its key table; to the
+    session, clearing the line and deleting a note are two different things to ask for.
+  - *The face edits the line.* A terminal has to move a cursor through a string itself. A
+    browser is given a text field that already does, with the phone's keyboard and its
+    autocorrect. So the session is told what the line now reads and nothing finer.
+  - *Effects out, nothing done.* A version to keep comes out as data and the face decides where
+    it goes, so the session needs no file in a terminal and no database in a tab. The editor,
+    the clipboard and opening a URL are asked for the same way.
+  - *The time is the host's.* The session asks the host for the time and for new ids. A test
+    stops the clock, so nothing in the app's tests depends on when they run.
+
+  Checked by running the binaries from before and after with the same 55 keys on a copy of
+  `main`: the screens matched but for one reworded message, and so did the lines written.
 - **The engine sees only what the text carries, plus where you were.** Words, tags, dates and
   position are the free signals. The paths you walk between notes are the next one: going from A
   to B again and again is a relation expressed without saying so, and a scorer that reads it can
@@ -286,6 +336,12 @@ Nothing is added to the engine until daily use asks for it.
   mean that the one-liners set, so a long document earns almost nothing for its own words. Its
   name now finds it; part of its name, or what it says, may not. Left until use shows it
   matters. `bm25_b` is the knob, and no setting of it was right on its own.
+- How notes reach a browser. The session runs in a tab and needs its lines from somewhere, and
+  the relay comes after the browser in the milestones. Something has to hand a tab the lines of
+  a space and take back the ones it writes. Not settled.
+- What the browser's keys are, and what stands in for Escape, Control and the arrows on a
+  phone. Each is an ergonomics question of its own.
+- Editing a note in the page. The terminal hands the text to your editor; a browser has none.
 - A summon key. Starting should feel like switching a window, so the terminal build wants a
   keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
 - Name. `fzn` stays unless something better appears.
@@ -298,7 +354,11 @@ Nothing is added to the engine until daily use asks for it.
    app: config, per-device log store, importers, terminal UI). The Silverbullet pages are the
    `main` space and the 2022 corpus is the `fzn-2022` space. Daily use from here; tuning follows
    use. Then the Go code is removed in one commit.
-2. **Same core in the browser.** WASM build, DOM renderer, ego graph.
+2. **Same core in the browser.** WASM build, DOM renderer, ego graph. First step done
+   2026-10-13: the app moved out of the terminal into the engine as a session, and the engine
+   builds for wasm32 as it stands. `crates/fzn-engine` is now the index, the scorers, the note
+   as it is kept, and the session; `crates/fzn` is the terminal face, the log files, the system
+   clock, config and the importers.
 3. **Relay and sync.** Single binary, opaque lines, multiple devices. Until then, Syncthing on
    the notes directory.
 4. **Text CRDT per note.** Behind the store module.

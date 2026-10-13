@@ -3,12 +3,13 @@
 mod config;
 mod import;
 mod store;
+mod system;
 mod ui;
 
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use fzn_engine::Engine;
+use fzn_engine::Session;
 
 const USAGE: &str = "\
 fzn [--space NAME]                      open your notes
@@ -129,11 +130,7 @@ fn main() -> Result<()> {
         Cmd::Open => {}
     }
 
-    let mut engine = Engine::with_weights(cfg.weights.clone());
-    for record in store.records() {
-        engine.upsert(ui::note_from(record));
-    }
-    let status = if store.is_empty() {
+    let status = if store.notes().is_empty() {
         "no notes yet: type and press Enter, or see fzn --help to import".to_owned()
     } else if store.skipped() > 0 {
         format!(
@@ -150,5 +147,10 @@ fn main() -> Result<()> {
     } else {
         format!("fzn · {space}")
     };
-    ui::App::new(engine, store, config::editor(&cfg), title, status).run()
+    // The session is the app. The terminal is one face on it, and the logs are where this
+    // device keeps what the session writes.
+    let (notes, logs) = store.into_parts();
+    let mut session = Session::new(Box::new(system::System), device, cfg.weights.clone(), notes);
+    session.say(status);
+    ui::App::new(session, logs, config::editor(&cfg), title).run()
 }

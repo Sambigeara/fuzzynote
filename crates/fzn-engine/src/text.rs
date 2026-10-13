@@ -141,6 +141,18 @@ pub fn only_tags(line: &str) -> bool {
     words.peek().is_some() && words.all(|w| w.starts_with('#') && facts(w).tags.len() == 1)
 }
 
+/// Truncates to `max` characters, marking the cut.
+pub fn fit(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    if max > 0 {
+        out.push('…');
+    }
+    out
+}
+
 /// The text with each date written in it blanked out, for when a date is to count as a date
 /// and not as the numbers in it.
 pub fn without_dates(text: &str) -> String {
@@ -421,6 +433,13 @@ fn date_named(word: &str, today: Day) -> Option<Day> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_truncates_by_characters() {
+        assert_eq!(fit("héllo", 10), "héllo");
+        assert_eq!(fit("héllo world", 5), "héll…");
+        assert_eq!(fit("x", 0), "");
+    }
 
     #[test]
     fn date_words_stand_for_dates() {

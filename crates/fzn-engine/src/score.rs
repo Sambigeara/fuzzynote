@@ -43,12 +43,8 @@ pub(crate) enum QueryLabel {
 }
 
 /// Tunable weights. The defaults are a starting point, not a conclusion.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(default)
-)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Weights {
     /// Weight of the lexical (BM25) scorer.
     pub lexical: f32,

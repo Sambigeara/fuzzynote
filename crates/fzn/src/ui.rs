@@ -1,32 +1,17 @@
 //! The terminal face: one input, one list, one preview, with the original fzn keys.
 //!
-//! The input is the top line. Below it the list shows recent notes while the input is empty and
-//! what the engine finds as you type, each with its reasons. A note is found by its own words and
-//! by the head of a note it links to, so the name of a note brings what was written in it, as
-//! going into the note does. Down moves onto the list, Up and
-//! Escape come back to the top line, and typing always goes to the top line. A chord acts on the
-//! top line when the cursor is there and on the selected note otherwise, as it did in fzn.
-//! Archived notes stay out of every list until Ctrl-V on the top line asks for them. Notes are
-//! edited in your editor. The footer shows only the keys that apply where the cursor is.
+//! The session is the app. This is what a terminal adds to it: which key asks for what, editing
+//! the top line, painting the view, and carrying out what the session asks for in return, which
+//! is keeping versions in this device's log, running your editor, the clipboard and opening a
+//! URL.
 //!
-//! Enter on a note goes into it, and the title grows by one step: what is linked to or from it
-//! comes first, newest on top, and what the engine finds besides follows, best first. Where you
-//! are is what you are talking about, so a note written there is linked to it. The line comes
-//! with you under one rule: if the note contains what was typed, or its head and the heads of the
-//! notes it links to have every word of it, that was a search, so the line clears, and Escape
-//! brings it back to an empty line; otherwise it was a draft, and it stays on the line to be
-//! written there. Escape never throws away what is on the line. Enter on a note
-//! already on the path goes back to it, so the path never repeats. Ctrl-L on a note in a zoom
-//! links or unlinks it, as a correction. A `[[head]]` typed into a note is one more way of making
-//! a link: saving the note links it to the note so headed. However it was made, a link is the
-//! target's id held on the note.
-//!
-//! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
-//! way of typing one: the top line shows the date it stands for and searches with it, and saving
-//! a note writes the date in its place, from the top line or from the editor.
+//! The input is the top line. Down moves onto the list, Up and Escape come back to the top line,
+//! and typing always goes to the top line. A chord acts on the top line when the cursor is there
+//! and on the selected note otherwise, as it did in fzn: Enter writes or goes in, Ctrl-D clears
+//! or deletes, Ctrl-V shows archived notes or archives. Escape steps back out of a note, and
+//! outside any note two of them quit. Notes are edited in your editor. The footer shows only the
+//! keys that apply where the cursor is.
 
-use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::Path;
@@ -34,7 +19,8 @@ use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use fzn_engine::{Day, Engine, Note, NoteId, SearchOptions, text, time};
+use fzn_engine::text::fit;
+use fzn_engine::{Action, Day, Effect, Hint, Moment, Session, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Style, Stylize};
@@ -42,120 +28,133 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::store::{Moment, Record, Store, new_id};
+use crate::store::Logs;
 
-const RECENT_LIMIT: usize = 500;
-const RELATED_LIMIT: usize = 60;
-const AROUND_LIMIT: usize = 200;
 /// How long the keyboard has to be idle before the logs are checked for news.
 const RELOAD_EVERY: Duration = Duration::from_secs(1);
 /// The most the breadcrumb on the top line takes up.
 const CRUMB_MAX: usize = 70;
 
-/// A note being looked around. The list shows its neighbourhood.
-struct Pivot {
-    id: String,
-    head: String,
-    /// The search the note was found with, put back on the way out if the line is empty by then.
-    /// A draft carried in has nothing to put back: it is still on the line.
-    restore: Option<String>,
-}
-
-struct Row {
-    id: NoteId,
-    head: String,
-    archived: bool,
-    has_body: bool,
-    /// Whether the note is linked to or from the one being looked around.
-    linked: bool,
-    /// The heads, as they are now, of the notes this one is linked to by id.
-    links: String,
-    reasons: String,
-    score: Option<f32>,
-    updated: Option<Moment>,
-}
-
 pub struct App {
-    engine: Engine,
-    store: Store,
+    session: Session,
+    logs: Logs,
     editor: String,
     /// What the top line is headed with: the app's name, and the space when it is not the usual one.
     title: String,
-    input: String,
-    /// Cursor position in the input, in characters.
+    /// Cursor position in the top line, in characters.
     cursor: usize,
-    rows: Vec<Row>,
+    /// Where the list is scrolled to.
     list: ListState,
-    show_archived: bool,
-    show_scores: bool,
-    status: String,
-    /// Notes being looked around, innermost last.
-    pivots: Vec<Pivot>,
     /// Whether the previous key was Escape, which makes a second one quit.
     escaped: bool,
-    /// Versions to restore, newest last: what a note was before a change, and what it became.
-    undo: Vec<(Option<Record>, Record)>,
-    redo: Vec<(Option<Record>, Record)>,
 }
 
 enum Flow {
     Continue,
-    /// The selected note is to be opened in the editor, which needs the terminal.
-    Edit,
+    /// A note is to be opened in the editor, which needs the terminal.
+    Edit {
+        id: String,
+        text: String,
+    },
     Quit,
 }
 
-/// The engine's view of a stored note.
-pub fn note_from(record: &Record) -> Note {
-    Note {
-        id: NoteId::new(record.id.clone()),
-        text: record.text.clone(),
-        links: record.links.iter().cloned().map(NoteId::new).collect(),
-        created: record.created.map(Moment::day),
-        updated: record.updated.map(Moment::day),
-        archived: record.archived,
+/// What a chord asks for. A chord acts on the top line when the cursor is there and on the
+/// selected note otherwise. Escape comes back a step: off the list, then out of the note.
+fn bound(code: KeyCode, ctrl: bool, on_top: bool, zoomed: bool) -> Option<Action> {
+    Some(match (code, ctrl) {
+        (KeyCode::Enter, _) if on_top => Action::Write,
+        (KeyCode::Enter, _) => Action::GoIn,
+        (KeyCode::Esc, _) if !on_top => Action::Select(None),
+        (KeyCode::Esc, _) if zoomed => Action::Back,
+        (KeyCode::Char('d'), true) if on_top => Action::Type(String::new()),
+        (KeyCode::Char('d'), true) => Action::Delete,
+        (KeyCode::Char('v'), true) if on_top => Action::ShowArchived,
+        (KeyCode::Char('v'), true) => Action::Archive,
+        (KeyCode::Char('o'), true) => Action::Edit,
+        (KeyCode::Char('u'), true) => Action::Undo,
+        (KeyCode::Char('r'), true) => Action::Redo,
+        (KeyCode::Char('l'), true) => Action::Link,
+        (KeyCode::Char('c'), true) => Action::Copy,
+        (KeyCode::Char('_' | '/'), true) => Action::OpenUrl,
+        (KeyCode::Char('b'), true) => Action::ShowScores,
+        (KeyCode::Up, _) => Action::Move(-1),
+        (KeyCode::Down, _) => Action::Move(1),
+        (KeyCode::PageUp, _) => Action::Move(-10),
+        (KeyCode::PageDown, _) => Action::Move(10),
+        _ => return None,
+    })
+}
+
+/// The key that asks for an action, as the footer names it.
+fn key_for(action: &Action) -> &'static str {
+    match action {
+        Action::Write | Action::GoIn => "Enter",
+        Action::Move(_) => "↓",
+        Action::Select(_) | Action::Back => "Esc",
+        Action::ShowArchived | Action::Archive => "^V",
+        Action::Delete => "^D",
+        Action::Edit => "^O",
+        Action::Link => "^L",
+        Action::Copy => "^C",
+        Action::OpenUrl => "^_",
+        Action::Undo => "^U",
+        Action::Redo => "^R",
+        Action::ShowScores => "^B",
+        // Typing and the editor ask for these, not a chord.
+        Action::Type(_) | Action::Save { .. } => "",
     }
 }
 
-/// The links a record holds once its text is saved: what it held, what the new text names in
-/// brackets, and no longer what only the old text named.
-pub fn links_on_save(
-    engine: &Engine,
-    id: &str,
-    old: &str,
-    new: &str,
-    links: &[String],
-) -> Vec<String> {
-    let held: Vec<NoteId> = links.iter().cloned().map(NoteId::new).collect();
-    engine
-        .links_on_save(&NoteId::new(id.to_owned()), old, new, &held)
-        .into_iter()
-        .map(|l| l.0)
-        .collect()
-}
-
-fn head_of(text: &str) -> &str {
-    text.lines().next().unwrap_or("").trim()
-}
-
-/// Whether there is more to read than the head. A line of nothing but tags is a label, not
-/// reading.
-fn has_body(text: &str) -> bool {
-    text.lines()
-        .skip(1)
-        .any(|line| !line.trim().is_empty() && !text::only_tags(line))
-}
-
-/// Truncates to `max` characters, marking the cut.
-fn fit(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_owned();
+/// The keys that do something where the cursor is, for the second footer row. Escape is always
+/// last, and where the session has no way back for it to take, two of them quit.
+fn footer(hints: &[Hint]) -> String {
+    let mut keys: Vec<String> = hints
+        .iter()
+        .map(|hint| format!("{} {}", key_for(&hint.action), hint.label))
+        .collect();
+    if hints.last().is_none_or(|h| key_for(&h.action) != "Esc") {
+        keys.push("Esc Esc quits".to_owned());
     }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
-    if max > 0 {
-        out.push('…');
-    }
-    out
+    keys.join(" · ")
+}
+
+/// What a key does to the top line, when it is one that edits it or moves along it: the line as
+/// it then reads, and where its cursor then is, in characters.
+fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(String, usize)> {
+    let end = line.chars().count();
+    let cursor = cursor.min(end);
+    let without = |from: usize, to: usize| {
+        let (from, to) = (byte_index(line, from), byte_index(line, to));
+        format!("{}{}", &line[..from], &line[to..])
+    };
+    let with = |c: char| {
+        let mut line = line.to_owned();
+        line.insert(byte_index(&line, cursor), c);
+        (line, cursor + 1)
+    };
+    Some(match (code, ctrl) {
+        (KeyCode::Char('a'), true) | (KeyCode::Home, _) => (line.to_owned(), 0),
+        (KeyCode::Char('e'), true) | (KeyCode::End, _) => (line.to_owned(), end),
+        (KeyCode::Left, _) => (line.to_owned(), cursor.saturating_sub(1)),
+        (KeyCode::Right, _) => (line.to_owned(), (cursor + 1).min(end)),
+        (KeyCode::Backspace, _) if cursor > 0 => (without(cursor - 1, cursor), cursor - 1),
+        (KeyCode::Delete, _) if cursor < end => (without(cursor, cursor + 1), cursor),
+        (KeyCode::Char('w'), true) => {
+            let chars: Vec<char> = line.chars().collect();
+            let mut start = cursor;
+            while start > 0 && chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            while start > 0 && !chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            (without(start, cursor), start)
+        }
+        (KeyCode::Tab, _) => with(' '),
+        (KeyCode::Char(c), false) => with(c),
+        _ => return None,
+    })
 }
 
 /// Where you are: the app, then each note gone into, outermost first, in at most `max`
@@ -213,6 +212,29 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Puts text on the clipboard via OSC 52, and says whether the terminal took it.
+fn copy(text: &str) -> bool {
+    let mut out = std::io::stdout();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes())).is_ok() && out.flush().is_ok()
+}
+
+/// Opens a URL with whatever the system opens URLs with, or says why it could not.
+fn open(url: &str) -> Result<(), String> {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(opener)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("{opener}: {e}"))
+}
+
 fn run_editor(editor: &str, path: &Path) -> Result<ExitStatus> {
     let mut parts = editor.split_whitespace();
     let program = parts.next().context("empty editor command")?;
@@ -223,28 +245,33 @@ fn run_editor(editor: &str, path: &Path) -> Result<ExitStatus> {
         .with_context(|| format!("run editor {editor:?}"))
 }
 
-fn format_day_of(moment: Option<Moment>) -> String {
-    moment.map_or_else(|| "?".to_owned(), |m| time::format_day(m.day()))
+/// Hands a note's text to the editor and waits for it. Gives back the text as it was left, or
+/// what to say when the editor did not finish well.
+fn edit_in(editor: &str, id: &str, text: &str) -> Result<Result<String, String>> {
+    let path = std::env::temp_dir().join(format!("fzn-{}.md", sanitise(id)));
+    fs::write(&path, text)?;
+    let status = run_editor(editor, &path)?;
+    if !status.success() {
+        return Ok(Err(format!(
+            "{editor} exited with {status}; note unchanged"
+        )));
+    }
+    let edited = fs::read_to_string(&path)?;
+    let _ = fs::remove_file(&path);
+    Ok(Ok(edited))
 }
 
-/// Today, by this machine's clock.
-fn today() -> Day {
-    Moment::now().day()
+fn format_day_of(moment: Option<Moment>) -> String {
+    moment.map_or_else(|| "?".to_owned(), |m| time::format_day(m.day()))
 }
 
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /// The dates that the date words on the top line stand for, to show beside it.
-fn dates_shown(input: &str, today: Day) -> String {
-    let dates: Vec<String> = text::date_words(input, today)
+fn dates_shown(dates: &[Day]) -> String {
+    let dates: Vec<String> = dates
         .iter()
-        .map(|w| {
-            format!(
-                "{} {}",
-                WEEKDAYS[time::weekday(w.day)],
-                time::format_day(w.day)
-            )
-        })
+        .map(|&day| format!("{} {}", WEEKDAYS[time::weekday(day)], time::format_day(day)))
         .collect();
     if dates.is_empty() {
         String::new()
@@ -254,32 +281,16 @@ fn dates_shown(input: &str, today: Day) -> String {
 }
 
 impl App {
-    pub fn new(
-        engine: Engine,
-        store: Store,
-        editor: String,
-        title: String,
-        status: String,
-    ) -> Self {
-        let mut app = Self {
-            engine,
-            store,
+    pub fn new(session: Session, logs: Logs, editor: String, title: String) -> Self {
+        Self {
+            session,
+            logs,
             editor,
             title,
-            input: String::new(),
             cursor: 0,
-            rows: Vec::new(),
             list: ListState::default(),
-            show_archived: false,
-            show_scores: false,
-            status,
-            pivots: Vec::new(),
             escaped: false,
-            undo: Vec::new(),
-            redo: Vec::new(),
-        };
-        app.refresh(true);
-        app
+        }
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -302,7 +313,7 @@ impl App {
             {
                 match self.handle(key)? {
                     Flow::Continue => {}
-                    Flow::Edit => self.edit(terminal)?,
+                    Flow::Edit { id, text } => self.edit(terminal, id, &text)?,
                     Flow::Quit => return Ok(()),
                 }
             }
@@ -312,691 +323,97 @@ impl App {
     fn handle(&mut self, key: KeyEvent) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
-        let on_top = self.list.selected().is_none();
-        let end = self.input.chars().count();
+        let (on_top, zoomed, line) = {
+            let view = self.session.view();
+            (
+                view.cursor.is_none(),
+                !view.path.is_empty(),
+                view.line.to_owned(),
+            )
+        };
+        if let Some(action) = bound(key.code, ctrl, on_top, zoomed) {
+            return self.act(action);
+        }
         match (key.code, ctrl) {
+            (KeyCode::Esc, _) if escaped => return Ok(Flow::Quit),
             (KeyCode::Esc, _) => {
-                if !on_top {
-                    self.list.select(None);
-                } else if !self.pivots.is_empty() {
-                    self.back();
-                } else if escaped {
-                    return Ok(Flow::Quit);
-                } else {
-                    self.escaped = true;
-                    self.status = "Escape again to quit".into();
-                }
+                self.escaped = true;
+                self.session.say("Escape again to quit");
             }
             (KeyCode::Char('q'), true) => return Ok(Flow::Quit),
-            (KeyCode::Enter, _) => {
-                if on_top {
-                    self.create()?;
-                } else {
-                    self.look_around();
+            (code, _) => match edited(&line, self.cursor, code, ctrl) {
+                // Typing always goes to the top line, so the session is told what it now reads.
+                Some((to, cursor)) if to != line => {
+                    let flow = self.act(Action::Type(to))?;
+                    self.cursor = cursor;
+                    return Ok(flow);
                 }
-            }
-            (KeyCode::Char('d'), true) => {
-                if on_top {
-                    self.set_input(String::new());
-                } else {
-                    self.delete()?;
-                }
-            }
-            (KeyCode::Char('v'), true) => {
-                if on_top {
-                    self.show_archived = !self.show_archived;
-                    self.refresh(false);
-                } else {
-                    self.toggle_archive()?;
-                }
-            }
-            (KeyCode::Char('o'), true) => return Ok(Flow::Edit),
-            (KeyCode::Char('u'), true) => self.undo()?,
-            (KeyCode::Char('r'), true) => self.redo()?,
-            (KeyCode::Char('l'), true) => self.link()?,
-            (KeyCode::Char('c'), true) => self.copy(),
-            (KeyCode::Char('_' | '/'), true) => self.open_url(),
-            (KeyCode::Char('b'), true) => self.show_scores = !self.show_scores,
-            (KeyCode::Up, _) => self.step(-1),
-            (KeyCode::Down, _) => self.step(1),
-            (KeyCode::PageUp, _) => self.step(-10),
-            (KeyCode::PageDown, _) => self.step(10),
-            (KeyCode::Char('a'), true) | (KeyCode::Home, _) => self.cursor = 0,
-            (KeyCode::Char('e'), true) | (KeyCode::End, _) => self.cursor = end,
-            (KeyCode::Char('w'), true) => self.delete_word(),
-            (KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
-            (KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(end),
-            (KeyCode::Backspace, _) => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    self.remove_char(self.cursor);
-                }
-            }
-            (KeyCode::Delete, _) => {
-                if self.cursor < end {
-                    self.remove_char(self.cursor);
-                }
-            }
-            (KeyCode::Tab, _) => self.insert_char(' '),
-            (KeyCode::Char(c), false) => self.insert_char(c),
-            _ => {}
+                Some((_, cursor)) => self.cursor = cursor,
+                None => {}
+            },
         }
         Ok(Flow::Continue)
     }
 
-    /// Zooms on the selected note: the list becomes its neighbourhood. If the note contains what
-    /// was typed, or is named by it, in its head and in the heads of the notes it links to, that
-    /// was a search for it, so the line clears and is kept for the way back. Otherwise it was a
-    /// draft, and it comes along to be written here. A note already on the
-    /// path is gone back to rather than added again, so the path never repeats.
-    fn look_around(&mut self) {
-        let Some(row) = self.selected() else {
-            return;
-        };
-        let (id, head) = (row.id.as_str().to_owned(), row.head.clone());
-        if let Some(at) = self.pivots.iter().position(|p| p.id == id) {
-            self.back_to(at + 1);
-            return;
+    /// Asks the session for something, and carries out what it asks for in return.
+    fn act(&mut self, action: Action) -> Result<Flow> {
+        let line = self.session.view().line.to_owned();
+        let mut flow = Flow::Continue;
+        for effect in self.session.act(action) {
+            match effect {
+                Effect::Keep(record) => self.logs.append(&record)?,
+                Effect::Edit { id, text } => flow = Flow::Edit { id, text },
+                Effect::Copy(text) => {
+                    if !copy(&text) {
+                        self.session.say("could not write to the terminal");
+                    }
+                }
+                Effect::Open(url) => {
+                    if let Err(why) = open(&url) {
+                        self.session.say(why);
+                    }
+                }
+            }
         }
-        let typed = text::expand_date_words(self.input.trim(), today());
-        let searched = typed.is_empty()
-            || self
-                .store
-                .get(&id)
-                .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
-            || self.engine.named_by(&NoteId::new(id.clone()), &typed);
-        let restore = searched.then(|| std::mem::take(&mut self.input));
-        self.pivots.push(Pivot { id, head, restore });
-        if searched {
-            self.set_input(String::new());
-        } else {
-            self.refresh(true);
+        // A line the session changed, as it does on the way into a note and out of one, has its
+        // cursor at the end.
+        let now = self.session.view().line;
+        if now != line {
+            self.cursor = now.chars().count();
         }
-    }
-
-    /// Steps back out to where the current context was entered from.
-    fn back(&mut self) {
-        self.back_to(self.pivots.len().saturating_sub(1));
-    }
-
-    /// Steps back out to `depth` notes on the path, onto the top line, so that the next chord
-    /// acts on the input and not on a note. What is on the line stays as it is; only an empty
-    /// line gets back the search that the first note left behind was found with, which is what
-    /// the line held at that depth.
-    fn back_to(&mut self, depth: usize) {
-        if depth >= self.pivots.len() {
-            return;
-        }
-        let left = self.pivots.split_off(depth);
-        match left.into_iter().next().and_then(|p| p.restore) {
-            Some(line) if self.input.trim().is_empty() => self.set_input(line),
-            _ => self.refresh(true),
-        }
+        Ok(flow)
     }
 
     /// Takes in what other devices and other instances have written. Says whether anything
     /// on screen may have changed.
     fn reload(&mut self) -> bool {
-        let changed = match self.store.sync() {
-            Ok(changed) => changed,
+        match self.logs.read() {
+            Ok(records) => self.session.absorb(records),
             Err(e) => {
-                self.status = format!("could not reread the notes: {e:#}");
-                return true;
-            }
-        };
-        if changed.is_empty() {
-            return false;
-        }
-        for id in &changed {
-            match self.store.get(id) {
-                Some(record) => self.engine.upsert(note_from(record)),
-                None => {
-                    self.engine.remove(&NoteId::new(id.clone()));
-                }
+                self.session
+                    .say(format!("could not reread the notes: {e:#}"));
+                true
             }
         }
-        let selected = self.selected().map(|r| r.id.as_str().to_owned());
-        self.refresh(false);
-        if let Some(id) = selected {
-            self.reselect(&id);
-        }
-        self.status = format!("{} changed elsewhere", changed.len());
-        true
     }
 
-    fn set_input(&mut self, input: String) {
-        self.cursor = input.chars().count();
-        self.input = input;
-        self.refresh(true);
-    }
-
-    fn insert_char(&mut self, c: char) {
-        let at = byte_index(&self.input, self.cursor);
-        self.input.insert(at, c);
-        self.cursor += 1;
-        self.refresh(true);
-    }
-
-    fn remove_char(&mut self, char_index: usize) {
-        let at = byte_index(&self.input, char_index);
-        self.input.remove(at);
-        self.refresh(true);
-    }
-
-    fn delete_word(&mut self) {
-        let chars: Vec<char> = self.input.chars().collect();
-        let mut start = self.cursor;
-        while start > 0 && chars[start - 1].is_whitespace() {
-            start -= 1;
-        }
-        while start > 0 && !chars[start - 1].is_whitespace() {
-            start -= 1;
-        }
-        let kept: String = chars[..start].iter().chain(&chars[self.cursor..]).collect();
-        self.input = kept;
-        self.cursor = start;
-        self.refresh(true);
-    }
-
-    /// Recomputes the list from the input and the context. `reset` moves the selection back to
-    /// the top.
-    fn refresh(&mut self, reset: bool) {
-        // A date word searches as the date it stands for.
-        let query = text::expand_date_words(self.input.trim(), today());
-        let rows = match (self.pivots.last(), query.is_empty()) {
-            (Some(p), _) => self.around(&p.id, &query),
-            (None, true) => self.recent(),
-            (None, false) => self.related(&query),
-        };
-        self.rows = rows;
-        let selected = if reset { None } else { self.list.selected() };
-        self.list.select(
-            selected
-                .filter(|_| !self.rows.is_empty())
-                .map(|i| i.min(self.rows.len() - 1)),
-        );
-    }
-
-    fn recent(&self) -> Vec<Row> {
-        let mut records: Vec<&Record> = self
-            .store
-            .records()
-            .filter(|r| self.show_archived || !r.archived)
-            .collect();
-        records.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.id.cmp(&b.id)));
-        records
-            .into_iter()
-            .take(RECENT_LIMIT)
-            .map(|r| Row {
-                id: NoteId::new(r.id.clone()),
-                head: head_of(&r.text).to_owned(),
-                archived: r.archived,
-                has_body: has_body(&r.text),
-                linked: false,
-                links: self.link_heads(r),
-                reasons: String::new(),
-                score: None,
-                updated: r.updated,
-            })
-            .collect()
-    }
-
-    fn related(&self, query: &str) -> Vec<Row> {
-        let opts = SearchOptions {
-            limit: RELATED_LIMIT,
-            include_archived: self.show_archived,
-            today: Some(today()),
-        };
-        self.engine
-            .search(query, &opts)
-            .into_iter()
-            .map(|hit| self.row(&hit))
-            .collect()
-    }
-
-    /// The neighbourhood of one note, narrowed by the input when there is one.
-    fn around(&self, id: &str, query: &str) -> Vec<Row> {
-        let opts = SearchOptions {
-            limit: AROUND_LIMIT,
-            include_archived: self.show_archived,
-            today: None,
-        };
-        let near = self.engine.related(&NoteId::new(id.to_owned()), &opts);
-        if query.is_empty() {
-            // What is linked is a list you keep, so it comes first with the newest on top. What
-            // the engine suggests follows in the order it gave, best first.
-            let mut rows: Vec<Row> = near.iter().map(|hit| self.row(hit)).collect();
-            rows.sort_by(|a, b| match (a.linked, b.linked) {
-                (true, true) => b.updated.cmp(&a.updated).then_with(|| b.id.cmp(&a.id)),
-                (true, false) => Ordering::Less,
-                (false, true) => Ordering::Greater,
-                (false, false) => Ordering::Equal,
-            });
-            return rows;
-        }
-        let ids: HashSet<&str> = near.iter().map(|hit| hit.note.id.as_str()).collect();
-        let linked: HashSet<&str> = near
-            .iter()
-            .filter(|hit| hit.linked)
-            .map(|hit| hit.note.id.as_str())
-            .collect();
-        let opts = SearchOptions {
-            limit: RECENT_LIMIT,
-            include_archived: self.show_archived,
-            today: Some(today()),
-        };
-        self.engine
-            .search(query, &opts)
-            .iter()
-            .filter(|hit| ids.contains(hit.note.id.as_str()))
-            .map(|hit| Row {
-                linked: linked.contains(hit.note.id.as_str()),
-                ..self.row(hit)
-            })
-            .collect()
-    }
-
-    /// The heads, as they are now, of the notes a record is linked to by id. The note being
-    /// looked around is left out, since everything on the list is about it.
-    fn link_heads(&self, record: &Record) -> String {
-        let around = self.pivots.last().map(|p| p.id.as_str());
-        record
-            .links
-            .iter()
-            .filter(|id| Some(id.as_str()) != around)
-            .filter_map(|id| self.store.get(id))
-            .map(|target| head_of(&target.text))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    fn row(&self, hit: &fzn_engine::Hit<'_>) -> Row {
-        let record = self.store.get(hit.note.id.as_str());
-        Row {
-            id: hit.note.id.clone(),
-            head: hit.note.head().to_owned(),
-            archived: hit.note.archived,
-            has_body: has_body(&hit.note.text),
-            linked: hit.linked,
-            links: record.map(|r| self.link_heads(r)).unwrap_or_default(),
-            reasons: hit
-                .reasons
-                .iter()
-                .map(|r| match r.scorer {
-                    // A link is a fact and reads as one, with no scorer to credit. So is a name.
-                    "link" | "name" => r.text.clone(),
-                    scorer => format!("{scorer}: {}", r.text),
-                })
-                .collect::<Vec<_>>()
-                .join(" · "),
-            score: Some(hit.score),
-            updated: record.and_then(|r| r.updated),
-        }
-    }
-
-    /// Moves the cursor between the top line (no selection) and the list.
-    fn step(&mut self, delta: i64) {
-        if self.rows.is_empty() {
-            self.list.select(None);
-            return;
-        }
-        let next = match self.list.selected() {
-            None if delta > 0 => Some((delta - 1).min(self.rows.len() as i64 - 1)),
-            None => None,
-            Some(i) => {
-                let n = i as i64 + delta;
-                (n >= 0).then(|| n.min(self.rows.len() as i64 - 1))
-            }
-        };
-        self.list.select(next.map(|n| n as usize));
-    }
-
-    fn selected(&self) -> Option<&Row> {
-        self.list.selected().and_then(|i| self.rows.get(i))
-    }
-
-    fn reselect(&mut self, id: &str) {
-        if let Some(i) = self.rows.iter().position(|r| r.id.as_str() == id) {
-            self.list.select(Some(i));
-        }
-    }
-
-    /// Writes a version to the store and the engine, remembering what it replaced for undo.
-    fn commit(&mut self, record: Record) -> Result<()> {
-        let before = self.store.version(record.id.as_str()).cloned();
-        let after = self.write(record)?;
-        self.undo.push((before, after));
-        self.redo.clear();
-        Ok(())
-    }
-
-    /// Stamps a version so that it supersedes the one held, here and on every other device, and
-    /// writes it.
-    fn write(&mut self, mut record: Record) -> Result<Record> {
-        record.stamp = Some(self.store.next_stamp(&record.id));
-        if record.deleted {
-            self.engine.remove(&NoteId::new(record.id.clone()));
-        } else {
-            self.engine.upsert(note_from(&record));
-        }
-        self.store.put(record.clone())?;
-        Ok(record)
-    }
-
-    /// Puts a note back to a version.
-    fn restore(&mut self, version: Option<&Record>, fallback: &Record) -> Result<String> {
-        let record = match version {
-            Some(v) => v.clone(),
-            None => Record {
-                deleted: true,
-                ..fallback.clone()
-            },
-        };
-        let id = record.id.clone();
-        self.write(record)?;
-        self.refresh(false);
-        self.reselect(&id);
-        Ok(id)
-    }
-
-    fn undo(&mut self) -> Result<()> {
-        let Some((before, after)) = self.undo.pop() else {
-            self.status = "nothing to undo".into();
-            return Ok(());
-        };
-        self.restore(before.as_ref(), &after)?;
-        self.status = format!("undid: {}", fit(head_of(&after.text), 40));
-        self.redo.push((before, after));
-        Ok(())
-    }
-
-    fn redo(&mut self) -> Result<()> {
-        let Some((before, after)) = self.redo.pop() else {
-            self.status = "nothing to redo".into();
-            return Ok(());
-        };
-        self.restore(Some(&after), &after)?;
-        self.status = format!("redid: {}", fit(head_of(&after.text), 40));
-        self.undo.push((before, after));
-        Ok(())
-    }
-
-    /// Turns the input into a note, linked to the note being looked around and to whatever it
-    /// names in brackets, with its date words written out as dates.
-    fn create(&mut self) -> Result<()> {
-        let text = text::expand_date_words(self.input.trim(), today());
-        if text.is_empty() {
-            return Ok(());
-        }
-        let around: Vec<String> = self
-            .pivots
-            .last()
-            .map(|p| p.id.clone())
-            .into_iter()
-            .collect();
-        let id = new_id();
-        let links = links_on_save(&self.engine, &id, "", &text, &around);
-        let now = Moment::now();
-        self.commit(Record {
-            id,
-            text,
-            links,
-            created: Some(now),
-            updated: Some(now),
-            stamp: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
-        })?;
-        self.set_input(String::new());
-        self.status = "created".into();
-        Ok(())
-    }
-
-    fn edit(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        let Some(id) = self.selected().map(|r| r.id.as_str().to_owned()) else {
-            return Ok(());
-        };
-        let Some(record) = self.store.get(&id).cloned() else {
-            return Ok(());
-        };
-        let path = std::env::temp_dir().join(format!("fzn-{}.md", sanitise(&id)));
-        fs::write(&path, &record.text)?;
-
+    /// Gives the terminal over to the editor, and saves what it leaves.
+    fn edit(&mut self, terminal: &mut DefaultTerminal, id: String, text: &str) -> Result<()> {
         ratatui::restore();
-        let status = run_editor(&self.editor, &path);
+        let edited = edit_in(&self.editor, &id, text);
         *terminal = ratatui::init();
         terminal.clear()?;
-
-        let status = status?;
-        if !status.success() {
-            self.status = format!("{} exited with {status}; note unchanged", self.editor);
-            return Ok(());
-        }
-        let edited = fs::read_to_string(&path)?;
-        let _ = fs::remove_file(&path);
-        let edited = text::expand_date_words(edited.trim_end_matches(['\n', '\r']), today());
-        if edited == record.text {
-            self.status = "unchanged".into();
-        } else if edited.trim().is_empty() {
-            self.status = "empty, so left unchanged; ^V archives".into();
-        } else {
-            let links = links_on_save(&self.engine, &id, &record.text, &edited, &record.links);
-            self.commit(Record {
-                text: edited,
-                links,
-                updated: Some(Moment::now()),
-                ..record
-            })?;
-            self.status = "saved".into();
-            self.refresh(false);
-            self.reselect(&id);
-        }
-        Ok(())
-    }
-
-    fn toggle_archive(&mut self) -> Result<()> {
-        let Some(id) = self.selected().map(|r| r.id.as_str().to_owned()) else {
-            return Ok(());
-        };
-        let Some(record) = self.store.get(&id).cloned() else {
-            return Ok(());
-        };
-        let archived = !record.archived;
-        self.commit(Record { archived, ..record })?;
-        self.status = if archived { "archived" } else { "unarchived" }.into();
-        self.refresh(false);
-        self.reselect(&id);
-        Ok(())
-    }
-
-    fn delete(&mut self) -> Result<()> {
-        let Some(id) = self.selected().map(|r| r.id.as_str().to_owned()) else {
-            return Ok(());
-        };
-        let Some(record) = self.store.get(&id).cloned() else {
-            return Ok(());
-        };
-        self.commit(Record {
-            deleted: true,
-            ..record
-        })?;
-        self.status = "deleted · ^U undoes".into();
-        self.refresh(false);
-        Ok(())
-    }
-
-    /// Copies the selected note's first URL, or its head, to the clipboard via OSC 52.
-    fn copy(&mut self) {
-        let Some(record) = self.selected().and_then(|r| self.store.get(r.id.as_str())) else {
-            return;
-        };
-        let (what, payload) = match text::facts(&record.text).urls.first() {
-            Some(url) => ("URL", url.clone()),
-            None => ("head", head_of(&record.text).to_owned()),
-        };
-        let mut out = std::io::stdout();
-        let ok = write!(out, "\x1b]52;c;{}\x07", base64(payload.as_bytes())).is_ok()
-            && out.flush().is_ok();
-        self.status = if ok {
-            format!("copied {what}: {}", fit(&payload, 50))
-        } else {
-            "could not write to the terminal".into()
-        };
-    }
-
-    fn open_url(&mut self) {
-        let Some(record) = self.selected().and_then(|r| self.store.get(r.id.as_str())) else {
-            return;
-        };
-        let Some(url) = text::facts(&record.text).urls.first().cloned() else {
-            self.status = "no URL in that note".into();
-            return;
-        };
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        self.status = match Command::new(opener)
-            .arg(&url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(_) => format!("opened {}", fit(&url, 60)),
-            Err(e) => format!("{opener}: {e}"),
-        };
-    }
-
-    /// Links the selected note to the one being looked around, or takes that link away. It is a
-    /// correction: what is written in a zoom is linked already, and outside one there is nothing
-    /// to link to.
-    fn link(&mut self) -> Result<()> {
-        let Some(around) = self.pivots.last().map(|p| p.id.clone()) else {
-            self.status = "go into a note first; what you write there links to it".into();
-            return Ok(());
-        };
-        let Some(row) = self.selected() else {
-            self.status =
-                "pick a note to link or unlink; what you write here is linked already".into();
-            return Ok(());
-        };
-        let id = row.id.as_str().to_owned();
-        let head = fit(&row.head, 40);
-        let (Some(note), Some(pivot)) = (
-            self.store.get(&id).cloned(),
-            self.store.get(&around).cloned(),
-        ) else {
-            return Ok(());
-        };
-        let without = |links: &[String], gone: &str| -> Vec<String> {
-            links.iter().filter(|l| *l != gone).cloned().collect()
-        };
-        // A text that still names the other note in brackets links it again when next saved.
-        let named = |text: &str, other: &str| {
-            let names = self.engine.named_in(text);
-            if names.iter().any(|n| n.as_str() == other) {
-                " · its [[brackets]] are still in the text, so an edit links it again"
-            } else {
-                ""
+        match edited? {
+            Ok(text) => {
+                self.act(Action::Save { id, text })?;
             }
-        };
-        if note.links.contains(&around) {
-            self.status = format!("unlinked {head}{}", named(&note.text, &around));
-            self.commit(Record {
-                links: without(&note.links, &around),
-                ..note
-            })?;
-        } else if pivot.links.contains(&id) {
-            self.status = format!("unlinked {head}{}", named(&pivot.text, &id));
-            self.commit(Record {
-                links: without(&pivot.links, &id),
-                ..pivot
-            })?;
-        } else {
-            let mut links = note.links.clone();
-            links.push(around);
-            self.commit(Record { links, ..note })?;
-            self.status = format!("linked {head}");
+            Err(why) => self.session.say(why),
         }
-        self.refresh(false);
-        self.reselect(&id);
         Ok(())
-    }
-
-    /// The first footer row: what just happened, and how many notes there are.
-    fn status_row(&self) -> String {
-        let notes = match self.store.len() {
-            1 => "1 note".to_owned(),
-            n => format!("{n} notes"),
-        };
-        if self.status.is_empty() {
-            notes
-        } else {
-            format!("{} · {notes}", self.status)
-        }
-    }
-
-    /// The keys that do something where the cursor is, for the second footer row. Escape is
-    /// always last.
-    fn keys(&self) -> String {
-        let zoomed = !self.pivots.is_empty();
-        let (mut keys, esc) = match self.selected() {
-            None => {
-                let mut keys = vec![if zoomed {
-                    "Enter writes here"
-                } else {
-                    "Enter writes"
-                }];
-                if !self.rows.is_empty() {
-                    keys.push("↓ picks a note");
-                }
-                keys.push(if self.show_archived {
-                    "^V hide archived"
-                } else {
-                    "^V show archived"
-                });
-                (keys, if zoomed { "Esc back" } else { "Esc Esc quits" })
-            }
-            Some(row) => {
-                let mut keys = vec!["Enter opens"];
-                if zoomed {
-                    keys.push(if row.linked { "^L unlink" } else { "^L link" });
-                }
-                keys.extend([
-                    "^O edit",
-                    if row.archived {
-                        "^V unarchive"
-                    } else {
-                        "^V archive"
-                    },
-                    "^D delete",
-                    "^C copy",
-                ]);
-                // Only the one note under the cursor is read for a URL, once per draw.
-                if self
-                    .store
-                    .get(row.id.as_str())
-                    .is_some_and(|r| !text::facts(&r.text).urls.is_empty())
-                {
-                    keys.push("^_ open URL");
-                }
-                (keys, "Esc up")
-            }
-        };
-        if !self.undo.is_empty() {
-            keys.push("^U undo");
-        }
-        if !self.redo.is_empty() {
-            keys.push("^R redo");
-        }
-        keys.push(esc);
-        keys.join(" · ")
     }
 
     fn draw(&mut self, frame: &mut Frame) {
+        let view = self.session.view();
         let [input_area, list_area, preview_area, status_area] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(5),
@@ -1007,49 +424,48 @@ impl App {
 
         let inner_width = usize::from(input_area.width.saturating_sub(4)).max(1);
         let scroll = self.cursor.saturating_sub(inner_width - 1);
-        let heads: Vec<&str> = self.pivots.iter().map(|p| p.head.as_str()).collect();
         let crumb_max = usize::from(input_area.width.saturating_sub(2)).min(CRUMB_MAX);
         let input = Paragraph::new(Line::from(vec![
             Span::raw("> ").dim(),
-            Span::raw(self.input.as_str()),
-            Span::raw(dates_shown(&self.input, today())).dim(),
+            Span::raw(view.line),
+            Span::raw(dates_shown(&view.dates)).dim(),
         ]))
         .scroll((0, scroll as u16))
-        .block(Block::bordered().title(breadcrumb(&self.title, &heads, crumb_max)));
+        .block(Block::bordered().title(breadcrumb(&self.title, &view.path, crumb_max)));
         frame.render_widget(input, input_area);
         frame.set_cursor_position((
             input_area.x + 3 + (self.cursor - scroll) as u16,
             input_area.y + 1,
         ));
 
-        let searching = !self.input.trim().is_empty();
-        let archived = if self.show_archived {
+        let searching = !view.line.trim().is_empty();
+        let archived = if view.archived_shown {
             " · archived shown"
         } else {
             ""
         };
-        let title = if let Some(p) = self.pivots.last() {
-            let linked = self.rows.iter().filter(|r| r.linked).count();
+        let title = if let Some(head) = view.path.last() {
+            let linked = view.rows.iter().filter(|r| r.linked).count();
             let counts = if searching {
-                format!("{} matching", self.rows.len())
+                format!("{} matching", view.rows.len())
             } else {
-                format!("{linked} linked, {} suggested", self.rows.len() - linked)
+                format!("{linked} linked, {} suggested", view.rows.len() - linked)
             };
-            format!(" around {} · {counts}{archived} ", fit(&p.head, 40))
+            format!(" around {} · {counts}{archived} ", fit(head, 40))
         } else if searching {
-            format!(" related · {}{archived} ", self.rows.len())
+            format!(" related · {}{archived} ", view.rows.len())
         } else {
-            format!(" recent · {}{archived} ", self.rows.len())
+            format!(" recent · {}{archived} ", view.rows.len())
         };
         let width = usize::from(list_area.width.saturating_sub(4));
-        let items: Vec<ListItem> = self
+        let items: Vec<ListItem> = view
             .rows
             .iter()
             .map(|row| {
                 let date = row
                     .updated
                     .map_or_else(|| " ".repeat(10), |m| time::format_day(m.day()));
-                let score = match (self.show_scores, row.score) {
+                let score = match (view.scores_shown, row.score) {
                     (true, Some(s)) => format!("{s:.2} "),
                     _ => String::new(),
                 };
@@ -1061,7 +477,7 @@ impl App {
                 let links = if row.links.is_empty() || room < 6 {
                     String::new()
                 } else {
-                    fit(&format!(" → {}", row.links), room)
+                    fit(&format!(" → {}", row.links.join(", ")), room)
                 };
                 let pad = room - links.chars().count();
                 let mut lines = vec![Line::from(vec![
@@ -1073,7 +489,7 @@ impl App {
                     lines.push(
                         Line::from(format!(
                             "      {}",
-                            fit(&row.reasons, width.saturating_sub(6))
+                            fit(&row.reasons.join(" · "), width.saturating_sub(6))
                         ))
                         .dim(),
                     );
@@ -1086,14 +502,18 @@ impl App {
             .block(Block::bordered().title(title))
             .highlight_style(Style::new().reversed())
             .highlight_symbol("▶ ");
+        self.list.select(view.cursor);
         frame.render_stateful_widget(list, list_area, &mut self.list);
 
-        let shown = self.selected().or(self.rows.first());
-        let (title, body) = match shown.and_then(|r| self.store.get(r.id.as_str())) {
-            Some(record) => (
+        let shown = view
+            .cursor
+            .and_then(|i| view.rows.get(i))
+            .or(view.rows.first());
+        let (title, body) = match (shown, view.preview) {
+            (Some(row), Some(record)) => (
                 format!(
                     " {}created {} · updated {}{}{} ",
-                    if self.selected().is_none() {
+                    if view.cursor.is_none() {
                         "top of list · "
                     } else {
                         ""
@@ -1101,14 +521,15 @@ impl App {
                     format_day_of(record.created),
                     format_day_of(record.updated),
                     if record.archived { " · archived" } else { "" },
-                    match shown.map(|r| r.links.as_str()) {
-                        Some(links) if !links.is_empty() => format!(" · links {}", fit(links, 60)),
-                        _ => String::new(),
+                    if row.links.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · links {}", fit(&row.links.join(", "), 60))
                     }
                 ),
-                record.text.clone(),
+                record.text.as_str(),
             ),
-            None => (" nothing to show ".to_owned(), String::new()),
+            _ => (" nothing to show ".to_owned(), ""),
         };
         frame.render_widget(
             Paragraph::new(body)
@@ -1118,9 +539,18 @@ impl App {
         );
 
         // Two rows, each clipped at the edge: what happened, then the keys that apply.
+        let notes = match view.notes {
+            1 => "1 note".to_owned(),
+            n => format!("{n} notes"),
+        };
+        let status = if view.status.is_empty() {
+            notes
+        } else {
+            format!("{} · {notes}", view.status)
+        };
         let footer = Text::from(vec![
-            Line::from(self.status_row()),
-            Line::from(self.keys()).dim(),
+            Line::from(status),
+            Line::from(footer(&view.hints)).dim(),
         ]);
         frame.render_widget(Paragraph::new(footer), status_area);
     }
@@ -1129,223 +559,30 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Store;
+    use crate::system::{self, System};
+    use fzn_engine::{Record, Weights};
     use std::path::PathBuf;
 
     fn app() -> (App, PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("fzn-ui-test-{:x}", crate::store::random_u64()));
-        let store = Store::open(&dir, "dev").unwrap();
-        let app = App::new(
-            Engine::new(),
-            store,
-            "true".into(),
-            "fzn".into(),
-            String::new(),
-        );
-        (app, dir)
-    }
-
-    fn add(app: &mut App, text: &str) {
-        app.set_input(text.to_owned());
-        app.create().unwrap();
-    }
-
-    fn heads(app: &App) -> Vec<&str> {
-        app.rows.iter().map(|r| r.head.as_str()).collect()
-    }
-
-    #[test]
-    fn archiving_keeps_the_date_and_hides_the_note_until_asked_for() {
-        let (mut app, dir) = app();
-        app.commit(Record {
-            id: "old".into(),
-            text: "kettlebell swings".into(),
-            links: Vec::new(),
-            created: Some(Moment::utc(1_000_000)),
-            updated: Some(Moment::utc(1_000_000)),
-            stamp: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
-        })
-        .unwrap();
-        app.refresh(true);
-        app.step(1);
-        app.toggle_archive().unwrap();
-        let held = app.store.get("old").unwrap();
-        assert!(held.archived);
-        assert_eq!(
-            held.updated,
-            Some(Moment::utc(1_000_000)),
-            "archiving is not an edit"
-        );
-
-        assert!(heads(&app).is_empty());
-        app.set_input("kettlebell".into());
-        assert!(heads(&app).is_empty(), "nor does typing find it");
-        app.show_archived = true;
-        app.refresh(false);
-        assert_eq!(heads(&app), ["kettlebell swings"]);
-
-        // Undo lands in the same second as the change it reverses, and still has to win.
-        app.undo().unwrap();
-        assert!(!app.store.get("old").unwrap().archived);
-        drop(app);
-        let reopened = Store::open(&dir, "dev").unwrap();
-        assert!(!reopened.get("old").unwrap().archived);
-        assert_eq!(
-            reopened.get("old").unwrap().updated,
-            Some(Moment::utc(1_000_000))
-        );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn stepping_back_out_of_a_note_lands_on_the_top_line() {
-        let (mut app, dir) = app();
-        add(&mut app, "kettlebell swings");
-        add(&mut app, "kettlebell press");
-        app.set_input("kettlebell".into());
-        app.step(1);
-        app.look_around();
-        assert_eq!(app.pivots.len(), 1);
-        assert_eq!(app.input, "");
-        app.back();
-        assert!(app.pivots.is_empty());
-        assert_eq!(app.input, "kettlebell");
-        assert_eq!(app.list.selected(), None, "so that ^D clears the input");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn going_into_a_note_already_on_the_path_goes_back_to_it() {
-        let (mut app, dir) = app();
-        put(
-            &mut app,
-            "squats",
-            "Squat log\ntrainingapp sets",
-            &[],
-            1_000,
-        );
-        put(
-            &mut app,
-            "profile",
-            "Profile\ntrainingapp numbers",
-            &["squats"],
-            2_000,
-        );
-        put(
-            &mut app,
-            "hub",
-            "trainingapp\nthe plan",
-            &["profile"],
-            3_000,
-        );
-        let path =
-            |app: &App| -> Vec<String> { app.pivots.iter().map(|p| p.head.clone()).collect() };
-
-        type_in(&mut app, "trai");
-        look_around(&mut app, "trainingapp");
-        type_in(&mut app, "pro");
-        look_around(&mut app, "Profile");
-        type_in(&mut app, "squat");
-        look_around(&mut app, "Squat log");
-        assert_eq!(path(&app), ["trainingapp", "Profile", "Squat log"]);
-        assert!(
-            heads(&app).contains(&"trainingapp"),
-            "the hub is a neighbour of the log, so it is listed again"
-        );
-
-        look_around(&mut app, "trainingapp");
-        assert_eq!(path(&app), ["trainingapp"], "back to it, not a fourth step");
-        assert_eq!(app.input, "pro", "the line as it was at that depth");
-        assert_eq!(app.list.selected(), None);
-
-        // With something on the line, the line stays as it is.
-        app.set_input(String::new());
-        look_around(&mut app, "Profile");
-        type_in(&mut app, "trai");
-        look_around(&mut app, "trainingapp");
-        assert_eq!(path(&app), ["trainingapp"]);
-        assert_eq!(app.input, "trai");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn what_another_instance_writes_shows_up() {
-        let (mut app, dir) = app();
-        add(&mut app, "mine");
-        assert!(!app.reload(), "nothing new");
-
-        let mut other = Store::open(&dir, "dev").unwrap();
-        let theirs = Record {
-            id: "theirs".into(),
-            text: "written elsewhere".into(),
-            links: Vec::new(),
-            created: Some(Moment::now()),
-            updated: Some(Moment::now().plus(60)),
-            stamp: Some(Moment::now()),
-            archived: false,
-            deleted: false,
-            device: String::new(),
-        };
-        other.put(theirs.clone()).unwrap();
-        assert!(app.reload());
-        assert_eq!(heads(&app), ["written elsewhere", "mine"]);
-        app.set_input("elsewhere".into());
-        assert_eq!(
-            heads(&app),
-            ["written elsewhere"],
-            "and the engine knows it"
-        );
-
-        other
-            .put(Record {
-                deleted: true,
-                stamp: Some(other.next_stamp("theirs")),
-                ..theirs
-            })
-            .unwrap();
-        assert!(app.reload());
-        assert!(heads(&app).is_empty());
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A note with its own time, so that the order of a list does not hang on the clock.
-    fn put(app: &mut App, id: &str, text: &str, links: &[&str], updated: i64) {
-        app.commit(Record {
-            id: id.into(),
-            text: text.into(),
-            links: links.iter().map(|&l| l.to_owned()).collect(),
-            created: Some(Moment::utc(updated)),
-            updated: Some(Moment::utc(updated)),
-            stamp: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
-        })
-        .unwrap();
-        app.refresh(true);
-    }
-
-    fn select(app: &mut App, head: &str) {
-        let i = app.rows.iter().position(|r| r.head == head).unwrap();
-        app.list.select(Some(i));
-    }
-
-    fn look_around(app: &mut App, head: &str) {
-        select(app, head);
-        app.look_around();
+        let dir = std::env::temp_dir().join(format!("fzn-ui-test-{:x}", system::random_u64()));
+        let (notes, logs) = Store::open(&dir, "dev").unwrap().into_parts();
+        let session = Session::new(Box::new(System), "dev", Weights::default(), notes);
+        (App::new(session, logs, "true".into(), "fzn".into()), dir)
     }
 
     /// Presses a key, with Control held when `ctrl` is set.
-    fn press(app: &mut App, code: KeyCode, ctrl: bool) {
+    fn press(app: &mut App, code: KeyCode, ctrl: bool) -> Flow {
         let modifiers = if ctrl {
             KeyModifiers::CONTROL
         } else {
             KeyModifiers::NONE
         };
-        app.handle(KeyEvent::new(code, modifiers)).unwrap();
+        app.handle(KeyEvent::new(code, modifiers)).unwrap()
+    }
+
+    fn chord(app: &mut App, c: char) -> Flow {
+        press(app, KeyCode::Char(c), true)
     }
 
     fn type_in(app: &mut App, text: &str) {
@@ -1354,451 +591,383 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_note_written_around_another_is_linked_by_id_and_listed_first() {
-        let (mut app, dir) = app();
-        put(
-            &mut app,
-            "profile",
-            "Profile\ntrainingapp numbers and plan",
-            &[],
-            2_000,
-        );
-        put(
-            &mut app,
-            "hub",
-            "trainingapp\nthe plan",
-            &["profile"],
-            3_000,
-        );
-        put(
-            &mut app,
-            "near",
-            "trainingapp plan ideas",
-            &[],
-            9_000_000_000,
-        );
-        look_around(&mut app, "trainingapp");
-        assert_eq!(heads(&app), ["Profile", "trainingapp plan ideas"]);
+    fn write(app: &mut App, text: &str) {
+        type_in(app, text);
+        press(app, KeyCode::Enter, false);
+    }
 
-        add(&mut app, "some new note");
+    fn heads(app: &App) -> Vec<String> {
+        let view = app.session.view();
+        view.rows.iter().map(|r| r.head.clone()).collect()
+    }
+
+    fn line(app: &App) -> String {
+        app.session.view().line.to_owned()
+    }
+
+    fn path(app: &App) -> Vec<String> {
+        let view = app.session.view();
+        view.path.iter().map(|&head| head.to_owned()).collect()
+    }
+
+    fn on_note(app: &App) -> bool {
+        app.session.view().cursor.is_some()
+    }
+
+    #[test]
+    fn enter_writes_the_line_into_this_devices_log() {
+        let (mut app, dir) = app();
+        write(&mut app, "kettlebell swings");
+        assert_eq!(heads(&app), ["kettlebell swings"]);
+        assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
+        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        assert_eq!(written.lines().count(), 1);
+        assert!(written.starts_with(r#"{"v":1,"id":""#), "{written}");
+        assert!(written.contains(r#""text":"kettlebell swings""#));
+        assert!(written.contains(r#""device":"dev""#));
+
+        let reopened = Store::open(&dir, "dev").unwrap();
+        assert_eq!(reopened.notes().len(), 1);
+        assert_eq!(reopened.skipped(), 0);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_chord_acts_on_the_line_or_on_the_note_under_the_cursor() {
+        let (mut app, dir) = app();
+        write(&mut app, "kettlebell swings");
+        write(&mut app, "boiler service");
+
+        // On the line, Ctrl-D clears it. On a note, it deletes the note.
+        type_in(&mut app, "boil");
+        assert_eq!(heads(&app), ["boiler service"]);
+        chord(&mut app, 'd');
+        assert_eq!(line(&app), "");
+        assert_eq!(heads(&app).len(), 2);
+        type_in(&mut app, "boil");
+        press(&mut app, KeyCode::Down, false);
+        chord(&mut app, 'd');
+        assert_eq!(app.session.view().notes, 1);
+        assert_eq!(line(&app), "boil", "the line is left alone");
+        chord(&mut app, 'd');
+        assert_eq!(heads(&app), ["kettlebell swings"]);
+
+        // On a note, Ctrl-V archives it or brings it back. On the line, it shows archived notes.
+        press(&mut app, KeyCode::Down, false);
+        chord(&mut app, 'v');
+        assert!(heads(&app).is_empty());
+        assert!(
+            !on_note(&app),
+            "nothing is listed, so the cursor is on the line"
+        );
+        chord(&mut app, 'v');
+        assert_eq!(heads(&app), ["kettlebell swings"]);
+        press(&mut app, KeyCode::Down, false);
+        chord(&mut app, 'v');
+        press(&mut app, KeyCode::Esc, false);
+        chord(&mut app, 'v');
         assert_eq!(
             heads(&app),
-            ["some new note", "Profile", "trainingapp plan ideas"],
-            "linked first and newest on top, then what the engine suggests"
+            ["kettlebell swings"],
+            "it is no longer archived"
         );
-        assert_eq!(
-            app.rows.iter().map(|r| r.linked).collect::<Vec<_>>(),
-            [true, true, false]
-        );
-        assert!(app.rows[0].reasons.starts_with("links here"));
-        assert!(app.rows[1].reasons.starts_with("linked from here"));
-        let new = app.store.get(app.rows[0].id.as_str()).unwrap().clone();
-        assert_eq!(new.text, "some new note", "the text is what was typed");
-        assert_eq!(new.links, ["hub"]);
 
-        // Renaming the hub breaks nothing, and from outside the note says what it is linked to.
-        let hub = app.store.get("hub").unwrap().clone();
-        app.commit(Record {
-            text: "Training App\nthe plan".into(),
-            ..hub
-        })
-        .unwrap();
-        app.refresh(false);
-        assert_eq!(heads(&app)[..2], ["some new note", "Profile"]);
-        app.back();
-        let row = app.rows.iter().find(|r| r.head == "some new note").unwrap();
-        assert_eq!(row.links, "Training App");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn ctrl_l_links_and_unlinks_the_selected_note() {
-        let (mut app, dir) = app();
-        put(
-            &mut app,
-            "profile",
-            "Profile\ntrainingapp numbers",
-            &[],
-            2_000,
-        );
-        let hub = "trainingapp\nthe plan, see [[Profile]]";
-        put(&mut app, "hub", hub, &["profile"], 3_000);
-        put(&mut app, "near", "trainingapp plan ideas", &[], 1_000);
-        look_around(&mut app, "trainingapp");
-        assert_eq!(heads(&app), ["Profile", "trainingapp plan ideas"]);
-
-        select(&mut app, "trainingapp plan ideas");
-        press(&mut app, KeyCode::Char('l'), true);
-        assert_eq!(app.store.get("near").unwrap().links, ["hub"]);
-        assert_eq!(
-            app.store.get("near").unwrap().updated,
-            Some(Moment::utc(1_000))
-        );
-        assert_eq!(heads(&app), ["Profile", "trainingapp plan ideas"]);
-        assert!(app.rows[1].linked, "locked in, and listed by its own date");
-        assert_eq!(app.selected().unwrap().head, "trainingapp plan ideas");
-
-        press(&mut app, KeyCode::Char('l'), true);
-        assert!(app.store.get("near").unwrap().links.is_empty());
-        assert!(!app.selected().unwrap().linked);
-        assert_eq!(app.status, "unlinked trainingapp plan ideas");
-
-        // Any link comes off the same way, whichever note holds it and however it was made.
-        select(&mut app, "Profile");
-        press(&mut app, KeyCode::Char('l'), true);
-        assert!(app.store.get("hub").unwrap().links.is_empty());
-        assert!(!app.selected().unwrap().linked);
-        assert!(app.status.contains("still in the text"), "{}", app.status);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn brackets_typed_into_a_note_link_it_by_id() {
-        let (mut app, dir) = app();
-        put(
-            &mut app,
-            "prog",
-            "Kettlebell Programme\nweek one",
-            &[],
-            2_000,
-        );
-        let typed = "follow [[kettlebell programme]] and [[Nowhere]] today";
-        add(&mut app, typed);
-        let new = app.rows[0].id.as_str().to_owned();
-        let held = app.store.get(&new).unwrap();
-        assert_eq!(held.links, ["prog"]);
-        assert_eq!(held.text, typed, "the text is left as typed");
-        look_around(&mut app, "Kettlebell Programme");
-        assert!(app.rows[0].linked && app.rows[0].reasons.starts_with("links here"));
-
-        // Renamed, the target is still linked, and the note shows its new head.
-        let prog = app.store.get("prog").unwrap().clone();
-        app.commit(Record {
-            text: "Strength Programme\nweek one".into(),
-            ..prog
-        })
-        .unwrap();
-        app.back();
-        let row = app.rows.iter().find(|r| r.id.as_str() == new).unwrap();
-        assert_eq!(row.links, "Strength Programme");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn ctrl_l_outside_a_zoom_does_nothing_but_say_so() {
-        let (mut app, dir) = app();
-        put(&mut app, "a", "kettlebell swings", &[], 2_000);
-        put(&mut app, "b", "kettlebell press", &[], 1_000);
-        type_in(&mut app, "kettlebell day");
-        select(&mut app, "kettlebell swings");
-        press(&mut app, KeyCode::Char('l'), true);
-        assert!(app.store.records().all(|r| r.links.is_empty()));
-        assert_eq!(app.undo.len(), 2, "nothing was written");
-        assert!(
-            app.status.starts_with("go into a note first"),
-            "{}",
-            app.status
-        );
-        assert_eq!(app.input, "kettlebell day", "the input is left alone");
-
-        press(&mut app, KeyCode::Esc, false);
-        press(&mut app, KeyCode::Enter, false);
-        let new = app
-            .store
-            .records()
-            .find(|r| r.text == "kettlebell day")
-            .unwrap();
-        assert!(
-            new.links.is_empty(),
-            "nor is anything kept for the note being written"
-        );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn esc_never_throws_away_what_you_typed() {
-        let (mut app, dir) = app();
-        put(&mut app, "hub", "trainingapp\nthe plan", &[], 3_000);
-        put(&mut app, "near", "trainingapp plan ideas", &[], 1_000);
-
-        // Gone into from an empty line.
-        select(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Enter, false);
-        type_in(&mut app, "deload next week");
-        press(&mut app, KeyCode::Esc, false);
-        assert!(app.pivots.is_empty());
-        assert_eq!(app.input, "deload next week");
-
-        // Gone into by a search.
-        press(&mut app, KeyCode::Char('d'), true);
-        type_in(&mut app, "trai");
-        select(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Enter, false);
-        type_in(&mut app, "deload next week");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(app.input, "deload next week", "the draft, not the search");
-        assert_eq!(app.list.selected(), None);
-
-        // With the line emptied, the search comes back.
-        press(&mut app, KeyCode::Char('d'), true);
-        type_in(&mut app, "trai");
-        select(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Enter, false);
-        type_in(&mut app, "oops");
-        press(&mut app, KeyCode::Char('d'), true);
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(app.input, "trai");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_search_clears_on_the_way_in_and_comes_back_on_the_way_out() {
-        let (mut app, dir) = app();
-        put(&mut app, "hub", "trainingapp\nthe plan", &[], 3_000);
-        put(&mut app, "near", "trainingapp plan ideas", &[], 1_000);
-        type_in(&mut app, "trai");
-        select(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(app.pivots.len(), 1);
-        assert_eq!(app.input, "");
-        assert_eq!(heads(&app), ["trainingapp plan ideas"]);
-
-        press(&mut app, KeyCode::Esc, false);
-        assert!(app.pivots.is_empty());
-        assert_eq!(app.input, "trai");
-        assert_eq!(app.cursor, 4);
-        assert_eq!(app.list.selected(), None, "on the top line");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn the_name_of_a_note_finds_what_was_written_in_it() {
-        let (mut app, dir) = app();
-        put(&mut app, "boiler", "Boiler", &[], 1_000);
-        put(&mut app, "quote", "engineer quoted 240", &["boiler"], 2_000);
-        put(
-            &mut app,
-            "pressure",
-            "pressure dropped again",
-            &["boiler"],
-            3_000,
-        );
-        put(&mut app, "far", "cake recipe", &[], 4_000);
-
-        type_in(&mut app, "boiler");
-        assert_eq!(heads(&app)[0], "Boiler", "the note so named comes first");
-        assert!(
-            app.rows[0].reasons.starts_with("its name · "),
-            "{}",
-            app.rows[0].reasons
-        );
-        assert_eq!(heads(&app).len(), 3);
-        let row = app.rows.iter().find(|r| r.id.as_str() == "quote").unwrap();
-        assert!(row.reasons.contains("about Boiler"), "{}", row.reasons);
-        assert_eq!(row.links, "Boiler", "and the row says so too");
-
-        // Going into a note found that way was a search for it, though it does not say the word.
-        select(&mut app, "pressure dropped again");
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(app.pivots.len(), 1);
-        assert_eq!(app.input, "");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(app.input, "boiler");
-
-        // So was one found by a word of its own and the name of what it is about.
-        press(&mut app, KeyCode::Char('d'), true);
-        type_in(&mut app, "boiler quoted");
-        assert_eq!(heads(&app)[0], "engineer quoted 240");
+        // On a note, Enter goes in. On the line, it writes, and what is written there is linked.
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Enter, false);
-        assert_eq!(app.input, "");
-        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(path(&app), ["kettlebell swings"]);
+        write(&mut app, "two sets");
+        assert_eq!(heads(&app), ["two sets"]);
+        assert!(app.session.view().rows[0].linked);
 
-        // Something new said about the boiler is a draft, and goes in with you.
-        press(&mut app, KeyCode::Char('d'), true);
-        type_in(&mut app, "boiler needs a service");
-        select(&mut app, "Boiler");
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(app.input, "boiler needs a service");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A hub with a neighbourhood of three: two notes that share words with the draft below, and
-    /// one that shares nothing with it.
-    fn hub_with_neighbours(app: &mut App) {
-        put(
-            app,
-            "profile",
-            "Profile\ntrainingapp numbers and plan",
-            &[],
-            2_000,
-        );
-        put(
-            app,
-            "squats",
-            "Squat log\ntrainingapp sets",
-            &["hub"],
-            2_500,
-        );
-        put(app, "hub", "trainingapp\nthe plan", &["profile"], 3_000);
-        put(app, "near", "trainingapp plan ideas", &[], 1_000);
-    }
-
-    const DRAFT: &str = "the plan needs a deload week";
-
-    #[test]
-    fn a_draft_comes_with_you_and_is_written_where_you_land() {
-        let (mut app, dir) = app();
-        hub_with_neighbours(&mut app);
-        look_around(&mut app, "trainingapp");
-        assert_eq!(
-            heads(&app),
-            ["Squat log", "Profile", "trainingapp plan ideas"]
-        );
-        app.back();
-
-        type_in(&mut app, DRAFT);
-        select(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(app.pivots.len(), 1);
-        assert_eq!(app.input, DRAFT, "the draft came along");
-        assert_eq!(app.cursor, DRAFT.chars().count());
-        assert_eq!(app.list.selected(), None);
-        assert_eq!(
-            heads(&app),
-            ["trainingapp plan ideas", "Profile"],
-            "the neighbourhood, narrowed by the draft"
-        );
-
-        press(&mut app, KeyCode::Enter, false);
-        let new = app.store.records().find(|r| r.text == DRAFT).unwrap();
-        assert_eq!(new.links, ["hub"]);
-        assert_eq!(app.input, "");
-        assert_eq!(heads(&app)[0], DRAFT, "at the top of the linked part");
-
-        press(&mut app, KeyCode::Esc, false);
-        assert!(app.pivots.is_empty());
-        assert_eq!(
-            app.input, "",
-            "the draft was written, so it is not put back"
-        );
+        // Every change went to the log, and that is all there is to reopening.
+        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        assert_eq!(written.lines().count(), 6);
+        let reopened = Store::open(&dir, "dev").unwrap();
+        let mut texts: Vec<&str> = reopened
+            .notes()
+            .records()
+            .map(|r| r.text.as_str())
+            .collect();
+        texts.sort_unstable();
+        assert_eq!(texts, ["kettlebell swings", "two sets"]);
+        assert!(reopened.notes().records().all(|r| !r.archived));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn a_draft_taken_into_a_note_and_back_out_is_still_on_the_line() {
+    fn escape_comes_back_a_step_at_a_time_and_twice_quits() {
         let (mut app, dir) = app();
-        hub_with_neighbours(&mut app);
-        type_in(&mut app, DRAFT);
-        select(&mut app, "trainingapp");
+        write(&mut app, "kettlebell swings");
+        press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Enter, false);
-        press(&mut app, KeyCode::Char('!'), false);
+        write(&mut app, "two sets");
+        press(&mut app, KeyCode::Down, false);
+        assert!(on_note(&app));
+
         press(&mut app, KeyCode::Esc, false);
-        assert!(app.pivots.is_empty());
-        assert_eq!(
-            app.input,
-            format!("{DRAFT}!"),
-            "as it is now, not as it was"
-        );
-        assert_eq!(app.list.selected(), None);
-        assert!(
-            heads(&app).contains(&"trainingapp"),
-            "and what it finds is listed"
-        );
+        assert!(!on_note(&app), "off the list first");
+        assert_eq!(path(&app).len(), 1);
+        press(&mut app, KeyCode::Esc, false);
+        assert!(path(&app).is_empty(), "then out of the note");
+
+        assert!(matches!(
+            press(&mut app, KeyCode::Esc, false),
+            Flow::Continue
+        ));
+        assert_eq!(app.session.view().status, "Escape again to quit");
+        assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
+
+        // Any other key in between, and it takes two again.
+        press(&mut app, KeyCode::Esc, false);
+        type_in(&mut app, "x");
+        assert!(matches!(
+            press(&mut app, KeyCode::Esc, false),
+            Flow::Continue
+        ));
+        assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
+        assert!(matches!(chord(&mut app, 'q'), Flow::Quit));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn the_footer_shows_only_what_applies() {
+    fn the_cursor_follows_the_line() {
         let (mut app, dir) = app();
-        assert_eq!(app.status_row(), "0 notes");
+        type_in(&mut app, "héllo wörld");
+        assert_eq!(app.cursor, 11);
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Left, false);
+        }
+        type_in(&mut app, "X");
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo Xwörld", 7));
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo wörld", 6));
+        press(&mut app, KeyCode::Delete, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo örld", 6));
+        chord(&mut app, 'a');
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo örld", 0));
+        chord(&mut app, 'e');
+        press(&mut app, KeyCode::Delete, false);
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo örld", 10));
+        chord(&mut app, 'w');
+        assert_eq!((line(&app).as_str(), app.cursor), ("héllo ", 6));
+        chord(&mut app, 'w');
+        assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(line(&app), " ", "a tab is a space");
+        chord(&mut app, 'd');
+
+        // A line the session puts back has its cursor at the end, wherever it was left.
+        write(&mut app, "trainingapp plan");
+        type_in(&mut app, "trai");
+        press(&mut app, KeyCode::Left, false);
+        press(&mut app, KeyCode::Down, false);
+        assert!(on_note(&app));
+        type_in(&mut app, "n");
+        assert!(!on_note(&app), "typing always goes to the top line");
+        assert_eq!((line(&app).as_str(), app.cursor), ("trani", 4));
+        chord(&mut app, 'd');
+        type_in(&mut app, "trai");
+        press(&mut app, KeyCode::Left, false);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keys_that_edit_the_line() {
+        let key =
+            |line: &str, cursor: usize, code: KeyCode, ctrl: bool| edited(line, cursor, code, ctrl);
         assert_eq!(
-            app.keys(),
+            key("ab", 1, KeyCode::Char('é'), false),
+            Some(("aéb".into(), 2))
+        );
+        assert_eq!(
+            key("aéb", 2, KeyCode::Backspace, false),
+            Some(("ab".into(), 1))
+        );
+        assert_eq!(key("ab", 0, KeyCode::Backspace, false), None);
+        assert_eq!(key("ab", 2, KeyCode::Delete, false), None);
+        assert_eq!(
+            key("one  two ", 9, KeyCode::Char('w'), true),
+            Some(("one  ".into(), 5)),
+            "back over the spaces, then the word"
+        );
+        assert_eq!(
+            key("one two", 5, KeyCode::Char('w'), true),
+            Some(("one wo".into(), 4)),
+            "only what is before the cursor"
+        );
+        assert_eq!(key("ab", 9, KeyCode::Left, false), Some(("ab".into(), 1)));
+        assert_eq!(key("ab", 2, KeyCode::Right, false), Some(("ab".into(), 2)));
+        assert_eq!(key("ab", 1, KeyCode::Char('x'), true), None);
+        assert_eq!(key("ab", 1, KeyCode::F(1), false), None);
+    }
+
+    /// The key a footer entry names.
+    fn named(key: &str) -> (KeyCode, bool) {
+        match key {
+            "Enter" => (KeyCode::Enter, false),
+            "Esc" => (KeyCode::Esc, false),
+            "↓" => (KeyCode::Down, false),
+            chord => {
+                let mut chars = chord.chars();
+                assert_eq!(chars.next(), Some('^'), "{chord}");
+                let c = chars.next().unwrap().to_ascii_lowercase();
+                (KeyCode::Char(c), true)
+            }
+        }
+    }
+
+    /// The footer as it is now, having checked that every key it names asks for what it says.
+    fn keys(app: &App) -> String {
+        let view = app.session.view();
+        let (on_top, zoomed) = (view.cursor.is_none(), !view.path.is_empty());
+        for hint in &view.hints {
+            let (code, ctrl) = named(key_for(&hint.action));
+            assert_eq!(
+                bound(code, ctrl, on_top, zoomed).as_ref(),
+                Some(&hint.action),
+                "{} {}",
+                key_for(&hint.action),
+                hint.label
+            );
+        }
+        footer(&view.hints)
+    }
+
+    #[test]
+    fn the_footer_names_the_key_for_each_thing_on_offer() {
+        let (mut app, dir) = app();
+        assert_eq!(
+            keys(&app),
             "Enter writes · ^V show archived · Esc Esc quits",
             "nothing listed, so nothing to pick"
         );
-        put(
-            &mut app,
-            "profile",
-            "Profile\ntrainingapp numbers",
-            &[],
-            2_000,
-        );
-        assert_eq!(app.status_row(), "1 note");
-        put(
-            &mut app,
-            "video",
-            "Squat form video\nhttps://example.com/squat for trainingapp",
-            &["hub"],
-            2_500,
-        );
-        put(
-            &mut app,
-            "hub",
-            "trainingapp\nthe plan",
-            &["profile"],
-            3_000,
-        );
-        put(&mut app, "near", "trainingapp plan ideas", &[], 1_000);
-        app.status = "saved".into();
-        assert_eq!(app.status_row(), "saved · 4 notes");
+        write(&mut app, "trainingapp");
         assert_eq!(
-            app.keys(),
+            keys(&app),
             "Enter writes · ↓ picks a note · ^V show archived · ^U undo · Esc Esc quits"
         );
-        select(&mut app, "trainingapp");
+        press(&mut app, KeyCode::Down, false);
         assert_eq!(
-            app.keys(),
+            keys(&app),
             "Enter opens · ^O edit · ^V archive · ^D delete · ^C copy · ^U undo · Esc up"
         );
 
-        app.look_around();
+        press(&mut app, KeyCode::Enter, false);
+        write(&mut app, "squat form video https://example.com/squat");
         assert_eq!(
-            app.keys(),
+            keys(&app),
             "Enter writes here · ↓ picks a note · ^V show archived · ^U undo · Esc back"
         );
-        select(&mut app, "Profile");
+        press(&mut app, KeyCode::Down, false);
         assert_eq!(
-            app.keys(),
-            "Enter opens · ^L unlink · ^O edit · ^V archive · ^D delete · ^C copy · ^U undo \
-             · Esc up"
-        );
-        select(&mut app, "Squat form video");
-        assert_eq!(
-            app.keys(),
+            keys(&app),
             "Enter opens · ^L unlink · ^O edit · ^V archive · ^D delete · ^C copy · ^_ open URL \
              · ^U undo · Esc up"
         );
-        select(&mut app, "trainingapp plan ideas");
-        assert!(
-            app.keys().starts_with("Enter opens · ^L link ·"),
-            "{}",
-            app.keys()
-        );
 
         // The widest a row gets: a linked, archived note with a URL, with undo and redo to hand.
-        app.show_archived = true;
-        app.refresh(false);
-        select(&mut app, "Squat form video");
-        app.toggle_archive().unwrap();
-        select(&mut app, "trainingapp plan ideas");
-        press(&mut app, KeyCode::Char('l'), true);
-        app.undo().unwrap();
-        app.list.select(None);
-        assert_eq!(
-            app.keys(),
-            "Enter writes here · ↓ picks a note · ^V hide archived · ^U undo · ^R redo · Esc back"
-        );
-        select(&mut app, "Squat form video");
-        let widest = app.keys();
+        press(&mut app, KeyCode::Esc, false);
+        chord(&mut app, 'v');
+        press(&mut app, KeyCode::Down, false);
+        chord(&mut app, 'v');
+        chord(&mut app, 'l');
+        chord(&mut app, 'u');
+        let widest = keys(&app);
         assert_eq!(
             widest,
             "Enter opens · ^L unlink · ^O edit · ^V unarchive · ^D delete · ^C copy \
              · ^_ open URL · ^U undo · ^R redo · Esc up"
         );
         assert!(widest.chars().count() <= 113, "{}", widest.chars().count());
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(
+            keys(&app),
+            "Enter writes here · ↓ picks a note · ^V hide archived · ^U undo · ^R redo · Esc back"
+        );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn what_another_instance_writes_shows_up() {
+        let (mut app, dir) = app();
+        write(&mut app, "mine");
+        assert!(!app.reload(), "its own line, read back, is not news");
+
+        let now = system::now();
+        let mut other = Logs::open(&dir, "other").unwrap();
+        other
+            .append(&Record {
+                id: "theirs".into(),
+                text: "written elsewhere".into(),
+                links: Vec::new(),
+                created: Some(now),
+                updated: Some(now.plus(60)),
+                stamp: Some(now),
+                archived: false,
+                deleted: false,
+                device: "other".into(),
+            })
+            .unwrap();
+        assert!(app.reload());
+        assert_eq!(heads(&app), ["written elsewhere", "mine"]);
+        assert_eq!(app.session.view().status, "1 changed elsewhere");
+        assert!(!app.reload(), "and each line once");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_editor_is_handed_the_text_and_what_it_leaves_is_saved() {
+        let (mut app, dir) = app();
+        write(&mut app, "the plan");
+        assert!(
+            matches!(chord(&mut app, 'o'), Flow::Continue),
+            "on the top line there is no note to edit"
+        );
+        press(&mut app, KeyCode::Down, false);
+        let Flow::Edit { id, text } = chord(&mut app, 'o') else {
+            panic!("the note under the cursor was not handed over");
+        };
+        assert_eq!(text, "the plan");
+
+        // An editor that changes nothing, and one that gives up.
+        assert_eq!(edit_in("true", &id, &text).unwrap(), Ok("the plan".into()));
+        let gave_up = edit_in("false", &id, &text).unwrap().unwrap_err();
+        assert!(gave_up.starts_with("false exited with"), "{gave_up}");
+        assert!(gave_up.ends_with("note unchanged"), "{gave_up}");
+
+        // One that leaves something else behind.
+        let left = dir.join("left-by-the-editor.md");
+        fs::write(&left, "The plan\nwith a body\n").unwrap();
+        let editor = format!("cp {}", left.display());
+        let edited = edit_in(&editor, &id, &text).unwrap().unwrap();
+        app.act(Action::Save { id, text: edited }).unwrap();
+        let view = app.session.view();
+        assert_eq!(view.status, "saved");
+        assert_eq!(view.preview.unwrap().text, "The plan\nwith a body");
+        assert!(view.rows[0].has_body);
+        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        assert_eq!(written.lines().count(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn date_words_are_shown_as_the_days_they_stand_for() {
+        assert_eq!(dates_shown(&[]), "");
+        assert_eq!(
+            dates_shown(&[
+                time::day_from_civil(2026, 10, 16),
+                time::day_from_civil(2026, 10, 14)
+            ]),
+            "  → Fri 2026-10-16, Wed 2026-10-14"
+        );
     }
 
     #[test]
@@ -1823,38 +992,6 @@ mod tests {
     }
 
     #[test]
-    fn a_date_word_searches_as_its_date_and_is_written_as_one() {
-        let (mut app, dir) = app();
-        let friday = text::expand_date_words("/fri", today());
-        let tomorrow = text::expand_date_words("/tom", today());
-        add(&mut app, &format!("dentist {friday}"));
-        add(&mut app, "something else entirely");
-
-        // On the line the word stays as typed, the date is shown beside it, and the search
-        // already uses the date.
-        type_in(&mut app, "/fri");
-        assert_eq!(app.input, "/fri");
-        assert!(dates_shown(&app.input, today()).ends_with(&friday));
-        assert_eq!(heads(&app), [format!("dentist {friday}")]);
-
-        // Going into the note it found is a search, so the line clears.
-        app.step(1);
-        app.look_around();
-        assert_eq!(app.input, "");
-        app.back();
-        assert_eq!(app.input, "/fri");
-
-        // Writing the line writes the date.
-        app.set_input("book the car in /tom, not /today's".into());
-        app.create().unwrap();
-        assert!(
-            heads(&app).contains(&format!("book the car in {tomorrow}, not /today's").as_str())
-        );
-        assert_eq!(dates_shown("no dates here /home/sam", today()), "");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
     fn base64_matches_the_standard() {
         assert_eq!(base64(b""), "");
         assert_eq!(base64(b"f"), "Zg==");
@@ -1864,26 +1001,8 @@ mod tests {
     }
 
     #[test]
-    fn fit_truncates_by_characters() {
-        assert_eq!(fit("héllo", 10), "héllo");
-        assert_eq!(fit("héllo world", 5), "héll…");
-        assert_eq!(fit("x", 0), "");
-    }
-
-    #[test]
     fn byte_index_handles_multibyte() {
         assert_eq!(byte_index("héllo", 2), 3);
         assert_eq!(byte_index("héllo", 99), 6);
-    }
-
-    #[test]
-    fn heads_and_bodies() {
-        assert_eq!(head_of("  a head \nbody"), "a head");
-        assert!(has_body("head\nbody"));
-        assert!(!has_body("head\n  \n"));
-        assert!(!has_body("head\n#house #plan\n"));
-        assert!(has_body("head\n#house\n- and more"));
-        assert!(has_body("head\n# A heading"));
-        assert!(!has_body("head"));
     }
 }

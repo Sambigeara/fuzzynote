@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use fzn_engine::Weights;
 use serde::{Deserialize, Serialize};
 
-use crate::store::random_u64;
+use crate::system::random_u64;
 
 pub const CONFIG_FILE: &str = "config.toml";
 pub const DEVICE_FILE: &str = "device";

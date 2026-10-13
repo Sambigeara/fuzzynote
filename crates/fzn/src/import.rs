@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
-use fzn_engine::{Day, Engine, text, time};
+use fzn_engine::{Day, Engine, Moment, Record, links_on_save, text, time};
 use serde::Deserialize;
 
-use crate::store::{Moment, Record, Store};
-use crate::ui::{links_on_save, note_from};
+use crate::store::Store;
+use crate::system;
 
 #[derive(Deserialize)]
 struct FznItem {
@@ -43,7 +43,7 @@ pub fn jsonl(path: &Path, store: &mut Store) -> Result<usize> {
         } else {
             format!("{}\n{}", item.line, item.note)
         };
-        let secs = |nanos: i64| (nanos > 0).then(|| Moment::local(nanos / 1_000_000_000));
+        let secs = |nanos: i64| (nanos > 0).then(|| system::local(nanos / 1_000_000_000));
         let created = secs(item.created_unix_nano);
         let record = Record {
             id: format!("fzn:{}", item.key),
@@ -119,7 +119,7 @@ pub fn markdown(dir: &Path, store: &mut Store) -> Result<Imported> {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| Moment::local(d.as_secs() as i64));
+            .map(|d| system::local(d.as_secs() as i64));
         pages.push(Page::read(name, &content, modified, &calendars));
     }
 
@@ -422,7 +422,7 @@ impl Page {
         };
         let written = self
             .day
-            .map(|day| Moment::on(day, self.time.unwrap_or(MIDDAY)));
+            .map(|day| system::on(day, self.time.unwrap_or(MIDDAY)));
         let nodes = nodes(&rows(&self.lines), &mut 0, None);
         let id = format!("md:{}", self.name);
         let mut lifted = Lifted {
@@ -714,10 +714,11 @@ impl Lifted<'_> {
 /// Returns how many notes gained a link.
 pub fn link_named(store: &mut Store) -> Result<usize> {
     let mut engine = Engine::new();
-    for record in store.records() {
-        engine.upsert(note_from(record));
+    for record in store.notes().records() {
+        engine.upsert(record.note());
     }
     let relinked: Vec<Record> = store
+        .notes()
         .records()
         .filter_map(|r| {
             let links = links_on_save(&engine, &r.id, "", &r.text, &r.links);
@@ -758,7 +759,7 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 /// stays deleted, and a text changed here after its source last changed is kept. Otherwise the
 /// text becomes the import's, and the note keeps its links and whether it is archived.
 fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
-    if let Some(held) = store.version(&record.id) {
+    if let Some(held) = store.notes().version(&record.id) {
         if held.deleted || held.text == record.text || held.updated > record.updated {
             return Ok(false);
         }
@@ -778,7 +779,7 @@ fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::random_u64;
+    use crate::system::random_u64;
 
     fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fzn-import-test-{:x}", random_u64()));
@@ -806,11 +807,11 @@ mod tests {
             0,
             "re-import adds nothing"
         );
-        let a = store.get("fzn:1:2").unwrap();
+        let a = store.notes().get("fzn:1:2").unwrap();
         assert!(a.archived);
         assert_eq!(a.created.map(|m| m.secs), Some(1_642_000_000));
         assert_eq!(a.updated, a.created);
-        let b = store.get("fzn:1:3").unwrap();
+        let b = store.notes().get("fzn:1:3").unwrap();
         assert_eq!(b.text, "a head\nand a body");
         assert_eq!(b.updated, None);
         fs::remove_dir_all(&dir).unwrap();
@@ -866,8 +867,13 @@ mod tests {
         assert_eq!(done.skipped, ["CONFIG", "index"]);
         link_named(&mut store).unwrap();
 
-        assert!(store.get("md:Journal/2026-09-05").is_none());
-        let note = |n: usize| store.get(&format!("md:Journal/2026-09-05#{n}")).unwrap();
+        assert!(store.notes().get("md:Journal/2026-09-05").is_none());
+        let note = |n: usize| {
+            store
+                .notes()
+                .get(&format!("md:Journal/2026-09-05#{n}"))
+                .unwrap()
+        };
         let day = time::day_from_civil(2026, 9, 5);
 
         // A bullet holding only a tag hands it down. The task under the beans is a note about
@@ -894,7 +900,7 @@ mod tests {
             note(6).text,
             "Reading\n- finished the book\n- see 2026-09-04"
         );
-        assert!(store.get("md:Journal/2026-09-05#7").is_none());
+        assert!(store.notes().get("md:Journal/2026-09-05#7").is_none());
 
         // All of that day, in the order the page had, which a list shows newest first.
         for n in 1..=6 {
@@ -902,22 +908,25 @@ mod tests {
             assert_eq!(note(n).created, note(n).updated);
         }
         assert!(note(1).updated > note(2).updated && note(5).updated > note(6).updated);
-        assert_eq!(store.get("md:Journal/2026-09-04#1").unwrap().text, "walked");
         assert_eq!(
-            store.get("md:Journal/2026-09-04#2").unwrap().text,
+            store.notes().get("md:Journal/2026-09-04#1").unwrap().text,
+            "walked"
+        );
+        assert_eq!(
+            store.notes().get("md:Journal/2026-09-04#2").unwrap().text,
             "#someday",
             "a line of nothing but tags is left as it is"
         );
 
         // A page named for a time is the note written then.
-        let seeds = store.get("md:Inbox/2026-09-05/16-09-24#1").unwrap();
+        let seeds = store.notes().get("md:Inbox/2026-09-05/16-09-24#1").unwrap();
         assert_eq!(
             seeds.text,
             "[Seed catalogue](https://example.com/seeds)\n- from the garden centre"
         );
         assert_eq!(
             seeds.created,
-            Some(Moment::on(day, 16 * 3600 + 9 * 60 + 24))
+            Some(system::on(day, 16 * 3600 + 9 * 60 + 24))
         );
 
         assert_eq!(markdown(&pages(&dir), &mut store).unwrap().notes, 0);
@@ -931,14 +940,14 @@ mod tests {
         let mut store = Store::open(&dir.join("space"), "dev").unwrap();
         markdown(&pages, &mut store).unwrap();
         link_named(&mut store).unwrap();
-        let held = |store: &Store, id: &str| store.get(id).unwrap().clone();
+        let held = |store: &Store, id: &str| store.notes().get(id).unwrap().clone();
 
         // Here: one note is rewritten, one is linked and archived, one is deleted.
         let passport = held(&store, "md:Journal/2026-09-05#5");
         store
             .put(Record {
                 text: "Renew passport, and the driving licence".into(),
-                updated: Some(Moment::now()),
+                updated: Some(system::now()),
                 stamp: Some(store.next_stamp(&passport.id)),
                 ..passport
             })
@@ -982,7 +991,12 @@ mod tests {
             "Renew passport, and the driving licence",
             "changed here since, so kept"
         );
-        assert!(store.get("md:Inbox/2026-09-05/16-09-24#1").is_none());
+        assert!(
+            store
+                .notes()
+                .get("md:Inbox/2026-09-05/16-09-24#1")
+                .is_none()
+        );
         let reopened = Store::open(&dir.join("space"), "dev").unwrap();
         assert_eq!(held(&reopened, "md:Journal/2026-09-04#1"), walked);
         fs::remove_dir_all(&dir).unwrap();
@@ -996,9 +1010,14 @@ mod tests {
         link_named(&mut store).unwrap();
 
         // The folder and the front matter are tags. Each item is about the page, in its order.
-        let boiler = store.get("md:Projects/Boiler").unwrap();
+        let boiler = store.notes().get("md:Projects/Boiler").unwrap();
         assert_eq!(boiler.text, "Boiler\n#house #projects");
-        let item = |n: usize| store.get(&format!("md:Projects/Boiler#{n}")).unwrap();
+        let item = |n: usize| {
+            store
+                .notes()
+                .get(&format!("md:Projects/Boiler#{n}"))
+                .unwrap()
+        };
         assert_eq!(item(1).text, "get three quotes\n#house #projects");
         assert_eq!(item(1).links, ["md:Projects/Boiler"]);
         assert!(!item(1).archived && item(2).archived);
@@ -1012,22 +1031,22 @@ mod tests {
         );
         assert!(boiler.updated > item(1).updated && item(1).updated > item(2).updated);
         assert!(
-            store.get("md:Projects/Boiler#4").is_none(),
+            store.notes().get("md:Projects/Boiler#4").is_none(),
             "an empty bullet is not a note"
         );
 
         // A document keeps its text, tasks included, and the front matter that is not tags.
-        let plan = store.get("md:Projects/Heating Plan").unwrap();
+        let plan = store.notes().get("md:Projects/Heating Plan").unwrap();
         assert_eq!(
             plan.text,
             "Heating Plan\n#house #plan #projects\n---\nstatus: draft\n---\n# Heating\n\n\
              Replace the boiler by winter.\n\n- [ ] decide on a heat pump"
         );
         assert!(plan.created.is_none());
-        assert!(store.get("md:Projects/Heating Plan#1").is_none());
+        assert!(store.notes().get("md:Projects/Heating Plan#1").is_none());
 
         // A page named for a date is headed by its title, and a calendar folder is not a tag.
-        let review = store.get("md:Projects/reviews/2026-09-07").unwrap();
+        let review = store.notes().get("md:Projects/reviews/2026-09-07").unwrap();
         assert_eq!(
             review.text,
             "Review: first week\n#projects\n## Done\n- [[Boiler]] quotes"
@@ -1051,11 +1070,12 @@ mod tests {
         let mut store = Store::open(&dir.join("space"), "dev").unwrap();
         markdown(&pages, &mut store).unwrap();
         assert_eq!(
-            store.get("md:home/Plan").unwrap().text,
+            store.notes().get("md:home/Plan").unwrap().text,
             "home/Plan\n#home\nthe plan\n\nsee [[work/Plan]]"
         );
         assert!(
             store
+                .notes()
                 .get("md:work/Plan")
                 .unwrap()
                 .text

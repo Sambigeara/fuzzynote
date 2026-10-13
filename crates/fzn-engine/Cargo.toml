@@ -1,14 +1,12 @@
 [package]
 name = "fzn-engine"
-description = "The fuzzynote engine: notes, an incremental index, and explainable relevance. No I/O, no UI."
+description = "The fuzzynote engine: the whole app with no screen and no keyboard. Notes, an incremental index, explainable relevance, and the session a face drives. No I/O, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-serde = ["dep:serde"]
-
 [dependencies]
 unicode-segmentation.workspace = true
-serde = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
