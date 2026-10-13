@@ -193,6 +193,8 @@ function edit({ id, text }) {
   const buttons = el('div', 'editing');
   buttons.append(save, cancel);
   $('note').replaceChildren(area, buttons);
+  // Whatever was being read here is gone, so the next painting puts it back.
+  delete $('note').dataset.shows;
   document.body.classList.add('editing-now');
   area.focus();
   area.setSelectionRange(text.length, text.length);
@@ -302,11 +304,23 @@ function paint() {
     rows[view.cursor].append(open);
   }
   $('list').replaceChildren(...rows);
-  if (view.cursor != null) rows[view.cursor]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from
+  // elsewhere must not pull the list back from where it was scrolled to.
+  const under = view.cursor != null ? view.rows[view.cursor].id : '';
+  if (under && under !== $('list').dataset.under) {
+    rows[view.cursor].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  $('list').dataset.under = under;
 
+  // The note being read is only put on the page again when it has changed, so that reading
+  // far down a long one is not sent back to its top by something arriving from elsewhere.
   if (!editing) {
     const row = view.cursor != null ? view.rows[view.cursor] : view.rows[0];
-    $('note').replaceChildren(...(note ? reading(note, row, true) : []));
+    const shows = note ? JSON.stringify([note.id, note.stamp, note.archived, row?.links]) : '';
+    const another = note?.id !== $('note').dataset.note;
+    set($('note'), shows, () => (note ? reading(note, row, true) : []));
+    if (another) $('note').scrollTop = 0;
+    $('note').dataset.note = note?.id ?? '';
     $('note').classList.toggle('glance', view.cursor == null);
   }
 
