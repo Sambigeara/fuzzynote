@@ -28,12 +28,20 @@
 </main>
 <footer>
   <div id="hints"></div>
-  <div id="state"><span id="status"></span><span id="count"></span><span id="sync"></span></div>
+  <div id="state"><span id="status"></span><span id="count"></span><span id="sync"></span><button id="passphrase" type="button" hidden>passphrase</button></div>
 </footer>
 <div id="elsewhere" hidden>
   <p>fzn is open in another tab, and that one has these notes now.</p>
   <button id="here" type="button">Use fzn here</button>
 </div>
+<form id="unlock" hidden>
+  <label for="secret">The passphrase for <b id="space"></b></label>
+  <input id="secret" type="password" autocomplete="current-password" required>
+  <p>It is the space's, not this browser's: the same on every device. It is asked for once
+    here, and the notes cannot be read without it.</p>
+  <p id="unlocking" role="status"></p>
+  <button type="submit">Open</button>
+</form>
 <script type="module" src="app.js"></script>
 </body>
 </html>

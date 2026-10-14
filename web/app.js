@@ -10,7 +10,7 @@
 // Everything else that can be asked for is a button at the foot of the page, reached with Tab
 // or a tap, and only what applies where the cursor is gets one.
 
-import init, { Fzn } from './pkg/fzn_web.js';
+import init, { Fzn, deriveKey } from './pkg/fzn_web.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -26,21 +26,77 @@ const space = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(asked) ? asked : 'main'
 const title = space === 'main' ? 'fzn' : `fzn · ${space}`;
 document.title = title;
 
-// This browser's name in the versions it writes, and so the name of its log. Made once and
-// kept, since two logs under one name are a fork.
-function device() {
+// What this browser keeps for a space, besides its lines: the writer id, and the key.
+const WRITER = `fzn.writer.${space}`;
+const KEY = `fzn.key.${space}`;
+
+function kept(name) {
+  try {
+    return localStorage.getItem(name);
+  } catch {
+    return null;
+  }
+}
+
+function keep(name, value) {
+  try {
+    if (value == null) localStorage.removeItem(name);
+    else localStorage.setItem(name, value);
+  } catch {
+    // Nowhere to keep it, so it is asked for or made again next time.
+  }
+}
+
+// This browser's writer id for the space: its name in the versions it writes, and so the name
+// of its log. Made once and kept, since two logs under one name are a fork. A browser from
+// before writer ids were kept a space at a time had one for every space, and each space takes
+// that one over.
+function writer() {
   const fresh = () =>
     [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('');
-  try {
-    let id = localStorage.getItem('fzn.device');
-    if (!/^[0-9a-f]{8}$/.test(id || '')) {
-      id = fresh();
-      localStorage.setItem('fzn.device', id);
-    }
-    return id;
-  } catch {
-    return fresh();
+  const plain = (id) => /^[0-9a-f]{8}$/.test(id || '');
+  let id = kept(WRITER);
+  if (!plain(id)) {
+    const old = kept('fzn.device');
+    id = plain(old) ? old : fresh();
+    keep(WRITER, id);
   }
+  return id;
+}
+
+// The space's key, from what was kept or from the passphrase. The form stays until there is
+// one. Argon2 holds the page for a moment, so the form says what it is doing first.
+function key(why = '') {
+  const found = kept(KEY);
+  if (found) return Promise.resolve(found);
+  const form = $('unlock');
+  const secret = $('secret');
+  const unlocking = $('unlocking');
+  $('space').textContent = space;
+  unlocking.textContent = why;
+  form.hidden = false;
+  document.body.classList.add('locked');
+  secret.focus();
+  return new Promise((resolve) => {
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      if (!secret.value) return;
+      form.classList.add('busy');
+      unlocking.textContent = 'deriving the key…';
+      // Two frames, so that the words are on the screen before Argon2 has the page.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const derived = deriveKey(secret.value, space);
+          secret.value = '';
+          keep(KEY, derived);
+          form.hidden = true;
+          form.classList.remove('busy');
+          document.body.classList.remove('locked');
+          resolve(derived);
+        }),
+      );
+    };
+  });
 }
 
 // Where lines are kept between visits: one record a line, under the log it is in and how far
@@ -74,6 +130,12 @@ async function openStore() {
       const store = db.transaction('lines', 'readwrite').objectStore('lines');
       lines.forEach((line, i) => store.put({ log, n: from + i, line }));
     },
+    // Every line of a log. Transactions on one store run in the order they were made, so this
+    // comes after whatever was kept before it was asked for.
+    forget: (log) => {
+      const store = db.transaction('lines', 'readwrite').objectStore('lines');
+      store.delete(IDBKeyRange.bound([log, 0], [log, Infinity]));
+    },
   };
 }
 
@@ -92,17 +154,27 @@ function act(action) {
   carryOut(fzn.act(JSON.stringify(action)));
 }
 
-// Does what the engine wants done: lines to keep, messages for the relay, and the three things
-// it leaves to whoever is showing the notes.
+// Does what the engine wants done, in its order: lines to keep, then logs to delete, which a
+// compaction has retired, then a new writer id to keep, then messages for the relay, and the
+// three things it leaves to whoever is showing the notes. Keeping comes before deleting so that
+// a page closed between the two still has the notes somewhere.
 function carryOut(json) {
   const todo = JSON.parse(json);
-  for (const kept of todo.keep) {
+  for (const lines of todo.keep) {
     try {
-      store?.keep(kept);
+      store?.keep(lines);
     } catch {
       fzn.say('could not keep that in this browser; it will be asked of the relay again');
     }
   }
+  for (const log of todo.delete) {
+    try {
+      store?.forget(log);
+    } catch {
+      // Left where it is, it is deleted the next time the page opens.
+    }
+  }
+  if (todo.device) keep(WRITER, todo.device);
   for (const text of todo.send) if (socket?.readyState === WebSocket.OPEN) socket.send(text);
   if (todo.edit) edit(todo.edit);
   if (todo.copy != null) copy(todo.copy);
@@ -340,7 +412,11 @@ function paint() {
     }),
   );
 
-  $('status').textContent = view.status;
+  // A key that opens nothing here writes nothing, and the way out is to type the passphrase
+  // again, so that is said for as long as it is so.
+  const shut = !fzn.key_verified();
+  $('state').classList.toggle('shut', shut);
+  $('status').textContent = view.status || (shut ? 'the passphrase does not open this space' : '');
   $('count').textContent = view.notes === 1 ? '1 note' : `${view.notes} notes`;
   $('sync').textContent = synced;
   $('sync').dataset.state = synced;
@@ -423,15 +499,33 @@ function standDown() {
 }
 $('here').onclick = () => location.reload();
 
+// For a passphrase mistyped: the key is forgotten and the page asks again.
+$('passphrase').onclick = () => {
+  keep(KEY, null);
+  location.reload();
+};
+
 async function start() {
   await init();
-  fzn = new Fzn(device());
+  const id = writer();
+  let why = '';
+  for (;;) {
+    try {
+      fzn = new Fzn(id, await key(why));
+      break;
+    } catch (cause) {
+      keep(KEY, null);
+      why = `${cause}; type the passphrase again`;
+    }
+  }
+  $('passphrase').hidden = false;
   if (tabs) {
     tabs.onmessage = (event) => event.data === 'here' && standDown();
     tabs.postMessage('here');
   }
   store = await openStore().catch(() => null);
-  if (store) for (const [log, lines] of await store.load()) fzn.load(log, lines);
+  if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
+  carryOut(fzn.opened());
   look();
   line.focus();
   connect();

@@ -590,7 +590,6 @@ version = "0.1.0"
 dependencies = [
  "fzn-engine",
  "js-sys",
- "serde",
  "serde_json",
  "wasm-bindgen",
  "web-sys",

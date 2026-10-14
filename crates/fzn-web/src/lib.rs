@@ -1,18 +1,15 @@
 //! fuzzynote in a browser tab.
 //!
-//! The engine is compiled to WebAssembly and the page drives it through [`Fzn`]. Everything
-//! crosses as text: an action goes in as JSON and what the page has to do comes back as JSON,
-//! and so does the view. The page owns what only a page can: the keys, the painting, the socket
-//! to the relay, and somewhere to keep lines between visits.
+//! The engine is compiled to WebAssembly and the page drives it through [`Fzn`], which is the
+//! engine's [`Device`] with a text boundary round it. Everything crosses as text: an action goes
+//! in as JSON and what the page has to do comes back as JSON, and so does the view. The page
+//! owns what only a page can: the keys, the painting, the socket to the relay, somewhere to keep
+//! lines between visits, and the asking for a passphrase.
 
-mod tab;
-
-pub use tab::{Editing, Kept, Tab, Todo};
-
-use fzn_engine::{Action, Host, Moment};
+use fzn_engine::{Action, Device, Host, Key, Moment, Todo, Weights};
 use wasm_bindgen::prelude::*;
 
-/// The browser, as a session sees it: its clock, and ids for new notes.
+/// The browser, as a device sees it: its clock, ids for new notes, and randomness.
 struct Browser;
 
 impl Host for Browser {
@@ -47,57 +44,101 @@ fn json(todo: &Todo) -> String {
     serde_json::to_string(todo).unwrap_or_default()
 }
 
+/// The key a passphrase gives for a space, as text to keep. Argon2 takes a moment.
+#[wasm_bindgen(js_name = deriveKey)]
+pub fn derive_key(passphrase: &str, space: &str) -> String {
+    Key::from_passphrase(passphrase, space).encode()
+}
+
 /// One space, open in one tab.
 #[wasm_bindgen]
 pub struct Fzn {
-    tab: Tab,
+    device: Device,
 }
 
 #[wasm_bindgen]
 impl Fzn {
-    /// `device` names this browser in the versions it writes, and is the name of its log.
+    /// `device` is this tab's writer id for the space, and so the name of its log. `key` is the
+    /// space's key as [`deriveKey`](derive_key) gave it; one that is not a key is refused, with
+    /// a reason the page can show.
     #[wasm_bindgen(constructor)]
-    pub fn new(device: String) -> Fzn {
-        Fzn {
-            tab: Tab::new(Box::new(Browser), device),
-        }
+    pub fn new(device: String, key: String) -> Result<Fzn, JsValue> {
+        let key =
+            Key::decode(&key).ok_or_else(|| JsValue::from_str("the kept key is not a key"))?;
+        Ok(Fzn {
+            device: Device::new(Box::new(Browser), device, Weights::default(), key),
+        })
     }
 
-    /// Takes in the lines of a log that the page kept from before.
-    pub fn load(&mut self, log: &str, lines: Vec<String>) {
-        self.tab.load(log, lines);
+    /// Takes in the lines of a log that the page kept from before, and says what to do about
+    /// them, which may be to delete a log that has been retired.
+    pub fn load(&mut self, log: &str, lines: Vec<String>) -> String {
+        json(&self.device.load(log, lines))
+    }
+
+    /// Once, after every `load` and before `connected`: compacts this writer's log if that is
+    /// due, which gives the writer a new id.
+    pub fn opened(&mut self) -> String {
+        json(&self.device.opened())
     }
 
     /// Does what was asked, which is an action as JSON, and says what the page has to do.
     pub fn act(&mut self, action: &str) -> String {
         match serde_json::from_str::<Action>(action) {
-            Ok(action) => json(&self.tab.act(action)),
+            Ok(action) => json(&self.device.act(action)),
             Err(_) => json(&Todo::default()),
         }
     }
 
     /// The socket to the relay has opened.
     pub fn connected(&mut self) -> String {
-        json(&self.tab.connected())
+        json(&self.device.connected())
     }
 
     /// The socket to the relay has closed.
     pub fn disconnected(&mut self) {
-        self.tab.disconnected();
+        self.device.disconnected();
     }
 
     /// The relay has said something.
     pub fn received(&mut self, text: &str) -> String {
-        json(&self.tab.received(text))
+        json(&self.device.received(text))
     }
 
     /// Puts a message on the status line.
     pub fn say(&mut self, status: &str) {
-        self.tab.say(status);
+        self.device.say(status);
     }
 
     /// What to show, as JSON.
     pub fn view(&self) -> String {
-        self.tab.view()
+        serde_json::to_string(&self.device.view()).unwrap_or_default()
+    }
+
+    /// This writer's id, and so the name of the log it writes.
+    pub fn device(&self) -> String {
+        self.device.device().to_owned()
+    }
+
+    /// Whether the key is known to be the space's, or nothing yet says otherwise.
+    pub fn key_verified(&self) -> bool {
+        self.device.key_verified()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_passphrase_gives_the_same_key_text_every_time() {
+        let key = derive_key("a garden in spring", "main");
+        assert_eq!(key.len(), 44);
+        assert_eq!(key, derive_key("a garden in spring", "main"));
+        assert_eq!(
+            key,
+            Key::from_passphrase("a garden in spring", "main").encode()
+        );
+        assert_ne!(key, derive_key("a garden in spring", "house"));
     }
 }
