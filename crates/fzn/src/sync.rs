@@ -1,192 +1,43 @@
-//! Sync, as the terminal does it: the logs of a space kept in step with a relay over a
-//! websocket. The relay is in `relay`, and the websocket both ends hold is in `wire`.
+//! The terminal's one socket: a websocket to a relay, held by a thread of its own, with text
+//! passed to and from the app over channels. The relay is in `relay`, and the websocket both
+//! ends hold is in `wire`.
 //!
-//! The engine's `Replica` knows what to send and what to keep. This module gives it the two
-//! things it has not got, the files and the socket: a [`Shelf`] is a replica kept as the logs in
-//! one directory, and the app puts one on the end of a connection to a relay.
-//!
-//! The app does this on a thread of its own and tells the session nothing. What arrives is
-//! added to the files, and the app finds it there the way it finds what another instance
-//! wrote. Only one process at a time syncs a directory, which a lock on a file in it settles:
-//! a second instance leaves it to the first, and takes over when the first is gone.
+//! The app's device decides what to say and what to make of what is heard; this thread only
+//! carries it, and dials again when the connection is lost. Nothing said while there is no
+//! connection is kept for the next one. A device says what it holds whenever it connects, and
+//! the relay sends it the rest, so whatever was dropped is worked out again then.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use fzn_engine::replica::{Message, Out, Peer, Replica, names_a_log};
+use fzn_engine::replica::names_a_log;
 
 use crate::wire::{GREETING, PORT, VERSION, Wire};
 
-/// How often the logs are looked at for what has been added to them.
-const LOOK: Duration = Duration::from_millis(250);
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(30);
-/// The file whose lock says which process is syncing a directory.
-const LOCK_FILE: &str = ".sync.lock";
-/// The relay, as the app numbers its one peer.
-const RELAY: Peer = 0;
 
-/// A replica kept as the logs in one directory. While it lives, no other process syncs that
-/// directory.
-struct Shelf {
-    dir: PathBuf,
-    replica: Replica,
-    /// How many bytes of each log are in the replica.
-    held: BTreeMap<String, u64>,
-    _lock: File,
-}
-
-impl Shelf {
-    /// Opens a directory that is there already and takes in every log in it. Gives nothing if
-    /// another process is syncing the directory.
-    fn open(dir: &Path) -> Result<Option<Self>> {
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join(LOCK_FILE))
-            .with_context(|| format!("open {}", dir.display()))?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(TryLockError::Error(e)) => return Err(e.into()),
-        }
-        let mut shelf = Self {
-            dir: dir.to_owned(),
-            replica: Replica::new(),
-            held: BTreeMap::new(),
-            _lock: lock,
-        };
-        shelf.grown()?;
-        Ok(Some(shelf))
-    }
-
-    /// Takes in what has been added to the logs since they were last looked at, by the app or
-    /// by anything else, and gives what the replica wants done about it. Gives nothing if the
-    /// logs are no longer what the replica holds, because one was replaced or taken away: the
-    /// shelf is then to be opened again.
-    fn grown(&mut self) -> Result<Option<Vec<Out>>> {
-        let mut paths: Vec<PathBuf> = fs::read_dir(&self.dir)
-            .with_context(|| format!("read {}", self.dir.display()))?
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
-            .collect();
-        paths.sort();
-        let mut out = Vec::new();
-        let mut seen = BTreeSet::new();
-        for path in paths {
-            let Some(log) = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .filter(|stem| names_a_log(stem))
-            else {
-                continue;
-            };
-            seen.insert(log.to_owned());
-            let from = self.held.get(log).copied().unwrap_or(0);
-            let mut file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
-            let len = file.metadata()?.len();
-            if len < from {
-                return Ok(None);
-            }
-            if len == from {
-                continue;
-            }
-            file.seek(SeekFrom::Start(from))?;
-            let mut bytes = Vec::new();
-            file.take(len - from)
-                .read_to_end(&mut bytes)
-                .with_context(|| format!("read {}", path.display()))?;
-            // A last line with no newline is still being written. It is left for the next look.
-            let Some(end) = bytes.iter().rposition(|&b| b == b'\n') else {
-                continue;
-            };
-            let lines: Vec<String> = bytes[..end]
-                .split(|&b| b == b'\n')
-                .map(|line| String::from_utf8_lossy(line).into_owned())
-                .collect();
-            out.extend(self.replica.append(log, lines));
-            self.held.insert(log.to_owned(), from + end as u64 + 1);
-        }
-        if self.held.keys().any(|log| !seen.contains(log)) {
-            return Ok(None);
-        }
-        Ok(Some(out))
-    }
-
-    /// Adds lines that came from a peer to the end of a log. Says no if the log is not what the
-    /// replica holds, because something else has added to it: the shelf is then to be opened
-    /// again. The log is locked meanwhile, as the app locks it to write, so that nothing lands
-    /// between the look and the write.
-    fn keep(&mut self, log: &str, lines: &[String]) -> Result<bool> {
-        let path = self.dir.join(format!("{log}.jsonl"));
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("open {}", path.display()))?;
-        file.lock()?;
-        let kept = self.keep_locked(&file, &path, log, lines);
-        let _ = file.unlock();
-        kept
-    }
-
-    fn keep_locked(
-        &mut self,
-        mut file: &File,
-        path: &Path,
-        log: &str,
-        lines: &[String],
-    ) -> Result<bool> {
-        let held = self.held.get(log).copied().unwrap_or(0);
-        let len = file.metadata()?.len();
-        if len < held {
-            return Ok(false);
-        }
-        if len > held {
-            // The start of a line and no end to it is what a crash leaves. It was never a line,
-            // and nothing is in the middle of writing it while the lock is held, so it goes.
-            let mut rest = Vec::new();
-            let mut reader = File::open(path)?;
-            reader.seek(SeekFrom::Start(held))?;
-            reader.read_to_end(&mut rest)?;
-            if rest.contains(&b'\n') {
-                return Ok(false);
-            }
-            file.set_len(held)?;
-        }
-        let mut text = String::new();
-        for line in lines {
-            text.push_str(line);
-            text.push('\n');
-        }
-        file.write_all(text.as_bytes())
-            .with_context(|| format!("append to {}", path.display()))?;
-        file.flush()?;
-        self.held.insert(log.to_owned(), held + text.len() as u64);
-        Ok(true)
-    }
-}
-
-/// What the app is told about its sync, when it changes.
+/// What the app hears from the thread that holds the socket.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum News {
-    /// Lines are passing to and from the relay.
+pub enum Event {
+    /// The relay is connected, and what is said to it from now on goes to it.
     Connected,
-    /// The relay cannot be reached, or would not have us, and why. It is tried again.
+    /// The relay said this.
+    Message(String),
+    /// The connection is lost. The relay is dialled again.
+    Disconnected,
+    /// The relay cannot be reached, or would not have us, and why. Said once for each reason,
+    /// however many times it is tried again.
     Unreachable(String),
-    /// Another fzn on this machine is syncing this space, and this one leaves it to it.
-    Elsewhere,
-    /// The log of this name here and the one the relay has are not one log, so nothing of it
-    /// is passing between them.
-    Forked(String),
+}
+
+/// The app's ends of the channels to and from the socket.
+pub struct Link {
+    pub to_relay: Sender<String>,
+    pub from_relay: Receiver<Event>,
 }
 
 /// A relay's address as it is given, `ws://host:port` or `host:port` or `host`, as the host and
@@ -239,109 +90,100 @@ fn dial(authority: &str, space: &str) -> Result<Wire> {
     Wire::new(socket)
 }
 
-/// Keeps a space's directory in step with a relay for as long as the app runs. What changes is
-/// told through the receiver. Nothing here touches the session: lines that arrive are added to
-/// the logs, where the app finds them.
-pub fn start(dir: PathBuf, relay: String, space: String) -> Receiver<News> {
-    let (news, heard) = mpsc::channel();
-    thread::spawn(move || {
-        let mut told = None;
-        let mut tell = |what: News| {
-            // The same thing is said once, however many times it happens in a row.
-            if told.as_ref() != Some(&what) {
-                told = Some(what.clone());
-                let _ = news.send(what);
-            }
-        };
-        let authority = match authority(&relay) {
-            Ok(authority) => authority,
-            Err(why) => return tell(News::Unreachable(format!("{why:#}"))),
-        };
-        // A space is a directory on the relay and part of the address it is asked for by.
-        if !names_a_log(&space) {
-            let why = format!("a space has to be plainly named to sync, and {space:?} is not");
-            return tell(News::Unreachable(why));
-        }
-        let mut wait = RETRY_FIRST;
-        loop {
-            match session(&dir, &authority, &space, &mut tell) {
-                // Whoever has the directory may go at any time, so it is asked for often.
-                Ok(Ended::Elsewhere) => {
-                    tell(News::Elsewhere);
-                    wait = RETRY_FIRST;
-                }
-                // The logs changed under the replica. It is opened again from what is there.
-                Ok(Ended::Stale) => {
-                    wait = RETRY_FIRST;
-                    continue;
-                }
-                Ok(Ended::Dropped) => wait = RETRY_FIRST,
-                Err(why) => tell(News::Unreachable(format!("{why:#}"))),
-            }
-            thread::sleep(wait);
-            wait = (wait * 2).min(RETRY_MOST);
-        }
-    });
-    heard
+/// Holds a connection to a relay for a space, for as long as the app keeps its end of the
+/// link: dials, carries text both ways, and dials again when the connection is lost.
+pub fn start(relay: String, space: String) -> Link {
+    let (to_relay, said) = mpsc::channel();
+    let (heard, from_relay) = mpsc::channel();
+    thread::spawn(move || hold(&relay, &space, &said, &heard));
+    Link {
+        to_relay,
+        from_relay,
+    }
 }
 
-/// How one go at syncing ended.
+/// How a connection that was made came to end.
 enum Ended {
-    /// Another process has the directory.
-    Elsewhere,
-    /// The logs are no longer what the replica holds.
-    Stale,
-    /// The connection was made, and then lost.
-    Dropped,
+    /// It was lost, and is to be made again.
+    Lost,
+    /// The app has gone, and so has the reason for it.
+    AppGone,
 }
 
-/// One go at syncing: open the directory, connect, and pass lines both ways until something
-/// gives. An error is a relay that could not be reached or would not have us.
-fn session(dir: &Path, authority: &str, space: &str, tell: &mut impl FnMut(News)) -> Result<Ended> {
-    let Some(mut shelf) = Shelf::open(dir)? else {
-        return Ok(Ended::Elsewhere);
+fn hold(relay: &str, space: &str, said: &Receiver<String>, heard: &Sender<Event>) {
+    let authority = match authority(relay) {
+        Ok(authority) => authority,
+        Err(why) => {
+            let _ = heard.send(Event::Unreachable(format!("{why:#}")));
+            return;
+        }
     };
-    let mut wire = dial(authority, space)?;
-    tell(News::Connected);
-    let mut looked = Instant::now();
-    let mut out = shelf.replica.connect(RELAY);
+    // A space is a directory on the relay and part of the address it is asked for by.
+    if !names_a_log(space) {
+        let why = format!("a space has to be plainly named to sync, and {space:?} is not");
+        let _ = heard.send(Event::Unreachable(why));
+        return;
+    }
+    let mut told: Option<String> = None;
+    let mut wait = RETRY_FIRST;
     loop {
-        for step in std::mem::take(&mut out) {
-            match step {
-                Out::Keep { log, lines } => {
-                    if !shelf.keep(&log, &lines)? {
-                        return Ok(Ended::Stale);
+        match dial(&authority, space) {
+            Ok(mut wire) => {
+                told = None;
+                wait = RETRY_FIRST;
+                // What was said for a connection that is gone is not for this one.
+                while said.try_recv().is_ok() {}
+                if heard.send(Event::Connected).is_err() {
+                    return;
+                }
+                let ended = carry(&mut wire, said, heard);
+                if heard.send(Event::Disconnected).is_err() {
+                    return;
+                }
+                if let Ended::AppGone = ended {
+                    return;
+                }
+            }
+            Err(why) => {
+                let why = format!("{why:#}");
+                if told.as_ref() != Some(&why) {
+                    if heard.send(Event::Unreachable(why.clone())).is_err() {
+                        return;
+                    }
+                    told = Some(why);
+                }
+            }
+        }
+        thread::sleep(wait);
+        wait = (wait * 2).min(RETRY_MOST);
+    }
+}
+
+/// Carries text both ways until the connection or the app goes.
+fn carry(wire: &mut Wire, said: &Receiver<String>, heard: &Sender<Event>) -> Ended {
+    loop {
+        loop {
+            match said.try_recv() {
+                Ok(text) => {
+                    if wire.say(text).is_err() {
+                        return Ended::Lost;
                     }
                 }
-                Out::Send(_, message) => {
-                    if wire.say(message.encode()?).is_err() {
-                        return Ok(Ended::Dropped);
-                    }
-                }
-                Out::Forked { log, .. } => tell(News::Forked(log)),
-                // Retiring a log and compacting are the device's business, and the device is
-                // on its way into the engine; the file-backed shelf here is about to go.
-                Out::Retire(_) | Out::Superseded(_) => {}
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return Ended::AppGone,
             }
         }
         if wire.keep_up().is_err() {
-            return Ok(Ended::Dropped);
+            return Ended::Lost;
         }
         match wire.hear() {
             Ok(Some(text)) => {
-                if let Some(message) = Message::decode(&text) {
-                    out = shelf.replica.receive(RELAY, message);
+                if heard.send(Event::Message(text)).is_err() {
+                    return Ended::AppGone;
                 }
             }
             Ok(None) => {}
-            Err(_) => return Ok(Ended::Dropped),
-        }
-        if out.is_empty() && looked.elapsed() >= LOOK {
-            looked = Instant::now();
-            match shelf.grown()? {
-                Some(grown) => out = grown,
-                None => return Ok(Ended::Stale),
-            }
+            Err(_) => return Ended::Lost,
         }
     }
 }
@@ -349,101 +191,6 @@ fn session(dir: &Path, authority: &str, space: &str, tell: &mut impl FnMut(News)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay::tests::{read, temp_dir, write};
-
-    fn lines(texts: &[&str]) -> Vec<String> {
-        texts.iter().map(|&t| t.to_owned()).collect()
-    }
-
-    #[test]
-    fn a_shelf_holds_what_the_logs_hold_and_takes_in_what_is_added() {
-        let dir = temp_dir();
-        write(&dir, "dev-a", "a1\na2\n");
-        write(&dir, "not a log", "x\n");
-        fs::write(dir.join("notes.txt"), "not a log either\n").unwrap();
-        let mut shelf = Shelf::open(&dir).unwrap().unwrap();
-        assert_eq!(shelf.replica.lines("dev-a"), ["a1", "a2"]);
-        assert_eq!(shelf.replica.have().len(), 1, "only plainly named logs");
-        assert!(
-            Shelf::open(&dir).unwrap().is_none(),
-            "one syncer to a directory"
-        );
-
-        // A line still being written waits for its end, and an empty line is a line.
-        assert!(shelf.grown().unwrap().unwrap().is_empty());
-        write(&dir, "dev-a", "\na4 is half");
-        write(&dir, "dev-b", "b1\n");
-        shelf.grown().unwrap().unwrap();
-        assert_eq!(shelf.replica.lines("dev-a"), ["a1", "a2", ""]);
-        assert_eq!(shelf.replica.lines("dev-b"), ["b1"]);
-        write(&dir, "dev-a", " written\n");
-        shelf.grown().unwrap().unwrap();
-        assert_eq!(
-            shelf.replica.lines("dev-a"),
-            ["a1", "a2", "", "a4 is half written"]
-        );
-
-        // What a peer sent is added to the file, and is not then taken for something new.
-        shelf.replica.connect(7);
-        let out = shelf.replica.receive(
-            7,
-            Message::Lines {
-                log: "dev-b".into(),
-                after: shelf.replica.have()["dev-b"],
-                lines: lines(&["b2", "b3"]),
-            },
-        );
-        let [Out::Keep { log, lines: kept }] = &out[..] else {
-            panic!("{out:?}");
-        };
-        assert!(shelf.keep(log, kept).unwrap());
-        assert_eq!(read(&dir, "dev-b"), "b1\nb2\nb3\n");
-        assert!(shelf.grown().unwrap().unwrap().is_empty());
-        assert_eq!(shelf.replica.lines("dev-b"), ["b1", "b2", "b3"]);
-
-        // Once the shelf is gone the directory is free again, and holds the same.
-        let have = shelf.replica.have();
-        drop(shelf);
-        let again = Shelf::open(&dir).unwrap().unwrap();
-        assert_eq!(again.replica.have(), have);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_shelf_notices_when_the_logs_are_not_what_it_holds() {
-        let dir = temp_dir();
-        write(&dir, "dev-a", "a1\na2\n");
-        write(&dir, "dev-b", "b1\n");
-        let mut shelf = Shelf::open(&dir).unwrap().unwrap();
-
-        // Something else added to a log between the replica taking lines and their being kept.
-        write(&dir, "dev-b", "from elsewhere\n");
-        assert!(!shelf.keep("dev-b", &lines(&["b2"])).unwrap());
-        assert_eq!(
-            read(&dir, "dev-b"),
-            "b1\nfrom elsewhere\n",
-            "left as it was"
-        );
-
-        // What a crash leaves, the start of a line with no end, is not a line and goes.
-        write(&dir, "dev-a", "{\"half");
-        assert!(shelf.keep("dev-a", &lines(&["a3"])).unwrap());
-        assert_eq!(read(&dir, "dev-a"), "a1\na2\na3\n");
-
-        // A log replaced by a shorter one, or taken away.
-        fs::write(dir.join("dev-a.jsonl"), "x\n").unwrap();
-        assert!(shelf.grown().unwrap().is_none());
-        drop(shelf);
-        let mut shelf = Shelf::open(&dir).unwrap().unwrap();
-        assert_eq!(
-            shelf.replica.lines("dev-a"),
-            ["x"],
-            "opened again, it is as on disk"
-        );
-        fs::remove_file(dir.join("dev-b.jsonl")).unwrap();
-        assert!(shelf.grown().unwrap().is_none());
-        fs::remove_dir_all(&dir).unwrap();
-    }
 
     #[test]
     fn a_relay_is_given_as_a_host_and_a_port() {
@@ -455,5 +202,15 @@ mod tests {
         assert!(authority("wss://nas.local").is_err());
         assert!(authority("http://nas.local").is_err());
         assert!(authority("").is_err());
+    }
+
+    #[test]
+    fn a_space_that_cannot_be_asked_for_is_said_and_not_dialled() {
+        let link = start("nas.local".into(), "a b".into());
+        let Ok(Event::Unreachable(why)) = link.from_relay.recv_timeout(Duration::from_secs(5))
+        else {
+            panic!("nothing said");
+        };
+        assert!(why.contains("plainly named"), "{why}");
     }
 }

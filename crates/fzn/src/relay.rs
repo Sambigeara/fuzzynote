@@ -464,7 +464,7 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::sync::{News, start};
+    use crate::sync::{Event, Link, start};
     use crate::system::random_u64;
     use fzn_engine::replica::Header;
 
@@ -512,11 +512,94 @@ pub(crate) mod tests {
         address
     }
 
-    fn connected(news: &mpsc::Receiver<News>) {
-        assert_eq!(
-            news.recv_timeout(Duration::from_secs(10)),
-            Ok(News::Connected)
-        );
+    /// A device as a relay sees one: a replica on the end of a link, holding its logs in
+    /// memory, with what it has been told.
+    pub(crate) struct Client {
+        replica: Replica,
+        link: Link,
+        connected: bool,
+        forked: Vec<String>,
+        unreachable: Vec<String>,
+    }
+
+    impl Client {
+        pub(crate) fn start(relay: &str, space: &str) -> Self {
+            Self {
+                replica: Replica::new(),
+                link: start(relay.to_owned(), space.to_owned()),
+                connected: false,
+                forked: Vec::new(),
+                unreachable: Vec::new(),
+            }
+        }
+
+        /// Takes in what the link has brought since it was last asked.
+        fn hear(&mut self) {
+            let heard: Vec<Event> = self.link.from_relay.try_iter().collect();
+            for event in heard {
+                let out = match event {
+                    Event::Connected => {
+                        self.connected = true;
+                        self.replica.connect(0)
+                    }
+                    Event::Message(text) => Message::decode(&text)
+                        .map_or_else(Vec::new, |message| self.replica.receive(0, message)),
+                    Event::Disconnected => {
+                        self.connected = false;
+                        self.replica.disconnect(0);
+                        Vec::new()
+                    }
+                    Event::Unreachable(why) => {
+                        self.unreachable.push(why);
+                        Vec::new()
+                    }
+                };
+                self.carry_out(out);
+            }
+        }
+
+        fn carry_out(&mut self, out: Vec<Out>) {
+            for out in out {
+                match out {
+                    Out::Send(_, message) => {
+                        let _ = self.link.to_relay.send(message.encode().unwrap());
+                    }
+                    Out::Forked { log, .. } => self.forked.push(log),
+                    _ => {}
+                }
+            }
+        }
+
+        /// Adds lines to the end of a log, as its writer does.
+        fn write(&mut self, log: &str, text: &str) {
+            let out = self.replica.append(log, text.lines().map(str::to_owned));
+            self.carry_out(out);
+        }
+
+        /// A log as held, each line with a newline.
+        fn read(&mut self, log: &str) -> String {
+            self.hear();
+            self.replica
+                .lines(log)
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect()
+        }
+
+        /// Waits for something to become so, taking in what the link brings meanwhile.
+        fn until(&mut self, so: impl Fn() -> bool) -> bool {
+            eventually(|| {
+                self.hear();
+                so()
+            })
+        }
+
+        fn connects(&mut self) {
+            assert!(eventually(|| {
+                self.hear();
+                self.connected
+            }));
+        }
     }
 
     #[test]
@@ -532,64 +615,49 @@ pub(crate) mod tests {
     #[test]
     fn two_devices_and_a_relay_come_to_hold_the_same_logs() {
         let root = temp_dir();
-        let (a, b, hub) = (root.join("a"), root.join("b"), root.join("relay"));
-        fs::create_dir_all(&a).unwrap();
-        write(&a, "dev-a", "a1\na2\n");
-        fs::create_dir_all(&b).unwrap();
-        write(&b, "dev-b", "b1\n");
+        let hub = root.join("relay");
         fs::create_dir_all(&hub).unwrap();
         let address = relay(&hub);
 
-        let news_a = start(a.clone(), format!("ws://{address}"), "main".into());
-        connected(&news_a);
-        assert!(eventually(|| read(&hub.join("main"), "dev-a") == "a1\na2\n"));
+        let mut a = Client::start(&format!("ws://{address}"), "main");
+        a.write("dev-a", "a1\na2\n");
+        a.connects();
+        assert!(a.until(|| read(&hub.join("main"), "dev-a") == "a1\na2\n"));
 
         // A device that comes later gets what the relay was given before it came, and what
         // either writes from then on reaches the other.
-        let news_b = start(b.clone(), address.clone(), "main".into());
-        connected(&news_b);
-        assert!(eventually(|| read(&b, "dev-a") == "a1\na2\n"));
-        assert!(eventually(|| read(&a, "dev-b") == "b1\n"));
-        write(&a, "dev-a", "a3\n");
-        write(&b, "dev-b", "b2\nb3\n");
-        assert!(eventually(|| read(&b, "dev-a") == "a1\na2\na3\n"));
-        assert!(eventually(|| read(&a, "dev-b") == "b1\nb2\nb3\n"));
-        assert_eq!(read(&hub.join("main"), "dev-b"), "b1\nb2\nb3\n");
-
-        // A second syncer on a directory leaves it to the first.
-        let second = start(a.clone(), address.clone(), "main".into());
-        assert_eq!(
-            second.recv_timeout(Duration::from_secs(10)),
-            Ok(News::Elsewhere)
-        );
+        let mut b = Client::start(&address, "main");
+        b.write("dev-b", "b1\n");
+        b.connects();
+        assert!(eventually(|| b.read("dev-a") == "a1\na2\n"));
+        assert!(eventually(|| a.read("dev-b") == "b1\n"));
+        a.write("dev-a", "a3\n");
+        b.write("dev-b", "b2\nb3\n");
+        assert!(eventually(|| b.read("dev-a") == "a1\na2\na3\n"));
+        assert!(eventually(|| a.read("dev-b") == "b1\nb2\nb3\n"));
+        assert!(b.until(|| read(&hub.join("main"), "dev-b") == "b1\nb2\nb3\n"));
 
         // Another space on the same relay is another set of logs.
-        let other = root.join("other");
-        fs::create_dir_all(&other).unwrap();
-        write(&other, "dev-a", "elsewhere\n");
-        let news = start(other.clone(), address, "other".into());
-        connected(&news);
-        assert!(eventually(
-            || read(&hub.join("other"), "dev-a") == "elsewhere\n"
-        ));
+        let mut other = Client::start(&address, "other");
+        other.write("dev-a", "elsewhere\n");
+        other.connects();
+        assert!(other.until(|| read(&hub.join("other"), "dev-a") == "elsewhere\n"));
         thread::sleep(Duration::from_millis(500));
-        assert_eq!(read(&other, "dev-b"), "", "and nothing of main comes to it");
-        assert!(news_a.try_recv().is_err() && news_b.try_recv().is_err());
+        assert_eq!(other.read("dev-b"), "", "and nothing of main comes to it");
+        assert!(a.unreachable.is_empty() && b.unreachable.is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn a_relay_deletes_the_file_of_a_log_that_a_compaction_retires() {
         let root = temp_dir();
-        let (a, b, hub) = (root.join("a"), root.join("b"), root.join("relay"));
-        fs::create_dir_all(&a).unwrap();
-        fs::create_dir_all(&b).unwrap();
-        write(&a, "dev-a", "a1\na2\na3\n");
+        let hub = root.join("relay");
         let address = relay(&hub);
-        let news = start(a.clone(), address.clone(), "main".into());
-        connected(&news);
+        let mut a = Client::start(&address, "main");
+        a.write("dev-a", "a1\na2\na3\n");
+        a.connects();
         let space = hub.join("main");
-        assert!(eventually(|| read(&space, "dev-a") == "a1\na2\na3\n"));
+        assert!(a.until(|| read(&space, "dev-a") == "a1\na2\na3\n"));
 
         // The writer starts a new log whose header names the old one, and the snapshot after it.
         let header = Header {
@@ -597,72 +665,71 @@ pub(crate) mod tests {
             snapshot: 2,
         };
         let compacted = format!("{}\ns1\ns2\n", header.line());
-        write(&a, "dev-b", &compacted);
-        assert!(eventually(
-            || read(&space, "dev-b") == compacted && !space.join("dev-a.jsonl").exists()
-        ));
+        a.write("dev-b", &compacted);
+        assert!(
+            a.until(|| read(&space, "dev-b") == compacted && !space.join("dev-a.jsonl").exists())
+        );
 
         // A device that comes later is given the new log, and never the old.
-        let news = start(b.clone(), address, "main".into());
-        connected(&news);
-        assert!(eventually(|| read(&b, "dev-b") == compacted));
-        assert!(!b.join("dev-a.jsonl").exists());
+        let mut b = Client::start(&address, "main");
+        b.connects();
+        assert!(eventually(|| b.read("dev-b") == compacted));
+        assert_eq!(b.read("dev-a"), "");
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn a_line_a_crash_left_unfinished_is_cut_when_a_space_is_opened() {
         let root = temp_dir();
-        let (a, hub) = (root.join("a"), root.join("relay"));
-        fs::create_dir_all(&a).unwrap();
+        let hub = root.join("relay");
         let space = hub.join("main");
         fs::create_dir_all(&space).unwrap();
         write(&space, "dev-a", "a1\na2\n{\"half");
         let address = relay(&hub);
 
-        let news = start(a.clone(), address, "main".into());
-        connected(&news);
-        assert!(eventually(|| read(&a, "dev-a") == "a1\na2\n"));
+        let mut a = Client::start(&address, "main");
+        a.connects();
+        assert!(eventually(|| a.read("dev-a") == "a1\na2\n"));
         assert_eq!(read(&space, "dev-a"), "a1\na2\n");
 
         // What comes after is added where the whole lines end.
-        write(&a, "dev-a", "a3\n");
-        assert!(eventually(|| read(&space, "dev-a") == "a1\na2\na3\n"));
-        thread::sleep(Duration::from_millis(500));
-        assert_eq!(read(&a, "dev-a"), "a1\na2\na3\n");
+        a.write("dev-a", "a3\n");
+        assert!(a.until(|| read(&space, "dev-a") == "a1\na2\na3\n"));
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn a_relay_turns_away_a_space_another_relay_holds() {
         let root = temp_dir();
-        let (a, b, hub) = (root.join("a"), root.join("b"), root.join("relay"));
-        fs::create_dir_all(&a).unwrap();
-        fs::create_dir_all(&b).unwrap();
-        write(&a, "dev-a", "a1\n");
-        write(&b, "dev-b", "b1\n");
+        let hub = root.join("relay");
         let (first, second) = (relay(&hub), relay(&hub));
 
-        let news_a = start(a.clone(), first, "main".into());
-        connected(&news_a);
+        let mut a = Client::start(&first, "main");
+        a.write("dev-a", "a1\n");
+        a.connects();
         let space = hub.join("main");
-        assert!(eventually(|| read(&space, "dev-a") == "a1\n"));
+        assert!(a.until(|| read(&space, "dev-a") == "a1\n"));
 
-        let news_b = start(b.clone(), second, "main".into());
-        assert!(matches!(
-            news_b.recv_timeout(Duration::from_secs(10)),
-            Ok(News::Unreachable(_))
-        ));
-        assert!(
-            news_b.recv_timeout(Duration::from_secs(3)).is_err(),
-            "and is not let in when it tries again"
+        let mut b = Client::start(&second, "main");
+        b.write("dev-b", "b1\n");
+        assert!(eventually(|| {
+            b.hear();
+            !b.unreachable.is_empty()
+        }));
+        thread::sleep(Duration::from_secs(3));
+        b.hear();
+        assert_eq!(
+            b.unreachable.len(),
+            1,
+            "and is not let in when it tries again, which is said once"
         );
+        assert!(!b.connected);
         assert_eq!(read(&space, "dev-b"), "");
-        assert_eq!(read(&b, "dev-a"), "");
+        assert_eq!(b.read("dev-a"), "");
 
         // The relay that holds the space goes on as before.
-        write(&a, "dev-a", "a2\n");
-        assert!(eventually(|| read(&space, "dev-a") == "a1\na2\n"));
+        a.write("dev-a", "a2\n");
+        assert!(a.until(|| read(&space, "dev-a") == "a1\na2\n"));
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -687,7 +754,7 @@ pub(crate) mod tests {
     #[test]
     fn a_relay_hands_out_the_pages_of_the_web_app() {
         let root = temp_dir();
-        let (web, hub, a) = (root.join("web"), root.join("relay"), root.join("a"));
+        let (web, hub) = (root.join("web"), root.join("relay"));
         fs::create_dir_all(web.join("pkg")).unwrap();
         fs::create_dir_all(&hub).unwrap();
         fs::write(web.join("index.html"), "<!doctype html><title>fzn</title>").unwrap();
@@ -724,11 +791,10 @@ pub(crate) mod tests {
         assert!(ask(&address, &post).0.starts_with("HTTP/1.1 405"));
 
         // And it is still a relay, on the same address.
-        fs::create_dir_all(&a).unwrap();
-        write(&a, "dev-a", "a1\n");
-        let news = start(a.clone(), address.clone(), "main".into());
-        connected(&news);
-        assert!(eventually(|| read(&hub.join("main"), "dev-a") == "a1\n"));
+        let mut a = Client::start(&address, "main");
+        a.write("dev-a", "a1\n");
+        a.connects();
+        assert!(a.until(|| read(&hub.join("main"), "dev-a") == "a1\n"));
 
         // A relay that was given no pages has none to hand out.
         let bare = relay(&hub.join("elsewhere-root"));
@@ -739,47 +805,39 @@ pub(crate) mod tests {
     #[test]
     fn a_fork_and_a_relay_that_is_not_there_are_said() {
         let root = temp_dir();
-        let (a, b, hub) = (root.join("a"), root.join("b"), root.join("relay"));
-        fs::create_dir_all(&a).unwrap();
-        write(&a, "dev-a", "a1\na2\na3\n");
-        // The same device id on a second machine, with a log of its own under it.
-        fs::create_dir_all(&b).unwrap();
-        write(&b, "dev-a", "a1\nx2\n");
-        write(&b, "dev-b", "b1\n");
+        let hub = root.join("relay");
         let address = relay(&hub);
 
-        let news_a = start(a.clone(), address.clone(), "main".into());
-        connected(&news_a);
-        assert!(eventually(
-            || read(&hub.join("main"), "dev-a") == "a1\na2\na3\n"
-        ));
-        let news_b = start(b.clone(), address, "main".into());
-        connected(&news_b);
-        assert_eq!(
-            news_b.recv_timeout(Duration::from_secs(10)),
-            Ok(News::Forked("dev-a".into()))
-        );
-        assert!(
-            eventually(|| read(&a, "dev-b") == "b1\n"),
-            "other logs go on"
-        );
-        assert_eq!(read(&b, "dev-a"), "a1\nx2\n", "and neither log is touched");
-        assert_eq!(read(&a, "dev-a"), "a1\na2\na3\n");
+        let mut a = Client::start(&address, "main");
+        a.write("dev-a", "a1\na2\na3\n");
+        a.connects();
+        assert!(a.until(|| read(&hub.join("main"), "dev-a") == "a1\na2\na3\n"));
+        // The same writer's id on a second machine, with a log of its own under it.
+        let mut b = Client::start(&address, "main");
+        b.write("dev-a", "a1\nx2\n");
+        b.write("dev-b", "b1\n");
+        b.connects();
+        assert!(eventually(|| {
+            b.hear();
+            b.forked == ["dev-a"]
+        }));
+        assert!(eventually(|| a.read("dev-b") == "b1\n"), "other logs go on");
+        assert_eq!(b.read("dev-a"), "a1\nx2\n", "and neither log is touched");
+        assert_eq!(a.read("dev-a"), "a1\na2\na3\n");
 
         // Nobody listening: it is said once, and tried again.
-        let nowhere = root.join("nowhere");
-        fs::create_dir_all(&nowhere).unwrap();
         let free = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap();
-        let news = start(nowhere, free.to_string(), "main".into());
-        assert!(matches!(
-            news.recv_timeout(Duration::from_secs(10)),
-            Ok(News::Unreachable(_))
-        ));
+        let mut nowhere = Client::start(&free.to_string(), "main");
+        assert!(eventually(|| {
+            nowhere.hear();
+            !nowhere.unreachable.is_empty()
+        }));
+        a.hear();
         assert!(
-            matches!(news_a.try_recv(), Err(TryRecvError::Empty)),
+            a.unreachable.is_empty() && a.forked.is_empty(),
             "the device whose log the relay has is told nothing"
         );
         fs::remove_dir_all(&root).unwrap();

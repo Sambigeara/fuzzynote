@@ -1,4 +1,8 @@
-//! One-off importers: the 2022 fuzzynote export, and a directory of markdown pages.
+//! Importers: a file of lines, either fzn's own export or a fuzzynote 2022 export, and a
+//! directory of markdown pages.
+//!
+//! They write the writer's log directly, as sealed lines, and only while the app is closed: the
+//! lock on the space's directory, which the importer holds, guarantees that.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -27,13 +31,21 @@ struct FznItem {
     updated_unix_nano: i64,
 }
 
-/// Imports the JSON Lines file written by the Go `cmd/export` tool. Re-importing is harmless.
+/// Imports a file of JSON lines: what `fzn export` writes, a line a note, or a fuzzynote 2022
+/// export. Re-importing is harmless.
 pub fn jsonl(path: &Path, store: &mut Store) -> Result<usize> {
     let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut imported = 0;
     for (i, line) in BufReader::new(file).lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
+            continue;
+        }
+        // A note as fzn writes it comes in as it is, under its own id.
+        if let Some(record) = Record::read(line.as_bytes()) {
+            if put_imported(store, record)? {
+                imported += 1;
+            }
             continue;
         }
         let item: FznItem =
@@ -779,12 +791,10 @@ fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::random_u64;
+    use crate::store::tests::{seal, temp_dir};
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fzn-import-test-{:x}", random_u64()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn open(space: &Path) -> Store {
+        Store::open(space, "dev".into(), seal(), true).unwrap()
     }
 
     #[test]
@@ -800,7 +810,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut store = Store::open(&dir.join("space"), "dev").unwrap();
+        let mut store = open(&dir.join("space"));
         assert_eq!(jsonl(&file, &mut store).unwrap(), 2);
         assert_eq!(
             jsonl(&file, &mut store).unwrap(),
@@ -814,6 +824,42 @@ mod tests {
         let b = store.notes().get("fzn:1:3").unwrap();
         assert_eq!(b.text, "a head\nand a body");
         assert_eq!(b.updated, None);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_export_is_brought_into_another_space_by_importing_it() {
+        let dir = temp_dir();
+        let mut from = open(&dir.join("a"));
+        let note = |id: &str, text: &str, secs: i64| Record {
+            id: id.into(),
+            text: text.into(),
+            links: Vec::new(),
+            created: Some(Moment::utc(secs)),
+            updated: Some(Moment::utc(secs)),
+            stamp: None,
+            archived: false,
+            deleted: false,
+            device: String::new(),
+        };
+        from.put(note("n1", "Boiler", 10)).unwrap();
+        from.put(Record {
+            archived: true,
+            links: vec!["n1".into()],
+            ..note("n2", "House", 20)
+        })
+        .unwrap();
+        let file = dir.join("export.jsonl");
+        from.export(&mut fs::File::create(&file).unwrap()).unwrap();
+
+        let mut to = open(&dir.join("b"));
+        assert_eq!(jsonl(&file, &mut to).unwrap(), 2);
+        assert_eq!(jsonl(&file, &mut to).unwrap(), 0, "re-import adds nothing");
+        let house = to.notes().get("n2").unwrap();
+        assert!(house.archived);
+        assert_eq!(house.links, ["n1"]);
+        assert_eq!(house.device, "dev");
+        assert_eq!(to.notes().get("n1").unwrap().text, "Boiler");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -861,7 +907,7 @@ mod tests {
     #[test]
     fn a_page_named_for_a_day_becomes_the_notes_written_on_it() {
         let dir = temp_dir();
-        let mut store = Store::open(&dir.join("space"), "dev").unwrap();
+        let mut store = open(&dir.join("space"));
         let done = markdown(&pages(&dir), &mut store).unwrap();
         assert_eq!((done.pages, done.notes), (6, 15));
         assert_eq!(done.skipped, ["CONFIG", "index"]);
@@ -937,7 +983,7 @@ mod tests {
     fn importing_again_brings_notes_up_to_date_and_keeps_what_was_done_here() {
         let dir = temp_dir();
         let pages = pages(&dir);
-        let mut store = Store::open(&dir.join("space"), "dev").unwrap();
+        let mut store = open(&dir.join("space"));
         markdown(&pages, &mut store).unwrap();
         link_named(&mut store).unwrap();
         let held = |store: &Store, id: &str| store.notes().get(id).unwrap().clone();
@@ -997,7 +1043,7 @@ mod tests {
                 .get("md:Inbox/2026-09-05/16-09-24#1")
                 .is_none()
         );
-        let reopened = Store::open(&dir.join("space"), "dev").unwrap();
+        let reopened = open(&dir.join("space"));
         assert_eq!(held(&reopened, "md:Journal/2026-09-04#1"), walked);
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1005,7 +1051,7 @@ mod tests {
     #[test]
     fn a_list_becomes_notes_about_its_page_and_a_document_stays_whole() {
         let dir = temp_dir();
-        let mut store = Store::open(&dir.join("space"), "dev").unwrap();
+        let mut store = open(&dir.join("space"));
         markdown(&pages(&dir), &mut store).unwrap();
         link_named(&mut store).unwrap();
 
@@ -1067,7 +1113,7 @@ mod tests {
             fs::create_dir_all(pages.join(name).parent().unwrap()).unwrap();
             fs::write(pages.join(name), "the plan\n\nsee [[work/Plan]]\n").unwrap();
         }
-        let mut store = Store::open(&dir.join("space"), "dev").unwrap();
+        let mut store = open(&dir.join("space"));
         markdown(&pages, &mut store).unwrap();
         assert_eq!(
             store.notes().get("md:home/Plan").unwrap().text,

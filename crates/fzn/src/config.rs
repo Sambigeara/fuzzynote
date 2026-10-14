@@ -1,8 +1,8 @@
 //! Configuration: where notes live, which space to open, which editor to use, and the engine
 //! weights.
 //!
-//! The config directory also holds this device's id. It must never be synced between machines,
-//! which is why it is separate from the notes directory.
+//! The config directory also holds the key to each space this machine opens. It must never be
+//! copied along with the notes, which is why it is separate from them.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -12,10 +12,12 @@ use anyhow::{Context, Result, bail};
 use fzn_engine::Weights;
 use serde::{Deserialize, Serialize};
 
-use crate::system::random_u64;
-
 pub const CONFIG_FILE: &str = "config.toml";
+/// Where this machine's one writer id was kept before each space had its own. A space opened
+/// for the first time since takes it, and the file is left alone.
 pub const DEVICE_FILE: &str = "device";
+/// The directory of the keys to spaces, one file a space.
+const KEYS_DIR: &str = "keys";
 pub const DEFAULT_SPACE: &str = "main";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -36,8 +38,8 @@ pub struct Config {
 pub const TEMPLATE: &str = r#"# fzn configuration.
 # The weights tune the relevance engine: change a number and restart.
 
-# Where your spaces live, one directory each. Point Syncthing, or anything that copies files,
-# at this directory.
+# Where your spaces live, one directory each. Only fzn writes them; a relay is how they get from
+# one machine to another.
 # root = "~/.fzn"
 
 # The space that plain `fzn` opens. `fzn --space NAME` opens another.
@@ -48,7 +50,8 @@ pub const TEMPLATE: &str = r#"# fzn configuration.
 
 # A relay to sync with: a machine running `fzn relay` that your devices can reach. With this
 # set, fzn syncs whichever space it opens for as long as it is open, and works as before when
-# the relay is out of reach. Leave it out and nothing leaves this machine.
+# the relay is out of reach. What it is sent is sealed with the space's passphrase, so the
+# relay cannot read it. Leave it out and nothing leaves this machine.
 # relay = "ws://nas.local:3960"
 
 [weights]
@@ -100,22 +103,9 @@ pub fn load_or_create(dir: &Path) -> Result<Config> {
     toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
-/// This device's id, created on first run.
-pub fn device_id(dir: &Path) -> Result<String> {
-    fs::create_dir_all(dir)?;
-    let path = dir.join(DEVICE_FILE);
-    match fs::read_to_string(&path) {
-        Ok(id) if !id.trim().is_empty() => Ok(id.trim().to_owned()),
-        Ok(_) => create_device_id(&path),
-        Err(e) if e.kind() == ErrorKind::NotFound => create_device_id(&path),
-        Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
-    }
-}
-
-fn create_device_id(path: &Path) -> Result<String> {
-    let id = format!("{:08x}", random_u64() as u32);
-    fs::write(path, format!("{id}\n")).with_context(|| format!("write {}", path.display()))?;
-    Ok(id)
+/// The directory of the keys to spaces.
+pub fn keys_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join(KEYS_DIR)
 }
 
 /// Root precedence: command line, then `$FZN_ROOT`, then the config file, then `~/.fzn`.
@@ -177,6 +167,7 @@ pub fn editor(cfg: &Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::system::random_u64;
 
     #[test]
     fn template_parses_to_defaults() {
@@ -250,13 +241,12 @@ mod tests {
     }
 
     #[test]
-    fn config_and_device_are_created_on_first_run() {
+    fn the_config_is_created_on_first_run() {
         let dir = std::env::temp_dir().join(format!("fzn-config-test-{:x}", random_u64()));
         let cfg = load_or_create(&dir).unwrap();
         assert_eq!(cfg, Config::default());
-        let id = device_id(&dir).unwrap();
-        assert_eq!(id.len(), 8);
-        assert_eq!(device_id(&dir).unwrap(), id, "device id is stable");
+        assert!(dir.join(CONFIG_FILE).exists());
+        assert_eq!(keys_dir(&dir), dir.join("keys"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

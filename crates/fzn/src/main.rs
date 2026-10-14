@@ -2,6 +2,7 @@
 
 mod config;
 mod import;
+mod key;
 mod relay;
 mod store;
 mod sync;
@@ -9,16 +10,17 @@ mod system;
 mod ui;
 mod wire;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use fzn_engine::Session;
+use fzn_engine::Seal;
 
 const USAGE: &str = "\
 fzn [--space NAME]                      open your notes
 fzn [--space NAME] export               write every note to standard output, one to a line
-fzn [--space NAME] import-jsonl FILE    import a fuzzynote 2022 export (made by the Go cmd/export tool)
+fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
+fzn [--space NAME] key                  type the space's passphrase again
 fzn relay [--listen ADDRESS] [--web DIR]  pass notes between your devices
 fzn --help
 
@@ -26,25 +28,34 @@ Notes live in spaces: separate sets of notes, one directory each under the root.
 the space named in ~/.config/fzn/config.toml, which is main to begin with. --space NAME (or -s)
 opens another, and creates it if it is new.
 
-The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Each device
-appends to its own file in a space, so the root can be synced by anything that copies files.
+The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Only fzn
+writes a space's directory, and one fzn at a time: a second window on a space is told so and
+stops. A relay, not copying files, is how a space gets from one machine to another.
 
-A line of those files is one version of one note, as JSON, and export writes the same lines. To
-bring an export into a space, put the file in the space's directory with a name ending .jsonl.
+Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
+twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
+sealed with that key before it is written, so neither the files nor a relay can be read without
+it. A forgotten passphrase is lost notes: there is no reset. If it was mistyped, fzn key asks
+again. $FZN_PASSPHRASE answers in place of the question, for scripts.
+
+export writes every note as one plain line of JSON, readable without fzn, to wherever you send
+it. import-jsonl is the way back in: a file put in a space's directory is not read.
 
 To sync, run fzn relay on a machine your devices can reach, and name that machine on each
 device: relay = \"ws://that-machine:3960\" in the config file, or --relay, or $FZN_RELAY. fzn then
 syncs whichever space it opens for as long as it is open, and works as before when the relay is
-out of reach. A relay serves every space under its root and keeps them as the same files, so
-its root can be opened with fzn too. It listens on 127.0.0.1:3960 unless --listen says
-otherwise. It has no password and no encryption yet, so only let it listen where everyone who
-can connect may read your notes. With --web DIR it also hands out the web app from that
-directory, the web directory of this repository once built, so that a browser can open the
+out of reach. A relay serves every space under its root and holds their sealed lines, which it
+cannot read. Its root is its own: fzn will not open a space the relay holds. It listens on
+127.0.0.1:3960 unless --listen says otherwise. It has no password and no TLS yet, so anyone who
+can reach it can take a copy of the sealed lines, or add lines that no device can open: let it
+listen only where your own devices reach it. With --web DIR it also hands out the web app from
+that directory, the web directory of this repository once built, so that a browser can open the
 relay's address and be one more device.
 
-If fzn says a log has forked, two machines have been writing under one device id. On one of
-them, quit fzn, rename that log in the space's directory (ID.jsonl to ID-old.jsonl, say) and
-delete the file named device in ~/.config/fzn. Nothing is lost: both logs then sync.
+If fzn says a log has forked, two machines have been writing under one writer id, usually
+because a space's directory was copied from one to the other. Nothing is lost, and nothing is
+yours to do: each machine starts a new log of its own, which retires the shared one, and every
+note both wrote is kept.
 
 A date in a note is plain text, written 2026-10-16. /today, /tomorrow, /yesterday, a day of the
 week such as /fri, and /+3 or /-2 for days from today are quicker ways of typing one: saving the
@@ -53,6 +64,7 @@ note writes the date in their place.";
 enum Cmd {
     Open,
     Relay,
+    Key,
     Export,
     ImportJsonl(PathBuf),
     ImportMarkdown(PathBuf),
@@ -114,6 +126,7 @@ fn parse_args() -> Result<Args> {
                 )
             }
             "relay" => cmd = Cmd::Relay,
+            "key" => cmd = Cmd::Key,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -176,18 +189,31 @@ fn main() -> Result<()> {
             );
         }
         println!(
-            "fzn relay: there is no password and no encryption yet, so anyone who can reach \
-             that address can read and write these notes"
+            "fzn relay: there is no password and no TLS yet, so anyone who can reach that \
+             address can take a copy of the sealed lines and add lines of their own"
         );
         return relay.serve();
     }
-    let device = config::device_id(&config_dir)?;
     let space = config::resolve_space(space_flag.as_deref(), &cfg)?;
     let dir = root.join(&space);
-    let mut store = store::Store::open(&dir, &device)?;
 
     match cmd {
+        Cmd::Key => {
+            key::forget(&space, &config_dir)?;
+            key::key_for(&space, &config_dir, &dir)?;
+            println!("the key for {space} was replaced");
+            return Ok(());
+        }
+        Cmd::Export => {
+            // Reading takes no lock, and leaves a torn line for whoever holds one to cut.
+            let key = key::key_for(&space, &config_dir, &dir)?;
+            let store = store::Store::open(&dir, String::new(), Seal::new(key), false)?;
+            store.export(&mut std::io::stdout().lock())?;
+            return Ok(());
+        }
         Cmd::ImportJsonl(path) => {
+            let _lock = hold(&dir, &space)?;
+            let mut store = importing(&dir, &space, &config_dir)?;
             let n = import::jsonl(&path, &mut store)?;
             let linked = import::link_named(&mut store)?;
             println!(
@@ -197,6 +223,8 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Cmd::ImportMarkdown(pages) => {
+            let _lock = hold(&dir, &space)?;
+            let mut store = importing(&dir, &space, &config_dir)?;
             let done = import::markdown(&pages, &mut store)?;
             let linked = import::link_named(&mut store)?;
             println!(
@@ -213,47 +241,73 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Cmd::Export => {
-            store.export(&mut std::io::stdout().lock())?;
-            return Ok(());
-        }
         Cmd::Open | Cmd::Relay => {}
     }
 
-    let status = if store.notes().is_empty() {
-        "no notes yet: type and press Enter, or see fzn --help to import".to_owned()
-    } else if store.skipped() > 0 {
-        format!(
-            "{} unreadable lines skipped in {}",
-            store.skipped(),
-            dir.display()
-        )
-    } else {
-        dir.display().to_string()
-    };
+    // This process is the only writer of the space's directory for as long as it is open.
+    let _lock = hold(&dir, &space)?;
+    let writer = store::writer(&dir, &config_dir)?;
+    let key = key::key_for(&space, &config_dir, &dir)?;
     // The space you live in needs no label. Any other one says where you are.
     let title = if space == config::resolve_space(None, &cfg)? {
         "fzn".to_owned()
     } else {
         format!("fzn · {space}")
     };
-    // The session is the app. The terminal is one face on it, and the logs are where this
-    // device keeps what the session writes.
-    let (notes, logs) = store.into_parts();
-    let mut session = Session::new(Box::new(system::System), device, cfg.weights.clone(), notes);
-    session.say(status);
-    // With a relay named, a thread keeps this space's logs in step with it for as long as the
-    // app is open. What arrives lands in the logs, and the app finds it there.
+    // The device is the app. The terminal is one face on it, and the directory is where it
+    // keeps its lines.
+    let opened = ui::App::open(
+        &dir,
+        &space,
+        writer,
+        key,
+        cfg.weights.clone(),
+        config::editor(&cfg),
+        title,
+    );
+    let mut app = match opened {
+        Ok(app) => app,
+        Err(why) => {
+            eprintln!("{why:#}");
+            std::process::exit(1);
+        }
+    };
+    // With a relay named, a thread holds a socket to it for as long as the app is open.
     let env_relay = std::env::var("FZN_RELAY").ok();
-    let relay = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg);
-    let sync = relay.map(|relay| {
-        let news = sync::start(dir.clone(), relay.clone(), space.clone());
+    if let Some(relay) = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg) {
+        let link = sync::start(relay.clone(), space.clone());
         // The status row names the relay by its host, as it was given.
         let host = relay
             .trim()
             .trim_start_matches("ws://")
             .trim_end_matches('/');
-        (host.to_owned(), news)
-    });
-    ui::App::new(session, logs, config::editor(&cfg), title, sync).run()
+        app.sync(host.to_owned(), link);
+    }
+    app.run()
+}
+
+/// Takes the lock on a space's directory, or stops: another fzn has it open, or a relay holds it.
+fn hold(dir: &Path, space: &str) -> Result<store::Lock> {
+    match store::Lock::take(dir)? {
+        Some(lock) => Ok(lock),
+        None => {
+            eprintln!("fzn already has {space} open in another window, or a relay holds it");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// A space opened for an importer to write, which holds its lock.
+fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store> {
+    let writer = store::writer(dir, config_dir)?;
+    let key = key::key_for(space, config_dir, dir)?;
+    let store = store::Store::open(dir, writer, Seal::new(key), true)?;
+    if store.skipped() > 0 {
+        eprintln!(
+            "{} lines in {} could not be read, and are left as they are",
+            store.skipped(),
+            dir.display()
+        );
+    }
+    Ok(store)
 }

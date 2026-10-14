@@ -1,9 +1,9 @@
 //! The terminal face: one input, one list, one preview, with the original fzn keys.
 //!
-//! The session is the app. This is what a terminal adds to it: which key asks for what, editing
-//! the top line, painting the view, and carrying out what the session asks for in return, which
-//! is keeping versions in this device's log, running your editor, the clipboard and opening a
-//! URL.
+//! The device is the app. This is what a terminal adds to it: which key asks for what, editing
+//! the top line, painting the view, and carrying out what the device asks for in return, which
+//! is keeping lines in the space's directory, saying things to the relay, running your editor,
+//! the clipboard and opening a URL.
 //!
 //! The input is the top line. Down moves onto the list, Up and Escape come back to the top line,
 //! and typing always goes to the top line. A chord acts on the top line when the cursor is there
@@ -12,20 +12,20 @@
 //! outside any note two of them quit. Notes are edited in your editor. The footer shows only the
 //! keys that apply where the cursor is.
 //!
-//! With a relay named, the status row says how sync is going. Sync itself is not here: a thread
-//! keeps the logs in step with the relay, and what it brings is found in the logs like anything
-//! another instance wrote.
+//! With a relay named, a thread holds the socket and the app hears from it between keys: what
+//! the relay says goes to the device, and what the device wants kept or said comes back here to
+//! be done, like anything else it asks for. The status row says how sync is going. Nothing is
+//! reread from the directory while the app runs, since nothing else writes it.
 
 use std::fs;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
-use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use fzn_engine::text::fit;
-use fzn_engine::{Action, Day, Effect, Hint, Moment, Session, time};
+use fzn_engine::{Action, Day, Device, Editing, Hint, Key, Moment, Todo, Weights, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Style, Stylize};
@@ -33,17 +33,20 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::store::Logs;
-use crate::sync::News;
+use crate::store::{self, Logs};
+use crate::sync::{self, Link};
+use crate::system::System;
 
-/// How long the keyboard has to be idle before the logs are checked for news.
-const RELOAD_EVERY: Duration = Duration::from_secs(1);
+/// How long the keyboard is waited on before the relay is listened to.
+const TICK: Duration = Duration::from_millis(50);
 /// The most the breadcrumb on the top line takes up.
 const CRUMB_MAX: usize = 70;
 
 pub struct App {
-    session: Session,
+    device: Device,
     logs: Logs,
+    /// The space's directory, where the writer's id is kept.
+    dir: PathBuf,
     editor: String,
     /// What the top line is headed with: the app's name, and the space when it is not the usual one.
     title: String,
@@ -53,8 +56,8 @@ pub struct App {
     list: ListState,
     /// Whether the previous key was Escape, which makes a second one quit.
     escaped: bool,
-    /// The relay this space syncs with, and what is heard of how that is going.
-    sync: Option<(String, Receiver<News>)>,
+    /// The relay this space syncs with, as the status row names it, and the link to it.
+    sync: Option<(String, Link)>,
     /// How sync is going, for the status row.
     synced: String,
 }
@@ -311,24 +314,58 @@ fn status_row(status: &str, notes: usize, synced: &str, width: usize) -> String 
 }
 
 impl App {
-    pub fn new(
-        session: Session,
-        logs: Logs,
+    /// Opens a space's directory as a device writing under `writer`: every log is given to the
+    /// device, what it asks for is done, and then whatever opening it is due, a compaction say.
+    /// Fails if the key opens none of the sealed lines there, since nothing could be written.
+    pub fn open(
+        dir: &Path,
+        space: &str,
+        writer: String,
+        key: Key,
+        weights: Weights,
         editor: String,
         title: String,
-        sync: Option<(String, Receiver<News>)>,
-    ) -> Self {
-        Self {
-            session,
+    ) -> Result<Self> {
+        let mut logs = Logs::open(dir)?;
+        let loaded = logs.load(true)?;
+        let mut app = Self {
+            device: Device::new(Box::new(System), writer, weights, key),
             logs,
+            dir: dir.to_owned(),
             editor,
             title,
             cursor: 0,
             list: ListState::default(),
             escaped: false,
-            sync,
+            sync: None,
             synced: String::new(),
+        };
+        for (log, lines) in loaded {
+            let todo = app.device.load(&log, lines);
+            app.carry_out(todo)?;
         }
+        if !app.device.key_verified() {
+            bail!("the passphrase does not open {space}: run fzn key to enter it again");
+        }
+        let todo = app.device.opened();
+        app.carry_out(todo)?;
+        if app.device.view().status.is_empty() {
+            let status = match (app.device.unopened(), app.device.view().notes) {
+                (0, 0) => {
+                    "no notes yet: type and press Enter, or see fzn --help to import".to_owned()
+                }
+                (0, _) => dir.display().to_string(),
+                (shut, _) => format!("{shut} lines here that this passphrase does not open"),
+            };
+            app.device.say(status);
+        }
+        Ok(app)
+    }
+
+    /// Syncs with a relay over a link to the thread that holds the socket. `relay` is how the
+    /// status row names it.
+    pub fn sync(&mut self, relay: String, link: Link) {
+        self.sync = Some((relay, link));
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -341,8 +378,8 @@ impl App {
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            while !event::poll(RELOAD_EVERY)? {
-                if self.reload() {
+            while !event::poll(TICK)? {
+                if self.hear()? {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
@@ -362,7 +399,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
         let (on_top, zoomed, line) = {
-            let view = self.session.view();
+            let view = self.device.view();
             (
                 view.cursor.is_none(),
                 !view.path.is_empty(),
@@ -376,11 +413,11 @@ impl App {
             (KeyCode::Esc, _) if escaped => return Ok(Flow::Quit),
             (KeyCode::Esc, _) => {
                 self.escaped = true;
-                self.session.say("Escape again to quit");
+                self.device.say("Escape again to quit");
             }
             (KeyCode::Char('q'), true) => return Ok(Flow::Quit),
             (code, _) => match edited(&line, self.cursor, code, ctrl) {
-                // Typing always goes to the top line, so the session is told what it now reads.
+                // Typing always goes to the top line, so the device is told what it now reads.
                 Some((to, cursor)) if to != line => {
                     let flow = self.act(Action::Type(to))?;
                     self.cursor = cursor;
@@ -393,72 +430,94 @@ impl App {
         Ok(Flow::Continue)
     }
 
-    /// Asks the session for something, and carries out what it asks for in return.
+    /// Asks the device for something, and carries out what it asks for in return.
     fn act(&mut self, action: Action) -> Result<Flow> {
-        let line = self.session.view().line.to_owned();
-        let mut flow = Flow::Continue;
-        for effect in self.session.act(action) {
-            match effect {
-                Effect::Keep(record) => self.logs.append(&record)?,
-                Effect::Edit { id, text } => flow = Flow::Edit { id, text },
-                Effect::Copy(text) => {
-                    if !copy(&text) {
-                        self.session.say("could not write to the terminal");
-                    }
-                }
-                Effect::Open(url) => {
-                    if let Err(why) = open(&url) {
-                        self.session.say(why);
-                    }
-                }
-            }
-        }
-        // A line the session changed, as it does on the way into a note and out of one, has its
+        let line = self.device.view().line.to_owned();
+        let todo = self.device.act(action);
+        let flow = self.carry_out(todo)?;
+        // A line the device changed, as it does on the way into a note and out of one, has its
         // cursor at the end.
-        let now = self.session.view().line;
+        let now = self.device.view().line;
         if now != line {
             self.cursor = now.chars().count();
         }
         Ok(flow)
     }
 
-    /// Takes in what other devices and other instances have written, and what there is to say
-    /// about sync. Says whether anything on screen may have changed.
-    fn reload(&mut self) -> bool {
-        let heard = self.hear_of_sync();
-        match self.logs.read() {
-            Ok(records) => self.session.absorb(records) || heard,
-            Err(e) => {
-                self.session
-                    .say(format!("could not reread the notes: {e:#}"));
-                true
+    /// Does what the device asks: lines kept before retired logs are deleted, so that a
+    /// compaction stopped half way leaves both logs and not neither, then the new writer id
+    /// kept, then what is to go to the relay, then the rest.
+    fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
+        for kept in &todo.keep {
+            self.logs.append(&kept.log, &kept.lines)?;
+        }
+        for log in &todo.delete {
+            self.logs.delete(log)?;
+        }
+        if let Some(writer) = &todo.device {
+            store::set_writer(&self.dir, writer)?;
+        }
+        if let Some((_, link)) = &self.sync {
+            for text in todo.send {
+                // A thread that has gone is a relay that is not there, which the row says.
+                let _ = link.to_relay.send(text);
             }
         }
+        if let Some(text) = todo.copy
+            && !copy(&text)
+        {
+            self.device.say("could not write to the terminal");
+        }
+        if let Some(url) = todo.open
+            && let Err(why) = open(&url)
+        {
+            self.device.say(why);
+        }
+        Ok(match todo.edit {
+            Some(Editing { id, text }) => Flow::Edit { id, text },
+            None => Flow::Continue,
+        })
     }
 
-    /// Takes in what the sync thread has said since it was last asked. How sync is going stays
-    /// on the status row. Why a relay cannot be reached, and a fork, are said once.
-    fn hear_of_sync(&mut self) -> bool {
-        let Some((relay, news)) = &self.sync else {
-            return false;
+    /// Takes in what the thread holding the socket has said since it was last asked, and says
+    /// whether there was anything. How sync is going stays on the status row; why a relay
+    /// cannot be reached is said once.
+    fn hear(&mut self) -> Result<bool> {
+        let Some((relay, link)) = &self.sync else {
+            return Ok(false);
         };
-        let mut heard = false;
-        for news in news.try_iter() {
-            heard = true;
-            match news {
-                News::Connected => self.synced = format!("syncing with {relay}"),
-                News::Elsewhere => self.synced = "another fzn here is syncing".to_owned(),
-                News::Unreachable(why) => {
-                    self.synced = "not syncing".to_owned();
-                    self.session.say(format!("{relay}: {why}"));
+        let relay = relay.clone();
+        let heard: Vec<sync::Event> = link.from_relay.try_iter().collect();
+        let verified = self.device.key_verified();
+        for event in &heard {
+            match event {
+                sync::Event::Connected => {
+                    self.synced = format!("syncing with {relay}");
+                    let todo = self.device.connected();
+                    self.carry_out(todo)?;
                 }
-                News::Forked(log) => self.session.say(format!(
-                    "the log {log} here is not the {log} on {relay}, so it is not syncing: \
-                     see fzn --help"
-                )),
+                sync::Event::Message(text) => {
+                    let todo = self.device.received(text);
+                    self.carry_out(todo)?;
+                }
+                sync::Event::Disconnected => {
+                    self.synced = "not syncing".to_owned();
+                    self.device.disconnected();
+                }
+                sync::Event::Unreachable(why) => {
+                    self.synced = "not syncing".to_owned();
+                    self.device.say(format!("{relay}: {why}"));
+                }
             }
         }
-        heard
+        // Lines from the relay that this key does not open are said as soon as they come, and
+        // not only when something is next written.
+        if verified && !self.device.key_verified() {
+            self.device.say(
+                "the passphrase does not open this space: quit, and run fzn key to enter it again",
+            );
+        }
+        Ok(!heard.is_empty())
     }
 
     /// Gives the terminal over to the editor, and saves what it leaves.
@@ -471,13 +530,13 @@ impl App {
             Ok(text) => {
                 self.act(Action::Save { id, text })?;
             }
-            Err(why) => self.session.say(why),
+            Err(why) => self.device.say(why),
         }
         Ok(())
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let view = self.session.view();
+        let view = self.device.view();
         let [input_area, list_area, preview_area, status_area] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(5),
@@ -620,16 +679,46 @@ impl App {
 mod tests {
     use super::*;
     use crate::store::Store;
-    use crate::system::{self, System};
-    use fzn_engine::{Record, Weights};
-    use std::path::PathBuf;
+    use crate::store::tests::temp_dir;
+    use fzn_engine::replica::{Header, Message, Out, Replica};
+    use fzn_engine::{Record, Seal};
+    use std::sync::mpsc::{self, Receiver, Sender};
 
+    const WRITER: &str = "3f9a01c2";
+
+    fn key() -> Key {
+        Key::from_bytes([7; 32])
+    }
+
+    /// The app opened on a space's directory with a key, as `fzn` opens it.
+    fn open_with(space: &Path, key: Key) -> Result<App> {
+        let writer = store::writer(space, &space.with_file_name("config"))?;
+        App::open(
+            space,
+            "main",
+            writer,
+            key,
+            Weights::default(),
+            "true".into(),
+            "fzn".into(),
+        )
+    }
+
+    /// The app on a new space under a scratch root, and the space's directory.
     fn app() -> (App, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("fzn-ui-test-{:x}", system::random_u64()));
-        let (notes, logs) = Store::open(&dir, "dev").unwrap().into_parts();
-        let session = Session::new(Box::new(System), "dev", Weights::default(), notes);
-        let app = App::new(session, logs, "true".into(), "fzn".into(), None);
-        (app, dir)
+        let space = temp_dir().join("main");
+        store::set_writer(&space, WRITER).unwrap();
+        (open_with(&space, key()).unwrap(), space)
+    }
+
+    /// Takes the scratch root away.
+    fn done(space: &Path) {
+        fs::remove_dir_all(space.parent().unwrap()).unwrap();
+    }
+
+    /// What the logs in the directory add up to.
+    fn on_disk(space: &Path) -> Store {
+        Store::open(space, String::new(), Seal::new(key()), false).unwrap()
     }
 
     /// Presses a key, with Control held when `ctrl` is set.
@@ -658,44 +747,135 @@ mod tests {
     }
 
     fn heads(app: &App) -> Vec<String> {
-        let view = app.session.view();
+        let view = app.device.view();
         view.rows.iter().map(|r| r.head.clone()).collect()
     }
 
     fn line(app: &App) -> String {
-        app.session.view().line.to_owned()
+        app.device.view().line.to_owned()
     }
 
     fn path(app: &App) -> Vec<String> {
-        let view = app.session.view();
+        let view = app.device.view();
         view.path.iter().map(|&head| head.to_owned()).collect()
     }
 
     fn on_note(app: &App) -> bool {
-        app.session.view().cursor.is_some()
+        app.device.view().cursor.is_some()
     }
 
     #[test]
-    fn enter_writes_the_line_into_this_devices_log() {
-        let (mut app, dir) = app();
+    fn enter_writes_a_sealed_line_and_reopening_shows_the_note() {
+        let (mut app, space) = app();
+        assert!(app.device.view().status.starts_with("no notes yet"));
         write(&mut app, "kettlebell swings");
         assert_eq!(heads(&app), ["kettlebell swings"]);
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
-        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
         assert_eq!(written.lines().count(), 1);
-        assert!(written.starts_with(r#"{"v":1,"id":""#), "{written}");
-        assert!(written.contains(r#""text":"kettlebell swings""#));
-        assert!(written.contains(r#""device":"dev""#));
+        assert!(written.starts_with(r#"{"s":1,"c":""#), "{written}");
+        assert!(!written.contains("kettlebell"));
 
-        let reopened = Store::open(&dir, "dev").unwrap();
-        assert_eq!(reopened.notes().len(), 1);
-        assert_eq!(reopened.skipped(), 0);
-        fs::remove_dir_all(&dir).unwrap();
+        drop(app);
+        let reopened = open_with(&space, key()).unwrap();
+        assert_eq!(heads(&reopened), ["kettlebell swings"]);
+        assert_eq!(reopened.device.view().status, space.display().to_string());
+        assert_eq!(reopened.device.device(), WRITER, "nothing to compact");
+        done(&space);
+    }
+
+    #[test]
+    fn a_passphrase_that_opens_nothing_here_is_refused_at_open() {
+        let (mut app, space) = app();
+        write(&mut app, "a garden");
+        drop(app);
+        let why = open_with(&space, Key::from_bytes([9; 32]))
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            why,
+            "the passphrase does not open main: run fzn key to enter it again"
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn a_plain_log_from_before_sealing_is_compacted_at_open() {
+        let space = temp_dir().join("main");
+        store::set_writer(&space, WRITER).unwrap();
+        let plain = |id: &str, text: &str, secs: i64| {
+            Record {
+                id: id.into(),
+                text: text.into(),
+                links: Vec::new(),
+                created: Some(Moment::utc(secs)),
+                updated: Some(Moment::utc(secs)),
+                stamp: Some(Moment::utc(secs)),
+                archived: false,
+                deleted: false,
+                device: WRITER.into(),
+            }
+            .line()
+            .unwrap()
+        };
+        let old = space.join(format!("{WRITER}.jsonl"));
+        fs::write(
+            &old,
+            [
+                plain("n1", "Boiler", 100),
+                plain("n2", "House", 200),
+                plain("n1", "Boiler serviced", 300),
+            ]
+            .concat(),
+        )
+        .unwrap();
+
+        let app = open_with(&space, key()).unwrap();
+        let mut seen = heads(&app);
+        seen.sort();
+        assert_eq!(seen, ["Boiler serviced", "House"]);
+        assert_eq!(app.device.view().status, "compacted 3 versions into 2");
+        let new = app.device.device().to_owned();
+        assert_ne!(new, WRITER);
+        assert_eq!(
+            fs::read_to_string(space.join(".writer")).unwrap(),
+            format!("{new}\n")
+        );
+        assert!(!old.exists(), "the plain log is gone");
+        let logs: Vec<String> = fs::read_dir(&space)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".jsonl"))
+            .collect();
+        assert_eq!(logs, [format!("{new}.jsonl")]);
+        let text = fs::read_to_string(space.join(&logs[0])).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            Header::read(lines[0]),
+            Some(Header {
+                compacts: vec![WRITER.into()],
+                snapshot: 2
+            })
+        );
+        for line in &lines[1..] {
+            assert!(line.starts_with(r#"{"s":1,"#), "{line}");
+            assert!(!line.contains("Boiler") && !line.contains("House"));
+        }
+
+        // Opened again, it is as it was left, and there is nothing more to do.
+        drop(app);
+        let again = open_with(&space, key()).unwrap();
+        let mut seen = heads(&again);
+        seen.sort();
+        assert_eq!(seen, ["Boiler serviced", "House"]);
+        assert_eq!(again.device.device(), new);
+        done(&space);
     }
 
     #[test]
     fn a_chord_acts_on_the_line_or_on_the_note_under_the_cursor() {
-        let (mut app, dir) = app();
+        let (mut app, space) = app();
         write(&mut app, "kettlebell swings");
         write(&mut app, "boiler service");
 
@@ -708,7 +888,7 @@ mod tests {
         type_in(&mut app, "boil");
         press(&mut app, KeyCode::Down, false);
         chord(&mut app, 'd');
-        assert_eq!(app.session.view().notes, 1);
+        assert_eq!(app.device.view().notes, 1);
         assert_eq!(line(&app), "boil", "the line is left alone");
         chord(&mut app, 'd');
         assert_eq!(heads(&app), ["kettlebell swings"]);
@@ -739,12 +919,12 @@ mod tests {
         assert_eq!(path(&app), ["kettlebell swings"]);
         write(&mut app, "two sets");
         assert_eq!(heads(&app), ["two sets"]);
-        assert!(app.session.view().rows[0].linked);
+        assert!(app.device.view().rows[0].linked);
 
         // Every change went to the log, and that is all there is to reopening.
-        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
         assert_eq!(written.lines().count(), 6);
-        let reopened = Store::open(&dir, "dev").unwrap();
+        let reopened = on_disk(&space);
         let mut texts: Vec<&str> = reopened
             .notes()
             .records()
@@ -753,12 +933,12 @@ mod tests {
         texts.sort_unstable();
         assert_eq!(texts, ["kettlebell swings", "two sets"]);
         assert!(reopened.notes().records().all(|r| !r.archived));
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
     }
 
     #[test]
     fn escape_comes_back_a_step_at_a_time_and_twice_quits() {
-        let (mut app, dir) = app();
+        let (mut app, space) = app();
         write(&mut app, "kettlebell swings");
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Enter, false);
@@ -776,7 +956,7 @@ mod tests {
             press(&mut app, KeyCode::Esc, false),
             Flow::Continue
         ));
-        assert_eq!(app.session.view().status, "Escape again to quit");
+        assert_eq!(app.device.view().status, "Escape again to quit");
         assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
 
         // Any other key in between, and it takes two again.
@@ -788,12 +968,12 @@ mod tests {
         ));
         assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
         assert!(matches!(chord(&mut app, 'q'), Flow::Quit));
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
     }
 
     #[test]
     fn the_cursor_follows_the_line() {
-        let (mut app, dir) = app();
+        let (mut app, space) = app();
         type_in(&mut app, "héllo wörld");
         assert_eq!(app.cursor, 11);
         for _ in 0..5 {
@@ -837,7 +1017,7 @@ mod tests {
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
         press(&mut app, KeyCode::Esc, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
     }
 
     #[test]
@@ -887,7 +1067,7 @@ mod tests {
 
     /// The footer as it is now, having checked that every key it names asks for what it says.
     fn keys(app: &App) -> String {
-        let view = app.session.view();
+        let view = app.device.view();
         let (on_top, zoomed) = (view.cursor.is_none(), !view.path.is_empty());
         for hint in &view.hints {
             let (code, ctrl) = named(key_for(&hint.action));
@@ -904,7 +1084,7 @@ mod tests {
 
     #[test]
     fn the_footer_names_the_key_for_each_thing_on_offer() {
-        let (mut app, dir) = app();
+        let (mut app, space) = app();
         assert_eq!(
             keys(&app),
             "Enter writes · ^V show archived · Esc Esc quits",
@@ -953,40 +1133,140 @@ mod tests {
             keys(&app),
             "Enter writes here · ↓ picks a note · ^V hide archived · ^U undo · ^R redo · Esc back"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
+    }
+
+    /// The far ends of an app's link: what it sent, and a way to tell it things.
+    fn link(app: &mut App) -> (Receiver<String>, Sender<sync::Event>) {
+        let (to_relay, sent) = mpsc::channel();
+        let (tell, from_relay) = mpsc::channel();
+        app.sync(
+            "nas.local".into(),
+            Link {
+                to_relay,
+                from_relay,
+            },
+        );
+        (sent, tell)
+    }
+
+    /// Connects the app to a relay, and passes what each says to the other until neither has
+    /// more to say.
+    fn connect(
+        app: &mut App,
+        relay: &mut Replica,
+        sent: &Receiver<String>,
+        tell: &Sender<sync::Event>,
+    ) {
+        relay.disconnect(0);
+        tell.send(sync::Event::Connected).unwrap();
+        let greeting = relay.connect(0);
+        pass(greeting, tell);
+        settle(app, relay, sent, tell);
+    }
+
+    /// Hands the app what the relay says to it.
+    fn pass(out: Vec<Out>, tell: &Sender<sync::Event>) {
+        for out in out {
+            if let Out::Send(0, message) = out {
+                let text = message.encode().unwrap();
+                tell.send(sync::Event::Message(text)).unwrap();
+            }
+        }
+    }
+
+    fn settle(
+        app: &mut App,
+        relay: &mut Replica,
+        sent: &Receiver<String>,
+        tell: &Sender<sync::Event>,
+    ) {
+        for _ in 0..10 {
+            app.hear().unwrap();
+            for text in sent.try_iter() {
+                let out = relay.receive(0, Message::decode(&text).unwrap());
+                pass(out, tell);
+            }
+        }
+    }
+
+    /// Sealed lines another device with the same passphrase wrote.
+    fn written_elsewhere(text: &str, key: Key) -> Vec<String> {
+        let mut other = Device::new(Box::new(System), "dev-b", Weights::default(), key);
+        other.act(Action::Type(text.into()));
+        let todo = other.act(Action::Write);
+        todo.keep.into_iter().flat_map(|kept| kept.lines).collect()
     }
 
     #[test]
-    fn what_another_instance_writes_shows_up() {
-        let (mut app, dir) = app();
+    fn what_the_relay_sends_shows_up_and_is_kept() {
+        let (mut app, space) = app();
         write(&mut app, "mine");
-        assert!(!app.reload(), "its own line, read back, is not news");
+        let (sent, tell) = link(&mut app);
+        assert!(!app.hear().unwrap(), "nothing until something is said");
+        let mut relay = Replica::new();
+        relay.append("dev-b", written_elsewhere("boiler service booked", key()));
 
-        let now = system::now();
-        let mut other = Logs::open(&dir, "other").unwrap();
-        other
-            .append(&Record {
-                id: "theirs".into(),
-                text: "written elsewhere".into(),
-                links: Vec::new(),
-                created: Some(now),
-                updated: Some(now.plus(60)),
-                stamp: Some(now),
-                archived: false,
-                deleted: false,
-                device: "other".into(),
-            })
-            .unwrap();
-        assert!(app.reload());
-        assert_eq!(heads(&app), ["written elsewhere", "mine"]);
-        assert_eq!(app.session.view().status, "1 changed elsewhere");
-        assert!(!app.reload(), "and each line once");
-        fs::remove_dir_all(&dir).unwrap();
+        connect(&mut app, &mut relay, &sent, &tell);
+        assert_eq!(app.synced, "syncing with nas.local");
+        let mut seen = heads(&app);
+        seen.sort();
+        assert_eq!(seen, ["boiler service booked", "mine"]);
+        assert_eq!(app.device.view().status, "1 changed elsewhere");
+        let kept = fs::read_to_string(space.join("dev-b.jsonl")).unwrap();
+        assert_eq!(kept.lines().collect::<Vec<_>>(), relay.lines("dev-b"));
+        assert_eq!(
+            relay.lines(WRITER).len(),
+            1,
+            "and the relay has what was here"
+        );
+
+        // What is written while the relay is away reaches it when it is back.
+        tell.send(sync::Event::Disconnected).unwrap();
+        assert!(app.hear().unwrap());
+        assert_eq!(app.synced, "not syncing");
+        write(&mut app, "pressure dropped");
+        assert!(sent.try_recv().is_err());
+        connect(&mut app, &mut relay, &sent, &tell);
+        assert_eq!(relay.lines(WRITER).len(), 2);
+
+        // Reopened, the app has it all without the relay.
+        drop(app);
+        let reopened = open_with(&space, key()).unwrap();
+        assert_eq!(heads(&reopened).len(), 3);
+        done(&space);
+    }
+
+    #[test]
+    fn a_device_given_lines_its_passphrase_does_not_open_writes_nothing() {
+        let (mut app, space) = {
+            let space = temp_dir().join("main");
+            store::set_writer(&space, WRITER).unwrap();
+            (open_with(&space, Key::from_bytes([9; 32])).unwrap(), space)
+        };
+        let (sent, tell) = link(&mut app);
+        let mut relay = Replica::new();
+        relay.append("dev-b", written_elsewhere("boiler service booked", key()));
+        connect(&mut app, &mut relay, &sent, &tell);
+        assert!(heads(&app).is_empty());
+        assert_eq!(
+            app.device.view().status,
+            "the passphrase does not open this space: quit, and run fzn key to enter it again"
+        );
+        write(&mut app, "a garden");
+        assert!(
+            app.device.view().status.contains("passphrase"),
+            "{}",
+            app.device.view().status
+        );
+        assert!(!space.join(format!("{WRITER}.jsonl")).exists());
+        assert!(relay.lines(WRITER).is_empty());
+        done(&space);
     }
 
     #[test]
     fn the_editor_is_handed_the_text_and_what_it_leaves_is_saved() {
-        let (mut app, dir) = app();
+        let (mut app, space) = app();
         write(&mut app, "the plan");
         assert!(
             matches!(chord(&mut app, 'o'), Flow::Continue),
@@ -1005,18 +1285,18 @@ mod tests {
         assert!(gave_up.ends_with("note unchanged"), "{gave_up}");
 
         // One that leaves something else behind.
-        let left = dir.join("left-by-the-editor.md");
+        let left = space.join("left-by-the-editor.md");
         fs::write(&left, "The plan\nwith a body\n").unwrap();
         let editor = format!("cp {}", left.display());
         let edited = edit_in(&editor, &id, &text).unwrap().unwrap();
         app.act(Action::Save { id, text: edited }).unwrap();
-        let view = app.session.view();
+        let view = app.device.view();
         assert_eq!(view.status, "saved");
         assert_eq!(view.preview.unwrap().text, "The plan\nwith a body");
         assert!(view.rows[0].has_body);
-        let written = fs::read_to_string(dir.join("dev.jsonl")).unwrap();
+        let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
         assert_eq!(written.lines().count(), 2);
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
     }
 
     #[test]
@@ -1033,43 +1313,44 @@ mod tests {
         assert_eq!(row, "/a/long/path/to/where/t… · 152 notes · not syncing");
         assert_eq!(row.chars().count(), 50);
 
-        let (mut app, dir) = app();
-        assert!(!app.reload(), "with no relay there is nothing to hear");
-        let (tell, news) = std::sync::mpsc::channel();
-        app.sync = Some(("nas.local".into(), news));
-        assert!(!app.reload(), "nor until something is said");
+        let (mut app, space) = app();
+        assert!(
+            !app.hear().unwrap(),
+            "with no relay there is nothing to hear"
+        );
+        let (_sent, tell) = link(&mut app);
+        assert!(!app.hear().unwrap(), "nor until something is said");
 
-        tell.send(News::Connected).unwrap();
-        assert!(app.reload());
+        tell.send(sync::Event::Connected).unwrap();
+        assert!(app.hear().unwrap());
         assert_eq!(app.synced, "syncing with nas.local");
-        tell.send(News::Unreachable("connection refused".into()))
+        tell.send(sync::Event::Disconnected).unwrap();
+        tell.send(sync::Event::Unreachable("connection refused".into()))
             .unwrap();
-        assert!(app.reload());
+        assert!(app.hear().unwrap());
         assert_eq!(app.synced, "not syncing");
         assert_eq!(
-            app.session.view().status,
+            app.device.view().status,
             "nas.local: connection refused",
             "why is said once, and the row goes on saying that it is not"
         );
-        tell.send(News::Connected).unwrap();
-        tell.send(News::Forked("3f9a01c2".into())).unwrap();
-        assert!(app.reload());
+        tell.send(sync::Event::Connected).unwrap();
+        tell.send(sync::Event::Message(r#"{"forked":"3f9a01c2"}"#.into()))
+            .unwrap();
+        assert!(app.hear().unwrap());
         assert_eq!(
             app.synced, "syncing with nas.local",
             "every other log goes on"
         );
         assert!(
-            app.session
+            app.device
                 .view()
                 .status
-                .starts_with("the log 3f9a01c2 here is not the 3f9a01c2 on nas.local"),
+                .starts_with("the log 3f9a01c2 here is not the 3f9a01c2 on the relay"),
             "{}",
-            app.session.view().status
+            app.device.view().status
         );
-        tell.send(News::Elsewhere).unwrap();
-        assert!(app.reload());
-        assert_eq!(app.synced, "another fzn here is syncing");
-        fs::remove_dir_all(&dir).unwrap();
+        done(&space);
     }
 
     #[test]
