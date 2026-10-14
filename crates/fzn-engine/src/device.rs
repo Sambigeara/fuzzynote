@@ -176,8 +176,10 @@ impl Device {
             let versions = self.read(&lines);
             self.session.absorb(versions);
         }
-        // A device opened with its own notes says nothing of them having changed.
-        self.session.say("");
+        // A device opened with its own notes says nothing of them having changed, unless what
+        // it was given is sealed under some other key.
+        self.session
+            .say(if self.key_verified() { "" } else { WRONG_KEY });
         todo
     }
 
@@ -404,6 +406,11 @@ impl Device {
                 Out::Keep { log, lines } => {
                     let versions = self.read(&lines);
                     self.session.absorb(versions);
+                    // A key that has just been found not to open the space is said so at
+                    // once, and not only when a write is tried.
+                    if !self.key_verified() {
+                        self.session.say(WRONG_KEY);
+                    }
                     let held = self.replica.lines(&log).len();
                     let from = held.saturating_sub(lines.len()) as u64;
                     todo.keep.push(Kept { log, from, lines });
@@ -412,6 +419,15 @@ impl Device {
                     if let Ok(text) = message.encode() {
                         todo.send.push(text);
                     }
+                }
+                // A fork of this device's own log is two machines writing under one id. The
+                // way out is a new log of this device's own, whose header retires the shared
+                // name; the other machine is superseded by it and does the same.
+                Out::Forked { log, .. } if log == self.device => {
+                    self.superseded = true;
+                    self.session.say(format!(
+                        "the log {log} here is not the {log} on the relay, so a new one is started"
+                    ));
                 }
                 Out::Forked { log, .. } => self.session.say(format!(
                     "the log {log} here is not the {log} on the relay, so it is not syncing"
@@ -699,15 +715,23 @@ mod tests {
         assert_eq!(saved.keep.len(), 1);
         assert_eq!(heads(&a), ["see the manual"]);
 
-        // What is not a message is passed over, and a fork is said.
+        // What is not a message is passed over. A fork of another writer's log is said; a fork
+        // of this device's own is put right there and then, with a new log.
         assert_eq!(a.received("not a message"), Todo::default());
         a.connected();
-        a.received(r#"{"forked":"dev-a"}"#);
+        a.received(r#"{"forked":"dev-z"}"#);
         assert!(
-            status(&a).starts_with("the log dev-a here is not"),
+            status(&a).starts_with("the log dev-z here is not"),
             "{}",
             status(&a)
         );
+        let todo = a.received(r#"{"forked":"dev-a"}"#);
+        let new = todo.device.clone().expect("a new writer id");
+        assert_ne!(new, "dev-a");
+        assert_eq!(a.device(), new);
+        assert_eq!(todo.delete, ["dev-a"]);
+        assert!(status(&a).starts_with("compacted"), "{}", status(&a));
+        assert_eq!(heads(&a), ["see the manual"]);
     }
 
     #[test]
@@ -738,10 +762,34 @@ mod tests {
         assert_eq!(b.unopened(), 2);
         assert!(!b.key_verified());
         assert!(heads(&b).is_empty());
+        assert!(
+            status(&b).contains("passphrase"),
+            "said as soon as it is seen: {}",
+            status(&b)
+        );
         assert_eq!(b.opened(), Todo::default(), "nor compacts");
         assert_eq!(write(&mut b, "a garden"), Todo::default());
         assert!(status(&b).contains("passphrase"), "{}", status(&b));
         assert!(b.replica.lines("dev-b").is_empty());
+
+        // The same when the sealed lines arrive from the relay: said before any write is tried.
+        let wrong = Device::new(
+            host("dev-d", 0),
+            "dev-d",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        let mut net = Net {
+            relay: Replica::new(),
+            devices: vec![device("dev-a"), wrong],
+        };
+        net.connect(0);
+        net.act(0, Action::Type("Boiler".into()));
+        net.act(0, Action::Write);
+        net.connect(1);
+        assert!(!net.devices[1].key_verified());
+        assert_eq!(net.devices[1].unopened(), 1);
+        assert_eq!(status(&net.devices[1]), WRONG_KEY);
 
         // Plain lines say nothing about a key, and a space of them takes the first one given.
         let mut c = Device::new(
@@ -844,7 +892,8 @@ mod tests {
     #[test]
     fn a_fork_is_put_right_by_compacting_on_both_sides() {
         // One writer's id on two machines: the second starts from the first's lines, then each
-        // writes its own.
+        // writes its own. Nobody has to do anything about it: the one the relay tells of the
+        // fork starts a new log, and the other is superseded by that log and starts its own.
         let mut a = twin("dev-a", "one", 0);
         let shared = write(&mut a, "Boiler").keep.remove(0).lines;
         let mut b = twin("dev-a", "two", 100);
@@ -858,13 +907,13 @@ mod tests {
         };
         net.connect(0);
         net.connect(1);
-        assert!(status(&net.devices[1]).contains("not syncing"));
-
-        let todo = net.devices[0].compact();
-        let first = todo.device.clone().unwrap();
-        net.relay_hears(0, todo);
+        let first = net.devices[0].device().to_owned();
         let second = net.devices[1].device().to_owned();
-        assert_ne!(second, "dev-a", "superseded, so compacted");
+        assert_ne!(second, "dev-a", "told of the fork, so compacted");
+        assert_ne!(
+            first, "dev-a",
+            "superseded by the other's new log, so compacted"
+        );
         assert_ne!(second, first);
 
         net.devices.push(device("dev-c"));

@@ -280,9 +280,16 @@ tab and the relay all run the same code.
 - **A fork is how a mistake shows.** The one that will happen is a writer's id copied to a
   second machine along with the rest of a directory, so that two machines write different
   logs under one name. Without the digest neither would send, each believing the other had its
-  lines, and notes would stay on one machine with nothing to say so. The way out is a
-  compaction on one of them, which takes a new id and retires the forked name.
+  lines, and notes would stay on one machine with nothing to say so. It puts itself right:
+  a device told that its own log is forked compacts, taking a new id, and its header retires
+  the forked name. Both machines do this, each from its own copy, so nothing either wrote is
+  lost, and the relay ends up with two logs where it had one shared name.
 - Not covered yet: who may connect to a relay, TLS, and history beyond what compaction keeps.
+  The header is taken on trust, and it is the one line a replica acts on: anyone who can
+  connect could send a log whose header names other writers' logs, and every replica but
+  each writer's own would retire them until that writer compacted again. Nothing is lost,
+  since a writer's own log is never retired on a peer's word, but it is the first thing
+  that authenticating a connection, or a header, has to close.
 
 ## Clients
 - **Terminal**: Rust and ratatui, with the original fzn keys where they still earn their place,
@@ -498,8 +505,8 @@ tab and the relay all run the same code.
 - **Dumb relay, self-hosted, before the browser.** Decided 2026-10-13, reversing the order.
   A tab needs its notes from somewhere, and a tab is one more device, so what syncs two
   machines is also what gives a browser its notes.
-- **Same repository.** The Go implementation is tagged and kept reachable; the Rust workspace
-  takes over the root. History is part of the project.
+- **Same repository.** The Go implementation is at the tag `go-final` and kept reachable; the
+  Rust workspace took over the root on 2026-10-14. History is part of the project.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -515,8 +522,9 @@ tab and the relay all run the same code.
   mean that the one-liners set, so a long document earns almost nothing for its own words. Its
   name now finds it; part of its name, or what it says, may not. Left until use shows it
   matters. `bm25_b` is the knob, and no setting of it was right on its own.
-- Putting a fork right by hand is a compaction; whether fzn should offer it when it reports a
-  fork, rather than waiting for the threshold, is for the first fork to say.
+- A fork is put right the moment it is seen, by compacting. Whether that is too eager, as when
+  a file was corrupted rather than copied, is for the first fork to say; the cost of a needless
+  compaction is one log replaced by a shorter one.
 - Key rotation. A space's key is for life. Changing a passphrase would mean every device
   compacting under the new key and the relay keeping both until all have, which is the
   compaction machinery and nothing more, but nobody has asked for it.
@@ -539,7 +547,7 @@ tab and the relay all run the same code.
    the Go code: `crates/fzn-engine` (model, index, three scorers, no I/O) and `crates/fzn` (the
    app: config, per-device log store, importers, terminal UI). The Silverbullet pages are the
    `main` space and the 2022 corpus is the `fzn-2022` space. Daily use from here; tuning follows
-   use. Then the Go code is removed in one commit.
+   use. The Go code was removed in one commit on 2026-10-14.
 2. **Relay and sync.** Single binary, opaque lines, multiple devices. Built 2026-10-13: the
    exchange is in the engine as `Replica`, `fzn relay` is the relay, and fzn syncs with one
    whenever one is named. Running since 2026-10-13 as a system service on a machine that is

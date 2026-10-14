@@ -1335,7 +1335,7 @@ mod tests {
             "why is said once, and the row goes on saying that it is not"
         );
         tell.send(sync::Event::Connected).unwrap();
-        tell.send(sync::Event::Message(r#"{"forked":"3f9a01c2"}"#.into()))
+        tell.send(sync::Event::Message(r#"{"forked":"dev-b"}"#.into()))
             .unwrap();
         assert!(app.hear().unwrap());
         assert_eq!(
@@ -1346,7 +1346,24 @@ mod tests {
             app.device
                 .view()
                 .status
-                .starts_with("the log 3f9a01c2 here is not the 3f9a01c2 on the relay"),
+                .starts_with("the log dev-b here is not the dev-b on the relay"),
+            "{}",
+            app.device.view().status
+        );
+
+        // A fork of this device's own log is put right by a new log, and the new writer id is
+        // kept with the space.
+        tell.send(sync::Event::Message(format!(r#"{{"forked":"{WRITER}"}}"#)))
+            .unwrap();
+        assert!(app.hear().unwrap());
+        let now = app.device.device().to_owned();
+        assert_ne!(now, WRITER, "{}", app.device.view().status);
+        assert_eq!(
+            fs::read_to_string(space.join(".writer")).unwrap().trim(),
+            now
+        );
+        assert!(
+            app.device.view().status.starts_with("compacted"),
             "{}",
             app.device.view().status
         );
