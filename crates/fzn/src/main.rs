@@ -2,10 +2,12 @@
 
 mod config;
 mod import;
+mod relay;
 mod store;
 mod sync;
 mod system;
 mod ui;
+mod wire;
 
 use std::path::PathBuf;
 
@@ -159,8 +161,8 @@ fn main() -> Result<()> {
     let root = config::resolve_root(root_flag.as_deref(), env_root.as_deref(), &cfg);
     if let Cmd::Relay = cmd {
         // A relay is nobody's device: it writes nothing of its own, so it has no id.
-        let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", sync::PORT));
-        let relay = sync::Relay::bind(root.clone(), &listen, web.clone())?;
+        let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", wire::PORT));
+        let relay = relay::Relay::bind(root.clone(), &listen, web.clone())?;
         println!(
             "fzn relay: passing on the spaces under {} to whoever connects to {}",
             root.display(),
