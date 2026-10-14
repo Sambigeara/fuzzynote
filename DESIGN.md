@@ -15,8 +15,8 @@ other people when you choose.
 - A note is text. Its first line is its head. There is no separate "line" and "note".
 - Instant. Every keystroke resolves within a frame over tens of thousands of notes. Nothing on the
   hot path touches disk or network.
-- Private by construction. The engine never calls out. Sync moves opaque events through a relay
-  that cannot read them.
+- Private by construction. The engine never calls out. Notes are sealed on the device with a key
+  the relay never has, so sync moves lines through a relay that cannot read them.
 - Explainable relevance. Every suggestion carries its reason. No black box in the loop by default.
 - Converge, never conflict. Every change is an event; devices merge; nothing is lost.
 - One core, thin faces. The engine is the whole app with no screen and no keyboard: a face says
@@ -144,34 +144,57 @@ Nothing is added to the engine until daily use asks for it.
   archived, deleted. What you said goes in the text; what happened to the note goes beside it.
   A file per note is not the store: files cannot merge two devices' edits, and most notes are
   one line.
-- **v1: one append-only log per device, per space.** Each line is a full snapshot of one note
+- **v1: one append-only log per writer, per space.** Each line is a full snapshot of one note
   as JSON: `v`, the version of the line format, then id, text, links, created, updated, stamp,
   archived, deleted, device. Times are RFC 3339 with the offset of the clock that wrote them,
   `2026-10-13T10:12:56+01:00`, so a line reads without the app, and a note keeps the day it
   was written on wherever it is read. Lines from before versions hold unix seconds and are
   still read; a line with a later version than the build knows is left alone, not misread.
-  `updated` is when the text last changed, so archiving a note does not re-date it. `stamp` is when the version was written,
-  and a local change is always stamped past the version it replaces. Loading replays every log
-  in the space and the version with the newest stamp wins, ties broken by device id. A device
-  only ever writes its own file, so the root can be synced by anything that copies files,
-  Syncthing included, with no conflicts. Last-writer-wins on a whole note is the known
-  limitation, accepted for now. Deletion is a tombstone line, kept so an older version arriving
-  later cannot resurrect the note. What a line says, and which of two versions is the newer,
-  is the engine's to settle, so that every device agrees. Where the lines are kept is the
-  face's: files under the terminal.
-- **Logs are reread as they grow.** Whenever the keyboard has been idle for a second the app
-  replays what has been appended since it last looked, so a second instance or a file-sync
-  delivery shows up without a restart. The relay will feed the same path.
+  `updated` is when the text last changed, so archiving a note does not re-date it. `stamp` is
+  when the version was written, and a local change is always stamped past the version it
+  replaces. Loading replays every log in the space and the version with the newest stamp wins,
+  ties broken by writer id. Last-writer-wins on a whole note is the known limitation, accepted
+  for now. Deletion is a tombstone line, kept so an older version arriving later cannot
+  resurrect the note. What a line says, and which of two versions is the newer, is the
+  engine's to settle, so that every device agrees. Where the lines are kept is the face's:
+  files under the terminal, IndexedDB in a tab.
+- **Lines are sealed before they are kept.** Decided 2026-10-14. What goes into a log, and so
+  to the relay, is not the snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is
+  a random 24-byte nonce and then the snapshot encrypted with XChaCha20-Poly1305 under the
+  space's key, base64. The key is 32 bytes derived from a passphrase with Argon2id (19 MiB,
+  two passes, one lane) and a salt that is the hash of the space's name, so that the same
+  passphrase on another device gives the same key and nothing has to be sent to get it.
+  Each device derives the key once and keeps it, in the config directory under the terminal
+  and in the browser's storage in a tab, so the passphrase is typed once a device. Lines from
+  before sealing are still read as they are; the first open with a key compacts the writer's
+  own log into a sealed one (see Sync), so plain lines leave the writer's log at once and the
+  relay as soon as it has the sealed one. The key is verified by opening a line: a device that
+  has seen a sealed line and opened none has the wrong passphrase, says so, and writes nothing,
+  since a line sealed under a second key would split the space in two. A space with no sealed
+  line yet takes the first key it is given. Forgetting a passphrase is losing the notes; there
+  is no recovery and no reset, and sharing a space will be sharing its passphrase until there
+  is something better. What the relay still sees: the names of the logs, how many lines each
+  has and how long they are, when they arrive, and the compaction headers. What a relay can
+  still do: withhold lines, or hand back an old prefix; it cannot forge, alter or reorder one.
+- **fzn is the only thing that writes a space's directory.** Decided 2026-10-14. One fzn at a
+  time has a space open on a machine, settled by a lock on a file in the directory, and a
+  second window is told so and stops. Nothing is reread while the app runs: what arrives from
+  the relay comes through the engine, which asks the face to keep it. Syncthing and the like
+  are not supported and not needed; the relay is the way between machines.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
-  CRDT updates instead of snapshots and nothing above the store module changes. In the browser
-  the same log lives in IndexedDB or OPFS.
+  sealed CRDT updates instead of sealed snapshots. The replica and the relay do not change,
+  since they never read a line; the session and `Notes` do, since the session reads and makes
+  `Record`s directly in a couple of dozen places and undo holds whole versions. Count on a
+  day in `session.rs` and `record.rs`, not a swap behind the store. Compaction already turns
+  a history into one snapshot a note, which is what a CRDT log needs from time to time too.
 - Sharing is sharing a subset of updates. Deferred, but nothing above prevents it.
 - **The snapshot line is the way in and out, for good.** `fzn export` writes every live note
-  as one such line, and a file of them put in a space's directory is read as one more log.
-  When the logs carry CRDT updates, or are encrypted, this format stays, so notes can always be
-  read and taken away without the app. It carries the facts beside the text as well as the
-  text: the 2022 corpus is what it looks like when only the text gets out (creation time
-  survives on 7% of its notes).
+  as one plain line, by your own hand and to wherever you point it, so notes can always be
+  read and taken away without the app. `fzn import-jsonl` is the way back in; a plain file is
+  no longer read as a log by being put in the directory, since it would then be sent in the
+  clear. When the logs carry CRDT updates this format stays. It carries the facts beside the
+  text as well as the text: the 2022 corpus is what it looks like when only the text gets out
+  (creation time survives on 7% of its notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
 
@@ -184,7 +207,24 @@ tab and the relay all run the same code.
   the end, so any copy of a log is the start of the writer's own. A *replica* is one place's
   copy of a space. What it holds of a log is one number, and what a peer lacks is the rest.
   Which log a line sits in is bookkeeping: the notes are what all the lines add up to, the
-  newest version of each, whatever order the lines come in and however many times.
+  newest version of each, whatever order the lines come in and however many times. A log is
+  named for its writer, and a writer's id is kept with the space it writes, in the space's
+  directory under the terminal and in the browser's storage for a tab, so that the writer of
+  one space is not the writer of another.
+- **Compaction is a new log.** Decided 2026-10-14. A log only grows, so a writer that wants a
+  shorter one starts another: it takes a new writer id, and the first line of the new log is a
+  header, `{"compacts":["3f9a01c2"],"snapshot":293}`, naming every log it has had before and
+  how many lines follow as the snapshot. The snapshot is the writer's latest version of every
+  note it ever wrote, tombstones included, one sealed line each; after it the log goes on as
+  any log does. A replica that holds the header and the whole snapshot *retires* the logs the
+  header names: it drops them from what it holds and says, ignores a peer that offers them,
+  and deletes them from wherever it keeps lines. Until it holds the whole snapshot it keeps
+  both, and the notes come out the same, since a version is a version whichever log it is in.
+  The writer compacts at open when its own log holds lines from before sealing, or has grown
+  past four times the versions that are live in it. Putting a fork right is the same move: the
+  writer takes a new log, and the one with two writers is retired by the header. Nothing is
+  state: which logs are retired follows from the logs held, and the header names the whole
+  chain so that it still follows after the middle of the chain is gone.
 - **A mark is a point in a log**: how many lines in, and a digest of those lines. The digest
   is FNV-1a, 64 bits, over each line and its newline, written as sixteen hex digits. It is a
   check against accidents, not a defence against anyone.
@@ -209,37 +249,40 @@ tab and the relay all run the same code.
   lines. What a replica holds is all it knows, so a new device says it has nothing and is sent
   everything, and a relay that has lost its disk is filled again by the next device to
   connect.
-- **Lines are never read on the way.** They are copied byte for byte. A line from a later
-  format, or an encrypted one, passes through a replica that cannot read it. This is what lets
-  the text CRDT and end-to-end encryption arrive later without the relay changing.
+- **Lines are never read on the way, but one.** They are copied byte for byte, and sealed, so
+  a replica could not read them if it tried. A line from a later format passes through a
+  replica that does not know it. The one line a replica reads is the first of a log, to see
+  whether it is a compaction header, which is bookkeeping about logs and not about notes.
+  This is what lets the text CRDT arrive without the relay changing.
 - **A connection** is a websocket to `/1/main` on the relay: the version of this exchange,
   then the space. Each end pings a quiet peer and gives up on one silent for 45 seconds.
 - **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves
-  every space under its root and keeps each as the same files a device keeps, so the root of a
-  relay can be opened with fzn like any other, and what is written there goes out too. It
-  listens on `127.0.0.1:3960` until told otherwise, because it has no password and no
-  encryption yet: it is for a network where everyone who can connect may read the notes.
-  Until it has a password of its own, what keeps it private is the address it listens on and
-  whom the machine lets reach it. As a systemd service, `IPAddressAllow=` says whom, and a
-  private network that other people's devices are on needs that as well.
+  every space under its root and keeps each as the same files a device keeps, sealed, and
+  holds the same lock on each, so nothing else writes them while it runs. It listens on
+  `127.0.0.1:3960` until told otherwise. It has no password and no TLS yet: anyone who can
+  connect can take a copy of the sealed lines and add lines of their own, which no device
+  will be able to open. What keeps it private is the key, which it never has; what keeps it
+  tidy is the address it listens on and whom the machine lets reach it. As a systemd service,
+  `IPAddressAllow=` says whom.
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with
   `--relay`. There is no command for it. While the app is open a thread keeps the space's
   logs in step with the relay, and the status row says how that is going. With no relay
   named, nothing leaves the machine.
-- **The files are where sync and the app meet.** The thread tells the app nothing. What
-  arrives is added to the logs, and the app finds it there as it finds what another instance
-  wrote; what the app writes, the thread finds in the logs and sends. One process at a time
-  syncs a directory, settled by a lock on a file in it: a second window leaves it to the
-  first and takes over when the first is gone. A log is locked for each write to it. If the
-  logs stop being what the replica holds, because one was replaced or something else wrote
-  to one, the replica is opened again from what is on disk.
-- **A fork is how a mistake shows.** The one that will happen is a device's id copied to a
-  second machine along with the rest of a home directory, so that two machines write different
+- **The engine is where sync and the app meet.** Decided 2026-10-14, replacing the files. A
+  *device* is a session and a replica joined in memory, with the space's key, and it is in the
+  engine as `Device`: the same code in the terminal, in a tab and in a test. A version the
+  session wants kept is sealed, becomes a line of this writer's log, and the replica sends it
+  on; a line the replica takes from the relay is opened and given to the session. The face is
+  left with what only it can do: the socket, and keeping lines for the next time. In the
+  terminal that is one thread holding the websocket and passing text both ways over channels,
+  and a directory of files that only this process writes. Nothing is reread, nothing is
+  locked per write, and nothing can go stale under the replica.
+- **A fork is how a mistake shows.** The one that will happen is a writer's id copied to a
+  second machine along with the rest of a directory, so that two machines write different
   logs under one name. Without the digest neither would send, each believing the other had its
-  lines, and notes would stay on one machine with nothing to say so.
-- Not covered yet: who may connect to a relay, encryption, putting a fork right other than
-  by hand, and history. Every version ever written is kept and a new device is sent all of
-  it, which today is 416K for `main` and 3.0M for the 2022 space.
+  lines, and notes would stay on one machine with nothing to say so. The way out is a
+  compaction on one of them, which takes a new id and retires the forked name.
+- Not covered yet: who may connect to a relay, TLS, and history beyond what compaction keeps.
 
 ## Clients
 - **Terminal**: Rust and ratatui, with the original fzn keys where they still earn their place,
@@ -259,7 +302,9 @@ tab and the relay all run the same code.
   line, on a note, inside a zoom. Above the keys is what just happened, how many notes there
   are and, with a relay named, how sync is going. No inline multi-line editor in v1. Not yet
   reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, Tab search
-  groups, Ctrl-^ export.
+  groups, Ctrl-^ export. The first time a space is opened on a machine fzn asks for its
+  passphrase, twice if the space is new, and keeps the key it derives; `fzn key` asks again,
+  for when it was mistyped. `$FZN_PASSPHRASE` answers for scripts.
 - **Zoom.** Enter on a note makes it the context, and the breadcrumb grows by one. The list
   becomes its neighbourhood, in two parts. What is linked to or from it comes first, newest on
   top: a link is a fact, and this part is a list you keep. What the engine finds besides follows,
@@ -277,12 +322,12 @@ tab and the relay all run the same code.
   on a note already on the path goes back to it, so the path never repeats; Escape steps back one
   hop, onto the top line. This is the ego graph as a flat list; following a link is picking its
   target here.
-- **Browser**: the same session and replica compiled to wasm32 via wasm-bindgen, with a page
-  of plain JavaScript and CSS to drive them: no framework and no build step but the engine's.
-  A tab is one more device. It has an id and a log of its own, keeps every log of the space
-  in the browser between visits, and syncs with the relay it was loaded from, so there is one
-  address to open and nothing to set up. A relay hands the page out when it is pointed at the
-  `web` directory with `--web`.
+- **Browser**: the engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain
+  JavaScript and CSS to drive it: no framework and no build step but the engine's. A tab is
+  one more device. It has a writer id and a log of its own for each space, keeps every log of
+  the space in the browser between visits, asks for the passphrase once and keeps the key,
+  and syncs with the relay it was loaded from, so there is one address to open and nothing to
+  set up. A relay hands the page out when it is pointed at the `web` directory with `--web`.
   - *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
     terminal's chords are not here, because a browser keeps most of them for itself. Every
     other thing that can be asked for is a button at the foot of the page, the footer of the
@@ -407,6 +452,33 @@ tab and the relay all run the same code.
   its own to get wrong. The cost is a rule that has to hold, one writer to a log, and the
   digest is there to notice when it does not. Merging is per note for now: two edits of one
   note made apart leave the newer one showing and the other in the log.
+- **Compaction is a new log, not a rewritten one.** Decided 2026-10-14. Rewriting a log in
+  place is a fork by the rule above, and any message saying "I rewrote it" is state a relay
+  can miss. A new log under a new id, with a header naming the old ones, is read the same by
+  a replica that was there and one that was not, and the retirement of the old logs follows
+  from what is held. It also makes fork repair the same move, and gives the text CRDT the
+  snapshot-and-go-on it will need. What it costs is the one line a replica reads.
+- **The engine owns sync.** Decided 2026-10-14, at Sam's direction, replacing the files as
+  the meeting point. The files bought Syncthing and a second window at the price of two
+  readers of one directory, a lock on every write, and a "stale, start again" path. Neither
+  is wanted: the relay is the way between machines, and a second window on one space is told
+  to use the first. `Device` had already been written for the browser, where there are no
+  files; it was the general thing all along, so it moved into the engine and the terminal
+  drives it too.
+- **Sealed on the device, from now.** Decided 2026-10-14, at Sam's direction. The lines were
+  already opaque to the relay by design; sealing them costs a key and a passphrase prompt a
+  device, and buys a relay that can sit anywhere. A passphrase, derived with Argon2id and a
+  salt from the space's name, was chosen over a generated key copied between devices because
+  a phone has a keyboard and not a clipboard from the terminal. There is no auth and no TLS
+  yet, by the same decision: the key is what protects the notes, and the address is what
+  protects the relay's disk and time.
+- **Per-note last-writer-wins stays, for now.** Revisited 2026-10-14 when asked whether the
+  CRDT could be made more robust. The stamp is already a per-note logical clock (a local
+  change is always stamped past the version it replaces, whatever the wall clock says), and
+  the merge is deterministic in any order. What is not robust is two devices editing one note
+  apart, where the newer whole text wins; that is the text CRDT, which is milestone 4 and
+  which compaction and sealing were shaped not to obstruct. Pulling Yrs or Loro in now would
+  be the dependency decision Sam deferred, made in passing.
 - **Sync is part of opening the app.** Decided 2026-10-13, at Sam's suggestion, over an
   `fzn sync` to be run beside it. A second thing to run is a second thing to remember, and
   one that fails without being seen. What it cost was two things to get right: only one of
@@ -443,10 +515,13 @@ tab and the relay all run the same code.
   mean that the one-liners set, so a long document earns almost nothing for its own words. Its
   name now finds it; part of its name, or what it says, may not. Left until use shows it
   matters. `bm25_b` is the knob, and no setting of it was right on its own.
-- Putting a fork right. The notes do not depend on which log a line is in, so the safe move is
-  for a writer to take a new name for its log. For now a fork is reported, and `fzn --help`
-  says how to do that by hand: rename the log and delete the device id. The case to expect
-  is a machine put back from a backup that writes a note before it has synced.
+- Putting a fork right by hand is a compaction; whether fzn should offer it when it reports a
+  fork, rather than waiting for the threshold, is for the first fork to say.
+- Key rotation. A space's key is for life. Changing a passphrase would mean every device
+  compacting under the new key and the relay keeping both until all have, which is the
+  compaction machinery and nothing more, but nobody has asked for it.
+- What the relay still sees: log names, counts, sizes and timing, and the compaction headers.
+  Padding lines to a few sizes would hide the sizes; nothing hides the timing.
 - The browser's keys past the four. Buttons reached with Tab are a start: nothing to
   remember, but slower than a chord for archiving ten notes in a row. Clearing the line and
   undo have no key at all yet.
@@ -469,7 +544,8 @@ tab and the relay all run the same code.
    exchange is in the engine as `Replica`, `fzn relay` is the relay, and fzn syncs with one
    whenever one is named. Running since 2026-10-13 as a system service on a machine that is
    always on, reached over a private network, where a note takes about a second to get from
-   one window to another.
+   one window to another. Reworked 2026-10-14: the engine owns sync through `Device`, lines
+   are sealed, and compaction is a new log.
 3. **Same core in the browser**, as one more device on the relay. WASM build, DOM renderer,
    ego graph. Built 2026-10-13 without the graph: `crates/fzn-web` is a tab as a device, and
    `web` is the page. Before that, the same day, the app moved out of the terminal into the
