@@ -5,27 +5,14 @@
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
 # Ctags
 tags
-
-# Bin directory
-bin/
-dist/
-
-# debug output
-debug/
 
 # Rust
 /target/
 
 # The engine built for the browser, by web/build.sh
 /web/pkg/
+
+# Claude Code worktrees and local settings.
+/.claude/
