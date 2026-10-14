@@ -31,6 +31,16 @@ impl Host for Browser {
         let random = (js_sys::Math::random() * 4_294_967_296.0) as u32;
         format!("{millis:x}{random:08x}")
     }
+
+    /// From the browser's cryptographic source, which every browser that runs WebAssembly has.
+    fn random(&self, buf: &mut [u8]) {
+        let filled = web_sys::window()
+            .and_then(|window| window.crypto().ok())
+            .and_then(|crypto| crypto.get_random_values_with_u8_array(buf).ok());
+        if filled.is_none() {
+            panic!("this browser supplied no randomness, which sealing needs");
+        }
+    }
 }
 
 fn json(todo: &Todo) -> String {

@@ -13,3 +13,16 @@ unicode-segmentation = "1.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+# Sealing. Pure Rust, and built for wasm32 with no features that reach for the machine: the
+# nonce comes from the host, so nothing here needs its own source of randomness.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+base64 = "0.22"
+
+# Deriving a key is deliberately slow, and unoptimised it is slower still; tests derive keys.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

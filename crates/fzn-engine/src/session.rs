@@ -50,6 +50,9 @@ pub trait Host {
 
     /// An id for a new note: unique across devices, and sorting after the ids made before it.
     fn new_id(&self) -> String;
+
+    /// Fills `buf` from the machine's source of randomness. For nonces and new writer ids.
+    fn random(&self, buf: &mut [u8]);
 }
 
 /// Everything that can be asked of a session. One that does not apply where the cursor is does
@@ -94,6 +97,31 @@ pub enum Action {
     ShowArchived,
     /// Say what each listed note scored, or stop.
     ShowScores,
+}
+
+impl Action {
+    /// Whether this action can change a note, and so needs the key verified.
+    pub fn writes(&self) -> bool {
+        match self {
+            Action::Write
+            | Action::Save { .. }
+            | Action::Archive
+            | Action::Delete
+            | Action::Link
+            | Action::Undo
+            | Action::Redo => true,
+            Action::Type(_)
+            | Action::Move(_)
+            | Action::Select(_)
+            | Action::GoIn
+            | Action::Back
+            | Action::Edit
+            | Action::Copy
+            | Action::OpenUrl
+            | Action::ShowArchived
+            | Action::ShowScores => false,
+        }
+    }
 }
 
 /// What a face has to do about an action. The session has already done its part.
@@ -233,6 +261,16 @@ impl Session {
         };
         session.refresh(true);
         session
+    }
+
+    /// Versions written from now on name this writer.
+    pub fn writes_as(&mut self, device: impl Into<String>) {
+        self.device = device.into();
+    }
+
+    /// The writer the versions this session writes name.
+    pub fn device(&self) -> &str {
+        &self.device
     }
 
     /// Does what was asked, and returns what the face has to do about it.
@@ -837,10 +875,11 @@ mod tests {
         offset: 0,
     };
 
-    /// A machine whose clock has stopped, and whose ids count up.
+    /// A machine whose clock has stopped, and whose ids and randomness count up.
     #[derive(Default)]
     struct Stopped {
         ids: Cell<u32>,
+        random: Cell<u8>,
     }
 
     impl Host for Stopped {
@@ -851,6 +890,13 @@ mod tests {
         fn new_id(&self) -> String {
             self.ids.set(self.ids.get() + 1);
             format!("new-{:04}", self.ids.get())
+        }
+
+        fn random(&self, buf: &mut [u8]) {
+            for byte in buf {
+                self.random.set(self.random.get().wrapping_add(1));
+                *byte = self.random.get();
+            }
         }
     }
 
@@ -1763,5 +1809,58 @@ mod tests {
         assert!(has_body("head\n#house\n- and more"));
         assert!(has_body("head\n# A heading"));
         assert!(!has_body("head"));
+    }
+
+    #[test]
+    fn only_the_actions_that_can_change_a_note_write() {
+        let writes = [
+            Action::Write,
+            Action::Save {
+                id: "n1".into(),
+                text: "Boiler: bleed the radiators".into(),
+            },
+            Action::Archive,
+            Action::Delete,
+            Action::Link,
+            Action::Undo,
+            Action::Redo,
+        ];
+        let reads = [
+            Action::Type("boiler".into()),
+            Action::Move(1),
+            Action::Select(None),
+            Action::GoIn,
+            Action::Back,
+            Action::Edit,
+            Action::Copy,
+            Action::OpenUrl,
+            Action::ShowArchived,
+            Action::ShowScores,
+        ];
+        for action in writes {
+            assert!(action.writes(), "{action:?}");
+        }
+        for action in reads {
+            assert!(!action.writes(), "{action:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_writer_names_the_versions_written_after_it() {
+        let devices = |effects: Vec<Effect>| -> Vec<String> {
+            effects
+                .into_iter()
+                .filter_map(|e| match e {
+                    Effect::Keep(r) => Some(r.device),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut s = session();
+        assert_eq!(s.device(), "dev");
+        assert_eq!(devices(add(&mut s, "plant the garlic")), ["dev"]);
+        s.writes_as("3f9a01c2");
+        assert_eq!(s.device(), "3f9a01c2");
+        assert_eq!(devices(add(&mut s, "net the brassicas")), ["3f9a01c2"]);
     }
 }

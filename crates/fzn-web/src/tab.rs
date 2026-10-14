@@ -155,6 +155,9 @@ impl Tab {
                 Out::Forked { log, .. } => self.session.say(format!(
                     "the log {log} here is not the {log} on the relay, so it is not syncing"
                 )),
+                // Retiring and compacting belong to the device, which is moving into the engine
+                // and will replace this tab.
+                Out::Retire(_) | Out::Superseded(_) => {}
             }
         }
     }
@@ -166,10 +169,12 @@ mod tests {
     use fzn_engine::Moment;
     use std::cell::Cell;
 
-    /// A machine whose clock has stopped at midday on 2026-10-13, and whose ids count up.
+    /// A machine whose clock has stopped at midday on 2026-10-13, and whose ids and randomness
+    /// count up.
     struct Stopped {
         name: &'static str,
         ids: Cell<u32>,
+        random: Cell<u8>,
     }
 
     impl Host for Stopped {
@@ -181,12 +186,20 @@ mod tests {
             self.ids.set(self.ids.get() + 1);
             format!("{}-{:04}", self.name, self.ids.get())
         }
+
+        fn random(&self, buf: &mut [u8]) {
+            for byte in buf {
+                self.random.set(self.random.get().wrapping_add(1));
+                *byte = self.random.get();
+            }
+        }
     }
 
     fn tab(device: &'static str) -> Tab {
         let host = Stopped {
             name: device,
             ids: Cell::new(0),
+            random: Cell::new(0),
         };
         Tab::new(Box::new(host), device)
     }

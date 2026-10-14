@@ -6,6 +6,10 @@
 //! in a browser. What a line says, and which of two versions is the newer, is settled here, so
 //! that every device agrees. When a text CRDT arrives, the lines carry updates instead of
 //! snapshots and nothing above this module changes.
+//!
+//! In a log the line is sealed, and what is sealed is exactly the plain line, so that a sealed
+//! log and an export differ by the envelope and nothing else. Logs from before sealing hold plain
+//! lines, and those are read as they are.
 
 use std::collections::BTreeMap;
 
@@ -13,6 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
 use crate::note::{Note, NoteId};
+use crate::seal::{Opened, Seal};
+use crate::session::Host;
 use crate::time::Moment;
 
 /// The version of the line format this build writes. Lines with no version are from before
@@ -46,6 +52,17 @@ pub struct Record {
     /// The device that wrote this version. Breaks ties between versions with equal stamps.
     #[serde(default)]
     pub device: String,
+}
+
+/// What one line of a log came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Read {
+    /// A version of a note.
+    Version(Record),
+    /// An envelope this seal does not open.
+    Shut,
+    /// Not a version: a compaction header, or garbage.
+    Other,
 }
 
 /// A line of a log: the version of the format, then the note.
@@ -91,6 +108,29 @@ impl Record {
             .ok()
             .filter(|line| line.v <= FORMAT)
             .map(|line| line.record)
+    }
+
+    /// Reads one line of a log, sealed or plain. An envelope is opened with the seal and what
+    /// is inside read as a plain line; a line that is not an envelope is read as a plain line.
+    /// `Shut` is an envelope this seal does not open. `Other` is anything that is not a version:
+    /// a compaction header, or garbage.
+    pub fn read_line(seal: &Seal, line: &str) -> Read {
+        let version = |plain: &str| match Record::read(plain.as_bytes()) {
+            Some(record) => Read::Version(record),
+            None => Read::Other,
+        };
+        match seal.open(line) {
+            Opened::Plain => version(line),
+            Opened::Text(plain) => version(&plain),
+            Opened::Shut => Read::Shut,
+        }
+    }
+
+    /// The version sealed as one line of a log, no newline.
+    pub fn sealed(&self, seal: &Seal, host: &dyn Host) -> serde_json::Result<String> {
+        let mut plain = self.line()?;
+        plain.pop();
+        Ok(seal.seal(&plain, host))
     }
 
     fn written(&self) -> Option<i64> {
@@ -179,6 +219,8 @@ pub fn links_on_save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seal::{Counting, Key};
+    use std::cell::Cell;
 
     fn rec(id: &str, text: &str, updated: i64) -> Record {
         Record {
@@ -298,6 +340,43 @@ mod tests {
             None
         );
         assert_eq!(Record::read(b"not json"), None);
+    }
+
+    #[test]
+    fn a_line_of_a_log_reads_back_whether_sealed_or_plain() {
+        let seal = Seal::new(Key::from_bytes([7; 32]));
+        let host = Counting(Cell::new(0));
+        let record = Record {
+            links: vec!["n0".into()],
+            ..rec("n1", "Boiler: service due\nbook it before winter", 20)
+        };
+
+        let sealed = record.sealed(&seal, &host).unwrap();
+        assert!(!sealed.contains('\n'));
+        assert!(crate::seal::is_sealed(&sealed));
+        assert_eq!(
+            Record::read_line(&seal, &sealed),
+            Read::Version(record.clone())
+        );
+
+        let plain = record.line().unwrap();
+        assert_eq!(
+            Record::read_line(&seal, plain.trim_end()),
+            Read::Version(record.clone()),
+            "a line from before sealing is read as it is"
+        );
+
+        let elsewhere = Seal::new(Key::from_bytes([8; 32]));
+        assert_eq!(Record::read_line(&elsewhere, &sealed), Read::Shut);
+
+        let header = r#"{"compacts":["3f9a01c2"],"snapshot":293}"#;
+        assert_eq!(Record::read_line(&seal, header), Read::Other);
+        assert_eq!(Record::read_line(&seal, "not json"), Read::Other);
+        assert_eq!(
+            Record::read_line(&seal, &seal.seal(header, &host)),
+            Read::Other,
+            "a sealed header is still not a version"
+        );
     }
 
     #[test]

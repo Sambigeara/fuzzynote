@@ -10,3 +10,7 @@ repository.workspace = true
 unicode-segmentation.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+sha2.workspace = true
+base64.workspace = true

@@ -16,3 +16,4 @@ serde_json.workspace = true
 # The command line tool that prepares the module for the browser has to be this version too.
 wasm-bindgen = "=0.2.129"
 js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Crypto"] }

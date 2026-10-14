@@ -18,6 +18,14 @@ impl Host for System {
     fn new_id(&self) -> String {
         new_id()
     }
+
+    /// From the operating system. A machine that cannot supply randomness cannot seal a line,
+    /// and there is nothing sensible to do but stop.
+    fn random(&self, buf: &mut [u8]) {
+        if let Err(e) = getrandom::fill(buf) {
+            panic!("this machine supplied no randomness, which sealing needs: {e}");
+        }
+    }
 }
 
 pub fn now() -> Moment {

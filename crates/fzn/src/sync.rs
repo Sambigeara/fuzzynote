@@ -413,6 +413,9 @@ fn session(dir: &Path, authority: &str, space: &str, tell: &mut impl FnMut(News)
                     }
                 }
                 Out::Forked { log, .. } => tell(News::Forked(log)),
+                // Retiring a log and compacting are the device's business, and the device is
+                // on its way into the engine; the file-backed shelf here is about to go.
+                Out::Retire(_) | Out::Superseded(_) => {}
             }
         }
         if wire.keep_up().is_err() {
@@ -458,6 +461,7 @@ impl Space {
                         let _ = to.send(message.encode()?);
                     }
                 }
+                Out::Retire(_) | Out::Superseded(_) => {}
                 Out::Forked { log, .. } => {
                     eprintln!(
                         "fzn relay: in {name}, a device's log {log} is not the {log} held here, \

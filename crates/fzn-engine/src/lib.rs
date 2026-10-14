@@ -10,7 +10,8 @@
 //! scorers over it, in [`Engine`]. Every answer carries its reasons.
 //!
 //! Beside it is the part that gets a space from one device to another, in [`replica`]: the same
-//! shape, with messages in and out in place of files and sockets.
+//! shape, with messages in and out in place of files and sockets. What it carries is sealed
+//! under the space's key first, in [`seal`], so that a relay holds nothing it can read.
 
 mod engine;
 mod index;
@@ -18,13 +19,15 @@ mod note;
 mod record;
 pub mod replica;
 mod score;
+pub mod seal;
 mod session;
 pub mod text;
 pub mod time;
 
 pub use engine::{Engine, Hit, SearchOptions, Stats};
 pub use note::{Note, NoteId};
-pub use record::{Notes, Record, links_on_save};
+pub use record::{Notes, Read, Record, links_on_save};
 pub use score::{Reason, Weights};
+pub use seal::{Key, Opened, Seal};
 pub use session::{Action, Effect, Hint, Host, Row, Session, View};
 pub use time::{Day, Moment};

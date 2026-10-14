@@ -16,8 +16,20 @@
 //! second machine, are therefore noticed and not mistaken for one: neither is changed, nothing
 //! of that log passes between the two, and both are told.
 //!
-//! A replica never reads a line. Lines are passed on byte for byte, so one that this build
-//! cannot read, or cannot decrypt, still gets where it is going.
+//! A log only grows, so a log is made shorter by starting another. Its first line is a
+//! [`Header`] naming every log its writer has had before, and how many lines after it are the
+//! snapshot that takes their place. A replica that holds the header and the whole snapshot
+//! *retires* the logs it names: drops them, ignores a peer that offers them, and tells the face
+//! to delete them. Rewriting a log in place would be a fork by the rule above, and a message
+//! saying "this was rewritten" would be state a replica could miss; a new log is read the same
+//! by a replica that was there and one that was not. Which logs are retired follows from the
+//! logs held, and because a header names its writer's whole chain, it still follows when the
+//! middle of the chain was never seen. Putting a fork right is the same move: one of the two
+//! writers starts a new log, and its header retires the name they shared.
+//!
+//! A replica never reads a line, but one. Lines are passed on byte for byte, so one that this
+//! build cannot read, or cannot decrypt, still gets where it is going. The one it reads is the
+//! first of each log, to see whether it is a header: bookkeeping about logs, not about notes.
 //!
 //! This module does no I/O. A face holds the connections and the storage: it says what
 //! happened, and gets back the lines to keep and the messages to send.
@@ -117,6 +129,37 @@ impl Message {
     }
 }
 
+/// The first line of a log that takes the place of others: the logs it retires, and how many
+/// lines after it are the snapshot of them. Its writer names every log it has had before, not
+/// only the last, so that each is retired by the newest log alone. Anywhere but the first line of
+/// a log, a line shaped like this is a line like any other.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Header {
+    pub compacts: Vec<String>,
+    pub snapshot: u64,
+}
+
+impl Header {
+    /// The header as the line it is written as.
+    pub fn line(&self) -> String {
+        // A `Value` prints without failing, and its keys come out in this order.
+        serde_json::json!({ "compacts": self.compacts, "snapshot": self.snapshot }).to_string()
+    }
+
+    /// Reads a line as a header, if it is exactly one: those two fields and no others, at least
+    /// one log named, and every name a plain one. Anything else is an ordinary line.
+    pub fn read(line: &str) -> Option<Self> {
+        // Derived, a struct would also be read from an array of its fields.
+        if !line.trim_start().starts_with('{') {
+            return None;
+        }
+        let header: Self = serde_json::from_str(line).ok()?;
+        let plain = !header.compacts.is_empty() && header.compacts.iter().all(|n| names_a_log(n));
+        plain.then_some(header)
+    }
+}
+
 /// What a face has to do after a replica has taken something in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Out {
@@ -128,13 +171,23 @@ pub enum Out {
     /// The log of this name held here and the one a peer holds are not one log. Nothing of it
     /// passes between the two until that is put right. Every other log goes on as before.
     Forked { log: String, peer: Peer },
+    /// The log of this name is retired: a log held here starts with a header naming it, and
+    /// holds the whole snapshot that takes its place. Delete it from wherever lines are kept. The
+    /// replica no longer holds it, and drops any more of it that comes.
+    Retire(String),
+    /// A peer's header retires the log this replica writes. It is kept, and goes on being sent,
+    /// since its lines may be ones nobody else has, as when two machines write under one id. The
+    /// device should compact: start a log of its own whose header names this one.
+    Superseded(String),
 }
 
-/// A log as it is held: its lines, and the digest of the log up to the end of each.
+/// A log as it is held: its lines, the digest of the log up to the end of each, and its header
+/// if its first line is one.
 #[derive(Default)]
 struct Log {
     lines: Vec<String>,
     ends: Vec<u64>,
+    header: Option<Header>,
 }
 
 impl Log {
@@ -163,8 +216,18 @@ impl Log {
     }
 
     fn push(&mut self, line: String) {
+        if self.lines.is_empty() {
+            self.header = Header::read(&line);
+        }
         self.ends.push(after(self.digest_at(self.len()), &line));
         self.lines.push(line);
+    }
+
+    /// The header, once the whole snapshot after it is held too.
+    fn complete(&self) -> Option<&Header> {
+        self.header
+            .as_ref()
+            .filter(|header| self.len() > header.snapshot)
     }
 }
 
@@ -185,11 +248,31 @@ struct Known {
 pub struct Replica {
     logs: BTreeMap<String, Log>,
     peers: BTreeMap<Peer, Known>,
+    /// Logs a header held here has taken the place of. None of them is held.
+    retired: BTreeSet<String>,
+    /// The log this replica writes, if it writes one.
+    writes: Option<String>,
+    /// Logs the face has been told are superseded, so that it is told once.
+    superseded: BTreeSet<String>,
 }
 
 impl Replica {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Marks the one log this replica writes, in place of any marked before. A relay writes
+    /// none. A peer's header does not retire this log, since a writer that shares its id with
+    /// another machine would lose lines nobody else has; the face is told it is
+    /// [`Out::Superseded`] instead. A writer that compacts marks its new log here before it
+    /// appends the header, so that its own header retires the old one.
+    pub fn writes(&mut self, log: &str) {
+        self.writes = Some(log.to_owned());
+    }
+
+    /// Logs a header held here has taken the place of.
+    pub fn retired(&self) -> &BTreeSet<String> {
+        &self.retired
     }
 
     /// Every log held, and how far.
@@ -207,10 +290,16 @@ impl Replica {
 
     /// Takes lines that are at the end of a log here: read from where they are kept, or just
     /// written. Peers that lack them are sent them. A line is given without the newline that
-    /// ends it, or with it. A log whose name is not a plain one stays where it is.
+    /// ends it, or with it. A log whose name is not a plain one stays where it is. A log that is
+    /// retired is not taken, and the face is told again to delete it, which is what tidies up a
+    /// file left from before.
     pub fn append(&mut self, log: &str, lines: impl IntoIterator<Item = String>) -> Vec<Out> {
         let mut out = Vec::new();
         if !names_a_log(log) {
+            return out;
+        }
+        if self.retired.contains(log) {
+            out.push(Out::Retire(log.to_owned()));
             return out;
         }
         let mut lines = lines.into_iter().peekable();
@@ -225,6 +314,7 @@ impl Replica {
             debug_assert!(!line.contains('\n'), "a line holds no newline");
             held.push(line);
         }
+        self.retire_by(log, &mut out);
         self.pass_on(log, None, &mut out);
         out
     }
@@ -262,6 +352,8 @@ impl Replica {
 
     /// A peer has said what it holds. That replaces whatever was believed of it. Whoever holds
     /// more of a log can check the other's mark against its own lines, and then sends the rest.
+    /// A log retired here is passed over: the peer retires it too once it has the log that
+    /// takes its place.
     fn told(&mut self, peer: Peer, theirs: &BTreeMap<String, Mark>, out: &mut Vec<Out>) {
         let Some(known) = self.peers.get_mut(&peer) else {
             return;
@@ -270,7 +362,7 @@ impl Replica {
         known.told = true;
         known.has = theirs
             .iter()
-            .filter(|(log, _)| names_a_log(log))
+            .filter(|(log, _)| names_a_log(log) && !self.retired.contains(*log))
             .map(|(log, mark)| (log.clone(), mark.lines))
             .collect();
         for (log, held) in &self.logs {
@@ -296,9 +388,13 @@ impl Replica {
 
     /// Lines have come from a peer. They are added only where they continue exactly what is
     /// held: lines already held are passed over, and lines from further on than is held are
-    /// answered by saying what is held, so that the peer sends from there.
+    /// answered by saying what is held, so that the peer sends from there. Lines of a retired
+    /// log are dropped.
     fn take(&mut self, peer: Peer, log: &str, from: Mark, lines: Vec<String>, out: &mut Vec<Out>) {
-        if !names_a_log(log) || lines.iter().any(|line| line.contains('\n')) {
+        if !names_a_log(log)
+            || self.retired.contains(log)
+            || lines.iter().any(|line| line.contains('\n'))
+        {
             return;
         }
         let Some(known) = self.peers.get_mut(&peer) else {
@@ -353,7 +449,37 @@ impl Replica {
             log: log.to_owned(),
             lines: fresh,
         });
+        self.retire_by(log, out);
         self.pass_on(log, Some(peer), out);
+    }
+
+    /// Retires what a log's header names, if the log has one and holds the whole snapshot after
+    /// it. The log this replica writes is kept, and the face told once that it is superseded.
+    fn retire_by(&mut self, log: &str, out: &mut Vec<Out>) {
+        let Some(header) = self.logs.get(log).and_then(Log::complete) else {
+            return;
+        };
+        let names = header.compacts.clone();
+        for name in names {
+            if name == log {
+                continue;
+            }
+            if self.writes.as_ref() == Some(&name) {
+                if self.superseded.insert(name.clone()) {
+                    out.push(Out::Superseded(name));
+                }
+                continue;
+            }
+            if !self.retired.insert(name.clone()) {
+                continue;
+            }
+            self.logs.remove(&name);
+            for known in self.peers.values_mut() {
+                known.has.remove(&name);
+                known.forked.remove(&name);
+            }
+            out.push(Out::Retire(name));
+        }
     }
 
     /// Sends the end of a log to every peer that lacks it, but for the one it came from.
@@ -420,6 +546,25 @@ mod tests {
         replica
     }
 
+    /// The lines of a log that compacts others: a header naming them, then the snapshot.
+    fn compaction(compacts: &[&str], snapshot: &[String]) -> Vec<String> {
+        let header = Header {
+            compacts: lines(compacts),
+            snapshot: snapshot.len() as u64,
+        };
+        std::iter::once(header.line())
+            .chain(snapshot.iter().cloned())
+            .collect()
+    }
+
+    /// A point in a set of lines, as a peer holding them would give it.
+    fn mark_of(texts: &[String], n: usize) -> Mark {
+        Mark {
+            lines: n as u64,
+            digest: texts[..n].iter().fold(FNV_BASIS, |d, line| after(d, line)),
+        }
+    }
+
     /// Replicas, and the connections between them. A connection carries messages one way in the
     /// order they were sent, as a socket does, and every message goes through its wire form.
     #[derive(Default)]
@@ -430,6 +575,9 @@ mod tests {
         kept: Vec<BTreeMap<String, Vec<String>>>,
         /// Every fork reported: where, of which log, with which peer.
         forked: Vec<(usize, String, usize)>,
+        /// What each replica was told to delete, and told was superseded, in order.
+        retired: Vec<Vec<String>>,
+        superseded: Vec<Vec<String>>,
         sent: usize,
     }
 
@@ -437,6 +585,8 @@ mod tests {
         fn of(replicas: Vec<Replica>) -> Self {
             Self {
                 kept: replicas.iter().map(|_| BTreeMap::new()).collect(),
+                retired: replicas.iter().map(|_| Vec::new()).collect(),
+                superseded: replicas.iter().map(|_| Vec::new()).collect(),
                 replicas,
                 ..Self::default()
             }
@@ -448,6 +598,11 @@ mod tests {
                     Out::Keep { log, lines } => {
                         self.kept[at].entry(log).or_default().extend(lines);
                     }
+                    Out::Retire(log) => {
+                        self.kept[at].remove(&log);
+                        self.retired[at].push(log);
+                    }
+                    Out::Superseded(log) => self.superseded[at].push(log),
                     Out::Send(peer, message) => {
                         let wire = self
                             .wires
@@ -484,6 +639,18 @@ mod tests {
         fn append(&mut self, at: usize, log: &str, texts: &[&str]) {
             let out = self.replicas[at].append(log, lines(texts));
             self.carry_out(at, out);
+        }
+
+        /// A writer compacts: it starts a log under a new name, whose header names every log it
+        /// has had before and whose snapshot is the last of them, and writes there from now on.
+        /// Returns the new log's lines.
+        fn compact(&mut self, at: usize, before: &[&str], to: &str) -> Vec<String> {
+            let last = before.last().expect("a log to compact");
+            let new = compaction(before, self.replicas[at].lines(last));
+            self.replicas[at].writes(to);
+            let out = self.replicas[at].append(to, new.clone());
+            self.carry_out(at, out);
+            new
         }
 
         /// Delivers the next message on one wire, if there is one.
@@ -915,6 +1082,307 @@ mod tests {
         assert_eq!(b.lines("dev-b")[1], big);
     }
 
+    #[test]
+    fn a_header_names_the_logs_it_compacts_and_is_nothing_else() {
+        let header = Header {
+            compacts: lines(&["dev-a", "dev-a-1"]),
+            snapshot: 293,
+        };
+        assert_eq!(
+            header.line(),
+            r#"{"compacts":["dev-a","dev-a-1"],"snapshot":293}"#
+        );
+        assert_eq!(Header::read(&header.line()), Some(header));
+        assert_eq!(
+            Header::read(r#"{ "snapshot": 0, "compacts": ["dev-a"] }"#),
+            Some(Header {
+                compacts: lines(&["dev-a"]),
+                snapshot: 0
+            }),
+            "as JSON, in any order"
+        );
+        for line in [
+            r#"{"compacts":["dev-a"],"snapshot":2,"v":1}"#,
+            r#"{"compacts":[],"snapshot":2}"#,
+            r#"{"compacts":["../elsewhere"],"snapshot":2}"#,
+            r#"{"compacts":["dev-a",""],"snapshot":2}"#,
+            r#"{"compacts":["dev-a"]}"#,
+            r#"{"compacts":["dev-a"],"snapshot":-1}"#,
+            r#"{"compacts":"dev-a","snapshot":2}"#,
+            r#"{"compacts":["dev-a"],"compacts":["dev-b"],"snapshot":2}"#,
+            r#"{"v":1,"id":"n1","text":"Boiler service"}"#,
+            r#"[["dev-a"],2]"#,
+            "Boiler service",
+            "",
+        ] {
+            assert_eq!(Header::read(line), None, "{line}");
+        }
+
+        // Anywhere but the first line of a log, a header is an ordinary line.
+        let later = compaction(&["dev-a"], &lines(&["Boiler service"]));
+        let mut held = replica(&[("dev-a", &["Boiler service"])]);
+        let mut out = held.append("dev-b", lines(&["House insurance"]));
+        out.extend(held.append("dev-b", later));
+        assert!(out.is_empty());
+        assert_eq!(held.lines("dev-a"), ["Boiler service"]);
+        assert!(held.retired().is_empty());
+    }
+
+    #[test]
+    fn a_log_is_retired_once_the_whole_snapshot_that_replaces_it_is_held() {
+        let old = lines(&["o1", "o2", "o3"]);
+        let new = compaction(&["dev-a"], &old);
+
+        // Appended a line at a time, from where it is kept.
+        let mut held = replica(&[("dev-a", &["o1", "o2", "o3"])]);
+        for line in &new[..3] {
+            assert!(held.append("dev-a-1", [line.clone()]).is_empty());
+        }
+        assert_eq!(held.lines("dev-a"), old, "one line short, both are kept");
+        assert_eq!(
+            held.append("dev-a-1", [new[3].clone()]),
+            [Out::Retire("dev-a".into())]
+        );
+        assert_eq!(held.have().keys().collect::<Vec<_>>(), ["dev-a-1"]);
+        assert!(held.lines("dev-a").is_empty());
+        assert_eq!(held.retired(), &BTreeSet::from(["dev-a".to_owned()]));
+
+        // Taken from a peer, a batch at a time.
+        let mut held = replica(&[("dev-a", &["o1", "o2", "o3"])]);
+        held.connect(7);
+        let some = |from: usize, to: usize| Message::Lines {
+            log: "dev-a-1".into(),
+            after: mark_of(&new, from),
+            lines: new[from..to].to_vec(),
+        };
+        assert_eq!(
+            held.receive(7, some(0, 3)),
+            [Out::Keep {
+                log: "dev-a-1".into(),
+                lines: new[..3].to_vec()
+            }]
+        );
+        assert_eq!(held.lines("dev-a"), old);
+        assert_eq!(
+            held.receive(7, some(3, 4)),
+            [
+                Out::Keep {
+                    log: "dev-a-1".into(),
+                    lines: new[3..].to_vec()
+                },
+                Out::Retire("dev-a".into())
+            ]
+        );
+        let mut whole = Replica::new();
+        whole.append("dev-a-1", new.clone());
+        assert_eq!(held.have(), whole.have());
+
+        // A log goes on after its snapshot as any log does, and nothing is retired twice.
+        assert!(held.append("dev-a-1", lines(&["n1"])).is_empty());
+    }
+
+    #[test]
+    fn a_retired_log_found_where_lines_are_kept_is_deleted_whichever_is_read_first() {
+        let new = compaction(&["dev-a"], &lines(&["o1", "o2"]));
+        let retire = [Out::Retire("dev-a".into())];
+
+        let mut old_first = replica(&[("dev-a", &["o1", "o2"])]);
+        assert_eq!(old_first.append("dev-a-1", new.clone()), retire);
+
+        let mut new_first = Replica::new();
+        assert_eq!(new_first.append("dev-a-1", new.clone()), retire);
+        assert_eq!(new_first.append("dev-a", lines(&["o1", "o2"])), retire);
+
+        for held in [&mut old_first, &mut new_first] {
+            assert_eq!(held.have().keys().collect::<Vec<_>>(), ["dev-a-1"]);
+            assert_eq!(held.retired(), &BTreeSet::from(["dev-a".to_owned()]));
+            // Found again, it is to be deleted again, and is still not held.
+            assert_eq!(held.append("dev-a", lines(&["o1"])), retire);
+            assert!(held.lines("dev-a").is_empty());
+            assert_eq!(held.have().len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_peer_offering_a_retired_log_is_not_listened_to() {
+        let new = compaction(&["dev-a"], &lines(&["o1"]));
+        let mut held = Replica::new();
+        held.append("dev-a-1", new.clone());
+        held.connect(7);
+
+        // It is sent the log that takes the place of the old one, and nothing of the old one,
+        // whatever it holds of it.
+        let theirs = BTreeMap::from([
+            ("dev-a".to_owned(), mark_of(&lines(&["x1", "x2"]), 2)),
+            ("dev-a-1".to_owned(), mark_of(&new, 0)),
+        ]);
+        assert_eq!(
+            held.receive(7, Message::Have(theirs)),
+            [Out::Send(
+                7,
+                Message::Lines {
+                    log: "dev-a-1".into(),
+                    after: mark_of(&new, 0),
+                    lines: new.clone()
+                }
+            )]
+        );
+
+        // And lines of it are dropped, from anywhere in it.
+        for after in [0, 2, 5] {
+            let some = Message::Lines {
+                log: "dev-a".into(),
+                after: mark_of(&lines(&["x1", "x2", "x3", "x4", "x5"]), after),
+                lines: lines(&["x6"]),
+            };
+            assert!(held.receive(7, some).is_empty());
+        }
+        assert_eq!(held.have().keys().collect::<Vec<_>>(), ["dev-a-1"]);
+    }
+
+    #[test]
+    fn the_newest_log_of_a_chain_retires_the_whole_chain() {
+        // The writer went from dev-a to dev-a-1 to dev-a-2, and this replica never saw dev-a-1.
+        let mut held = replica(&[("dev-a", &["o1"])]);
+        let newest = compaction(&["dev-a", "dev-a-1"], &lines(&["o1", "m1"]));
+        assert_eq!(
+            held.append("dev-a-2", newest),
+            [Out::Retire("dev-a".into()), Out::Retire("dev-a-1".into())]
+        );
+        assert_eq!(held.retired().len(), 2);
+        assert_eq!(
+            held.append("dev-a-1", lines(&["m1"])),
+            [Out::Retire("dev-a-1".into())]
+        );
+        assert_eq!(held.have().keys().collect::<Vec<_>>(), ["dev-a-2"]);
+    }
+
+    #[test]
+    fn a_writer_keeps_its_own_log_when_a_peer_compacts_it_until_it_compacts_too() {
+        // Two machines write under dev-a. The other one has compacted, into dev-a-1.
+        let mut writer = replica(&[("dev-a", &["o1", "o2"])]);
+        writer.writes("dev-a");
+        writer.connect(7);
+        writer.receive(7, Message::Have(BTreeMap::new()));
+        let mut theirs = compaction(&["dev-a"], &lines(&["o1", "x2"]));
+        theirs.push("n1".into());
+        let some = |from: usize, to: usize| Message::Lines {
+            log: "dev-a-1".into(),
+            after: mark_of(&theirs, from),
+            lines: theirs[from..to].to_vec(),
+        };
+        let out = writer.receive(7, some(0, 3));
+        assert_eq!(out[1..], [Out::Superseded("dev-a".into())]);
+        assert_eq!(
+            writer.lines("dev-a"),
+            ["o1", "o2"],
+            "its own lines are kept"
+        );
+        assert!(writer.retired().is_empty());
+
+        // It is said once, however much more of that log comes.
+        assert_eq!(writer.receive(7, some(3, 4)).len(), 1);
+
+        // What it writes meanwhile still goes out.
+        assert_eq!(
+            writer.append("dev-a", lines(&["o3"])),
+            [Out::Send(
+                7,
+                Message::Lines {
+                    log: "dev-a".into(),
+                    after: mark_of(&lines(&["o1", "o2"]), 2),
+                    lines: lines(&["o3"])
+                }
+            )]
+        );
+
+        // Once it compacts, its own header retires the log it wrote before.
+        writer.writes("dev-a-2");
+        let ours = compaction(&["dev-a"], writer.lines("dev-a"));
+        let out = writer.append("dev-a-2", ours);
+        assert_eq!(out[0], Out::Retire("dev-a".into()));
+        assert!(
+            matches!(&out[1..], [Out::Send(7, Message::Lines { log, .. })] if log == "dev-a-2")
+        );
+        assert_eq!(
+            writer.have().keys().collect::<Vec<_>>(),
+            ["dev-a-1", "dev-a-2"]
+        );
+    }
+
+    #[test]
+    fn a_writer_that_compacts_retires_its_old_log_everywhere() {
+        // The relay is replica 0.
+        let mut net = Net::of(vec![
+            Replica::new(),
+            replica(&[("dev-a", &["a1", "a2", "a3"])]),
+            replica(&[("dev-b", &["b1"])]),
+        ]);
+        net.replicas[1].writes("dev-a");
+        net.replicas[2].writes("dev-b");
+        net.connect(1, 0);
+        net.connect(2, 0);
+        net.settle();
+        assert_eq!(net.replicas[2].lines("dev-a"), ["a1", "a2", "a3"]);
+
+        let new = net.compact(1, &["dev-a"], "dev-a-1");
+        net.append(1, "dev-a-1", &["a4"]);
+        net.settle();
+        for (at, replica) in net.replicas.iter().enumerate() {
+            assert_eq!(replica.have(), net.replicas[0].have());
+            assert_eq!(
+                replica.have().keys().collect::<Vec<_>>(),
+                ["dev-a-1", "dev-b"]
+            );
+            assert_eq!(replica.lines("dev-a-1")[..4], new[..]);
+            assert_eq!(net.retired[at], ["dev-a"], "told once, at {at}");
+            assert!(!net.kept[at].contains_key("dev-a"));
+        }
+        assert!(net.superseded.iter().all(Vec::is_empty));
+        assert!(net.forked.is_empty());
+    }
+
+    #[test]
+    fn a_fork_is_put_right_by_both_sides_compacting() {
+        // The same id on two machines, each with a log of its own under it, through a relay.
+        let mut net = Net::of(vec![
+            Replica::new(),
+            replica(&[("dev-a", &["a1", "a2", "a3"]), ("dev-b", &["b1"])]),
+            replica(&[("dev-a", &["a1", "x2"]), ("dev-c", &["c1"])]),
+        ]);
+        net.replicas[1].writes("dev-a");
+        net.replicas[2].writes("dev-a");
+        net.connect(1, 0);
+        net.settle();
+        net.connect(2, 0);
+        net.settle();
+        assert!(!net.forked.is_empty());
+
+        // One of them compacts. The other is told its log is superseded, and keeps it.
+        net.compact(1, &["dev-a"], "dev-a-1");
+        net.settle();
+        assert_eq!(net.superseded, [vec![], vec![], vec!["dev-a".to_owned()]]);
+        assert_eq!(net.replicas[2].lines("dev-a"), ["a1", "x2"]);
+        assert_eq!(
+            net.replicas[2].lines("dev-a-1")[1..],
+            lines(&["a1", "a2", "a3"])
+        );
+
+        // It compacts in turn, and the name the two shared is gone from everywhere.
+        net.compact(2, &["dev-a"], "dev-d");
+        net.settle();
+        for (at, replica) in net.replicas.iter().enumerate() {
+            assert_eq!(replica.have(), net.replicas[0].have());
+            assert_eq!(
+                replica.have().keys().collect::<Vec<_>>(),
+                ["dev-a-1", "dev-b", "dev-c", "dev-d"]
+            );
+            assert_eq!(net.retired[at], ["dev-a"], "told once, at {at}");
+        }
+        assert_eq!(net.replicas[0].lines("dev-d")[1..], lines(&["a1", "x2"]));
+        assert_eq!(net.superseded[2].len(), 1);
+    }
+
     /// A small generator of the same numbers every time.
     struct Dice(u64);
 
@@ -930,21 +1398,35 @@ mod tests {
     #[test]
     fn whatever_happens_in_whatever_order_everyone_ends_up_with_the_same_lines() {
         const REPLICAS: usize = 5;
+        let mut chains = 0;
         for seed in 1..=100 {
             let mut dice = Dice(u64::wrapping_mul(seed, 0x9e37_79b9_7f4a_7c15));
             let mut net = Net::of((0..REPLICAS).map(|_| Replica::new()).collect());
-            // What each device has written to its own log. Replica 0 writes nothing.
+            // Every log each device has written, the one it writes now last, and what it has
+            // written to that one. Replica 0 writes nothing.
+            let mut names: Vec<Vec<String>> =
+                (0..REPLICAS).map(|a| vec![format!("dev-{a}")]).collect();
             let mut written: Vec<Vec<String>> = vec![Vec::new(); REPLICAS];
+            for (a, names) in names.iter().enumerate().skip(1) {
+                net.replicas[a].writes(&names[0]);
+            }
             for step in 0..400 {
                 let (a, b) = (dice.roll(REPLICAS), dice.roll(REPLICAS));
                 match dice.roll(10) {
                     0..=2 if a > 0 => {
                         let line = format!("{{\"n\":\"{seed}-{a}-{step}\"}}");
                         written[a].push(line.clone());
-                        net.append(a, &format!("dev-{a}"), &[line.as_str()]);
+                        let log = names[a].last().cloned().unwrap_or_default();
+                        net.append(a, &log, &[line.as_str()]);
                     }
                     3 => net.connect(a, b),
                     4 => net.disconnect(a, b),
+                    5 if a > 0 && dice.roll(4) == 0 => {
+                        let to = format!("dev-{a}-{}", names[a].len());
+                        let before: Vec<&str> = names[a].iter().map(String::as_str).collect();
+                        written[a] = net.compact(a, &before, &to);
+                        names[a].push(to);
+                    }
                     _ => {
                         net.deliver(a, b);
                     }
@@ -963,9 +1445,15 @@ mod tests {
             net.settle();
 
             assert!(net.forked.is_empty(), "seed {seed}: {:?}", net.forked);
+            assert!(net.superseded.iter().all(Vec::is_empty), "seed {seed}");
+            let mut compacted: Vec<String> = names
+                .iter()
+                .flat_map(|names| names[..names.len() - 1].iter().cloned())
+                .collect();
+            compacted.sort();
             for (at, replica) in net.replicas.iter().enumerate() {
                 for (device, lines) in written.iter().enumerate() {
-                    let log = format!("dev-{device}");
+                    let log = names[device].last().cloned().unwrap_or_default();
                     assert_eq!(replica.lines(&log), lines, "seed {seed}: {log} at {at}");
                     // A replica was told to keep exactly the lines it did not write itself.
                     let kept = net.kept[at].get(&log).cloned().unwrap_or_default();
@@ -976,7 +1464,22 @@ mod tests {
                     }
                 }
                 assert_eq!(replica.have(), net.replicas[0].have(), "seed {seed}");
+                // Every log a header names is retired, and the face told to delete it once.
+                for log in &compacted {
+                    assert!(
+                        !replica.have().contains_key(log),
+                        "seed {seed}: {log} at {at}"
+                    );
+                }
+                let mut retired = net.retired[at].clone();
+                retired.sort();
+                assert_eq!(retired, compacted, "seed {seed}: at {at}");
             }
+            chains += usize::from(names.iter().any(|names| names.len() > 2));
         }
+        assert!(
+            chains > 10,
+            "writers compacted more than once in {chains} runs"
+        );
     }
 }
