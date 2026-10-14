@@ -11,8 +11,10 @@
 //!
 //! Beside it is the part that gets a space from one device to another, in [`replica`]: the same
 //! shape, with messages in and out in place of files and sockets. What it carries is sealed
-//! under the space's key first, in [`seal`], so that a relay holds nothing it can read.
+//! under the space's key first, in [`seal`], so that a relay holds nothing it can read. The two
+//! meet in a [`Device`], which is what a face that syncs drives in place of a bare session.
 
+pub mod device;
 mod engine;
 mod index;
 mod note;
@@ -24,6 +26,7 @@ mod session;
 pub mod text;
 pub mod time;
 
+pub use device::{Device, Editing, Kept, Todo};
 pub use engine::{Engine, Hit, SearchOptions, Stats};
 pub use note::{Note, NoteId};
 pub use record::{Notes, Read, Record, links_on_save};
