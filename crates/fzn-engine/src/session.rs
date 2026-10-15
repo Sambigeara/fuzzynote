@@ -24,8 +24,10 @@
 //! the line was a search for the place, so it clears and comes back on the way out. Every note
 //! carrying the label comes first, newest on top, and what the engine finds for the label's words
 //! follows. A note written there ends its head with the label, as it would have been typed, so
-//! that it reads as one written with the label on the line always has; only a note written in
-//! the place inherits it, and only from the innermost place.
+//! that it reads as one written with the label on the line always has. A new row opens with the
+//! label already in its head and the caret before it, so that what the writer sees is what is
+//! written, and the note is in its place on every device from its first letter. Only a note
+//! written in the place inherits it, and only from the innermost place.
 //!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, the search uses it, and saving a
@@ -40,9 +42,10 @@
 //! is written when it closes, since a version is the whole note. The versions written in one
 //! visit of the cursor to a row are gathered into one entry, so that undo takes back a visit
 //! and not a keystroke. A new note, opened at the top from an empty line or under the row the
-//! cursor is on, is written at its first letter, and left with nothing in its head its row
-//! goes. The list holds still while the cursor walks it, so that the arrow that leaves a head
-//! lands where it was aimed, and is put in order when the cursor comes back to the line.
+//! cursor is on, is written at its first letter, and left with nothing in it but the label it
+//! opened with, its row goes. The list holds still while the cursor walks it, so that the arrow
+//! that leaves a head lands where it was aimed, and is put in order when the cursor comes back
+//! to the line.
 //!
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
@@ -218,7 +221,8 @@ pub struct Row {
 #[derive(Debug, Serialize)]
 pub struct Field<'a> {
     pub text: &'a str,
-    /// A new note with nothing in its head, whose row goes if the cursor leaves it so.
+    /// A new note with nothing in it but the label it opened with, whose row goes if the cursor
+    /// leaves it so. Its caret belongs at the start, before the label.
     pub fresh: bool,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
@@ -262,19 +266,18 @@ struct Writing {
     id: String,
     text: String,
     /// What the note read when the cursor landed, or when the body last closed or the editor
-    /// last came back; empty for a new note. Putting back goes back to this.
+    /// last came back; for a new note, what it opened with. Putting back goes back to this.
     original: String,
-    /// The row was opened as a new note in this visit, so that left with nothing in its head
-    /// it goes rather than being deleted.
+    /// The row was opened as a new note in this visit, so that left with nothing in it but its
+    /// label it goes rather than being deleted.
     new: bool,
     /// The body is open: the field holds the whole note and not only its head.
     whole: bool,
     /// When the cursor landed, which is `created` for a new note.
     opened: Moment,
-    /// Where a new note was opened, which it inherits: a note it links to from its first
-    /// version, or a label added to its head when it is first written out, while `original` is
-    /// still empty.
-    around: Option<Place>,
+    /// What a new note's head opened with: the label of the place it was opened in, after a
+    /// space, or nothing. It is not the writer's, so a row with only this in it is empty.
+    label: String,
     /// The entry on the undo stack that this visit's versions are gathered into, once one has
     /// been written.
     entry: Option<usize>,
@@ -282,8 +285,8 @@ struct Writing {
 
 impl Writing {
     /// Whether the text has changed in this visit: from what it read when the cursor landed, or
-    /// was last written out on closing its body, which for a new note is nothing at first. A new
-    /// note with nothing in it has nothing to put back.
+    /// was last written out on closing its body, which for a new note is what it opened with at
+    /// first. A new note with nothing in it has nothing to put back.
     fn differs(&self) -> bool {
         if self.blank() {
             return false;
@@ -293,14 +296,22 @@ impl Writing {
         self.text.trim_end_matches(ends) != self.original.trim_end_matches(ends)
     }
 
-    /// A new note with nothing in it, which goes if it is left so.
+    /// A new note with nothing in it but the label it opened with, which goes if it is left so.
     fn blank(&self) -> bool {
-        self.new && self.text.trim().is_empty()
+        self.new && self.bare(&self.text)
     }
 
-    /// Nothing in the head, which is not written while the cursor is on it.
+    /// Nothing in the head but the label a new note opened with. Such a head is not written
+    /// while the cursor is on it.
     fn head_empty(&self) -> bool {
-        self.text.lines().next().unwrap_or("").trim().is_empty()
+        self.bare(self.text.lines().next().unwrap_or(""))
+    }
+
+    /// Whether a text holds nothing but the label the note opened with, or the start of it, as
+    /// is left when the label is taken out a letter at a time from its end: none of it is the
+    /// writer's, so that taking the label out writes nothing.
+    fn bare(&self, text: &str) -> bool {
+        self.label.trim().starts_with(text.trim())
     }
 }
 
@@ -314,7 +325,6 @@ struct Pivot {
 
 /// What can be gone into: a note, or a label typed on the line. A note written in a place
 /// inherits it, as a link to the note or as the label at the end of its head.
-#[derive(Clone)]
 enum Place {
     Note {
         id: String,
@@ -345,8 +355,9 @@ impl Place {
         }
     }
 
-    /// A new note's text with what it inherits from here written into it: a label at the end
-    /// of its head, unless the note carries it already. A note's link is not in its text.
+    /// The text of a note written from the line here, with what it inherits written into it: a
+    /// label at the end of its head, unless the note carries it already. A note's link is not in
+    /// its text. A new row has the label in its head from the start, so this is the line's alone.
     fn hand_down(&self, text: String, created: Day) -> String {
         match self {
             Place::Label { label, written } if !label.carried_by(&text, created) => {
@@ -368,7 +379,7 @@ impl Place {
 }
 
 /// A label that is a place: a tag or a person, lowercased as the index holds them, or a day.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 enum Label {
     Tag(String),
     Mention(String),
@@ -513,9 +524,8 @@ impl Session {
     }
 
     /// Whether the note under the cursor holds something not yet written, which leaving it
-    /// would write: an open body typed into, a date word not yet written out, the label of the
-    /// place a new note was opened in, a head emptied, or a new note left empty after a version
-    /// of it was written.
+    /// would write: an open body typed into, a date word not yet written out, a head emptied, or a
+    /// new note left empty after a version of it was written.
     pub fn unwritten(&self) -> bool {
         let Some(field) = self.field.as_ref() else {
             return false;
@@ -524,7 +534,7 @@ impl Session {
         if field.blank() {
             return held.is_some();
         }
-        let text = self.to_keep(field);
+        let text = self.normalise(&field.text);
         match held {
             Some(held) => held.text != text,
             None => field.new,
@@ -574,13 +584,10 @@ impl Session {
                 self.out.push(Effect::Editor { id, text });
             }
             Action::Save { id, text } if id == field.id => {
-                let new = field.new;
-                let normal = self.normalise(&text);
-                if let Some(field) = self.field.as_mut() {
-                    field.text = text;
-                }
-                if new && normal.is_empty() {
-                    // An editor that leaves nothing leaves no note.
+                field.text = text;
+                if field.blank() {
+                    // An editor that leaves nothing, or only the label the row opened with,
+                    // leaves no note.
                     self.leave();
                 } else if !self.flush() && self.notes.get(&id).is_some() {
                     self.status = "unchanged".into();
@@ -613,12 +620,12 @@ impl Session {
             // new note goes; a note emptied is deleted, and undo brings it back. One with a body
             // stays, since the body is not in the head to see.
             Action::Erase => {
-                let (id, new, text) = (field.id.clone(), field.new, field.text.clone());
                 // A head with text is not an empty row, whatever the face sent.
                 if !field.head_empty() {
                     return None;
                 }
-                if !self.normalise(&text).is_empty() {
+                let (id, new) = (field.id.clone(), field.new);
+                if !field.bare(&field.text) {
                     self.status = "it has a body, so it stays".into();
                     return None;
                 }
@@ -748,9 +755,11 @@ impl Session {
         self.stale = true;
     }
 
-    /// The first version of the new note being written in the field.
+    /// The first version of the new note being written in the field, linked to the note being
+    /// looked around. That is where its row was opened, since whatever moves out of a place
+    /// leaves the row first.
     fn created(&self, field: &Writing, text: String) -> Record {
-        let around = field.around.as_ref().and_then(Place::note);
+        let around = self.around_note();
         let links = links_on_save(
             &self.engine,
             &field.id,
@@ -773,14 +782,14 @@ impl Session {
 
     /// Puts the field back as it read when the cursor landed. What was written in this visit is
     /// written back to that, through the visit's own entry, which then changes nothing and goes:
-    /// the visit leaves nothing to undo. A new note goes back to an empty row, and its version,
-    /// if it had one, is deleted.
+    /// the visit leaves nothing to undo. A new note goes back to its row as it opened, empty or
+    /// with only its label, and its version, if it had one, is deleted.
     fn put_back(&mut self) {
         let Some(field) = self.field.as_mut() else {
             return;
         };
         field.text = field.original.clone();
-        let (id, original, new) = (field.id.clone(), field.original.clone(), field.new);
+        let (id, original, blank) = (field.id.clone(), field.original.clone(), field.blank());
         let ours = field.entry.filter(|&i| i + 1 == self.undo.len());
         let Some(held) = self.notes.get(&id).cloned() else {
             return;
@@ -792,7 +801,7 @@ impl Session {
         let record = match ours.map(|i| self.undo[i].0.clone()) {
             // The version the cursor landed on, dates and links and all.
             Some(Some(before)) if before.text == original && !before.deleted => before,
-            _ if new && original.is_empty() => Record {
+            _ if blank => Record {
                 deleted: true,
                 ..held
             },
@@ -808,7 +817,7 @@ impl Session {
         } else {
             self.gather(record);
         }
-        if new && let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
+        if blank && let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
             row.head = String::new();
             row.has_body = false;
             row.links = Vec::new();
@@ -851,7 +860,7 @@ impl Session {
                     new: false,
                     whole: false,
                     opened: self.host.now(),
-                    around: None,
+                    label: String::new(),
                     entry: None,
                 });
             }
@@ -1473,10 +1482,17 @@ impl Session {
     }
 
     /// Opens a new note at this row of the list, with the cursor in it. It has its id from now,
-    /// and its time, and it is written at its first letter.
+    /// and its time, and it is written at its first letter. Inside a label its head opens with
+    /// the label, unless the note carries it already, as one written on the day it is does.
     fn draft_at(&mut self, at: usize) {
         let id = self.host.new_id();
-        let around = self.pivots.last().map(|p| p.place.clone());
+        let opened = self.host.now();
+        let label = match self.pivots.last().map(|p| &p.place) {
+            Some(Place::Label { label, written }) if !label.carried_by("", opened.day()) => {
+                format!(" {written}")
+            }
+            _ => String::new(),
+        };
         let at = at.min(self.rows.len());
         self.rows.insert(
             at,
@@ -1487,7 +1503,7 @@ impl Session {
                 has_body: false,
                 // Written here, it will be linked to the note being looked around, or carry the
                 // label.
-                linked: around.is_some(),
+                linked: !self.pivots.is_empty(),
                 links: Vec::new(),
                 reasons: Vec::new(),
                 score: None,
@@ -1497,12 +1513,12 @@ impl Session {
         self.cursor = Some(at);
         self.field = Some(Writing {
             id,
-            text: String::new(),
-            original: String::new(),
+            text: label.clone(),
+            original: label.clone(),
             new: true,
             whole: false,
-            opened: self.host.now(),
-            around,
+            opened,
+            label,
             entry: None,
         });
     }
@@ -1523,36 +1539,23 @@ impl Session {
         text::expand_date_words(rest, self.today())
     }
 
-    /// What the note in the field is to be kept as: its text normalised and, for a new note not
-    /// yet written out, with what it inherits written into it. Once written out it has had it,
-    /// so a label taken out again stays out; cleared back to an empty row, it has not.
-    fn to_keep(&self, field: &Writing) -> String {
-        let text = self.normalise(&field.text);
-        match &field.around {
-            Some(place) if field.new && field.original.is_empty() && !text.is_empty() => {
-                place.hand_down(text, field.opened.day())
-            }
-            _ => text,
-        }
-    }
-
-    /// Writes the note under the cursor as it is to be kept, with its date words written out and
-    /// what a new note inherits written in, and leaves the cursor where it is. Says whether it
-    /// wrote anything. What it is compared with is what the note holds, since the visit may have
-    /// written it already as it was typed. A new note is written if it has text and was not
-    /// written as typed, as when its body was typed into. A note emptied is deleted, which takes
-    /// its row away now; a new one emptied is left for the caller to take away. Otherwise the row
-    /// is put right where it stands and the list waits for the cursor to come back to the line,
-    /// so that the arrow that left the head lands on the row it was aimed at.
+    /// Writes the note under the cursor as it is to be kept, with its date words written out, and
+    /// leaves the cursor where it is. Says whether it wrote anything. What it is compared with is
+    /// what the note holds, since the visit may have written it already as it was typed. A new
+    /// note is written if it has text and was not written as typed, as when its body was typed
+    /// into. A note emptied is deleted, which takes its row away now; a new one emptied is left
+    /// for the caller to take away. Otherwise the row is put right where it stands and the list
+    /// waits for the cursor to come back to the line, so that the arrow that left the head lands
+    /// on the row it was aimed at.
     fn flush(&mut self) -> bool {
         let Some(field) = self.field.as_ref() else {
             return false;
         };
-        let (id, new, original) = (field.id.clone(), field.new, field.original.clone());
-        let text = self.to_keep(field);
-        if new && text.is_empty() {
+        if field.blank() {
             return false;
         }
+        let (id, new, original) = (field.id.clone(), field.new, field.original.clone());
+        let text = self.normalise(&field.text);
         let wrote = match self.notes.get(&id) {
             Some(held) if held.text == text => false,
             Some(_) => {
@@ -1626,12 +1629,12 @@ impl Session {
     }
 
     /// Takes back what was kept of a new note that has been cleared, leaving its row where it
-    /// is, empty, with the cursor in it: a later letter writes it again.
+    /// is, as it opened, with the cursor in it: a later letter writes it again.
     fn unwrite_new(&mut self) {
         let Some(field) = self.field.as_mut() else {
             return;
         };
-        field.original.clear();
+        field.original = field.label.clone();
         let id = field.id.clone();
         let Some(held) = self.notes.get(&id).cloned() else {
             return;
@@ -4349,29 +4352,36 @@ mod tests {
     }
 
     #[test]
-    fn a_note_written_in_place_inside_a_tag_gets_it_when_the_cursor_leaves_the_row() {
+    fn a_new_row_inside_a_tag_opens_with_it_and_its_first_letter_writes_it_there() {
         let mut s = session();
         house(&mut s);
         type_in(&mut s, "#house");
         s.act(Action::GoIn);
 
-        s.act(Action::Write);
-        edited(&mut s, "order oil /fri");
+        assert!(s.act(Action::Write).is_empty(), "nothing is written yet");
+        assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
+        assert!(!s.unwritten(), "the label alone is nothing to write");
         let id = s.field.as_ref().unwrap().id.clone();
-        assert_eq!(
-            s.notes.get(&id).unwrap().text,
-            "order oil /fri",
-            "while the cursor is on it the head reads as typed"
-        );
+
+        // The first letter goes before the label, where the caret is, and is written with it.
+        let typed = edited(&mut s, "B #house");
+        let [Effect::Keep(kept)] = &typed[..] else {
+            panic!("one version: {typed:?}");
+        };
+        assert_eq!(kept.text, "B #house");
+        assert_eq!(field(&s), Some(("B #house".to_owned(), false, false)));
+
+        edited(&mut s, "Bleed the radiators /fri #house");
         let undo = s.undo.len();
         s.act(Action::Move(1));
         assert_eq!(
             s.notes.get(&id).unwrap().text,
-            "order oil 2026-10-16 #house"
+            "Bleed the radiators 2026-10-16 #house",
+            "date words are written out on leaving, and nothing is added"
         );
         assert_eq!(s.undo.len(), undo, "still one change to undo");
         s.act(Action::Select(None));
-        assert_eq!(heads(&s)[0], "order oil 2026-10-16 #house");
+        assert_eq!(heads(&s)[0], "Bleed the radiators 2026-10-16 #house");
         assert!(s.rows[0].linked);
 
         // Only a note made here inherits: one edited here is left as it was written.
@@ -4385,33 +4395,88 @@ mod tests {
     }
 
     #[test]
-    fn a_new_note_inside_a_tag_written_out_cleared_and_typed_again_still_gets_it() {
+    fn a_new_row_inside_a_tag_with_only_the_tag_in_it_is_empty() {
+        let mut s = session();
+        house(&mut s);
+        type_in(&mut s, "#house");
+        s.act(Action::GoIn);
+        let listed = heads(&s).len();
+
+        // Left as it opened, it goes, and nothing was ever written.
+        s.act(Action::Write);
+        let offered = labels(&s);
+        assert!(!offered.contains(&"go in") && !offered.contains(&"new note here"));
+        for action in [Action::Write, Action::GoIn, Action::Archive, Action::Copy] {
+            assert!(s.act(action).is_empty());
+        }
+        assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
+        assert!(s.act(Action::Select(None)).is_empty());
+        assert_eq!(heads(&s).len(), listed, "no row remains");
+
+        // Backspace at its start takes it away, as it would an empty row.
+        s.act(Action::Move(1));
+        s.act(Action::Write);
+        assert_eq!(heads(&s).len(), listed + 1);
+        assert!(s.act(Action::Erase).is_empty());
+        assert_eq!(heads(&s).len(), listed);
+        assert_eq!(s.cursor, Some(0), "up to the row it was opened under");
+
+        // The editor leaving only the label leaves no note either.
+        s.act(Action::Write);
+        let id = s.field.as_ref().unwrap().id.clone();
+        assert!(
+            s.act(Action::Save {
+                id,
+                text: " #house\n".into()
+            })
+            .is_empty()
+        );
+        assert_eq!(heads(&s).len(), listed);
+
+        // Nor does a body that pushes the label under an empty head, as Enter at its start does.
+        s.act(Action::Write);
+        s.act(Action::Edit);
+        edited(&mut s, "\n #house");
+        assert!(s.act(Action::Done).is_empty());
+        assert!(s.act(Action::Select(None)).is_empty());
+        assert_eq!(heads(&s).len(), listed);
+    }
+
+    #[test]
+    fn a_new_row_inside_a_tag_put_back_or_cleared_is_as_it_opened() {
         let mut s = session();
         house(&mut s);
         type_in(&mut s, "#house");
         s.act(Action::GoIn);
 
         s.act(Action::Write);
-        edited(&mut s, "order oil");
-        s.act(Action::Done);
+        edited(&mut s, "order oil #house");
         let id = s.field.as_ref().unwrap().id.clone();
-        assert_eq!(s.notes.get(&id).unwrap().text, "order oil #house");
+        assert!(s.notes.get(&id).is_some());
+        s.act(Action::Undo);
+        assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
+        assert!(s.notes.get(&id).is_none(), "its version is taken back");
 
-        // Cleared and written out, it is an empty row again, as one never typed into is.
-        edited(&mut s, "");
+        // Written out, then cleared back to its label and written out, it is as it opened.
+        edited(&mut s, "order oil #house");
+        s.act(Action::Done);
+        assert_eq!(s.notes.get(&id).unwrap().text, "order oil #house");
+        edited(&mut s, " #house");
         s.act(Action::Done);
         assert!(s.notes.get(&id).is_none());
-        edited(&mut s, "order logs");
+        edited(&mut s, "order logs #house");
         s.act(Action::Move(1));
         assert_eq!(s.notes.get(&id).unwrap().text, "order logs #house");
 
-        // Taken out once it is there, it stays out.
+        // The label taken out is out: what is seen is what is written. Taken out a letter at a
+        // time from its end, what is left of it is no more the writer's than the whole of it.
         s.act(Action::Select(None));
         s.act(Action::Write);
+        for left in (0..7).rev() {
+            assert!(edited(&mut s, &" #house"[..left]).is_empty(), "{left}");
+        }
         edited(&mut s, "sweep the chimney");
-        s.act(Action::Done);
         let id = s.field.as_ref().unwrap().id.clone();
-        edited(&mut s, "sweep the chimney");
         s.act(Action::Select(None));
         assert_eq!(s.notes.get(&id).unwrap().text, "sweep the chimney");
     }
@@ -4630,6 +4695,11 @@ mod tests {
         assert_eq!(s.notes.get(&new).unwrap().text, "water the plants");
         s.act(Action::Select(None));
         s.act(Action::Write);
+        assert_eq!(
+            field(&s),
+            Some((String::new(), true, false)),
+            "nothing to add"
+        );
         edited(&mut s, "feed the cat");
         let id = s.field.as_ref().unwrap().id.clone();
         s.act(Action::Select(None));
@@ -4658,7 +4728,8 @@ mod tests {
             "post the parcel 2026-10-16"
         );
         s.act(Action::Write);
-        edited(&mut s, "order oil");
+        assert_eq!(field(&s), Some((" 2026-10-16".to_owned(), true, false)));
+        edited(&mut s, "order oil 2026-10-16");
         let id = s.field.as_ref().unwrap().id.clone();
         s.act(Action::Select(None));
         assert_eq!(s.notes.get(&id).unwrap().text, "order oil 2026-10-16");

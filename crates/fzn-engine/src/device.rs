@@ -867,6 +867,30 @@ mod tests {
     }
 
     #[test]
+    fn a_new_row_inside_a_tag_is_in_the_tag_on_another_device_from_its_first_letter() {
+        let mut net = Net {
+            relay: Replica::new(),
+            devices: vec![device("dev-a"), device("dev-b")],
+        };
+        net.connect(0);
+        net.connect(1);
+        for device in 0..2 {
+            net.act(device, Action::Type("#house".into()));
+            net.act(device, Action::GoIn);
+        }
+
+        // Opened and left with only the label in it, it was never anything.
+        net.act(0, Action::Write);
+        net.act(0, Action::Select(None));
+        assert!(net.relay.lines("dev-a").is_empty());
+
+        net.act(0, Action::Write);
+        net.act(0, Action::Edited("B #house".into()));
+        assert_eq!(net.relay.lines("dev-a").len(), 1);
+        assert_eq!(heads(&net.devices[1]), ["B #house"], "listed in its #house");
+    }
+
+    #[test]
     fn a_device_with_the_wrong_key_reads_nothing_and_writes_nothing() {
         let mut a = device("dev-a");
         let lines: Vec<String> = ["House", "Boiler"]

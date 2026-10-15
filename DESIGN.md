@@ -94,7 +94,8 @@ other people when you choose.
   this context written by hand on every line, and Ctrl-P pasted it. Built for the simplest case:
   a note created while looking around another links to it. And since 2026-10-14 for the next: a
   note created inside a tag, a person or a day ends its head with the label, as it would have
-  been typed. Only the innermost place is inherited.
+  been typed, and since 2026-10-15 a new row there opens with the label already in it. Only the
+  innermost place is inherited.
 
 ## Engine
 The engine is a library, and it is the app. It owns no UI, opens no file, reads no clock and
@@ -803,15 +804,41 @@ tab and the relay all run the same code.
   the label already is left as it is, whether its text has it anywhere or, for a day, the note
   was written on that day, since the day a note was written is not typed but is its `created`.
   So in a zoom on today nothing is added, and in a zoom on `/fri` a note written today ends with
-  `2026-10-16`. Only a note created in the place inherits, and only from the innermost place: in
-  `#house › Boiler` a new note links to Boiler and gets no tag, exactly as a note in a note's
-  zoom always has, since the path says how you got there and its last step says where you are.
+  `2026-10-16`. Revised 2026-10-15: a new row opens with the label in its head, rather than
+  getting it on leaving (see "A new row in a label opens with the label"). Only a note created
+  in the place inherits, and only from the innermost place: in `#house › Boiler` a new note
+  links to Boiler and gets no tag, exactly as a note in a note's zoom always has, since the path
+  says how you got there and its last step says where you are.
   One label at a time: several labels as one context, and a plain-word search as a context, are
   left out, the second because a plain-word search could only hand down the old prefix, the same
   words written on every line. Nothing is linked in a label, so Ctrl-L there does nothing but
   say so, and the first part of the list is the notes that carry it, whatever the weights make
   of them. Remembering the path across restarts is left out too: the summon key in the open
   questions is the answer to coming back to where you were.
+- **A new row in a label opens with the label.** Decided 2026-10-15, agreed with Sam, replacing
+  the call in "A tag is a place you can go into" that a note written in place gets the label
+  when the cursor leaves its row. A head is kept as it is typed, so the note was on every other
+  device from its first letter, but without the label until Enter, an arrow or Escape left the
+  row: until then every other device held `Bleed the radiators` with no `#house`, and its own
+  `#house` did not list it. A label added on leaving reached other devices late, and a note's
+  link was never late, since it is in the note's first version. Now a new row opened inside a
+  tag, a person or a day reads ` #house` from the moment it opens, a space and the label as it
+  was typed, with the caret at its start. Nothing is written until the first letter, and that
+  letter writes `B #house`, so the note is in its place on every device at once and what the
+  writer sees is exactly what is written. The label is text like any other: the writer can see
+  where the note will go, and can delete it, and then it stays out. A row with nothing in it but
+  the label it opened with is empty, as a row with nothing in it was: opening it writes nothing,
+  Enter and the chords do nothing there, leaving it takes it away, putting it back returns it to
+  the label, and Backspace at its start takes it away. The caret lands at the start and not the
+  end, and goes back there when the row is put back, so that what is typed goes before the
+  label. A day is put in only when it is not the day the note is written on, since that day is
+  its `created`: a zoom on today opens an empty row, one on `/fri` opens ` 2026-10-16`. A note
+  written from the line inside a label still has the label added as it is written, since the
+  line was the search and that is its one version. Taken out a letter at a time from its end,
+  as Backspace does and as a phone's keyboard only can, what is left of the label is no more the
+  writer's than the label was, so nothing is written until a letter that is. What it costs: a
+  new row holding only the start of its label, `#ho` in `#house`, is empty too and goes when it
+  is left, and the label taken out from its start writes each step, as typing does.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

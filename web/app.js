@@ -450,9 +450,10 @@ box.addEventListener('keydown', (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       act('write');
       break;
-    // Backspace on an empty head takes the row away and steps up, as it would an empty line.
+    // Backspace on an empty head takes the row away and steps up, as it would an empty line. A new
+    // row with only the label it opened with is empty while the caret is before the label.
     case 'Backspace':
-      if (!plain || box.value !== '') return;
+      if (!plain || box.selectionEnd !== 0 || (box.value !== '' && !view.field.fresh)) return;
       act('erase');
       break;
     case 'Escape':
@@ -677,8 +678,8 @@ function paintRows() {
     li.classList.toggle('suggested', apart);
     li.classList.toggle('archived', row.archived);
     li.classList.toggle('editing', selected && !!field?.whole);
-    // A new note with no text has nowhere to go in to, so its row has no arrow.
-    li.classList.toggle('blank', selected && !!field?.fresh && field.text.trim() === '');
+    // A new note with nothing in it has nowhere to go in to, so its row has no arrow.
+    li.classList.toggle('blank', selected && !!field?.fresh);
     const k = rowKey(row, selected, apart);
     if (li.dataset.k !== k) {
       li.dataset.k = k;
@@ -700,19 +701,20 @@ function paintRows() {
   // person's caret is left alone while they type. On landing, and when the body closes, the caret
   // goes to the end of the head; when the body opens it stays where it was, at the end of the head,
   // so that Down goes to the second line; otherwise it is kept where it was, as far as the text
-  // still reaches.
+  // still reaches. A new row with only the label it opened with has its caret at the start instead,
+  // before the label, wherever it would go to the end, and when it is put back to the label.
   if (field && boxIn && field.whole && editor) {
     box.classList.add('whole');
-    // The editor is given a fresh state when the body opens, its caret at the end of the head as
-    // the box's would be, and when it takes over from the box, with the box's caret. While `:w`
-    // closes and opens again it is left as it is, so the caret and the step undo survive the
-    // write. Otherwise it is told the text only when the engine's differs from it: put back, a
-    // date word expanded, a version from elsewhere. A newline just made at the end is not a
-    // difference, as it is not one to the engine, which keeps the note without it: told the kept
-    // text, the editor would take the new line away under the hands.
+    // The editor is given a fresh state when the body opens, its caret where the box's would be,
+    // and when it takes over from the box, with the box's caret. While `:w` closes and opens again
+    // it is left as it is, so the caret and the step undo survive the write. Otherwise it is told
+    // the text only when the engine's differs from it: put back, a date word expanded, a version
+    // from elsewhere. A newline just made at the end is not a difference, as it is not one to the
+    // engine, which keeps the note without it: told the kept text, the editor would take the new
+    // line away under the hands.
     const toggled = !wasWhole;
     const kept = (text) => text.replace(/[\r\n]+$/, '');
-    if (!keeping && toggled) editor.open(field.text, headOf(field.text).length);
+    if (!keeping && toggled) editor.open(field.text, field.fresh ? 0 : headOf(field.text).length);
     else if (!keeping && !hadEditor) editor.open(field.text, Math.min(from, field.text.length));
     else if (kept(editor.text()) !== kept(field.text)) editor.setText(field.text);
     const lost = [document.body, line].includes(document.activeElement);
@@ -721,12 +723,14 @@ function paintRows() {
     box.classList.toggle('whole', field.whole);
     const want = boxText(field);
     const toggled = field.whole !== wasWhole;
-    if (box.value !== want) {
+    const told = box.value !== want;
+    if (told) {
       box.value = want;
       fit();
     }
     const end = box.value.length;
-    if (landed || (toggled && !field.whole)) box.setSelectionRange(end, end);
+    const at = field.fresh ? 0 : end;
+    if (landed || (toggled && !field.whole) || (told && field.fresh)) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
     // A word in the foot reached by Tab keeps the focus. The box takes it when the cursor has
     // just arrived, when the body opens or closes, and when it had it before the painting.

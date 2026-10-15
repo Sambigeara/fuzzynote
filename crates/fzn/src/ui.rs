@@ -7,17 +7,18 @@
 //!
 //! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and
 //! goes to the note it wrote or, with nothing on it, opens a new row at the top to write in, and
-//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, and
-//! typing changes it and is written at once, as it was in fzn, with its date words written out
-//! when the arrows up and down, or Escape, leave it. Enter opens a new note under it, so that a
-//! run of notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your
-//! editor, which is where a body is written. Right at the end of the head goes in, and at the end
-//! of the line goes into the tag, person, day or note the line names; short of the end it is the
-//! caret's, as Left is. A chord acts on the note where on the line it acts on the line, as it did
-//! in fzn: Ctrl-D deletes or clears, Ctrl-V archives or shows archived notes, and Ctrl-U puts a
-//! changed head back before it undoes anything else. Escape comes back a rung at a time: off the
-//! row, off the text on the line, out of the place, and on an empty line outside any place two
-//! of them quit. The footer shows only the keys that apply where the cursor is.
+//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or at
+//! the start of a new row that opens with the label of the place, and typing changes it and is
+//! written at once, as it was in fzn, with its date words written out when the arrows up and
+//! down, or Escape, leave it. Enter opens a new note under it, so that a run of notes is Enter
+//! and typing; a new note left empty goes. Ctrl-O hands the note to your editor, which is where
+//! a body is written. Right at the end of the head goes in, and at the end of the line goes into
+//! the tag, person, day or note the line names; short of the end it is the caret's, as Left is. A
+//! chord acts on the note where on the line it acts on the line, as it did in fzn: Ctrl-D deletes
+//! or clears, Ctrl-V archives or shows archived notes, and Ctrl-U puts a changed head back before
+//! it undoes anything else. Escape comes back a rung at a time: off the row, off the text on the
+//! line, out of the place, and on an empty line outside any place two of them quit. The footer
+//! shows only the keys that apply where the cursor is.
 //!
 //! The screen is painted by hand and flat, in the terminal's own colours, because the cursor has
 //! to land in a row whose height depends on what is under it, and because there is nothing to
@@ -104,9 +105,9 @@ enum Place {
 /// the cursor otherwise. `at_end` and `empty` are of the text the cursor is in, the line or the
 /// head. The arrow goes in only from its end, since short of it the arrow is the caret's: from a
 /// head into the note, and from the line into what the line names, which the session decides.
-/// Backspace takes a row away only when its head is empty; with text in the head it is the
-/// caret's. Escape comes back a rung: off the row, then off the text on the line, then out of
-/// the place.
+/// Backspace takes a row away only when its head is empty, as a new row with only its label is
+/// while the caret is before the label; with text in the head it is the caret's. Escape comes
+/// back a rung: off the row, then off the text on the line, then out of the place.
 fn bound(
     code: KeyCode,
     ctrl: bool,
@@ -697,33 +698,44 @@ impl App {
     }
 
     /// Where the cursor is, and of the text it is in, the head of its row or the line, whether
-    /// the caret is at its end and whether it is empty.
+    /// the caret is at its end and whether it is empty. A new row with only the label it opened
+    /// with is empty while the caret is before the label, where it lands.
     fn caret(&self, view: &View) -> (Place, bool, bool) {
-        let (place, text, caret) = match &view.field {
-            Some(field) => (Place::Row, head_and_body(field.text).0, self.row_cursor),
-            None => (Place::Line, view.line, self.cursor),
+        let (place, text, caret, fresh) = match &view.field {
+            Some(field) => {
+                let head = head_and_body(field.text).0;
+                (Place::Row, head, self.row_cursor, field.fresh)
+            }
+            None => (Place::Line, view.line, self.cursor, false),
         };
-        (place, caret >= text.chars().count(), text.is_empty())
+        let empty = text.is_empty() || (fresh && caret == 0);
+        (place, caret >= text.chars().count(), empty)
     }
 
     /// Asks the device for something, and carries out what it asks for in return.
     fn act(&mut self, action: Action) -> Result<Flow> {
-        let (line, was_on) = {
+        let (line, was_on, was_fresh) = {
             let view = self.device.view();
-            (view.line.to_owned(), under_cursor(&view))
+            let fresh = view.field.as_ref().is_some_and(|field| field.fresh);
+            (view.line.to_owned(), under_cursor(&view), fresh)
         };
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
         let view = self.device.view();
         // A line the device changed, as it does on the way into a note and out of one, has its
         // cursor at the end, and so does the head of a row just landed on. A head put back or
-        // written in place keeps its caret where it was, if the head is still that long.
+        // written in place keeps its caret where it was, if the head is still that long. A new
+        // row with only the label it opened with, landed on or put back to it, has its caret
+        // before the label.
         if view.line != line {
             self.cursor = view.line.chars().count();
         }
         if let Some(field) = &view.field {
             let end = head_and_body(field.text).0.chars().count();
-            self.row_cursor = if under_cursor(&view) == was_on {
+            let stayed = under_cursor(&view) == was_on;
+            self.row_cursor = if field.fresh && !(stayed && was_fresh) {
+                0
+            } else if stayed {
                 self.row_cursor.min(end)
             } else {
                 end
@@ -1428,18 +1440,52 @@ mod tests {
     }
 
     #[test]
-    fn a_new_note_written_in_place_inside_a_tag_ends_with_it_once_escape_leaves_the_row() {
+    fn a_new_row_inside_a_tag_opens_with_it_and_the_caret_before_it() {
         let (mut app, space) = app();
         write(&mut app, "Boiler service #house");
         type_in(&mut app, "#house");
         press(&mut app, KeyCode::Right, false);
         press(&mut app, KeyCode::Enter, false);
+        assert_eq!(field(&app).as_deref(), Some(" #house"));
+        assert_eq!(app.row_cursor, 0, "before the label");
         type_in(&mut app, "Order oil");
-        assert_eq!(field(&app).as_deref(), Some("Order oil"), "as typed");
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("Order oil #house"),
+            "as written"
+        );
+
+        // Put back, it is as it opened, with the caret before the label again.
+        chord(&mut app, 'u');
+        assert_eq!(field(&app).as_deref(), Some(" #house"));
+        assert_eq!(app.row_cursor, 0);
+        type_in(&mut app, "Order oil");
         press(&mut app, KeyCode::Esc, false);
         assert!(!on_note(&app));
         assert_eq!(heads(&app)[0], "Order oil #house");
         assert_eq!(path(&app), ["#house"]);
+        done(&space);
+    }
+
+    #[test]
+    fn backspace_on_a_new_row_inside_a_tag_with_only_the_tag_takes_it_away() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler service #house");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(heads(&app).len(), 2);
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!(heads(&app), ["Boiler service #house"]);
+        assert_eq!(field(&app).as_deref(), Some("Boiler service #house"));
+
+        // With the caret moved off its start, Backspace is the caret's, and takes from the label.
+        press(&mut app, KeyCode::Enter, false);
+        press(&mut app, KeyCode::End, false);
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!(field(&app).as_deref(), Some(" #hous"));
+        assert_eq!(app.row_cursor, 6, "and the caret stays where it was");
         done(&space);
     }
 
