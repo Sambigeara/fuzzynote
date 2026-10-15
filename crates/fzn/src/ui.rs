@@ -916,10 +916,10 @@ impl App {
         let mut blocks: Vec<Painted> = Vec::new();
         for (i, row) in view.rows.iter().enumerate() {
             let mut lines = Vec::new();
-            // In a zoom, what is linked is kept apart from what is only suggested. With text on
-            // the line the two are ranked together, and nothing is kept apart.
+            // In a zoom, what the line finds in the place is kept apart from what it only finds
+            // there. With nothing on the line the place lists only what is in it.
             if zoomed
-                && view.line.trim().is_empty()
+                && !view.line.trim().is_empty()
                 && i > 0
                 && view.rows[i - 1].linked
                 && !row.linked
@@ -1443,6 +1443,34 @@ mod tests {
         type_in(&mut app, "boil");
         chord(&mut app, 'd');
         assert_eq!(line(&app), "");
+        done(&space);
+    }
+
+    #[test]
+    fn in_a_place_what_the_line_only_finds_is_a_row_of_nothing_below_what_is_in_it() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler pressure gauge");
+        write(&mut app, "Boiler");
+        type_in(&mut app, "Boiler");
+        press(&mut app, KeyCode::Right, false);
+        write(&mut app, "pressure low");
+        assert_eq!(path(&app), ["Boiler"]);
+        let shot = screen(&mut app, 60, 10);
+        assert!(shot.rows[2].starts_with(" pressure low"), "{:?}", shot.rows);
+        assert!(
+            shot.rows[3..9].iter().all(String::is_empty),
+            "only what is in it"
+        );
+
+        type_in(&mut app, "pressure");
+        let shot = screen(&mut app, 60, 10);
+        assert!(shot.rows[2].starts_with(" pressure low"), "{:?}", shot.rows);
+        assert_eq!(shot.rows[3], "");
+        assert!(
+            shot.rows[4].starts_with(" Boiler pressure gauge"),
+            "{:?}",
+            shot.rows
+        );
         done(&space);
     }
 

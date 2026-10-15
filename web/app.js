@@ -678,8 +678,9 @@ function paintRows() {
     }
     const selected = i === view.cursor;
     if (li.getAttribute('aria-selected') !== String(selected)) li.setAttribute('aria-selected', selected);
-    const apart = zoomed && !searching && !row.linked && i > 0 && view.rows[i - 1].linked;
-    li.classList.toggle('suggested', apart);
+    // In a place, what the line finds in it is set apart from what it only finds there.
+    const apart = zoomed && searching && !row.linked && i > 0 && view.rows[i - 1].linked;
+    li.classList.toggle('apart', apart);
     li.classList.toggle('archived', row.archived);
     li.classList.toggle('editing', selected && !!field?.whole);
     // A new note with nothing in it has nowhere to go in to, so its row has no arrow.

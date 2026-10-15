@@ -49,7 +49,8 @@ other people when you choose.
   the context: tags, people, rare words. The old common-prefix zoom is the special case. One
   label is reinstated (2026-10-14): a tag, a person or a day typed on the line is gone into with
   the arrow and is the context, and since 2026-10-15 labels gone into one after another are one
-  context. Selecting notes, and a context of plain words, are not.
+  context, and so are a note and the labels gone into after it. Selecting notes, and a context
+  of plain words, are not.
 - Search groups: Tab-separated terms, `~` fuzzy, `!` inverse, substring by default.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key; show/hide archived globally.
@@ -97,9 +98,10 @@ other people when you choose.
   note created inside a tag, a person or a day ends its head with the label, as it would have
   been typed, and since 2026-10-15 a new row there opens with the label already in it. Also
   since 2026-10-15, labels gone into one after another are one context and are all inherited,
-  so a note written in `#house › today` carries both. A note on the path starts afresh: what is
-  written in it links to it and carries no label from before it, and labels gone into after it
-  leave it behind.
+  so a note written in `#house › today` carries both, and a note on the path is one context with
+  the labels gone into after it, so a note written in `Boiler › today` links to Boiler and is
+  of today. Labels before the last note on the path are only how it was reached: in
+  `#house › Boiler` a note links to Boiler and carries no tag.
 
 ## Engine
 The engine is a library, and it is the app. It owns no UI, opens no file, reads no clock and
@@ -150,9 +152,10 @@ and a human-readable reason. Cheapest first:
    another scorer, not a dependency.
 
 **Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. Two facts come
-before any score: what is linked to the note being looked around, or carries the labels being
-looked around, and the note headed with what was typed. Budget: under five milliseconds per
-keystroke for ten thousand notes.
+before any score: what is in the place being looked around, linked to its note and carrying its
+labels, and the note headed with what was typed. With nothing on the line no scorer runs in a
+place: its facts are a set, the note's links kept to the notes on the index's list for every
+label. Budget: under five milliseconds per keystroke for ten thousand notes.
 
 **Tuning happens in the product.** Every suggestion shows its reasons; writing where you are
 makes a link, and a chord corrects one, stored on the note as the target's id; the weights live
@@ -391,14 +394,22 @@ tab and the relay all run the same code.
   `its name`, wherever it is and whatever the limit, so Right goes where the list shows, and
   typing a name is the way from any place to any note. A line that names neither, or names where
   you already are, leaves Right doing nothing. The path shows a label as it is written:
-  `#house`, `@joe`, `2026-10-16`. The list becomes the place's neighbourhood, in two parts. The
-  facts come first, in the order the space keeps them in: what is linked to or from the note, or
-  every note carrying the label, which for a day is every note written on it or mentioning it.
-  Labels gone into one after another are one place (see "Labels gone into one after another are
-  one place"): its facts are the notes carrying every one of them. A link is a fact and so is a
-  label, and this part is a list you keep, however long it is. What the engine finds besides
-  follows, best first: shared tags and people, shared words, shared dates, each with its reason;
-  for a label, what its words find. The line comes with you, under one rule:
+  `#house`, `@joe`, `2026-10-16`. The place is the last note on the path, if there is one,
+  together with every label gone into after it (see "Labels gone into one after another are one
+  place" and "A place is the last note on the path and the labels after it"); labels before the
+  note are only how you got there. Its facts are the notes linked to or from the note that carry
+  every one of those labels: the links alone when no label follows the note, and with no note on
+  the path every note carrying all the labels, which for a day is every note written on it or
+  mentioning it. A link is a fact and so is a label. The list works as the top of the space does
+  (see "A place lists what is in it; typing finds"): with nothing on the line it is what is in
+  the place, its facts in the order the space keeps them in, however many, and nothing the
+  engine suggests; a row says how it is linked, `links here`, `linked from here` or `linked both
+  ways`, and nothing scored. Typing finds: the note the line names first, then the place's facts
+  that match, then what the engine finds in its neighbourhood that matches, each best first with
+  its reasons, and a row of nothing between the last fact and the first find. Around a note the
+  neighbourhood is what shares its tags and people, words and dates, or links to the same things,
+  with only the notes carrying the labels counted as facts; around labels alone it is what their
+  words find. The line comes with you, under one rule:
   if the note you went into contains what you typed, or its head and the heads of the notes it
   links to have every word of it, you were searching for it, so the line clears and stepping back
   brings it back; otherwise you were writing, and the draft is carried in to be written here. A
@@ -409,23 +420,24 @@ tab and the relay all run the same code.
   it, clear, stay" is one key. The faces bind Right at the end of the line to going in and
   Escape to that, and the session offers `clear` as the way back while the line has text and
   `back` once it is empty. Either way, what you write inside is about the place: inside a note
-  it links to it and lands at the top of the linked part, and inside a label its head ends with
+  it links to it and lands at the top of the place, and inside a label its head ends with
   the label, as it would have been typed, unless the note carries it already: in its text, or
   for a day by being written on it, since the day a note was written is its `created`. A note
   written from the line has it added as it is written; a new row opens with it already in its
   head. Inside labels gone into one after another the head ends with each of them it does not
   carry, in the order of the path: in `#house › @joe` a new row opens ` #house @joe`, and in
-  `#house › today` a note reads `Order oil #house`. Only a note created there inherits, and a
-  note on the path starts afresh: in `#house › Boiler` a new note links to Boiler and carries no
-  tag, and in `#house › Boiler › today` only today counts. This is context inheritance in its
-  simplest form.
-  Typing inside a context narrows the neighbourhood and ranks what is left, with the note the
-  line names first. Ctrl-L moves a note between the two parts by linking or unlinking it; it is
-  a correction, not the mechanism, and outside a note's zoom, at the top or inside a label, it
-  has nothing to do and says so. Right at the end of a head again walks a hop further, and on a
-  place already on the path goes back to it, so the path never repeats; stepping back goes one
-  hop, onto the line. This is the ego graph as a flat list; following a link is picking its
-  target here.
+  `#house › today` a note reads `Order oil #house`. Only a note created there inherits, and only
+  from the place: in `Boiler › today` a new note links to Boiler and is of today by being
+  written on it, in `Boiler › #house` a new row opens ` #house` and links to Boiler, and in
+  `#house › Boiler` a new note links to Boiler and carries no tag. This is context inheritance in
+  its simplest form.
+  Ctrl-L links the note under the cursor to the place's note or unlinks it, which takes it into
+  the place or out of it when it carries the place's labels: on an empty line an unlinked note
+  leaves the list, and a note to link is one that typing found. It is a correction, not the
+  mechanism, and with no note on the path, at the top or inside labels alone, it has nothing to
+  do and says so. Right at the end of a head again walks a hop further, and on a place already on
+  the path goes back to it, so the path never repeats; stepping back goes one hop, onto the line.
+  This is the ego graph as a flat list; following a link is picking its target here.
 - **Browser**: the engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain
   JavaScript and CSS to drive it: no framework, and one dependency, the body's editor, built by
   hand into one committed file (see the decision). A tab is one more device. It has a writer id
@@ -832,6 +844,10 @@ tab and the relay all run the same code.
   so Ctrl-L there does nothing but say so, and the first part of the list is the notes that
   carry it, whatever the weights make of them. Remembering the path across restarts is left out
   too: the summon key in the open questions is the answer to coming back to where you were.
+  Revised 2026-10-15: on an empty line the list is only the notes that carry the label, and
+  what its words find comes when typing (see "A place lists what is in it; typing finds"); and
+  a note on the path no longer starts afresh, but is one place with the labels gone into after
+  it (see "A place is the last note on the path and the labels after it").
 - **A new row in a label opens with the label.** Decided 2026-10-15, agreed with Sam, replacing
   the call in "A tag is a place you can go into" that a note written in place gets the label
   when the cursor leaves its row. A head is kept as it is typed, so the note was on every other
@@ -872,7 +888,9 @@ tab and the relay all run the same code.
   always did, and is never taken together with anything: in `#house › Boiler` a new note links to
   Boiler and carries no tag, and in `#house › Boiler › today` only today counts. The path,
   going in, going back a step at a time, and going back to a place already on it are as they
-  were; nothing about the run is kept but the path itself.
+  were; nothing about the run is kept but the path itself. Revised 2026-10-15: the run is taken
+  together with the last note on the path before it, and only the labels before that note start
+  nothing (see "A place is the last note on the path and the labels after it").
 - **Where a note sits is kept.** Decided 2026-10-15, at Sam's direction, reversing "No manual
   ordering (provisional)". The empty line's list was in the order of `updated`, and so were a
   place's facts, by the Zoom paragraph and "A tag is a place you can go into", and that had two
@@ -923,6 +941,60 @@ tab and the relay all run the same code.
   walked afresh each time the list is made, O(n log n) in the notes: 5 to 7 ms over 30,000 notes
   in a release build, against under 1 ms for the sort by `updated` it replaces, so nothing is
   cached.
+- **A place lists what is in it; typing finds.** Decided 2026-10-15, agreed with Sam, replacing
+  the neighbourhood in two parts that the Zoom paragraph and "A tag is a place you can go into"
+  listed on an empty line, the facts and then the engine's suggestions with their reasons. A
+  zoom on a day, or on `#house › today`, showed lots of other notes: the suggestions were each
+  label's carriers less the notes carrying them all, so the place never read as the set it is.
+  Now every place works as the top of the space already did, where an empty line is every note
+  in your order with no reasons, and typing finds, ranked and with reasons. With nothing on the
+  line a place, whether a note, labels or both, lists only its facts, in the order the space
+  keeps them in, and nothing the engine suggests. A fact carries no scorer's reason, as a row at
+  the top carries none; how it is linked, `links here`, `linked from here` or `linked both
+  ways`, is a fact and not a score, and stays. No scorer runs for it: the facts are a set, the
+  note's links kept to what the index lists for each label, and the list is the walk of the
+  space's order that the top already makes, kept to that set. With something on the line the
+  list is the note the line names, as before wherever it is, then the place's facts that match,
+  then what the engine finds in its neighbourhood that matches, each with its reasons; facts
+  before finds, where before they were ranked together. The row of nothing that both faces drew
+  between the facts and the suggestions on an empty line is drawn where facts and finds now meet,
+  with something on the line. Three reasons. The Vision ties finding to typing and going in to
+  belonging: "as you type, the engine finds", and "go into one of those and write there, and
+  what you write belongs to it". The top level already listed a set on an empty line and found
+  when typed, so a place that did otherwise was a second rule. And a label is typed on purpose,
+  so a place is exactly what a note written there joins, and its list should be that and no
+  more. What it costs: going into a note no longer shows the notes related to it until
+  something is typed, and a note that says a tag's word without carrying the tag, `house move
+  plan` in `#house`, shows only when typing. Since every row on an empty line is now a fact, all
+  of them can be moved, and Ctrl-L there can only unlink, which takes the note out of the list;
+  a note to link is one the line found.
+- **A place is the last note on the path and the labels after it.** Decided 2026-10-15, agreed
+  with Sam, replacing "a note on the path starts afresh … in `#house › Boiler › today` only today
+  counts" in "Labels gone into one after another are one place". A note on the path was never
+  taken together with anything, so in `Boiler › today` the list was all of today's notes and a
+  note written there did not link to Boiler: it fell out of Boiler, the fault that "Labels gone
+  into one after another are one place" put right for labels earlier the same day. Now the place
+  is the last note on the path, if there is one, together with every label gone into after it. Its
+  facts are the notes linked to or from that note which carry every label in the run: the links
+  alone with no label after the note, and the carriers alone with no note on the path. A note
+  written there links to the note, as in a note's zoom, and inherits each label it does not carry
+  yet, as a run of labels does, and a new row opens with them: in `Boiler › #house` it opens
+  ` #house` and links to Boiler. Ctrl-L there links or unlinks to the note, as in a note's zoom;
+  with labels alone it says what it said. Typing finds in the note's neighbourhood, with only the
+  notes carrying the labels counted as facts, so a note linked to Boiler but written another day
+  is a find in `Boiler › today`. The note's body is shown where a note's zoom shows it. Its name
+  typed there lists it first, as any note the line names, and Right goes back to it, as to any
+  place on the path; Ctrl-L on it has nothing to do, since a note does not link to itself. The
+  labels before the note are only how it was reached: `#house › Boiler › today` is the place
+  `Boiler › today` is, and in `#house › Boiler` a new note links to Boiler and carries no tag, as
+  before. Going into a note from any of these starts a new place at that note. The reasons: the
+  same place reached by two routes should give the same note. What is before the note is already
+  recorded, by the links that put the note where it is, so copying `#house` onto a note written in
+  Boiler would be a second copy of it, and one that goes stale when a note moves. And how far up a
+  path finding reaches is a question for search, which today goes one hop down from a name (see "A
+  name finds what was written in it" and the open question "One hop or the whole path?"), and is
+  not written onto notes. The engine is asked about every place as one thing, a note, labels or
+  both, where it had one call for a note and another for labels.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -225,8 +225,8 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 @keyframes arrive { from { opacity: 0; } }
 
-/* In a zoom, what is linked and what is only suggested are set a row apart. */
-.row.suggested { margin-top: var(--row); }
+/* In a zoom, what the line finds in the place and what it only finds there are set a row apart. */
+.row.apart { margin-top: var(--row); }
 
 .main {
   position: relative;

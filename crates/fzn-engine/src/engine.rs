@@ -43,14 +43,32 @@ impl Default for SearchOptions {
     }
 }
 
+/// A place being looked around: the last note on the path, if there is one, and the labels
+/// gone into after it, which `written` is as they were typed. The labels before the note are
+/// only how it was reached, and are not here.
+pub(crate) struct Place<'a> {
+    pub note: Option<&'a NoteId>,
+    pub labels: &'a [Label],
+    pub written: &'a str,
+}
+
+/// A place as the index has it: its note, the notes linking to it and those it links to, each
+/// sorted and without it, and its facts, sorted.
+struct Ties {
+    note: Option<DocId>,
+    links_in: Vec<DocId>,
+    links_out: Vec<DocId>,
+    facts: Vec<DocId>,
+}
+
 /// A suggested note, its score, and why.
 #[derive(Clone, Debug)]
 pub struct Hit<'a> {
     pub note: &'a Note,
     pub score: f32,
     pub reasons: Vec<Reason>,
-    /// Whether the note is linked to or from the one being looked around, or carries the labels
-    /// being looked around. That is a fact, where the rest is a guess, and such notes are
+    /// Whether the note is a fact of the place being looked around: linked to or from its note
+    /// and carrying its labels. That is a fact, where the rest is a guess, and such notes are
     /// returned whatever they score and whatever the limit.
     pub linked: bool,
     /// Whether the note's head is what was typed. Such notes come first, whatever they score
@@ -141,9 +159,9 @@ impl Engine {
         self.typed(text, opts, &[])
     }
 
-    /// `search`, with the notes in `carrying`, which is sorted, listed as facts whatever they
-    /// score and whatever the limit.
-    fn typed(&self, text: &str, opts: &SearchOptions, carrying: &[DocId]) -> Vec<Hit<'_>> {
+    /// `search`, with the notes in `place`, which is sorted, listed as the facts of a place
+    /// whatever they score and whatever the limit.
+    fn typed(&self, text: &str, opts: &SearchOptions, place: &[DocId]) -> Vec<Hit<'_>> {
         let (terms, prefix) = typed_words(text);
         let facts = text::facts(text);
         let mut labels = query_labels(&terms, &facts);
@@ -163,7 +181,7 @@ impl Engine {
             links_out: &[],
             named: Some(&named),
         };
-        self.run(&ctx, opts, &self.headed(text), carrying)
+        self.run(&ctx, opts, &self.headed(text), place)
     }
 
     /// The notes whose head is what was typed, sorted: every word of the head was typed and no
@@ -237,15 +255,102 @@ impl Engine {
         Some((doc.note.head(), linked))
     }
 
-    /// The neighbourhood of an existing note: what is linked to or from it, marked as such, and
-    /// what the engine finds besides.
-    pub fn related(&self, id: &NoteId, opts: &SearchOptions) -> Vec<Hit<'_>> {
-        let Some(&d) = self.by_id.get(id) else {
+    /// The facts of a place, each with how it is linked to the place's note when it has one:
+    /// the notes linked to or from the note that carry every label, or with no note the notes
+    /// carrying them all. They are a set, worked out from the links and the index and in no
+    /// order; nothing is scored.
+    pub(crate) fn facts(&self, place: &Place) -> Vec<(&Note, Option<&'static str>)> {
+        let Some(ties) = self.ties(place) else {
             return Vec::new();
+        };
+        ties.facts
+            .iter()
+            .filter_map(|&d| {
+                let doc = self.docs[d as usize].as_ref()?;
+                Some((&doc.note, link_reason(&ties.links_in, &ties.links_out, d)))
+            })
+            .collect()
+    }
+
+    /// The neighbourhood of a place: its facts, marked as such and listed whatever they score
+    /// and whatever the limit, and what the engine finds besides, best first. Around a note that
+    /// is what shares its tags, people, words and dates, and what links to the same things; a
+    /// note linked to it but not carrying the labels is one of those. Around labels alone it is
+    /// what their words find, and the last day among them is the day nearness in time is
+    /// measured from, as a note's own day is, so that a note written on it says the same date
+    /// and not how far it is from today.
+    pub(crate) fn around(&self, place: &Place, opts: &SearchOptions) -> Vec<Hit<'_>> {
+        let Some(ties) = self.ties(place) else {
+            return Vec::new();
+        };
+        let Some(d) = ties.note else {
+            let opts = SearchOptions {
+                today: place
+                    .labels
+                    .iter()
+                    .rev()
+                    .find_map(|label| match label {
+                        Label::Date(day) => Some(*day),
+                        _ => None,
+                    })
+                    .or(opts.today),
+                ..opts.clone()
+            };
+            // Whitespace after it, so that the last label's word is a whole word and not the
+            // start of one.
+            return self.typed(&format!("{} ", place.written), &opts, &ties.facts);
         };
         let Some(doc) = self.docs[d as usize].as_ref() else {
             return Vec::new();
         };
+        let terms = self.top_terms(d, 20);
+        let mut labels = query_labels(&terms, &doc.facts);
+        // Notes linked to the same things this one is are its siblings: a suggestion.
+        labels.extend(
+            ties.links_out
+                .iter()
+                .filter_map(|&t| self.docs[t as usize].as_ref())
+                .map(|target| QueryLabel::LinksTo {
+                    id: target.note.id.as_str().to_owned(),
+                    head: target.note.head().to_owned(),
+                }),
+        );
+        let ctx = Context {
+            terms: &terms,
+            prefix: None,
+            labels: &labels,
+            dates: &doc.facts.dates,
+            day: doc.note.day(),
+            exclude: Some(d),
+            links_in: &ties.links_in,
+            links_out: &ties.links_out,
+            named: None,
+        };
+        self.run(&ctx, opts, &[], &ties.facts)
+    }
+
+    /// A place as the index has it, or nothing if its note is gone. Its facts are the notes
+    /// linked either way that carry every label, the links alone with no labels, or the carriers
+    /// alone with no note.
+    fn ties(&self, place: &Place) -> Option<Ties> {
+        let carrying = place.labels.split_first().map(|(first, rest)| {
+            let mut carrying = self.index.docs_with(first).to_vec();
+            for label in rest {
+                let with = self.index.docs_with(label);
+                carrying.retain(|d| with.binary_search(d).is_ok());
+            }
+            carrying
+        });
+        let Some(id) = place.note else {
+            return Some(Ties {
+                note: None,
+                links_in: Vec::new(),
+                links_out: Vec::new(),
+                facts: carrying.unwrap_or_default(),
+            });
+        };
+        let &d = self.by_id.get(id)?;
+        let doc = self.docs[d as usize].as_ref()?;
         let mut links_in = self
             .index
             .docs_with(&Label::Link(id.as_str().to_owned()))
@@ -261,67 +366,18 @@ impl Engine {
             docs.dedup();
             docs.retain(|&other| other != d);
         }
-
-        let terms = self.top_terms(d, 20);
-        let mut labels = query_labels(&terms, &doc.facts);
-        // Notes linked to the same things this one is are its siblings: a suggestion.
-        labels.extend(
-            links_out
-                .iter()
-                .filter_map(|&t| self.docs[t as usize].as_ref())
-                .map(|target| QueryLabel::LinksTo {
-                    id: target.note.id.as_str().to_owned(),
-                    head: target.note.head().to_owned(),
-                }),
-        );
-        let ctx = Context {
-            terms: &terms,
-            prefix: None,
-            labels: &labels,
-            dates: &doc.facts.dates,
-            day: doc.note.day(),
-            exclude: Some(d),
-            links_in: &links_in,
-            links_out: &links_out,
-            named: None,
-        };
-        self.run(&ctx, opts, &[], &[])
-    }
-
-    /// The neighbourhood of tags, people and days taken together, which `written` is as they
-    /// would be typed: every note carrying all of them, marked as linked and listed whatever it
-    /// scores and whatever the limit, and what the engine finds besides for those words. The
-    /// last day among them is also the day nearness in time is measured from, as a note's own
-    /// day is in `related`, so that a note written on it says the same date and not how far it
-    /// is from today.
-    pub(crate) fn labelled(
-        &self,
-        labels: &[Label],
-        written: &str,
-        opts: &SearchOptions,
-    ) -> Vec<Hit<'_>> {
-        let Some((first, rest)) = labels.split_first() else {
-            return Vec::new();
-        };
-        let mut carrying = self.index.docs_with(first).to_vec();
-        for label in rest {
-            let with = self.index.docs_with(label);
-            carrying.retain(|d| with.binary_search(d).is_ok());
+        let mut facts: Vec<DocId> = links_in.iter().chain(&links_out).copied().collect();
+        facts.sort_unstable();
+        facts.dedup();
+        if let Some(carrying) = carrying {
+            facts.retain(|d| carrying.binary_search(d).is_ok());
         }
-        let opts = SearchOptions {
-            today: labels
-                .iter()
-                .rev()
-                .find_map(|label| match label {
-                    Label::Date(day) => Some(*day),
-                    _ => None,
-                })
-                .or(opts.today),
-            ..opts.clone()
-        };
-        // Whitespace after it, so that the last label's word is a whole word and not the start
-        // of one.
-        self.typed(&format!("{written} "), &opts, &carrying)
+        Some(Ties {
+            note: Some(d),
+            links_in,
+            links_out,
+            facts,
+        })
     }
 
     /// The one note whose head is what was typed, by the rule that lists a name first in
@@ -393,17 +449,16 @@ impl Engine {
 
     /// Scores the candidates and lists them best first, after the notes in `first`, which is
     /// sorted: those are the notes being named, and they are listed whatever they score. So are
-    /// the notes in `carrying`, also sorted, which carry the labels being looked around and are
-    /// facts of it, as what is linked is of a note.
+    /// the notes in `facts`, also sorted, which are the facts of the place being looked around.
     fn run<'a: 'c, 'c>(
         &'a self,
         ctx: &Context<'c>,
         opts: &SearchOptions,
         first: &[DocId],
-        carrying: &[DocId],
+        facts: &[DocId],
     ) -> Vec<Hit<'a>> {
         let mut c = Candidates::default();
-        for &d in first.iter().chain(carrying) {
+        for &d in first.iter().chain(facts) {
             c.include(d);
         }
         score::lexical(&self.index, ctx, &self.weights, &mut c);
@@ -415,20 +470,8 @@ impl Engine {
                 .and_then(|doc| doc.note.day())
         };
         score::temporal(&self.index, &day_of, ctx, &self.weights, &mut c);
-        let link = |d: DocId| {
-            let (to_here, from_here) = (
-                ctx.links_in.binary_search(&d).is_ok(),
-                ctx.links_out.binary_search(&d).is_ok(),
-            );
-            match (to_here, from_here) {
-                (true, true) => Some("linked both ways"),
-                (true, false) => Some("links here"),
-                (false, true) => Some("linked from here"),
-                (false, false) => None,
-            }
-        };
         let named = |d: DocId| first.binary_search(&d).is_ok();
-        let fact = |d: DocId| link(d).is_some() || carrying.binary_search(&d).is_ok();
+        let fact = |d: DocId| facts.binary_search(&d).is_ok();
         let mut ranked = score::combine(c, &self.weights, &|d| fact(d) || named(d));
         // A stable sort, so the notes being named and the rest each keep their order.
         ranked.sort_by_key(|&(d, ..)| !named(d));
@@ -440,22 +483,21 @@ impl Engine {
                 if !opts.include_archived && doc.note.archived {
                     return None;
                 }
-                match link(d) {
-                    Some(text) => reasons.insert(
+                // The limit is on suggestions. What is a fact or named is always there.
+                if !named(d) && !fact(d) {
+                    suggestions += 1;
+                    if suggestions > opts.limit {
+                        return None;
+                    }
+                }
+                if let Some(text) = link_reason(ctx.links_in, ctx.links_out, d) {
+                    reasons.insert(
                         0,
                         Reason {
                             scorer: "link",
                             text: text.to_owned(),
                         },
-                    ),
-                    None if named(d) || fact(d) => {}
-                    // The limit is on suggestions. What is a fact or named is always there.
-                    None => {
-                        suggestions += 1;
-                        if suggestions > opts.limit {
-                            return None;
-                        }
-                    }
+                    );
                 }
                 if named(d) {
                     reasons.insert(
@@ -528,6 +570,20 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     labels
 }
 
+/// How a note is linked to the note being looked around, from the notes that link to it and the
+/// notes it links to, each sorted. It is a fact, and reads as one.
+fn link_reason(links_in: &[DocId], links_out: &[DocId], d: DocId) -> Option<&'static str> {
+    match (
+        links_in.binary_search(&d).is_ok(),
+        links_out.binary_search(&d).is_ok(),
+    ) {
+        (true, true) => Some("linked both ways"),
+        (true, false) => Some("links here"),
+        (false, true) => Some("linked from here"),
+        (false, false) => None,
+    }
+}
+
 /// What was typed, as the words that are complete and the word still being typed. The last word
 /// is still being typed unless whitespace follows it. A date counts as a date, which the time
 /// scorer reads, and not as the numbers in it, which would find every note with a 16 in it.
@@ -569,6 +625,17 @@ mod tests {
 
     fn ids<'a>(hits: &[Hit<'a>]) -> Vec<&'a str> {
         hits.iter().map(|h| h.note.id.as_str()).collect()
+    }
+
+    /// The neighbourhood of a note alone.
+    fn near<'a>(e: &'a Engine, id: &str, opts: &SearchOptions) -> Vec<Hit<'a>> {
+        let id = NoteId::new(id);
+        let place = Place {
+            note: Some(&id),
+            labels: &[],
+            written: "",
+        };
+        e.around(&place, opts)
     }
 
     fn has_reason(hit: &Hit, scorer: &str, contains: &str) -> bool {
@@ -632,7 +699,7 @@ mod tests {
         );
         assert!(e.named_in("[[Nowhere]] and no brackets").is_empty());
         assert!(
-            e.related(&id("prog"), &SearchOptions::default())
+            near(&e, "prog", &SearchOptions::default())
                 .iter()
                 .all(|h| !h.linked),
             "nothing is linked until a note is saved with its links"
@@ -679,8 +746,7 @@ mod tests {
             ..Default::default()
         };
         let linked = |e: &Engine, id: &str| -> Vec<String> {
-            let mut ids: Vec<String> = e
-                .related(&NoteId::new(id), &no_suggestions)
+            let mut ids: Vec<String> = near(e, id, &no_suggestions)
                 .iter()
                 .inspect(|h| assert!(h.linked))
                 .map(|h| h.note.id.to_string())
@@ -693,7 +759,7 @@ mod tests {
             ["child", "profile", "sibling"],
             "linked notes are there whatever the limit, and share no words with the hub"
         );
-        let around = e.related(&NoteId::new("hub"), &SearchOptions::default());
+        let around = near(&e, "hub", &SearchOptions::default());
         let hit = |id: &str| around.iter().find(|h| h.note.id.as_str() == id).unwrap();
         assert!(has_reason(hit("child"), "link", "links here"));
         assert!(has_reason(hit("profile"), "link", "linked from here"));
@@ -701,7 +767,7 @@ mod tests {
         assert!(around.iter().all(|h| h.note.id.as_str() != "far"));
 
         // From a child, the hub is linked and the other child is a suggestion with its reason.
-        let around = e.related(&NoteId::new("child"), &SearchOptions::default());
+        let around = near(&e, "child", &SearchOptions::default());
         assert_eq!(ids(&around), ["hub", "sibling"]);
         assert!(around[0].linked && !around[1].linked);
         assert!(has_reason(&around[1], "explicit", "also links trainingapp"));
@@ -816,7 +882,7 @@ mod tests {
         assert!(!ids(&e.search("boiler service", &live)).contains(&"doc"));
 
         // A neighbourhood has no name in it to go first.
-        let around = e.related(&NoteId::new("a"), &opts);
+        let around = near(&e, "a", &opts);
         assert!(around.iter().all(|h| !has_reason(h, "name", "")));
     }
 
@@ -890,14 +956,11 @@ mod tests {
     }
 
     #[test]
-    fn related_excludes_itself() {
+    fn a_notes_neighbourhood_leaves_it_out() {
         let e = engine(&[("a", "alpha beta"), ("b", "alpha gamma"), ("c", "delta")]);
-        let hits = e.related(&NoteId::new("a"), &SearchOptions::default());
+        let hits = near(&e, "a", &SearchOptions::default());
         assert_eq!(ids(&hits), ["b"]);
-        assert!(
-            e.related(&NoteId::new("missing"), &SearchOptions::default())
-                .is_empty()
-        );
+        assert!(near(&e, "missing", &SearchOptions::default()).is_empty());
     }
 
     #[test]

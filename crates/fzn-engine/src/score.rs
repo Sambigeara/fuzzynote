@@ -120,7 +120,7 @@ pub(crate) struct Context<'a> {
     pub prefix: Option<&'a str>,
     pub labels: &'a [QueryLabel],
     pub dates: &'a [Day],
-    /// The day to measure proximity from: today when typing, the note's own day for `related`.
+    /// The day to measure proximity from: today when typing, the note's own day around a note.
     pub day: Option<Day>,
     pub exclude: Option<DocId>,
     /// Notes that link to the note being looked around, sorted.
