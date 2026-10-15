@@ -1,21 +1,35 @@
-//! The terminal face: one input, one list, one preview, with the original fzn keys.
+//! The terminal face: one line, the rows under it, and one cursor that moves between them.
 //!
 //! The device is the app. This is what a terminal adds to it: which key asks for what, editing
-//! the top line, painting the view, and carrying out what the device asks for in return, which
-//! is keeping lines in the space's directory, saying things to the relay, running your editor,
-//! the clipboard and opening a URL.
+//! the line and the head of the row the cursor is on, painting the view, and carrying out what
+//! the device asks for in return, which is keeping lines in the space's directory, saying things
+//! to the relay, running your editor, the clipboard and opening a URL.
 //!
-//! The input is the top line. Down moves onto the list, Up and Escape come back to the top line,
-//! and typing always goes to the top line. A chord acts on the top line when the cursor is there
-//! and on the selected note otherwise, as it did in fzn: Enter writes or goes in, Ctrl-D clears
-//! or deletes, Ctrl-V shows archived notes or archives. Escape steps back out of a note, and
-//! outside any note two of them quit. Notes are edited in your editor. The footer shows only the
-//! keys that apply where the cursor is.
+//! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and
+//! goes to the note it wrote or, with nothing on it, opens a new row at the top to write in, and
+//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, and
+//! typing changes it and is written at once, as it was in fzn, with its date words written out
+//! when the arrows up and down, or Escape, leave it. Enter opens a new note under it, so that a
+//! run of notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your
+//! editor, which is where a body is written. Right at the end of the head goes in, and at the end
+//! of the line goes into the tag, person, day or note the line names; short of the end it is the
+//! caret's, as Left is. A chord acts on the note where on the line it acts on the line, as it did
+//! in fzn: Ctrl-D deletes or clears, Ctrl-V archives or shows archived notes, and Ctrl-U puts a
+//! changed head back before it undoes anything else. Escape comes back a rung at a time: off the
+//! row, off the text on the line, out of the place, and on an empty line outside any place two
+//! of them quit. The footer shows only the keys that apply where the cursor is.
+//!
+//! The screen is painted by hand and flat, in the terminal's own colours, because the cursor has
+//! to land in a row whose height depends on what is under it, and because there is nothing to
+//! frame: the terminal's cursor in a bold head is the row being written in, and dim is what can
+//! be ignored. A status row is there only while there is something to say, and each key clears
+//! what the one before it said.
 //!
 //! With a relay named, a thread holds the socket and the app hears from it between keys: what
 //! the relay says goes to the device, and what the device wants kept or said comes back here to
-//! be done, like anything else it asks for. The status row says how sync is going. Nothing is
-//! reread from the directory while the app runs, since nothing else writes it.
+//! be done, like anything else it asks for. Nothing is said while sync works, and `not syncing`
+//! while it does not. Nothing is reread from the directory while the app runs, since nothing
+//! else writes it.
 
 use std::fs;
 use std::io::Write as _;
@@ -25,12 +39,11 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use fzn_engine::text::fit;
-use fzn_engine::{Action, Day, Device, Editing, Hint, Key, Moment, Todo, Weights, time};
+use fzn_engine::{Action, Day, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Style, Stylize};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::{Line, Span};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::store::{self, Logs};
@@ -39,8 +52,11 @@ use crate::system::System;
 
 /// How long the keyboard is waited on before the relay is listened to.
 const TICK: Duration = Duration::from_millis(50);
-/// The most the breadcrumb on the top line takes up.
-const CRUMB_MAX: usize = 70;
+/// The most of a body shown under its row before the rest is left to a `…`.
+const BODY_ROWS: usize = 6;
+/// What the status row says for as long as the passphrase opens nothing the relay has sent.
+const WRONG_KEY: &str =
+    "the passphrase does not open this space: quit, and run fzn key to enter it again";
 
 pub struct App {
     device: Device,
@@ -48,48 +64,75 @@ pub struct App {
     /// The space's directory, where the writer's id is kept.
     dir: PathBuf,
     editor: String,
-    /// What the top line is headed with: the app's name, and the space when it is not the usual one.
+    /// What the path row is headed with: the app's name, and the space when it is not the usual one.
     title: String,
-    /// Cursor position in the top line, in characters.
+    /// Cursor position in the line, in characters.
     cursor: usize,
-    /// Where the list is scrolled to.
-    list: ListState,
+    /// Cursor position in the head of the row the cursor is on, in characters.
+    row_cursor: usize,
+    /// The first row painted, kept so that the list moves only when the cursor would leave it.
+    top: usize,
     /// Whether the previous key was Escape, which makes a second one quit.
     escaped: bool,
     /// The relay this space syncs with, as the status row names it, and the link to it.
     sync: Option<(String, Link)>,
-    /// How sync is going, for the status row.
-    synced: String,
+    /// Whether the relay has been lost or could not be reached, and is not back yet.
+    not_syncing: bool,
+    /// Why the relay could not be reached, said until it is.
+    unreachable: Option<String>,
 }
 
 enum Flow {
     Continue,
     /// A note is to be opened in the editor, which needs the terminal.
-    Edit {
+    Editor {
         id: String,
         text: String,
     },
     Quit,
 }
 
-/// What a chord asks for. A chord acts on the top line when the cursor is there and on the
-/// selected note otherwise. Escape comes back a step: off the list, then out of the note.
-fn bound(code: KeyCode, ctrl: bool, on_top: bool, zoomed: bool) -> Option<Action> {
+/// Where the cursor is, which decides what a key asks for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Line,
+    /// On a row, whose head is the field.
+    Row,
+}
+
+/// What a key asks for. A chord acts on the line when the cursor is there and on the note under
+/// the cursor otherwise. `at_end` and `empty` are of the text the cursor is in, the line or the
+/// head. The arrow goes in only from its end, since short of it the arrow is the caret's: from a
+/// head into the note, and from the line into what the line names, which the session decides.
+/// Backspace takes a row away only when its head is empty; with text in the head it is the
+/// caret's. Escape comes back a rung: off the row, then off the text on the line, then out of
+/// the place.
+fn bound(
+    code: KeyCode,
+    ctrl: bool,
+    place: Place,
+    zoomed: bool,
+    at_end: bool,
+    empty: bool,
+) -> Option<Action> {
+    let on_line = place == Place::Line;
     Some(match (code, ctrl) {
-        (KeyCode::Enter, _) if on_top => Action::Write,
-        (KeyCode::Enter, _) => Action::GoIn,
-        (KeyCode::Esc, _) if !on_top => Action::Select(None),
+        (KeyCode::Enter, _) => Action::Write,
+        (KeyCode::Backspace, _) if !on_line && empty => Action::Erase,
+        (KeyCode::Char('o'), true) if !on_line => Action::Editor,
+        (KeyCode::Right, _) if at_end => Action::GoIn,
+        (KeyCode::Esc, _) if !on_line => Action::Select(None),
+        (KeyCode::Esc, _) if !empty => Action::Type(String::new()),
         (KeyCode::Esc, _) if zoomed => Action::Back,
-        (KeyCode::Char('d'), true) if on_top => Action::Type(String::new()),
+        (KeyCode::Char('d'), true) if on_line => Action::Type(String::new()),
         (KeyCode::Char('d'), true) => Action::Delete,
-        (KeyCode::Char('v'), true) if on_top => Action::ShowArchived,
+        (KeyCode::Char('v'), true) if on_line => Action::ShowArchived,
         (KeyCode::Char('v'), true) => Action::Archive,
-        (KeyCode::Char('o'), true) => Action::Edit,
+        (KeyCode::Char('c'), true) if !on_line => Action::Copy,
+        (KeyCode::Char('_' | '/'), true) if !on_line => Action::OpenUrl,
         (KeyCode::Char('u'), true) => Action::Undo,
         (KeyCode::Char('r'), true) => Action::Redo,
         (KeyCode::Char('l'), true) => Action::Link,
-        (KeyCode::Char('c'), true) => Action::Copy,
-        (KeyCode::Char('_' | '/'), true) => Action::OpenUrl,
         (KeyCode::Char('b'), true) => Action::ShowScores,
         (KeyCode::Up, _) => Action::Move(-1),
         (KeyCode::Down, _) => Action::Move(1),
@@ -102,26 +145,47 @@ fn bound(code: KeyCode, ctrl: bool, on_top: bool, zoomed: bool) -> Option<Action
 /// The key that asks for an action, as the footer names it.
 fn key_for(action: &Action) -> &'static str {
     match action {
-        Action::Write | Action::GoIn => "Enter",
+        Action::Write => "Enter",
+        Action::Editor => "^O",
+        Action::GoIn => "→",
         Action::Move(_) => "↓",
-        Action::Select(_) | Action::Back => "Esc",
+        Action::Select(_) | Action::Back | Action::Done => "Esc",
+        // Clearing the line is the rung Escape takes while it has text; Ctrl-D is its second key.
+        Action::Type(text) if text.is_empty() => "Esc",
         Action::ShowArchived | Action::Archive => "^V",
         Action::Delete => "^D",
-        Action::Edit => "^O",
         Action::Link => "^L",
         Action::Copy => "^C",
         Action::OpenUrl => "^_",
         Action::Undo => "^U",
         Action::Redo => "^R",
         Action::ShowScores => "^B",
-        // Typing and the editor ask for these, not a chord.
-        Action::Type(_) | Action::Save { .. } => "",
+        // Typing and the editor ask for the rest, not a key. A body is written in the editor here,
+        // so opening one in place has no key either. Backspace on an empty row asks for Erase,
+        // and the footer does not name it, since taking an empty line away is what Backspace
+        // does everywhere.
+        Action::Edit
+        | Action::Type(_)
+        | Action::Edited(_)
+        | Action::Save { .. }
+        | Action::Erase => "",
     }
 }
 
-/// The keys that do something where the cursor is, for the second footer row. Escape is always
-/// last, and where the session has no way back for it to take, two of them quit.
-fn footer(hints: &[Hint]) -> String {
+/// What is on offer that a key asks for where the caret is: not what no key asks for, and not
+/// going in while the caret is short of the end of its text, where the arrow is the caret's.
+fn keyed(hints: &[Hint], at_end: bool) -> Vec<&Hint> {
+    hints
+        .iter()
+        .filter(|hint| !key_for(&hint.action).is_empty())
+        .filter(|hint| at_end || hint.action != Action::GoIn)
+        .collect()
+}
+
+/// The keys that do something where the cursor is, for the footer. Escape is always last, and
+/// where the session has no way back for it to take, two of them quit.
+fn footer(hints: &[Hint], at_end: bool, room: usize) -> String {
+    let hints = keyed(hints, at_end);
     let mut keys: Vec<String> = hints
         .iter()
         .map(|hint| format!("{} {}", key_for(&hint.action), hint.label))
@@ -129,11 +193,16 @@ fn footer(hints: &[Hint]) -> String {
     if hints.last().is_none_or(|h| key_for(&h.action) != "Esc") {
         keys.push("Esc Esc quits".to_owned());
     }
-    keys.join(" · ")
+    // A narrow terminal loses chords from the middle, never the first or the way back.
+    let width = |keys: &[String]| keys.iter().map(|k| k.chars().count() + 2).sum::<usize>() - 2;
+    while keys.len() > 2 && width(&keys) > room {
+        keys.remove(keys.len() - 2);
+    }
+    keys.join("  ")
 }
 
-/// What a key does to the top line, when it is one that edits it or moves along it: the line as
-/// it then reads, and where its cursor then is, in characters.
+/// What a key does to a line of text, the line or a row's head, when it is one that edits
+/// it or moves along it: the text as it then reads, and where its cursor then is, in characters.
 fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(String, usize)> {
     let end = line.chars().count();
     let cursor = cursor.min(end);
@@ -170,9 +239,9 @@ fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(Strin
     })
 }
 
-/// Where you are: the app, then each note gone into, outermost first, in at most `max`
+/// Where you are: the app, then each place gone into, outermost first, in at most `max`
 /// characters. Past three steps the middle ones give way to `…`. Every step gets an equal share
-/// of the room, and what a short head does not use goes to the longer ones.
+/// of the room, and what a short step does not use goes to the longer ones.
 fn breadcrumb(title: &str, heads: &[&str], max: usize) -> String {
     let steps: Vec<&str> = match heads {
         [first, .., before, last] if heads.len() > 3 => vec![first, "…", before, last],
@@ -274,13 +343,9 @@ fn edit_in(editor: &str, id: &str, text: &str) -> Result<Result<String, String>>
     Ok(Ok(edited))
 }
 
-fn format_day_of(moment: Option<Moment>) -> String {
-    moment.map_or_else(|| "?".to_owned(), |m| time::format_day(m.day()))
-}
-
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-/// The dates that the date words on the top line stand for, to show beside it.
+/// The dates that the date words on the line stand for, to show at the end of its row.
 fn dates_shown(dates: &[Day]) -> String {
     let dates: Vec<String> = dates
         .iter()
@@ -289,28 +354,197 @@ fn dates_shown(dates: &[Day]) -> String {
     if dates.is_empty() {
         String::new()
     } else {
-        format!("  → {}", dates.join(", "))
+        format!("→ {}", dates.join(", "))
     }
 }
 
-/// The first footer row, in at most `width` characters: what just happened, how many notes
-/// there are, and how sync is going when there is a relay to sync with. What just happened is
-/// the part that gives way when there is not room, so the rest is always there to be read.
-fn status_row(status: &str, notes: usize, synced: &str, width: usize) -> String {
-    let notes = match notes {
-        1 => "1 note".to_owned(),
-        n => format!("{n} notes"),
-    };
-    let standing = if synced.is_empty() {
-        notes
-    } else {
-        format!("{notes} · {synced}")
-    };
-    if status.is_empty() {
-        return standing;
+/// A note's head, its first line, and the body under it, without the blank lines between.
+fn head_and_body(text: &str) -> (&str, &str) {
+    match text.split_once('\n') {
+        Some((head, body)) => (head, body.trim_start_matches(['\n', '\r']).trim_end()),
+        None => (text, ""),
     }
-    let room = width.saturating_sub(standing.chars().count() + 3);
-    format!("{} · {standing}", fit(status, room))
+}
+
+/// The note the cursor is on, if it is on one. A row is landed on when this changes, which it
+/// does when the cursor moves and also when the note at the same place on the list is another.
+fn under_cursor(view: &View) -> Option<String> {
+    view.cursor
+        .and_then(|i| view.rows.get(i))
+        .map(|row| row.id.clone())
+}
+
+/// What follows a row's head, to be dimmed: a mark if there is more to read, the notes it links
+/// to, and why it is listed.
+fn tail(row: &Row) -> String {
+    let mut tail = String::new();
+    if row.has_body {
+        tail.push_str(" ¶");
+    }
+    if !row.links.is_empty() {
+        tail.push_str("  → ");
+        tail.push_str(&row.links.join(", "));
+    }
+    if !row.reasons.is_empty() {
+        tail.push_str("  ");
+        tail.push_str(&row.reasons.join(" · "));
+    }
+    tail
+}
+
+/// Text broken between words into rows of at most `width` characters, a word longer than a row
+/// across as many as it takes. Each line of the text starts a row of its own.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let (mut row, mut len) = (String::new(), 0);
+        for word in line.split(' ') {
+            let n = word.chars().count();
+            if len > 0 && len + 1 + n > width {
+                rows.push(std::mem::take(&mut row));
+                len = 0;
+            } else if len > 0 {
+                row.push(' ');
+                len += 1;
+            }
+            for c in word.chars() {
+                if len == width {
+                    rows.push(std::mem::take(&mut row));
+                    len = 0;
+                }
+                row.push(c);
+                len += 1;
+            }
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// A body as rows indented by `indent` in a screen `width` wide, at most [`BODY_ROWS`] of them
+/// and a dim `…` when there is more.
+fn body_rows(body: &str, indent: usize, width: usize) -> Vec<Line<'static>> {
+    if body.is_empty() {
+        return Vec::new();
+    }
+    let pad = " ".repeat(indent);
+    let wrapped = wrap(body, width.saturating_sub(indent + 1));
+    let more = wrapped.len() > BODY_ROWS;
+    let mut rows: Vec<Line> = wrapped
+        .into_iter()
+        .take(BODY_ROWS)
+        .map(|row| Line::from(format!("{pad}{row}")))
+        .collect();
+    if more {
+        rows.push(Line::from(format!("{pad}…")).dim());
+    }
+    rows
+}
+
+/// The score before a row's head, when scores are shown.
+fn score_of(row: &Row, shown: bool) -> String {
+    match (shown, row.score) {
+        (true, Some(score)) => format!("{score:.2} "),
+        _ => String::new(),
+    }
+}
+
+/// A row of the list as it is when the cursor is not on it: the head, then as much of the tail
+/// as there is room for. The head is cut only when it alone does not fit.
+fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
+    let score = score_of(row, scores);
+    let room = width.saturating_sub(2 + score.chars().count());
+    let head = fit(&row.head, room);
+    let rest = room - head.chars().count();
+    let tail = tail(row);
+    let mut spans = vec![Span::raw(" "), Span::raw(score).dim(), Span::raw(head)];
+    if !tail.is_empty() && rest > 3 {
+        spans.push(Span::raw(fit(&tail, rest)).dim());
+    }
+    let line = Line::from(spans);
+    if row.archived { line.dim() } else { line }
+}
+
+/// The row the cursor is on, `head` being its head as it is now typed: the head bold and its date
+/// at the right, and its tail after the head or, when it does not fit there, on a row of its own
+/// under it, since this is the row being asked about. A head too long for the room scrolls so
+/// that the caret, `caret` characters in, stays in sight; the column it is then drawn at comes
+/// back with the rows.
+fn selected_rows(
+    row: &Row,
+    head: &str,
+    caret: usize,
+    scores: bool,
+    width: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let score = score_of(row, scores);
+    let date = row
+        .updated
+        .map_or_else(String::new, |m| time::format_day(m.day()));
+    let dated = if date.is_empty() { 0 } else { date.len() + 2 };
+    let room = width
+        .saturating_sub(2 + score.chars().count() + dated)
+        .max(1);
+    let caret = caret.min(head.chars().count());
+    let scroll = caret.saturating_sub(room - 1);
+    let head: String = head.chars().skip(scroll).take(room).collect();
+    let x = 1 + score.chars().count() + caret - scroll;
+    let tail = tail(row);
+    let fits = tail.chars().count() <= room - head.chars().count();
+    let mut used = 1 + score.chars().count() + head.chars().count();
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::raw(score).dim(),
+        Span::raw(head).bold(),
+    ];
+    if fits {
+        used += tail.chars().count();
+        spans.push(Span::raw(tail.clone()).dim());
+    }
+    if !date.is_empty() {
+        let pad = width.saturating_sub(used + date.len() + 1);
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.push(Span::raw(date).dim());
+    }
+    let mut rows = vec![Line::from(spans)];
+    if !fits {
+        let tail = fit(tail.trim_start(), width.saturating_sub(4));
+        rows.push(Line::from(format!("   {tail}")).dim());
+    }
+    if row.archived {
+        rows = rows.into_iter().map(Stylize::dim).collect();
+    }
+    (rows, x)
+}
+
+/// A row of the list as the rows of the screen it takes, and where in them the cursor is when it
+/// is on that row: which of them, and how far along.
+struct Painted {
+    lines: Vec<Line<'static>>,
+    cursor: Option<(usize, usize)>,
+}
+
+/// Paints one row of the screen, `y` rows down, if the screen reaches that far.
+fn paint(frame: &mut Frame, y: usize, x: usize, line: Line) {
+    let area = frame.area();
+    let (Ok(y), Ok(x)) = (u16::try_from(y), u16::try_from(x)) else {
+        return;
+    };
+    if y < area.height && x < area.width {
+        let at = Rect::new(area.x + x, area.y + y, area.width - x, 1);
+        frame.render_widget(line, at);
+    }
+}
+
+/// Paints text dimmed so that it ends a column short of the right edge, as dates and the state
+/// of things are.
+fn paint_right(frame: &mut Frame, y: usize, text: &str) {
+    let width = usize::from(frame.area().width);
+    let len = text.chars().count();
+    if !text.is_empty() && len + 2 < width {
+        paint(frame, y, width - len - 1, Line::from(text.to_owned()).dim());
+    }
 }
 
 impl App {
@@ -335,10 +569,12 @@ impl App {
             editor,
             title,
             cursor: 0,
-            list: ListState::default(),
+            row_cursor: 0,
+            top: 0,
             escaped: false,
             sync: None,
-            synced: String::new(),
+            not_syncing: false,
+            unreachable: None,
         };
         for (log, lines) in loaded {
             let todo = app.device.load(&log, lines);
@@ -349,21 +585,23 @@ impl App {
         }
         let todo = app.device.opened();
         app.carry_out(todo)?;
+        // An empty space says how to begin, until the first key.
         if app.device.view().status.is_empty() {
-            let status = match (app.device.unopened(), app.device.view().notes) {
-                (0, 0) => {
-                    "no notes yet: type and press Enter, or see fzn --help to import".to_owned()
-                }
-                (0, _) => dir.display().to_string(),
-                (shut, _) => format!("{shut} lines here that this passphrase does not open"),
-            };
-            app.device.say(status);
+            match (app.device.unopened(), app.device.view().notes) {
+                (0, 0) => app
+                    .device
+                    .say("no notes yet: type and press Enter, or see fzn --help to import"),
+                (0, _) => {}
+                (shut, _) => app.device.say(format!(
+                    "{shut} lines here that this passphrase does not open"
+                )),
+            }
         }
         Ok(app)
     }
 
     /// Syncs with a relay over a link to the thread that holds the socket. `relay` is how the
-    /// status row names it.
+    /// status row names it when it cannot be reached.
     pub fn sync(&mut self, relay: String, link: Link) {
         self.sync = Some((relay, link));
     }
@@ -388,7 +626,7 @@ impl App {
             {
                 match self.handle(key)? {
                     Flow::Continue => {}
-                    Flow::Edit { id, text } => self.edit(terminal, id, &text)?,
+                    Flow::Editor { id, text } => self.hand_to_editor(terminal, id, &text)?,
                     Flow::Quit => return Ok(()),
                 }
             }
@@ -398,26 +636,54 @@ impl App {
     fn handle(&mut self, key: KeyEvent) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
-        let (on_top, zoomed, line) = {
+        let (zoomed, line, field, (place, at_end, empty)) = {
             let view = self.device.view();
-            (
-                view.cursor.is_none(),
-                !view.path.is_empty(),
-                view.line.to_owned(),
-            )
+            let field = view.field.as_ref().map(|field| field.text.to_owned());
+            let caret = self.caret(&view);
+            (!view.path.is_empty(), view.line.to_owned(), field, caret)
         };
-        if let Some(action) = bound(key.code, ctrl, on_top, zoomed) {
+        // Each key clears what the one before it said, so the status row says only what this
+        // one did.
+        self.device.say("");
+        if (key.code, ctrl) == (KeyCode::Char('q'), true) {
+            if place == Place::Row {
+                self.act(Action::Done)?;
+            }
+            return Ok(Flow::Quit);
+        }
+        if let Some(action) = bound(key.code, ctrl, place, zoomed, at_end, empty) {
             return self.act(action);
         }
-        match (key.code, ctrl) {
-            (KeyCode::Esc, _) if escaped => return Ok(Flow::Quit),
-            (KeyCode::Esc, _) => {
+        match key.code {
+            KeyCode::Esc if escaped => return Ok(Flow::Quit),
+            KeyCode::Esc => {
                 self.escaped = true;
                 self.device.say("Escape again to quit");
             }
-            (KeyCode::Char('q'), true) => return Ok(Flow::Quit),
-            (code, _) => match edited(&line, self.cursor, code, ctrl) {
-                // Typing always goes to the top line, so the device is told what it now reads.
+            // On a row its head is edited, and the device is told what the whole note now
+            // reads, the body under the head as it was. Left at the start of the head stays
+            // there: Esc is the one way back.
+            code if field.is_some() => {
+                let text = field.unwrap_or_default();
+                let (head, body) = match text.split_once('\n') {
+                    Some((head, body)) => (head, Some(body)),
+                    None => (text.as_str(), None),
+                };
+                match edited(head, self.row_cursor, code, ctrl) {
+                    Some((to, cursor)) if to != head => {
+                        self.row_cursor = cursor;
+                        let text = match body {
+                            Some(body) => format!("{to}\n{body}"),
+                            None => to,
+                        };
+                        return self.act(Action::Edited(text));
+                    }
+                    Some((_, cursor)) => self.row_cursor = cursor,
+                    None => {}
+                }
+            }
+            // On the line typing goes to the line, so the device is told what it now reads.
+            code => match edited(&line, self.cursor, code, ctrl) {
                 Some((to, cursor)) if to != line => {
                     let flow = self.act(Action::Type(to))?;
                     self.cursor = cursor;
@@ -430,16 +696,38 @@ impl App {
         Ok(Flow::Continue)
     }
 
+    /// Where the cursor is, and of the text it is in, the head of its row or the line, whether
+    /// the caret is at its end and whether it is empty.
+    fn caret(&self, view: &View) -> (Place, bool, bool) {
+        let (place, text, caret) = match &view.field {
+            Some(field) => (Place::Row, head_and_body(field.text).0, self.row_cursor),
+            None => (Place::Line, view.line, self.cursor),
+        };
+        (place, caret >= text.chars().count(), text.is_empty())
+    }
+
     /// Asks the device for something, and carries out what it asks for in return.
     fn act(&mut self, action: Action) -> Result<Flow> {
-        let line = self.device.view().line.to_owned();
+        let (line, was_on) = {
+            let view = self.device.view();
+            (view.line.to_owned(), under_cursor(&view))
+        };
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
+        let view = self.device.view();
         // A line the device changed, as it does on the way into a note and out of one, has its
-        // cursor at the end.
-        let now = self.device.view().line;
-        if now != line {
-            self.cursor = now.chars().count();
+        // cursor at the end, and so does the head of a row just landed on. A head put back or
+        // written in place keeps its caret where it was, if the head is still that long.
+        if view.line != line {
+            self.cursor = view.line.chars().count();
+        }
+        if let Some(field) = &view.field {
+            let end = head_and_body(field.text).0.chars().count();
+            self.row_cursor = if under_cursor(&view) == was_on {
+                self.row_cursor.min(end)
+            } else {
+                end
+            };
         }
         Ok(flow)
     }
@@ -459,7 +747,7 @@ impl App {
         }
         if let Some((_, link)) = &self.sync {
             for text in todo.send {
-                // A thread that has gone is a relay that is not there, which the row says.
+                // A thread that has gone is a relay that is not there, which the footer says.
                 let _ = link.to_relay.send(text);
             }
         }
@@ -473,15 +761,14 @@ impl App {
         {
             self.device.say(why);
         }
-        Ok(match todo.edit {
-            Some(Editing { id, text }) => Flow::Edit { id, text },
+        Ok(match todo.editor {
+            Some(Editing { id, text }) => Flow::Editor { id, text },
             None => Flow::Continue,
         })
     }
 
     /// Takes in what the thread holding the socket has said since it was last asked, and says
-    /// whether there was anything. How sync is going stays on the status row; why a relay
-    /// cannot be reached is said once.
+    /// whether there was anything. Why a relay cannot be reached is kept to be said until it can.
     fn hear(&mut self) -> Result<bool> {
         let Some((relay, link)) = &self.sync else {
             return Ok(false);
@@ -492,7 +779,8 @@ impl App {
         for event in &heard {
             match event {
                 sync::Event::Connected => {
-                    self.synced = format!("syncing with {relay}");
+                    self.not_syncing = false;
+                    self.unreachable = None;
                     let todo = self.device.connected();
                     self.carry_out(todo)?;
                 }
@@ -501,27 +789,43 @@ impl App {
                     self.carry_out(todo)?;
                 }
                 sync::Event::Disconnected => {
-                    self.synced = "not syncing".to_owned();
+                    self.not_syncing = true;
                     self.device.disconnected();
                 }
                 sync::Event::Unreachable(why) => {
-                    self.synced = "not syncing".to_owned();
-                    self.device.say(format!("{relay}: {why}"));
+                    self.not_syncing = true;
+                    self.unreachable = Some(format!("{relay}: {why}"));
                 }
             }
         }
-        // Lines from the relay that this key does not open are said as soon as they come, and
-        // not only when something is next written.
+        // Lines from the relay that this key does not open are said as soon as they come, in
+        // the face's own words, which say what to do about it.
         if verified && !self.device.key_verified() {
-            self.device.say(
-                "the passphrase does not open this space: quit, and run fzn key to enter it again",
-            );
+            self.device.say("");
         }
         Ok(!heard.is_empty())
     }
 
+    /// What the status row says: what the last key did, or what happened since, and when
+    /// nothing did, the trouble that lasts until it is put right. With none, there is no row.
+    fn status(&self) -> Option<String> {
+        let said = self.device.view().status;
+        if !said.is_empty() {
+            Some(said.to_owned())
+        } else if !self.device.key_verified() {
+            Some(WRONG_KEY.to_owned())
+        } else {
+            self.unreachable.clone()
+        }
+    }
+
     /// Gives the terminal over to the editor, and saves what it leaves.
-    fn edit(&mut self, terminal: &mut DefaultTerminal, id: String, text: &str) -> Result<()> {
+    fn hand_to_editor(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        id: String,
+        text: &str,
+    ) -> Result<()> {
         ratatui::restore();
         let edited = edit_in(&self.editor, &id, text);
         *terminal = ratatui::init();
@@ -535,143 +839,159 @@ impl App {
         Ok(())
     }
 
+    /// Paints the view from the top down: the path in a zoom, the line, the body of the note
+    /// being looked around, the list, and at the foot the status when there is one and the
+    /// keys.
     fn draw(&mut self, frame: &mut Frame) {
+        let status = self.status();
         let view = self.device.view();
-        let [input_area, list_area, preview_area, status_area] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(9),
-            Constraint::Length(2),
-        ])
-        .areas(frame.area());
+        let (_, at_end, _) = self.caret(&view);
+        let width = usize::from(frame.area().width);
+        let height = usize::from(frame.area().height);
+        let zoomed = !view.path.is_empty();
+        let mut cursor = None;
+        let mut y = 0;
 
-        let inner_width = usize::from(input_area.width.saturating_sub(4)).max(1);
-        let scroll = self.cursor.saturating_sub(inner_width - 1);
-        let crumb_max = usize::from(input_area.width.saturating_sub(2)).min(CRUMB_MAX);
-        let input = Paragraph::new(Line::from(vec![
-            Span::raw("> ").dim(),
-            Span::raw(view.line),
-            Span::raw(dates_shown(&view.dates)).dim(),
-        ]))
-        .scroll((0, scroll as u16))
-        .block(Block::bordered().title(breadcrumb(&self.title, &view.path, crumb_max)));
-        frame.render_widget(input, input_area);
-        frame.set_cursor_position((
-            input_area.x + 3 + (self.cursor - scroll) as u16,
-            input_area.y + 1,
-        ));
+        if zoomed {
+            let crumb = breadcrumb(&self.title, &view.path, width.saturating_sub(1));
+            paint(frame, y, 0, Line::from(crumb).dim());
+            y += 1;
+        }
 
-        let searching = !view.line.trim().is_empty();
+        // The line, scrolled so that its cursor is in sight of whatever is said at its end.
         let archived = if view.archived_shown {
-            " · archived shown"
+            "archived shown"
         } else {
             ""
         };
-        let title = if let Some(head) = view.path.last() {
-            let linked = view.rows.iter().filter(|r| r.linked).count();
-            let counts = if searching {
-                format!("{} matching", view.rows.len())
+        let right = [dates_shown(&view.dates), archived.to_owned()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("  ");
+        let said = right.chars().count();
+        let room = width
+            .saturating_sub(2 + if said > 0 { said + 2 } else { 0 })
+            .max(1);
+        let scroll = self.cursor.saturating_sub(room - 1);
+        let shown: String = view.line.chars().skip(scroll).take(room).collect();
+        paint(frame, y, 1, Line::from(shown));
+        paint_right(frame, y, &right);
+        if view.cursor.is_none() {
+            cursor = Some((1 + self.cursor - scroll, y));
+        }
+        y += 1;
+
+        // The first result sits right under the line. Only a body shown there is set apart from
+        // the list by a row of nothing, so that its last line does not read as a row.
+        if let Some(here) = view.here.filter(|_| zoomed) {
+            let rows = body_rows(head_and_body(&here.text).1, 1, width);
+            let shown = !rows.is_empty();
+            for row in rows {
+                paint(frame, y, 0, row.dim());
+                y += 1;
+            }
+            if shown {
+                y += 1;
+            }
+        }
+
+        let mut blocks: Vec<Painted> = Vec::new();
+        for (i, row) in view.rows.iter().enumerate() {
+            let mut lines = Vec::new();
+            // In a zoom, what is linked is kept apart from what is only suggested. With text on
+            // the line the two are ranked together, and nothing is kept apart.
+            if zoomed
+                && view.line.trim().is_empty()
+                && i > 0
+                && view.rows[i - 1].linked
+                && !row.linked
+            {
+                lines.push(Line::default());
+            }
+            let at = lines.len();
+            let mut at_cursor = None;
+            // The row the cursor is on is drawn from the note as it is being typed, with the
+            // terminal's cursor in its head.
+            if view.cursor == Some(i) {
+                let text = view.field.as_ref().map_or(row.head.as_str(), |f| f.text);
+                let (head, body) = head_and_body(text);
+                let (rows, x) = selected_rows(row, head, self.row_cursor, view.scores_shown, width);
+                lines.extend(rows);
+                lines.extend(body_rows(body, 3, width));
+                at_cursor = Some((at, x));
             } else {
-                format!("{linked} linked, {} suggested", view.rows.len() - linked)
-            };
-            format!(" around {} · {counts}{archived} ", fit(head, 40))
-        } else if searching {
-            format!(" related · {}{archived} ", view.rows.len())
-        } else {
-            format!(" recent · {}{archived} ", view.rows.len())
-        };
-        let width = usize::from(list_area.width.saturating_sub(4));
-        let items: Vec<ListItem> = view
-            .rows
-            .iter()
-            .map(|row| {
-                let date = row
-                    .updated
-                    .map_or_else(|| " ".repeat(10), |m| time::format_day(m.day()));
-                let score = match (view.scores_shown, row.score) {
-                    (true, Some(s)) => format!("{s:.2} "),
-                    _ => String::new(),
-                };
-                let marker = if row.has_body { "▸ " } else { "  " };
-                let head_width = width.saturating_sub(date.len() + 1 + score.len() + 2);
-                let head = fit(&row.head, head_width);
-                // What the note is linked to follows its head, dimmed, where there is room.
-                let room = head_width - head.chars().count();
-                let links = if row.links.is_empty() || room < 6 {
-                    String::new()
-                } else {
-                    fit(&format!(" → {}", row.links.join(", ")), room)
-                };
-                let pad = room - links.chars().count();
-                let mut lines = vec![Line::from(vec![
-                    Span::raw(format!("{score}{marker}{head}")),
-                    Span::raw(links).dim(),
-                    Span::raw(format!("{:pad$} {date}", "")),
-                ])];
-                if !row.reasons.is_empty() {
-                    lines.push(
-                        Line::from(format!(
-                            "      {}",
-                            fit(&row.reasons.join(" · "), width.saturating_sub(6))
-                        ))
-                        .dim(),
-                    );
+                lines.push(row_line(row, view.scores_shown, width));
+            }
+            blocks.push(Painted {
+                lines,
+                cursor: at_cursor,
+            });
+        }
+
+        // The list moves only as far as it must to keep the cursor's row and its body in sight.
+        let bottom = height.saturating_sub(1 + usize::from(status.is_some()));
+        let room = bottom.saturating_sub(y);
+        match view.cursor {
+            None => self.top = 0,
+            Some(focus) => {
+                self.top = self.top.min(focus);
+                while self.top < focus
+                    && blocks[self.top..=focus]
+                        .iter()
+                        .map(|painted| painted.lines.len())
+                        .sum::<usize>()
+                        > room
+                {
+                    self.top += 1;
                 }
-                let item = ListItem::new(Text::from(lines));
-                if row.archived { item.dim() } else { item }
-            })
-            .collect();
-        let list = List::new(items)
-            .block(Block::bordered().title(title))
-            .highlight_style(Style::new().reversed())
-            .highlight_symbol("▶ ");
-        self.list.select(view.cursor);
-        frame.render_stateful_widget(list, list_area, &mut self.list);
+            }
+        }
+        'list: for painted in blocks.into_iter().skip(self.top) {
+            for (k, line) in painted.lines.into_iter().enumerate() {
+                if y >= bottom {
+                    break 'list;
+                }
+                if let Some((at, x)) = painted.cursor
+                    && at == k
+                {
+                    cursor = Some((x, y));
+                }
+                paint(frame, y, 0, line);
+                y += 1;
+            }
+        }
 
-        let shown = view
-            .cursor
-            .and_then(|i| view.rows.get(i))
-            .or(view.rows.first());
-        let (title, body) = match (shown, view.preview) {
-            (Some(row), Some(record)) => (
-                format!(
-                    " {}created {} · updated {}{}{} ",
-                    if view.cursor.is_none() {
-                        "top of list · "
-                    } else {
-                        ""
-                    },
-                    format_day_of(record.created),
-                    format_day_of(record.updated),
-                    if record.archived { " · archived" } else { "" },
-                    if row.links.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" · links {}", fit(&row.links.join(", "), 60))
-                    }
-                ),
-                record.text.as_str(),
-            ),
-            _ => (" nothing to show ".to_owned(), ""),
+        if let Some(status) = status {
+            let row = height.saturating_sub(2);
+            paint(
+                frame,
+                row,
+                1,
+                Line::from(fit(&status, width.saturating_sub(2))),
+            );
+        }
+        let foot = height.saturating_sub(1);
+        let syncing = if self.sync.is_some() && self.not_syncing {
+            "not syncing"
+        } else {
+            ""
         };
-        frame.render_widget(
-            Paragraph::new(body)
-                .wrap(Wrap { trim: false })
-                .block(Block::bordered().title(title)),
-            preview_area,
+        let keys_room = width.saturating_sub(2 + if syncing.is_empty() { 0 } else { 13 });
+        paint(
+            frame,
+            foot,
+            1,
+            Line::from(fit(&footer(&view.hints, at_end, keys_room), keys_room)).dim(),
         );
+        paint_right(frame, foot, syncing);
 
-        // Two rows, each clipped at the edge: what happened, then the keys that apply.
-        let footer = Text::from(vec![
-            Line::from(status_row(
-                view.status,
-                view.notes,
-                &self.synced,
-                usize::from(status_area.width),
-            )),
-            Line::from(footer(&view.hints)).dim(),
-        ]);
-        frame.render_widget(Paragraph::new(footer), status_area);
+        if let Some((x, y)) = cursor
+            && let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y))
+        {
+            let area = frame.area();
+            frame.set_cursor_position((area.x + x, area.y + y));
+        }
     }
 }
 
@@ -681,7 +1001,7 @@ mod tests {
     use crate::store::Store;
     use crate::store::tests::temp_dir;
     use fzn_engine::replica::{Header, Message, Out, Replica};
-    use fzn_engine::{Record, Seal};
+    use fzn_engine::{Moment, Record, Seal};
     use std::sync::mpsc::{self, Receiver, Sender};
 
     const WRITER: &str = "3f9a01c2";
@@ -741,9 +1061,14 @@ mod tests {
         }
     }
 
+    /// Writes a note from the line and comes back to the line for the next: Enter takes the
+    /// cursor to the note it wrote, and Esc brings it back.
     fn write(app: &mut App, text: &str) {
         type_in(app, text);
         press(app, KeyCode::Enter, false);
+        if on_note(app) {
+            press(app, KeyCode::Esc, false);
+        }
     }
 
     fn heads(app: &App) -> Vec<String> {
@@ -764,6 +1089,53 @@ mod tests {
         app.device.view().cursor.is_some()
     }
 
+    /// What the field under the cursor reads, if the cursor is on a row.
+    fn field(app: &App) -> Option<String> {
+        app.device.view().field.map(|field| field.text.to_owned())
+    }
+
+    /// The screen as painted `width` by `height`: each row with its trailing blanks gone, which
+    /// rows are dimmed and which bold from the second column, and where the terminal's cursor is.
+    struct Screen {
+        rows: Vec<String>,
+        dim: Vec<bool>,
+        bold: Vec<bool>,
+        cursor: (u16, u16),
+    }
+
+    fn screen(app: &mut App, width: u16, height: u16) -> Screen {
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Modifier;
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let cursor = terminal.get_cursor_position().unwrap();
+        let buffer = terminal.backend().buffer();
+        let has = |y: u16, modifier: Modifier| buffer[(1, y)].modifier.contains(modifier);
+        Screen {
+            rows: (0..height)
+                .map(|y| {
+                    let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+                    row.trim_end().to_owned()
+                })
+                .collect(),
+            dim: (0..height).map(|y| has(y, Modifier::DIM)).collect(),
+            bold: (0..height).map(|y| has(y, Modifier::BOLD)).collect(),
+            cursor: (cursor.x, cursor.y),
+        }
+    }
+
+    /// Writes a body under the note under the cursor, as the editor would.
+    fn with_body(app: &mut App, text: &str) {
+        let Flow::Editor { id, .. } = chord(app, 'o') else {
+            panic!("the note under the cursor was not handed over");
+        };
+        app.act(Action::Save {
+            id,
+            text: text.into(),
+        })
+        .unwrap();
+    }
+
     #[test]
     fn enter_writes_a_sealed_line_and_reopening_shows_the_note() {
         let (mut app, space) = app();
@@ -779,7 +1151,11 @@ mod tests {
         drop(app);
         let reopened = open_with(&space, key()).unwrap();
         assert_eq!(heads(&reopened), ["kettlebell swings"]);
-        assert_eq!(reopened.device.view().status, space.display().to_string());
+        assert_eq!(
+            reopened.status(),
+            None,
+            "a space with notes in it says nothing"
+        );
         assert_eq!(reopened.device.device(), WRITER, "nothing to compact");
         done(&space);
     }
@@ -913,9 +1289,17 @@ mod tests {
             "it is no longer archived"
         );
 
-        // On a note, Enter goes in. On the line, it writes, and what is written there is linked.
+        // On a note, Ctrl-O hands it to the editor, and the cursor stays on it.
         press(&mut app, KeyCode::Down, false);
-        press(&mut app, KeyCode::Enter, false);
+        let Flow::Editor { text, .. } = chord(&mut app, 'o') else {
+            panic!("the note under the cursor was not handed over");
+        };
+        assert_eq!(text, "kettlebell swings");
+        assert!(on_note(&app));
+
+        // On a note, the arrow goes in, since the caret landed at the end of its head. On the
+        // line, Enter writes, and what is written there is linked.
+        press(&mut app, KeyCode::Right, false);
         assert_eq!(path(&app), ["kettlebell swings"]);
         write(&mut app, "two sets");
         assert_eq!(heads(&app), ["two sets"]);
@@ -941,7 +1325,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "kettlebell swings");
         press(&mut app, KeyCode::Down, false);
-        press(&mut app, KeyCode::Enter, false);
+        press(&mut app, KeyCode::Right, false);
         write(&mut app, "two sets");
         press(&mut app, KeyCode::Down, false);
         assert!(on_note(&app));
@@ -961,13 +1345,101 @@ mod tests {
 
         // Any other key in between, and it takes two again.
         press(&mut app, KeyCode::Esc, false);
-        type_in(&mut app, "x");
+        press(&mut app, KeyCode::Left, false);
         assert!(matches!(
             press(&mut app, KeyCode::Esc, false),
             Flow::Continue
         ));
         assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
         assert!(matches!(chord(&mut app, 'q'), Flow::Quit));
+        done(&space);
+    }
+
+    #[test]
+    fn right_at_the_end_of_the_line_goes_into_what_it_names_and_short_of_it_moves_the_caret() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler service #house");
+        write(&mut app, "Fix the gutter #house");
+        write(&mut app, "Cake recipe");
+
+        type_in(&mut app, "#house");
+        assert!(keys(&app).contains("→ go in"), "{}", keys(&app));
+        press(&mut app, KeyCode::Left, false);
+        assert!(!keys(&app).contains("→ go in"), "{}", keys(&app));
+        press(&mut app, KeyCode::Right, false);
+        assert!(path(&app).is_empty(), "the caret moved");
+        assert_eq!(app.cursor, 6);
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(path(&app), ["#house"]);
+        assert_eq!(line(&app), "");
+        let mut house = heads(&app)[..2].to_vec();
+        house.sort();
+        assert_eq!(house, ["Boiler service #house", "Fix the gutter #house"]);
+
+        // What names nothing leaves the arrow doing nothing.
+        type_in(&mut app, "gutter and");
+        assert!(!keys(&app).contains("go in"), "{}", keys(&app));
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(path(&app), ["#house"]);
+        assert_eq!(line(&app), "gutter and");
+        done(&space);
+    }
+
+    #[test]
+    fn escape_on_the_line_clears_it_then_steps_back_and_only_then_says_it_would_quit() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler service #house");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::Right, false);
+
+        type_in(&mut app, "boil");
+        assert!(keys(&app).ends_with("Esc clear"), "{}", keys(&app));
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(line(&app), "", "cleared");
+        assert_eq!(path(&app), ["#house"], "and still inside");
+        assert!(keys(&app).ends_with("Esc back"), "{}", keys(&app));
+
+        press(&mut app, KeyCode::Esc, false);
+        assert!(path(&app).is_empty(), "out of the place");
+        assert_eq!(line(&app), "#house", "with the search that found it");
+        assert_eq!(app.cursor, 6);
+        assert!(keys(&app).ends_with("Esc clear"), "{}", keys(&app));
+
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(line(&app), "");
+        assert_eq!(
+            app.status(),
+            None,
+            "a rung was taken, so nothing about quitting"
+        );
+        assert!(keys(&app).ends_with("Esc Esc quits"), "{}", keys(&app));
+        assert!(matches!(
+            press(&mut app, KeyCode::Esc, false),
+            Flow::Continue
+        ));
+        assert_eq!(app.status().as_deref(), Some("Escape again to quit"));
+        assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
+
+        // Ctrl-D on the line is a second key for clearing it.
+        type_in(&mut app, "boil");
+        chord(&mut app, 'd');
+        assert_eq!(line(&app), "");
+        done(&space);
+    }
+
+    #[test]
+    fn a_new_note_written_in_place_inside_a_tag_ends_with_it_once_escape_leaves_the_row() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler service #house");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Enter, false);
+        type_in(&mut app, "Order oil");
+        assert_eq!(field(&app).as_deref(), Some("Order oil"), "as typed");
+        press(&mut app, KeyCode::Esc, false);
+        assert!(!on_note(&app));
+        assert_eq!(heads(&app)[0], "Order oil #house");
+        assert_eq!(path(&app), ["#house"]);
         done(&space);
     }
 
@@ -1000,20 +1472,22 @@ mod tests {
         assert_eq!(line(&app), " ", "a tab is a space");
         chord(&mut app, 'd');
 
-        // A line the session puts back has its cursor at the end, wherever it was left.
+        // Off the list and back, the line's cursor is where it was left. A line the session puts
+        // back has its cursor at the end, wherever it was left.
         write(&mut app, "trainingapp plan");
         type_in(&mut app, "trai");
         press(&mut app, KeyCode::Left, false);
         press(&mut app, KeyCode::Down, false);
         assert!(on_note(&app));
+        press(&mut app, KeyCode::Esc, false);
         type_in(&mut app, "n");
-        assert!(!on_note(&app), "typing always goes to the top line");
+        assert!(!on_note(&app));
         assert_eq!((line(&app).as_str(), app.cursor), ("trani", 4));
         chord(&mut app, 'd');
         type_in(&mut app, "trai");
         press(&mut app, KeyCode::Left, false);
         press(&mut app, KeyCode::Down, false);
-        press(&mut app, KeyCode::Enter, false);
+        press(&mut app, KeyCode::Right, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
         press(&mut app, KeyCode::Esc, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
@@ -1056,6 +1530,7 @@ mod tests {
             "Enter" => (KeyCode::Enter, false),
             "Esc" => (KeyCode::Esc, false),
             "↓" => (KeyCode::Down, false),
+            "→" => (KeyCode::Right, false),
             chord => {
                 let mut chars = chord.chars();
                 assert_eq!(chars.next(), Some('^'), "{chord}");
@@ -1068,18 +1543,19 @@ mod tests {
     /// The footer as it is now, having checked that every key it names asks for what it says.
     fn keys(app: &App) -> String {
         let view = app.device.view();
-        let (on_top, zoomed) = (view.cursor.is_none(), !view.path.is_empty());
-        for hint in &view.hints {
+        let zoomed = !view.path.is_empty();
+        let (place, at_end, empty) = app.caret(&view);
+        for hint in keyed(&view.hints, at_end) {
             let (code, ctrl) = named(key_for(&hint.action));
             assert_eq!(
-                bound(code, ctrl, on_top, zoomed).as_ref(),
+                bound(code, ctrl, place, zoomed, at_end, empty).as_ref(),
                 Some(&hint.action),
                 "{} {}",
                 key_for(&hint.action),
                 hint.label
             );
         }
-        footer(&view.hints)
+        footer(&view.hints, at_end, usize::MAX)
     }
 
     #[test]
@@ -1087,31 +1563,52 @@ mod tests {
         let (mut app, space) = app();
         assert_eq!(
             keys(&app),
-            "Enter writes · ^V show archived · Esc Esc quits",
+            "Enter new note  ^V show archived  Esc Esc quits",
             "nothing listed, so nothing to pick"
         );
         write(&mut app, "trainingapp");
         assert_eq!(
             keys(&app),
-            "Enter writes · ↓ picks a note · ^V show archived · ^U undo · Esc Esc quits"
+            "Enter new note  ↓ pick a note  ^V show archived  ^U undo  Esc Esc quits"
         );
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter opens · ^O edit · ^V archive · ^D delete · ^C copy · ^U undo · Esc up"
+            "Enter new note  ^O editor  → go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
         );
 
-        press(&mut app, KeyCode::Enter, false);
+        // Short of the end of the head the arrow is the caret's, so going in is not named there.
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(
+            keys(&app),
+            "Enter new note  ^O editor  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
+        );
+        press(&mut app, KeyCode::Right, false);
+        assert!(path(&app).is_empty(), "the caret moved");
+        assert!(keys(&app).contains("→ go in"), "{}", keys(&app));
+
+        // A changed head offers putting it back in place of undo.
+        type_in(&mut app, "s");
+        assert_eq!(
+            keys(&app),
+            "Enter new note  ^O editor  → go in  ^V archive  ^D delete  ^C copy  ^U put back  \
+             Esc up"
+        );
+        chord(&mut app, 'u');
+        assert_eq!(field(&app).as_deref(), Some("trainingapp"));
+        assert_eq!(app.row_cursor, 11, "the caret is kept in the head put back");
+
+        press(&mut app, KeyCode::Right, false);
         write(&mut app, "squat form video https://example.com/squat");
         assert_eq!(
             keys(&app),
-            "Enter writes here · ↓ picks a note · ^V show archived · ^U undo · Esc back"
+            "Enter new note here  ↓ pick a note  ^V show archived  ^U undo  Esc back"
         );
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter opens · ^L unlink · ^O edit · ^V archive · ^D delete · ^C copy · ^_ open URL \
-             · ^U undo · Esc up"
+            "Enter new note here  ^O editor  → go in  ^L unlink  ^V archive  ^D delete  \
+             ^C copy  ^_ open URL  ^U undo  Esc up"
         );
 
         // The widest a row gets: a linked, archived note with a URL, with undo and redo to hand.
@@ -1124,14 +1621,25 @@ mod tests {
         let widest = keys(&app);
         assert_eq!(
             widest,
-            "Enter opens · ^L unlink · ^O edit · ^V unarchive · ^D delete · ^C copy \
-             · ^_ open URL · ^U undo · ^R redo · Esc up"
+            "Enter new note here  ^O editor  → go in  ^L unlink  ^V unarchive  ^D delete  \
+             ^C copy  ^_ open URL  ^U undo  ^R redo  Esc up"
         );
-        assert!(widest.chars().count() <= 113, "{}", widest.chars().count());
+        assert!(widest.chars().count() <= 124, "{}", widest.chars().count());
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(
             keys(&app),
-            "Enter writes here · ↓ picks a note · ^V hide archived · ^U undo · ^R redo · Esc back"
+            "Enter new note here  ↓ pick a note  ^V hide archived  ^U undo  ^R redo  Esc back"
+        );
+
+        // A new note offers the editor, and once it has text, everything a note offers, with
+        // putting it back in place of undo.
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(keys(&app), "^O editor  Esc up");
+        type_in(&mut app, "x");
+        assert_eq!(
+            keys(&app),
+            "Enter new note here  ^O editor  → go in  ^L unlink  ^V archive  ^D delete  \
+             ^C copy  ^U put back  Esc up"
         );
         done(&space);
     }
@@ -1208,7 +1716,7 @@ mod tests {
         relay.append("dev-b", written_elsewhere("boiler service booked", key()));
 
         connect(&mut app, &mut relay, &sent, &tell);
-        assert_eq!(app.synced, "syncing with nas.local");
+        assert!(!app.not_syncing);
         let mut seen = heads(&app);
         seen.sort();
         assert_eq!(seen, ["boiler service booked", "mine"]);
@@ -1224,7 +1732,7 @@ mod tests {
         // What is written while the relay is away reaches it when it is back.
         tell.send(sync::Event::Disconnected).unwrap();
         assert!(app.hear().unwrap());
-        assert_eq!(app.synced, "not syncing");
+        assert!(app.not_syncing);
         write(&mut app, "pressure dropped");
         assert!(sent.try_recv().is_err());
         connect(&mut app, &mut relay, &sent, &tell);
@@ -1250,14 +1758,18 @@ mod tests {
         connect(&mut app, &mut relay, &sent, &tell);
         assert!(heads(&app).is_empty());
         assert_eq!(
-            app.device.view().status,
-            "the passphrase does not open this space: quit, and run fzn key to enter it again"
+            app.status().as_deref(),
+            Some(WRONG_KEY),
+            "said as soon as it comes"
         );
         write(&mut app, "a garden");
-        assert!(
-            app.device.view().status.contains("passphrase"),
-            "{}",
-            app.device.view().status
+        let said = app.status().unwrap_or_default();
+        assert!(said.contains("passphrase"), "{said}");
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(
+            app.status().as_deref(),
+            Some(WRONG_KEY),
+            "and it is said until it is put right"
         );
         assert!(!space.join(format!("{WRITER}.jsonl")).exists());
         assert!(relay.lines(WRITER).is_empty());
@@ -1270,16 +1782,17 @@ mod tests {
         write(&mut app, "the plan");
         assert!(
             matches!(chord(&mut app, 'o'), Flow::Continue),
-            "on the top line there is no note to edit"
+            "on the line there is no note to hand over"
         );
         press(&mut app, KeyCode::Down, false);
-        let Flow::Edit { id, text } = chord(&mut app, 'o') else {
+        type_in(&mut app, "s");
+        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
             panic!("the note under the cursor was not handed over");
         };
-        assert_eq!(text, "the plan");
+        assert_eq!(text, "the plans", "the head as it now reads");
 
         // An editor that changes nothing, and one that gives up.
-        assert_eq!(edit_in("true", &id, &text).unwrap(), Ok("the plan".into()));
+        assert_eq!(edit_in("true", &id, &text).unwrap(), Ok("the plans".into()));
         let gave_up = edit_in("false", &id, &text).unwrap().unwrap_err();
         assert!(gave_up.starts_with("false exited with"), "{gave_up}");
         assert!(gave_up.ends_with("note unchanged"), "{gave_up}");
@@ -1295,25 +1808,428 @@ mod tests {
         assert_eq!(view.preview.unwrap().text, "The plan\nwith a body");
         assert!(view.rows[0].has_body);
         let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
-        assert_eq!(written.lines().count(), 2);
+        assert_eq!(
+            written.lines().count(),
+            3,
+            "the note, the letter typed, and what the editor left"
+        );
         done(&space);
     }
 
     #[test]
-    fn the_status_row_says_how_sync_is_going_when_there_is_a_relay() {
-        assert_eq!(status_row("", 0, "", 80), "0 notes");
-        assert_eq!(status_row("saved", 1, "", 80), "saved · 1 note");
-        assert_eq!(
-            status_row("saved", 4, "syncing with nas.local", 80),
-            "saved · 4 notes · syncing with nas.local"
-        );
-        // What just happened gives way, so that the count and the sync are always there.
-        let long = "/a/long/path/to/where/the/notes/are/kept/on/this/machine/main";
-        let row = status_row(long, 152, "not syncing", 50);
-        assert_eq!(row, "/a/long/path/to/where/t… · 152 notes · not syncing");
-        assert_eq!(row.chars().count(), 50);
-
+    fn typing_into_a_row_edits_its_head_and_leaves_the_body() {
         let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, "Boiler service");
+        press(&mut app, KeyCode::Down, false);
+        // Written in the same second, either may be first on the list.
+        let (picked, other) = (heads(&app)[0].clone(), heads(&app)[1].clone());
+        let end = picked.chars().count();
+        assert_eq!(
+            app.row_cursor, end,
+            "the caret lands at the end of the head"
+        );
+        with_body(&mut app, &format!("{picked}\nCall two firms."));
+        assert_eq!(heads(&app)[0], picked);
+        assert_eq!(app.row_cursor, end, "and stays there over the editor");
+        let log = space.join(format!("{WRITER}.jsonl"));
+        let count = || fs::read_to_string(&log).unwrap().lines().count();
+        let start = count();
+
+        type_in(&mut app, " quote");
+        for _ in 0..6 {
+            press(&mut app, KeyCode::Left, false);
+        }
+        press(&mut app, KeyCode::Backspace, false);
+        chord(&mut app, 'a');
+        press(&mut app, KeyCode::Delete, false);
+        type_in(&mut app, "b");
+        let typed = format!("b{} quote\nCall two firms.", &picked[1..end - 1]);
+        assert_eq!(field(&app), Some(typed.clone()));
+        assert_eq!(app.row_cursor, 1);
+        assert_eq!(line(&app), "", "the line is left alone");
+        assert_eq!(
+            count(),
+            start + 9,
+            "a version a change, the body kept under each"
+        );
+
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(field(&app), Some(other.clone()));
+        assert_eq!(
+            app.row_cursor,
+            other.chars().count(),
+            "the caret lands at the end of the next head"
+        );
+        assert_eq!(app.device.view().status, "");
+        assert_eq!(count(), start + 9, "and nothing more on leaving the row");
+        let texts: Vec<String> = on_disk(&space)
+            .notes()
+            .records()
+            .map(|r| r.text.clone())
+            .collect();
+        assert!(texts.contains(&typed), "{texts:?}");
+        done(&space);
+    }
+
+    #[test]
+    fn a_stray_letter_on_a_row_changes_its_head_and_is_written_at_once() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, "Boiler");
+        let log = space.join(format!("{WRITER}.jsonl"));
+        let count = || fs::read_to_string(&log).unwrap().lines().count();
+        press(&mut app, KeyCode::Down, false);
+        let stray = format!("{}s", heads(&app)[0]);
+        type_in(&mut app, "s");
+        assert_eq!(field(&app), Some(stray.clone()));
+        assert_eq!(app.status(), None, "a letter says nothing");
+        assert_eq!(count(), 3, "and is written");
+
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(app.status(), None);
+        assert_eq!(count(), 3, "and down writes nothing more");
+        assert_eq!(
+            heads(&app)[0],
+            stray,
+            "the list holds still under the cursor"
+        );
+
+        // Walking the list without typing writes nothing.
+        press(&mut app, KeyCode::Up, false);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Up, false);
+        press(&mut app, KeyCode::Up, false);
+        assert!(!on_note(&app));
+        assert_eq!(count(), 3);
+        done(&space);
+    }
+
+    #[test]
+    fn right_at_the_end_of_the_head_goes_in_and_before_it_moves_the_caret() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(app.row_cursor, 5);
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(app.row_cursor, 6);
+        assert!(
+            path(&app).is_empty(),
+            "short of the end the arrow is the caret's"
+        );
+
+        // Left at the start of the head stays there.
+        chord(&mut app, 'a');
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(app.row_cursor, 0);
+        assert!(on_note(&app) && path(&app).is_empty());
+
+        chord(&mut app, 'e');
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(path(&app), ["Boiler"]);
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_too_long_for_its_row_scrolls_to_keep_the_caret_in_sight() {
+        let (mut app, space) = app();
+        let long = "the boiler pressure keeps dropping after the radiators are bled";
+        write(&mut app, long);
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 40, 8);
+        let date = time::format_day(app.device.view().rows[0].updated.unwrap().day());
+        assert!(shot.rows[1].ends_with(&date), "{:?}", shot.rows[1]);
+        assert!(shot.rows[1].contains("are bled"), "{:?}", shot.rows[1]);
+        assert!(shot.cursor.0 < 40 - 12, "{:?}", shot.cursor);
+        assert_eq!(shot.cursor.1, 1);
+
+        chord(&mut app, 'a');
+        let shot = screen(&mut app, 40, 8);
+        assert!(
+            shot.rows[1].starts_with(" the boiler"),
+            "{:?}",
+            shot.rows[1]
+        );
+        assert_eq!(shot.cursor, (1, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn enter_with_text_on_the_line_puts_the_cursor_at_the_end_of_the_note_it_wrote() {
+        let (mut app, space) = app();
+        type_in(&mut app, "House");
+        press(&mut app, KeyCode::Enter, false);
+        assert!(on_note(&app));
+        assert_eq!(field(&app).as_deref(), Some("House"));
+        assert_eq!(app.row_cursor, 5, "the caret at the end of its head");
+        assert_eq!(line(&app), "");
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(shot.cursor, (6, 1), "the terminal's cursor in the row");
+
+        // Enter there opens a row under it.
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(heads(&app), ["House", ""]);
+        assert_eq!(app.device.view().cursor, Some(1));
+        done(&space);
+    }
+
+    #[test]
+    fn enter_on_an_empty_line_and_typing_makes_a_note() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(field(&app).as_deref(), Some(""));
+        assert_eq!(app.row_cursor, 0);
+        press(&mut app, KeyCode::Up, false);
+        assert_eq!(
+            heads(&app),
+            ["House"],
+            "a new row left empty was never anything"
+        );
+
+        press(&mut app, KeyCode::Enter, false);
+        type_in(&mut app, "a garden");
+        assert_eq!(line(&app), "", "typing went to the row");
+        press(&mut app, KeyCode::Up, false);
+        let mut seen = heads(&app);
+        seen.sort();
+        assert_eq!(seen, ["House", "a garden"]);
+        assert!(
+            !on_note(&app),
+            "and the cursor is back on the line for the next"
+        );
+        assert_eq!(
+            app.status(),
+            None,
+            "kept as it was typed, so nothing is said"
+        );
+        let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
+        assert_eq!(written.lines().count(), 1 + 8, "a line a letter");
+
+        // Ctrl-O on a new note hands it to the editor as it is so far.
+        press(&mut app, KeyCode::Enter, false);
+        let Flow::Editor { text, .. } = chord(&mut app, 'o') else {
+            panic!("the new note was not handed over");
+        };
+        assert_eq!(text, "");
+        done(&space);
+    }
+
+    #[test]
+    fn enter_on_a_row_opens_a_new_row_under_it_and_what_is_typed_there_is_kept() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(heads(&app), ["House", ""]);
+        assert_eq!(app.device.view().cursor, Some(1));
+        assert_eq!((field(&app).as_deref(), app.row_cursor), (Some(""), 0));
+        let shot = screen(&mut app, 60, 10);
+        assert_eq!(shot.rows[2], "");
+        assert_eq!(
+            shot.cursor,
+            (1, 2),
+            "the cursor in the empty head under the row"
+        );
+
+        // What is typed is kept as it is typed, Enter opens another row, and Escape leaves the
+        // last.
+        type_in(&mut app, "Boiler");
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(heads(&app), ["House", "Boiler", ""]);
+        type_in(&mut app, "a garden");
+        press(&mut app, KeyCode::Esc, false);
+        assert!(!on_note(&app));
+        assert_eq!(line(&app), "", "the line is left alone");
+        let mut texts: Vec<String> = on_disk(&space)
+            .notes()
+            .records()
+            .map(|r| r.text.clone())
+            .collect();
+        texts.sort();
+        assert_eq!(texts, ["Boiler", "House", "a garden"]);
+        done(&space);
+    }
+
+    #[test]
+    fn backspace_on_an_empty_row_takes_it_away_and_goes_up() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        let first = heads(&app)[0].clone();
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(heads(&app).len(), 3);
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!(heads(&app).len(), 2);
+        assert_eq!(app.device.view().cursor, Some(0));
+        assert_eq!(field(&app), Some(first));
+        done(&space);
+    }
+
+    #[test]
+    fn backspace_at_the_start_of_a_head_with_text_leaves_it() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Home, false);
+        assert_eq!(app.row_cursor, 0);
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!(heads(&app), ["House"]);
+        assert_eq!(field(&app).as_deref(), Some("House"));
+        assert_eq!(app.device.view().cursor, Some(0));
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_typed_into_is_on_disk_when_the_app_quits() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        type_in(&mut app, " pressure");
+        assert!(matches!(chord(&mut app, 'q'), Flow::Quit));
+        let texts: Vec<String> = on_disk(&space)
+            .notes()
+            .records()
+            .map(|r| r.text.clone())
+            .collect();
+        assert_eq!(texts, ["Boiler pressure"]);
+        done(&space);
+    }
+
+    #[test]
+    fn the_row_under_the_cursor_has_the_cursor_in_its_head_its_head_bold_and_its_body_under_it() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        let picked = heads(&app)[0].clone();
+        with_body(&mut app, &format!("{picked}\nThe combi under the stairs."));
+        // Written last, the note with a body is first on the list and the other under it.
+        assert_eq!(heads(&app)[0], picked);
+        let other = heads(&app)[1].clone();
+        let updated = app.device.view().rows[0].updated.unwrap();
+        let date = format!(" {}", time::format_day(updated.day()));
+        let shot = screen(&mut app, 60, 10);
+        assert_eq!(shot.rows[0], "", "the line, empty");
+        assert!(
+            shot.rows[1].starts_with(&format!(" {picked} ¶")) && shot.rows[1].ends_with(&date),
+            "{:?}",
+            shot.rows[1]
+        );
+        assert!(shot.bold[1] && !shot.dim[1]);
+        assert_eq!(shot.rows[2], "   The combi under the stairs.");
+        assert_eq!(shot.rows[3], format!(" {other}"));
+        assert!(!shot.dim[3] && !shot.bold[3], "no other row is dimmed");
+        let x = u16::try_from(1 + picked.len()).unwrap();
+        assert_eq!(
+            shot.cursor,
+            (x, 1),
+            "the terminal's own cursor, at the end of the head, right under the line"
+        );
+        assert_eq!(shot.rows[8], " saved", "what the last thing asked for did");
+        assert!(
+            shot.rows[9].starts_with(" Enter new note  ^O editor  → go in  ^V archive"),
+            "{:?}",
+            shot.rows[9]
+        );
+        assert!(shot.dim[9]);
+
+        // A key that says nothing leaves no status row, and the keys stay at the foot.
+        press(&mut app, KeyCode::Left, false);
+        let shot = screen(&mut app, 60, 10);
+        assert_eq!(shot.rows[8], "");
+        assert_eq!(shot.cursor, (x - 1, 1), "one back from the end of the head");
+
+        // A new row opens at the top, empty, with the cursor in it.
+        press(&mut app, KeyCode::Esc, false);
+        press(&mut app, KeyCode::Enter, false);
+        let shot = screen(&mut app, 60, 10);
+        assert_eq!(shot.rows[1], "");
+        assert_eq!(shot.cursor, (1, 1));
+        assert_eq!(shot.rows[2], format!(" {picked} ¶"));
+        assert!(!shot.dim[2]);
+        assert!(
+            shot.rows[9].starts_with(" ^O editor  Esc up"),
+            "{:?}",
+            shot.rows[9]
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn the_list_moves_only_as_far_as_it_must_to_keep_the_cursor_in_sight() {
+        let (mut app, space) = app();
+        for n in 0..12 {
+            write(&mut app, &format!("garden bed {n}"));
+        }
+        let listed = heads(&app);
+        // The head a painted row shows, without the date the selected one has at its end.
+        let head = |row: &str| row.trim().split("  ").next().unwrap().to_owned();
+        // Seven rows of list, from the second row: the line and the footer take the rest.
+        let shown = |app: &mut App| -> Vec<String> {
+            screen(app, 40, 9).rows[1..8]
+                .iter()
+                .map(|r| head(r))
+                .collect()
+        };
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(shown(&mut app), listed[..7]);
+        for _ in 0..7 {
+            press(&mut app, KeyCode::Down, false);
+        }
+        assert_eq!(shown(&mut app), listed[1..8]);
+        let x = u16::try_from(1 + listed[7].len()).unwrap();
+        assert_eq!(
+            screen(&mut app, 40, 9).cursor,
+            (x, 7),
+            "the cursor's row is the last in sight"
+        );
+        press(&mut app, KeyCode::Up, false);
+        assert_eq!(
+            shown(&mut app),
+            listed[1..8],
+            "moving back up within sight moves nothing"
+        );
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(shown(&mut app), listed[..7], "and from the line, the top");
+        done(&space);
+    }
+
+    #[test]
+    fn a_body_is_broken_between_words() {
+        assert_eq!(
+            wrap("the combi under the stairs", 10),
+            ["the combi", "under the", "stairs"]
+        );
+        assert_eq!(wrap("one\n\ntwo", 10), ["one", "", "two"]);
+        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(
+            head_and_body("Boiler\n\nThe combi.\n"),
+            ("Boiler", "The combi.")
+        );
+        let long = (0..9)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = body_rows(&long, 3, 40);
+        assert_eq!(rows.len(), BODY_ROWS + 1);
+        assert_eq!(rows[BODY_ROWS].to_string(), "   …");
+    }
+
+    #[test]
+    fn the_status_says_what_the_last_key_did_and_trouble_until_it_is_put_right() {
+        let (mut app, space) = app();
+        assert!(app.status().unwrap().starts_with("no notes yet"));
+        type_in(&mut app, "x");
+        assert_eq!(app.status(), None, "the first key clears what opening said");
+        chord(&mut app, 'd');
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(app.status().as_deref(), Some("Escape again to quit"));
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(app.status(), None, "and so does every key after");
+
         assert!(
             !app.hear().unwrap(),
             "with no relay there is nothing to hear"
@@ -1323,25 +2239,23 @@ mod tests {
 
         tell.send(sync::Event::Connected).unwrap();
         assert!(app.hear().unwrap());
-        assert_eq!(app.synced, "syncing with nas.local");
+        assert!(!app.not_syncing, "nothing is said while sync works");
         tell.send(sync::Event::Disconnected).unwrap();
         tell.send(sync::Event::Unreachable("connection refused".into()))
             .unwrap();
         assert!(app.hear().unwrap());
-        assert_eq!(app.synced, "not syncing");
+        assert!(app.not_syncing);
+        press(&mut app, KeyCode::Left, false);
         assert_eq!(
-            app.device.view().status,
-            "nas.local: connection refused",
-            "why is said once, and the row goes on saying that it is not"
+            app.status().as_deref(),
+            Some("nas.local: connection refused"),
+            "why is said until the relay is back"
         );
         tell.send(sync::Event::Connected).unwrap();
         tell.send(sync::Event::Message(r#"{"forked":"dev-b"}"#.into()))
             .unwrap();
         assert!(app.hear().unwrap());
-        assert_eq!(
-            app.synced, "syncing with nas.local",
-            "every other log goes on"
-        );
+        assert!(!app.not_syncing, "every other log goes on");
         assert!(
             app.device
                 .view()
@@ -1378,7 +2292,7 @@ mod tests {
                 time::day_from_civil(2026, 10, 16),
                 time::day_from_civil(2026, 10, 14)
             ]),
-            "  → Fri 2026-10-16, Wed 2026-10-14"
+            "→ Fri 2026-10-16, Wed 2026-10-14"
         );
     }
 

@@ -70,8 +70,8 @@ pub struct Todo {
     pub send: Vec<String>,
     /// This writer's new id, when it has changed, for the face to keep in place of the old.
     pub device: Option<String>,
-    /// A note to edit. What is made of it comes back as the action `save`.
-    pub edit: Option<Editing>,
+    /// A note to hand to the face's editor. What is made of it comes back as the action `save`.
+    pub editor: Option<Editing>,
     /// Text for the clipboard.
     pub copy: Option<String>,
     /// A URL to open.
@@ -88,7 +88,7 @@ impl Todo {
         if after.device.is_some() {
             self.device = after.device;
         }
-        self.edit = self.edit.take().or(after.edit);
+        self.editor = self.editor.take().or(after.editor);
         self.copy = self.copy.take().or(after.copy);
         self.open = self.open.take().or(after.open);
     }
@@ -211,7 +211,18 @@ impl Device {
     /// space's.
     pub fn act(&mut self, action: Action) -> Todo {
         let mut todo = Todo::default();
-        if action.writes() && !self.key_verified() {
+        // A head is written as it is typed, but a body typed into, or a date word not yet
+        // written out, waits for the cursor to leave. When the key turns out to be wrong that
+        // cannot be written, and so cannot be left either, since leaving writes; it can only be
+        // put back, and then left. Putting back writes the version the cursor landed on, if the
+        // head was written as it was typed before the key was found wrong: one line, under the
+        // key every line this device has written is already under.
+        let gated = if self.session.unwritten() {
+            !matches!(action, Action::Undo | Action::ShowScores)
+        } else {
+            action.writes()
+        };
+        if gated && !self.key_verified() {
             self.session.say(WRONG_KEY);
             return todo;
         }
@@ -230,7 +241,7 @@ impl Device {
                     });
                     self.carry_out(out, &mut todo);
                 }
-                Effect::Edit { id, text } => todo.edit = Some(Editing { id, text }),
+                Effect::Editor { id, text } => todo.editor = Some(Editing { id, text }),
                 Effect::Copy(text) => todo.copy = Some(text),
                 Effect::Open(url) => todo.open = Some(url),
             }
@@ -691,14 +702,15 @@ mod tests {
     fn the_rest_is_handed_to_the_face() {
         let mut a = device("dev-a");
         write(&mut a, "see https://example.com/boiler");
+        a.act(Action::Select(None));
         assert_eq!(
-            a.act(Action::Edit),
+            a.act(Action::Editor),
             Todo::default(),
             "nothing under the cursor"
         );
         a.act(Action::Move(1));
-        let todo = a.act(Action::Edit);
-        let editing = todo.edit.unwrap();
+        let todo = a.act(Action::Editor);
+        let editing = todo.editor.unwrap();
         assert_eq!(editing.text, "see https://example.com/boiler");
         assert_eq!(
             a.act(Action::Copy).copy.as_deref(),
@@ -739,7 +751,118 @@ mod tests {
         let json = serde_json::to_string(&Todo::default()).unwrap();
         assert_eq!(
             json,
-            r#"{"keep":[],"delete":[],"send":[],"device":null,"edit":null,"copy":null,"open":null}"#
+            r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null}"#
+        );
+    }
+
+    #[test]
+    fn typing_into_a_head_is_refused_when_the_key_is_not_verified() {
+        let mut a = device("dev-a");
+        let lines: Vec<String> = write(&mut a, "Boiler").keep.remove(0).lines;
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        // A plain line from before sealing is read whatever the key, so there is a note to try.
+        b.load("dev-x", vec![plain("x-1", "a garden", 100)]);
+        b.load("dev-a", lines);
+        assert!(!b.key_verified());
+        assert_eq!(heads(&b), ["a garden"]);
+
+        // No new note is opened, and a head can be walked to but not changed, so nothing is
+        // ever changed that could not be written.
+        b.say("");
+        assert_eq!(b.act(Action::Write), Todo::default());
+        assert!(b.view().field.is_none());
+        assert_eq!(status(&b), WRONG_KEY);
+        b.act(Action::Move(1));
+        assert_eq!(b.view().cursor, Some(0));
+        assert_eq!(
+            b.act(Action::Edited("a garden gate".into())),
+            Todo::default()
+        );
+        assert_eq!(b.view().field.map(|f| f.text), Some("a garden"));
+        assert_eq!(b.act(Action::Edit), Todo::default());
+        assert!(b.view().field.is_some_and(|f| !f.whole));
+        assert_eq!(b.act(Action::Done), Todo::default());
+
+        // With the right key a new note is opened, and is written as one sealed line at its
+        // first letter.
+        a.act(Action::Type(String::new()));
+        a.act(Action::Write);
+        assert!(a.view().field.is_some_and(|field| field.fresh));
+        let typed = a.act(Action::Edited("House".into()));
+        assert_eq!(typed.keep.len(), 1);
+        assert_eq!(opened(&typed.keep[0].lines[0]).text, "House");
+        assert_eq!(a.act(Action::Done).keep.len(), 0, "nothing more to write");
+    }
+
+    #[test]
+    fn a_body_changed_when_the_key_turns_out_to_be_wrong_can_only_be_put_back() {
+        let mut a = device("dev-a");
+        let lines: Vec<String> = write(&mut a, "Boiler").keep.remove(0).lines;
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        // With only a plain line seen, the key is taken on trust and a body can be changed. A
+        // head would be written as it was typed; a body waits for it to close.
+        b.load("dev-x", vec![plain("x-1", "a garden", 100)]);
+        b.act(Action::Move(1));
+        b.act(Action::Edit);
+        b.act(Action::Edited("a garden\ngate".into()));
+        assert!(b.key_verified());
+        assert!(b.session.unwritten());
+
+        // Then a sealed line arrives that the key does not open. Nothing that would leave the
+        // body is done, since leaving writes, and nor is any more typing.
+        b.load("dev-a", lines);
+        assert!(!b.key_verified());
+        b.say("");
+        assert_eq!(b.act(Action::Move(1)), Todo::default());
+        assert_eq!(status(&b), WRONG_KEY);
+        assert_eq!(b.act(Action::Type("house".into())), Todo::default());
+        assert_eq!(b.act(Action::Done), Todo::default());
+        assert_eq!(
+            b.act(Action::Edited("a garden\ngate, painted".into())),
+            Todo::default()
+        );
+        let text = |b: &Device| b.view().field.map(|field| field.text.to_owned());
+        assert_eq!(text(&b), Some("a garden\ngate".to_owned()));
+
+        // Putting back what was never written writes nothing, so it is not refused, and then the
+        // row is left.
+        assert_eq!(b.act(Action::Undo), Todo::default());
+        assert_eq!(text(&b), Some("a garden".to_owned()));
+        assert_eq!(status(&b), "put back as it was");
+        assert_eq!(b.act(Action::Move(-1)), Todo::default());
+        assert_eq!(b.view().cursor, None);
+    }
+
+    #[test]
+    fn typing_into_a_new_row_sends_the_relay_a_line_a_letter() {
+        let mut net = Net {
+            relay: Replica::new(),
+            devices: vec![device("dev-a"), device("dev-b")],
+        };
+        net.connect(0);
+        net.connect(1);
+        net.act(0, Action::Write);
+        for (n, text) in ["B", "Bo", "Boi"].into_iter().enumerate() {
+            net.act(0, Action::Edited(text.into()));
+            assert_eq!(net.devices[0].replica.lines("dev-a").len(), n + 1);
+            assert_eq!(net.relay.lines("dev-a").len(), n + 1, "sent as it is typed");
+            assert_eq!(heads(&net.devices[1]), [text], "and on the other device");
+        }
+        net.act(0, Action::Move(-1));
+        assert_eq!(
+            net.relay.lines("dev-a").len(),
+            3,
+            "and nothing more on leaving"
         );
     }
 

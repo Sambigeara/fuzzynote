@@ -2,46 +2,45 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <title>fzn</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<main>
-  <header>
-    <nav id="path" aria-label="Where you are"></nav>
-    <label id="top">
-      <span class="prompt" aria-hidden="true">›</span>
-      <input id="line" type="text" autocomplete="off" autocapitalize="sentences" spellcheck="false"
-             enterkeyhint="enter" aria-label="Type to find or to write" autofocus>
-      <span id="dates"></span>
-      <button id="clear" type="button" tabindex="-1" aria-label="Clear the line" hidden>×</button>
-    </label>
-  </header>
-  <section id="found">
-    <h2 id="title"></h2>
-    <ol id="list" role="listbox" aria-label="Notes"></ol>
-  </section>
-  <article id="note"></article>
+<body class="locked">
+<main id="page">
+  <form id="unlock" hidden>
+    <div class="above"><label id="for" for="secret">The passphrase for <b id="space"></b></label></div>
+    <div class="top">
+      <input id="secret" class="field" type="password" autocomplete="current-password" required>
+    </div>
+    <p id="unlocking">Asked once on this device. The notes cannot be read without it.</p>
+  </form>
+  <div id="above" class="above">
+    <nav id="path" aria-label="Where you are" hidden></nav>
+    <div id="here" class="said-body" hidden></div>
+  </div>
+  <div id="top" class="top">
+    <input id="line" class="field" type="text" autocomplete="off" autocapitalize="sentences"
+           spellcheck="false" enterkeyhint="enter" aria-label="Type to find or to write">
+    <span id="dates"></span>
+    <button id="clear" type="button" tabindex="-1" aria-label="Clear the line" hidden>×</button>
+    <button id="go-in" class="chev" type="button" tabindex="-1" aria-label="Go in" hidden>›</button>
+  </div>
+  <p id="empty" hidden>Type a thought. Enter keeps it.</p>
+  <p id="elsewhere" hidden>fzn is open in another tab. <button id="takeover" class="word" type="button">use it here</button></p>
+  <ol id="list" role="listbox" aria-label="Notes"></ol>
 </main>
-<footer>
+<footer id="foot">
   <div id="hints"></div>
-  <div id="state"><span id="status"></span><span id="count"></span><span id="sync"></span><button id="passphrase" type="button" hidden>passphrase</button></div>
+  <div id="said">
+    <span id="status" role="status"></span>
+    <span id="trouble" hidden>The passphrase does not open this space. <button id="again" class="word" type="button">Type it again.</button></span>
+    <span id="sync" hidden>not syncing</span>
+    <button id="passphrase" class="word" type="button" hidden>passphrase</button>
+  </div>
 </footer>
-<div id="elsewhere" hidden>
-  <p>fzn is open in another tab, and that one has these notes now.</p>
-  <button id="here" type="button">Use fzn here</button>
-</div>
-<form id="unlock" hidden>
-  <label for="secret">The passphrase for <b id="space"></b></label>
-  <input id="secret" type="password" autocomplete="current-password" required>
-  <p>It is the space's, not this browser's: the same on every device. It is asked for once
-    here, and the notes cannot be read without it.</p>
-  <p id="unlocking" role="status"></p>
-  <button type="submit">Open</button>
-</form>
 <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -2,8 +2,9 @@
 
 fzn is a blank page with one input. Typing finds: as you type, the notes you have already
 written that belong with it come up, each with the reason it was found. Enter writes: the line
-becomes a new note. Enter on a note goes into it, and what you write there is about that note
-and links to it. Where you are is what you are talking about. There are no folders, no
+becomes a new note. The arrow at the end of a note goes into it, and what you write there is
+about that note and links to it; a tag such as `#house` is gone into the same way, and what you
+write there carries it. Where you are is what you are talking about. There are no folders, no
 documents and no tree, only notes and the links between them.
 
 The same engine runs in a terminal and in a browser tab. Devices sync through a small relay you
@@ -29,9 +30,11 @@ kept apart from each other, one directory each under `~/.fzn/<space>/`. Plain `f
 space named in the config file (`main` to begin with); `fzn --space garden` opens another and
 creates it if it is new.
 
-The whole app in one sentence: type to find or to write; Enter goes into the note under the
-cursor, or writes the line; Esc comes back. Every other key is shown in the footer, and only
-when it applies where the cursor is. To edit a note at length, Ctrl-O opens it in `$EDITOR`.
+The whole app in one sentence: type to find or to write; Enter writes the line, or opens a new
+note under the one you are on; the arrow at the end of a note goes into it, and at the end of
+the line into the tag, person, day or note the line names; Esc clears the line, or comes back.
+Every other key is shown in the footer, and only when it applies where the cursor is. To edit a
+note at length, Ctrl-O opens it in `$EDITOR`.
 
 A note is plain text: its first line is its head, and `#tag`, `@person`, dates written
 `2026-10-16` and URLs mean what they look like. For example:

@@ -33,11 +33,13 @@ use crate::wire::{GREETING, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
 const LOCK_FILE: &str = ".lock";
-/// What a page of the web app may do: load its own files and its own WebAssembly, and talk to
-/// a relay. Nothing from anywhere else, and nothing written into the page as markup.
+/// What a page of the web app may do: load its own files and its own WebAssembly, talk to a
+/// relay, and use inline styles, because the body's editor injects its stylesheet. No script
+/// from anywhere else; and the page writes nothing into itself as markup, which is its own
+/// practice, since allowing inline styles means the policy no longer holds it to that.
 const PAGE_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
-    connect-src 'self' ws: wss:; img-src 'self' data:; base-uri 'none'; form-action 'none'; \
-    frame-ancestors 'none'";
+    style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; \
+    base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// A space as a relay holds it: its replica, its directory, which nothing else writes while
 /// the lock is held, and where to put what is to go to each peer.
@@ -768,6 +770,7 @@ pub(crate) mod tests {
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert!(head.contains("Content-Type: text/html; charset=utf-8"));
         assert!(head.contains("Content-Security-Policy: default-src 'self'"));
+        assert!(head.contains("style-src 'self' 'unsafe-inline'"));
         assert_eq!(body, b"<!doctype html><title>fzn</title>");
         let (head, body) = get(&address, "/app.js?v=2");
         assert!(head.contains("Content-Type: text/javascript"), "{head}");

@@ -32,5 +32,5 @@ pub use note::{Note, NoteId};
 pub use record::{Notes, Read, Record, links_on_save};
 pub use score::{Reason, Weights};
 pub use seal::{Key, Opened, Seal};
-pub use session::{Action, Effect, Hint, Host, Row, Session, View};
+pub use session::{Action, Effect, Field, Hint, Host, Row, Session, View};
 pub use time::{Day, Moment};

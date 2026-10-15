@@ -49,10 +49,13 @@ pub struct Hit<'a> {
     pub note: &'a Note,
     pub score: f32,
     pub reasons: Vec<Reason>,
-    /// Whether the note is linked to or from the one being looked around. That is a fact, where
-    /// the rest is a guess, and such notes are returned whatever they score and whatever the
-    /// limit.
+    /// Whether the note is linked to or from the one being looked around, or carries the label
+    /// being looked around. That is a fact, where the rest is a guess, and such notes are
+    /// returned whatever they score and whatever the limit.
     pub linked: bool,
+    /// Whether the note's head is what was typed. Such notes come first, whatever they score
+    /// and whatever the limit.
+    pub named: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -135,6 +138,12 @@ impl Engine {
     /// the input ends in whitespace. A note headed with what was typed is the note being named,
     /// and comes first whatever it scores and whatever the limit.
     pub fn search(&self, text: &str, opts: &SearchOptions) -> Vec<Hit<'_>> {
+        self.typed(text, opts, &[])
+    }
+
+    /// `search`, with the notes in `carrying`, which is sorted, listed as facts whatever they
+    /// score and whatever the limit.
+    fn typed(&self, text: &str, opts: &SearchOptions, carrying: &[DocId]) -> Vec<Hit<'_>> {
         let (terms, prefix) = typed_words(text);
         let facts = text::facts(text);
         let mut labels = query_labels(&terms, &facts);
@@ -154,7 +163,7 @@ impl Engine {
             links_out: &[],
             named: Some(&named),
         };
-        self.run(&ctx, opts, &self.headed(text))
+        self.run(&ctx, opts, &self.headed(text), carrying)
     }
 
     /// The notes whose head is what was typed, sorted: every word of the head was typed and no
@@ -276,7 +285,42 @@ impl Engine {
             links_out: &links_out,
             named: None,
         };
-        self.run(&ctx, opts, &[])
+        self.run(&ctx, opts, &[], &[])
+    }
+
+    /// The neighbourhood of a tag, a person or a day, which `written` is as it would be typed:
+    /// every note carrying it, marked as linked and listed whatever it scores and whatever the
+    /// limit, and what the engine finds besides for those words. A day is also the day nearness
+    /// in time is measured from, as a note's own day is in `related`, so that a note written on
+    /// it says the same date and not how far it is from today.
+    pub(crate) fn labelled(
+        &self,
+        label: &Label,
+        written: &str,
+        opts: &SearchOptions,
+    ) -> Vec<Hit<'_>> {
+        let opts = SearchOptions {
+            today: match label {
+                Label::Date(day) => Some(*day),
+                _ => opts.today,
+            },
+            ..opts.clone()
+        };
+        // Whitespace after it, so that the label's word is a whole word and not the start of one.
+        self.typed(&format!("{written} "), &opts, self.index.docs_with(label))
+    }
+
+    /// The one note whose head is what was typed, by the rule that lists a name first in
+    /// `search`, if exactly one is. The app goes into it from the line.
+    pub(crate) fn the_note_named(&self, text: &str, include_archived: bool) -> Option<&Note> {
+        let mut named = self
+            .headed(text)
+            .into_iter()
+            .filter_map(|d| self.docs[d as usize].as_ref())
+            .map(|doc| &doc.note)
+            .filter(|note| include_archived || !note.archived);
+        let one = named.next()?;
+        named.next().is_none().then_some(one)
     }
 
     /// The notes a text names in `[[brackets]]`, by their heads. Brackets are a way of typing a
@@ -334,15 +378,18 @@ impl Engine {
     }
 
     /// Scores the candidates and lists them best first, after the notes in `first`, which is
-    /// sorted: those are the notes being named, and they are listed whatever they score.
+    /// sorted: those are the notes being named, and they are listed whatever they score. So are
+    /// the notes in `carrying`, also sorted, which carry the label being looked around and are
+    /// facts of it, as what is linked is of a note.
     fn run<'a: 'c, 'c>(
         &'a self,
         ctx: &Context<'c>,
         opts: &SearchOptions,
         first: &[DocId],
+        carrying: &[DocId],
     ) -> Vec<Hit<'a>> {
         let mut c = Candidates::default();
-        for &d in first {
+        for &d in first.iter().chain(carrying) {
             c.include(d);
         }
         score::lexical(&self.index, ctx, &self.weights, &mut c);
@@ -367,7 +414,8 @@ impl Engine {
             }
         };
         let named = |d: DocId| first.binary_search(&d).is_ok();
-        let mut ranked = score::combine(c, &self.weights, &|d| link(d).is_some() || named(d));
+        let fact = |d: DocId| link(d).is_some() || carrying.binary_search(&d).is_ok();
+        let mut ranked = score::combine(c, &self.weights, &|d| fact(d) || named(d));
         // A stable sort, so the notes being named and the rest each keep their order.
         ranked.sort_by_key(|&(d, ..)| !named(d));
         let mut suggestions = 0;
@@ -378,8 +426,7 @@ impl Engine {
                 if !opts.include_archived && doc.note.archived {
                     return None;
                 }
-                let link = link(d);
-                match link {
+                match link(d) {
                     Some(text) => reasons.insert(
                         0,
                         Reason {
@@ -387,8 +434,8 @@ impl Engine {
                             text: text.to_owned(),
                         },
                     ),
-                    None if named(d) => {}
-                    // The limit is on suggestions. What is linked or named is always there.
+                    None if named(d) || fact(d) => {}
+                    // The limit is on suggestions. What is a fact or named is always there.
                     None => {
                         suggestions += 1;
                         if suggestions > opts.limit {
@@ -409,7 +456,8 @@ impl Engine {
                     note: &doc.note,
                     score,
                     reasons,
-                    linked: link.is_some(),
+                    linked: fact(d),
+                    named: named(d),
                 })
             })
             .collect()
