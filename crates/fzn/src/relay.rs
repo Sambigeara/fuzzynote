@@ -29,6 +29,7 @@ use fzn_engine::replica::{Message, Out, Peer, Replica, names_a_log};
 use tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tungstenite::http::StatusCode;
 
+use crate::system;
 use crate::wire::{GREETING, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
@@ -422,6 +423,8 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
         )
         .map_err(|e| anyhow!("{e}"))?;
     let mut wire = Wire::new(socket)?;
+    // The relay's clock is said first, so that a device can say when its own is far off.
+    wire.say(Message::Now(system::now()).encode()?)?;
 
     let peer = hub.peers.fetch_add(1, Ordering::Relaxed);
     let (to, waiting) = mpsc::channel();
@@ -612,6 +615,24 @@ pub(crate) mod tests {
         for path in ["/", "/main", "/1/", "/1/main/more", "/1/..", "/1/a b"] {
             assert_eq!(asked_for(path), Err(StatusCode::NOT_FOUND), "{path}");
         }
+    }
+
+    #[test]
+    fn a_relay_says_its_clock_before_anything_else() {
+        let root = temp_dir();
+        let hub = root.join("relay");
+        fs::create_dir_all(&hub).unwrap();
+        let link = start(relay(&hub), "main".into());
+        let first = loop {
+            if let Event::Message(text) = link.from_relay.recv_timeout(GREETING).unwrap() {
+                break text;
+            }
+        };
+        let Some(Message::Now(then)) = Message::decode(&first) else {
+            panic!("{first}");
+        };
+        assert!((system::now().ms - then.ms).abs() < 5_000, "{first}");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

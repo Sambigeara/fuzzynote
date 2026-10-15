@@ -460,12 +460,17 @@ body.resting .row .tail { display: none; }
 .word:hover { color: var(--ink); }
 .word:focus-visible { color: var(--ink); text-decoration: underline; outline: none; }
 
+/* What is said goes to the next line whole when the line is full, rather than each part
+   breaking where it stands. */
 #said {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: baseline;
-  gap: 1.125em;
+  gap: 0 1.125em;
   margin-left: auto;
 }
+#sync { white-space: nowrap; }
 #status { color: var(--soft); transition: opacity 600ms; }
 #status.faded { opacity: 0; }
 #trouble, #trouble .word, #status.trouble { color: var(--ink); }
@@ -529,7 +534,7 @@ body.elsewhere :is(#above, #top, #here, #lower, #buffer, #hints, #said) { opacit
   }
   #hints { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   #hints .word { min-height: 44px; white-space: nowrap; }
-  #said { margin-left: 0; justify-content: flex-end; }
+  #said { margin-left: 0; }
   #said:empty { display: none; }
 }
 

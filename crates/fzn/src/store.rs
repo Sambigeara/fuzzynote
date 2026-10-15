@@ -208,6 +208,10 @@ impl Store {
                         opened += usize::from(was_sealed);
                         notes.apply(record);
                     }
+                    Read::Later => {
+                        opened += 1;
+                        skipped += 1;
+                    }
                     Read::Shut => shut += 1,
                     Read::Other if Header::read(&line).is_some() => {}
                     Read::Other => skipped += 1,
@@ -268,7 +272,7 @@ impl Store {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::system::{now_secs, random_u64};
+    use crate::system::{self, random_u64};
     use fzn_engine::Key;
 
     pub(crate) fn temp_dir() -> PathBuf {
@@ -423,7 +427,7 @@ pub(crate) mod tests {
             concat!(
                 "{\"compacts\":[\"dev-x\"],\"snapshot\":1}\n",
                 "{\"id\":\"old\",\"text\":\"from before\",\"created\":10,\"updated\":30,\"stamp\":40,\"device\":\"dev-b\"}\n",
-                "{\"v\":3,\"id\":\"new\",\"text\":\"from the future\"}\n",
+                "{\"v\":4,\"id\":\"new\",\"text\":\"from the future\"}\n",
                 "not json\n",
             ),
         )
@@ -458,6 +462,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_space_of_lines_from_a_later_format_opens_with_its_key() {
+        let dir = temp_dir();
+        let later = seal().seal(r#"{"v":99,"id":"new","text":"from the future"}"#, &System);
+        Logs::open(&dir).unwrap().append("dev-b", &[later]).unwrap();
+        let s = open(&dir, "dev-a");
+        assert!(s.notes().is_empty());
+        assert_eq!(s.skipped(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn deleted_notes_stay_dead() {
         let dir = temp_dir();
         let mut s = open(&dir, "dev-a");
@@ -482,7 +497,7 @@ pub(crate) mod tests {
     fn the_stamp_decides_the_newest_and_a_local_change_always_wins() {
         let dir = temp_dir();
         let mut s = open(&dir, "dev-a");
-        let far_ahead = now_secs() + 3600;
+        let far_ahead = system::now().secs() + 3600;
         s.put(Record {
             stamp: Some(Moment::utc(far_ahead)),
             ..rec("n1", "written by a clock running ahead", 10)
@@ -498,10 +513,10 @@ pub(crate) mod tests {
             assert_eq!(s.notes().get("n1").unwrap().text, text);
         }
         assert_eq!(
-            s.notes().get("n1").unwrap().stamp.map(|m| m.secs),
-            Some(far_ahead + 2)
+            s.notes().get("n1").unwrap().stamp.map(|m| m.ms),
+            Some(far_ahead * 1_000 + 2)
         );
-        assert!(s.next_stamp("unseen").secs <= now_secs());
+        assert!(s.next_stamp("unseen") <= system::now());
         assert_eq!(
             open(&dir, "dev-a").notes().get("n1").unwrap().text,
             "second change in the same second"
@@ -531,7 +546,7 @@ pub(crate) mod tests {
         let text = String::from_utf8(out).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2, "one line a note, and no history");
-        assert!(lines[1].starts_with(r#"{"v":2,"id":"n1","text":"first, done","#));
+        assert!(lines[1].starts_with(r#"{"v":3,"id":"n1","text":"first, done","#));
         assert_eq!(
             Record::read(lines[1].as_bytes()).as_ref(),
             s.notes().get("n1")

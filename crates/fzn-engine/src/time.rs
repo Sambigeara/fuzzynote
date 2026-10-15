@@ -1,5 +1,6 @@
 //! Days and moments. Relevance never needs anything finer than a day. A note's times are kept to
-//! the second, with the offset of the clock that recorded them.
+//! the millisecond, with the offset of the clock that recorded them, since a stamp a keystroke
+//! has to step past the one before it, and a step of a second ran ahead of the clock.
 
 use std::fmt;
 
@@ -9,6 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub type Day = i32;
 
 const SECS_PER_DAY: i64 = 86_400;
+const MS_PER_SEC: i64 = 1_000;
 
 /// Converts a civil date to a day number.
 pub fn day_from_civil(year: i32, month: u32, day: u32) -> Day {
@@ -57,18 +59,27 @@ pub fn format_day(day: Day) -> String {
 
 /// A moment, and how far from UTC the clock that recorded it was. The offset keeps the day the
 /// moment fell on where it was written, whatever zone it is read in. Written as RFC 3339,
-/// `2026-10-13T10:12:56+01:00`, so that a line can be read without the app.
+/// `2026-10-13T10:12:56.250+01:00`, so that a line can be read without the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Moment {
-    /// Unix seconds.
-    pub secs: i64,
+    /// Unix milliseconds.
+    pub ms: i64,
     /// Seconds east of UTC.
     pub offset: i32,
 }
 
 impl Moment {
+    /// On a whole second, in UTC, as the lines from before versions held their times.
     pub fn utc(secs: i64) -> Self {
-        Self { secs, offset: 0 }
+        Self {
+            ms: secs.saturating_mul(MS_PER_SEC),
+            offset: 0,
+        }
+    }
+
+    /// Unix seconds, the millisecond dropped.
+    pub fn secs(self) -> i64 {
+        self.ms.div_euclid(MS_PER_SEC)
     }
 
     /// The day it was where the moment was recorded.
@@ -76,18 +87,20 @@ impl Moment {
         day_from_unix_secs(self.wall())
     }
 
-    pub fn plus(self, secs: i64) -> Self {
+    pub fn plus_secs(self, secs: i64) -> Self {
         Self {
-            secs: self.secs.saturating_add(secs),
+            ms: self.ms.saturating_add(secs.saturating_mul(MS_PER_SEC)),
             ..self
         }
     }
 
+    /// Seconds since 1970 by the clock that recorded it.
     fn wall(self) -> i64 {
-        self.secs.saturating_add(i64::from(self.offset))
+        self.secs().saturating_add(i64::from(self.offset))
     }
 
-    /// Reads RFC 3339. Fractions of a second are dropped.
+    /// Reads RFC 3339. A fraction of a second is read to the millisecond, and what is finer is
+    /// dropped.
     fn parse(s: &str) -> Option<Self> {
         let b = s.as_bytes();
         let num = |from: usize, n: usize| -> Option<i64> {
@@ -107,9 +120,13 @@ impl Moment {
             return None;
         }
         let mut at = 19;
+        let mut ms = 0;
         if is(at, b'.') {
             at += 1;
-            while b.get(at).is_some_and(u8::is_ascii_digit) {
+            let mut unit = 100;
+            while let Some(&digit) = b.get(at).filter(|c| c.is_ascii_digit()) {
+                ms += unit * i64::from(digit - b'0');
+                unit /= 10;
                 at += 1;
             }
         }
@@ -122,8 +139,9 @@ impl Moment {
             _ => return None,
         };
         let days = i64::from(day_from_civil(num(0, 4)? as i32, month as u32, day as u32));
+        let secs = days * SECS_PER_DAY + hour * 3600 + minute * 60 + second - offset;
         Some(Self {
-            secs: days * SECS_PER_DAY + hour * 3600 + minute * 60 + second - offset,
+            ms: secs * MS_PER_SEC + ms,
             offset: offset as i32,
         })
     }
@@ -136,10 +154,11 @@ impl fmt::Display for Moment {
         let secs = wall.rem_euclid(SECS_PER_DAY);
         write!(
             f,
-            "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}",
+            "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}",
             secs / 3600,
             secs % 3600 / 60,
-            secs % 60
+            secs % 60,
+            self.ms.rem_euclid(MS_PER_SEC)
         )?;
         if self.offset == 0 {
             return f.write_str("Z");
@@ -238,36 +257,34 @@ mod tests {
         // 23:30 on the 13th in Lisbon, in summer: the 13th there, already the 13th in UTC too.
         // 00:30 on the 14th in Lisbon is still the 13th in UTC, and the note says the 14th.
         let late = Moment {
-            secs: 1_791_934_200,
+            ms: 1_791_934_200_000,
             offset: 3600,
         };
-        assert_eq!(late.to_string(), "2026-10-14T00:30:00+01:00");
+        assert_eq!(late.to_string(), "2026-10-14T00:30:00.000+01:00");
         assert_eq!(format_day(late.day()), "2026-10-14");
-        assert_eq!(format_day(Moment::utc(late.secs).day()), "2026-10-13");
-        assert_eq!(Moment::utc(late.secs).to_string(), "2026-10-13T23:30:00Z");
+        assert_eq!(format_day(Moment::utc(late.secs()).day()), "2026-10-13");
+        assert_eq!(
+            Moment::utc(late.secs()).to_string(),
+            "2026-10-13T23:30:00.000Z"
+        );
 
         for text in [
-            "2026-10-14T00:30:00+01:00",
-            "2026-10-13T23:30:00Z",
-            "2026-10-13T18:30:00-05:00",
-            "1969-12-31T23:59:59Z",
+            "2026-10-14T00:30:00.000+01:00",
+            "2026-10-13T23:30:00.000Z",
+            "2026-10-13T18:30:00.000-05:00",
+            "1969-12-31T23:59:59.000Z",
         ] {
             let moment = Moment::parse(text).unwrap();
             assert_eq!(moment.to_string(), text);
             assert_eq!(
-                moment.secs,
+                moment.secs(),
                 if text.starts_with("19") {
                     -1
                 } else {
-                    late.secs
+                    late.secs()
                 }
             );
         }
-        assert_eq!(
-            Moment::parse("2026-10-13t23:30:00.250z"),
-            Some(Moment::utc(late.secs)),
-            "fractions are dropped"
-        );
         for bad in [
             "",
             "2026-10-13",
@@ -277,7 +294,50 @@ mod tests {
         ] {
             assert_eq!(Moment::parse(bad), None, "{bad:?}");
         }
-        assert_eq!(late.plus(60).secs - late.secs, 60);
-        assert_eq!(late.plus(60).offset, late.offset);
+        assert_eq!(late.plus_secs(60).ms - late.ms, 60_000);
+        assert_eq!(late.plus_secs(60).offset, late.offset);
+    }
+
+    #[test]
+    fn a_time_written_to_the_second_before_milliseconds_reads_as_it_did() {
+        for (text, then) in [
+            ("2026-10-14T00:30:00+01:00", "2026-10-14T00:30:00.000+01:00"),
+            ("2026-10-13T23:30:00Z", "2026-10-13T23:30:00.000Z"),
+            ("1969-12-31T23:59:59Z", "1969-12-31T23:59:59.000Z"),
+        ] {
+            let moment = Moment::parse(text).unwrap();
+            assert_eq!(moment.ms % 1_000, 0, "{text}");
+            assert_eq!(Moment::parse(then), Some(moment));
+        }
+        let old: Moment = serde_json::from_str("1791934200").unwrap();
+        assert_eq!(old, Moment::utc(1_791_934_200));
+    }
+
+    #[test]
+    fn a_millisecond_stamp_is_written_and_read_back_exactly() {
+        let moment = Moment {
+            ms: 1_791_934_200_007,
+            offset: 3600,
+        };
+        let text = moment.to_string();
+        assert_eq!(text, "2026-10-14T00:30:00.007+01:00");
+        assert_eq!(Moment::parse(&text), Some(moment));
+        let json = serde_json::to_string(&moment).unwrap();
+        assert_eq!(serde_json::from_str::<Moment>(&json).unwrap(), moment);
+
+        // Before 1970 the millisecond still counts forward from the second.
+        let early = Moment { ms: -1, offset: 0 };
+        assert_eq!(early.to_string(), "1969-12-31T23:59:59.999Z");
+        assert_eq!(Moment::parse("1969-12-31T23:59:59.999Z"), Some(early));
+
+        // Finer than a millisecond is dropped, and fewer digits are tenths and hundredths.
+        assert_eq!(
+            Moment::parse("2026-10-13t23:30:00.250999z").map(|m| m.ms % 1_000),
+            Some(250)
+        );
+        assert_eq!(
+            Moment::parse("2026-10-13T23:30:00.5Z").map(|m| m.ms % 1_000),
+            Some(500)
+        );
     }
 }

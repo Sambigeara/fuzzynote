@@ -34,8 +34,10 @@ use crate::time::Moment;
 /// The version of the line format this build writes. Lines with no version are from before
 /// there was one, and hold their times as unix seconds. A line with a later version is left
 /// alone rather than misread. Version 2 added the place, which a build of version 1 would drop
-/// from every note it rewrote.
-const FORMAT: u32 = 2;
+/// from every note it rewrote. Version 3 keeps times to the millisecond, which a build of
+/// version 2 would drop, and so take two versions of a note written in one second for a tie
+/// that devices of version 3 had told apart.
+const FORMAT: u32 = 3;
 
 /// One version of one note.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +84,9 @@ pub struct Record {
 pub enum Read {
     /// A version of a note.
     Version(Record),
+    /// An envelope this seal opens around what this build does not read, a version of a later
+    /// format. The key is the space's, since it opened it, and the line is left as it is.
+    Later,
     /// An envelope this seal does not open.
     Shut,
     /// Not a version: a compaction header, or garbage.
@@ -135,16 +140,15 @@ impl Record {
 
     /// Reads one line of a log, sealed or plain. An envelope is opened with the seal and what
     /// is inside read as a plain line; a line that is not an envelope is read as a plain line.
-    /// `Shut` is an envelope this seal does not open. `Other` is anything that is not a version:
-    /// a compaction header, or garbage.
+    /// `Later` is an envelope this seal opens around what this build does not read, and `Shut`
+    /// one it does not open. `Other` is any other line that is not a version: a compaction
+    /// header, or garbage.
     pub fn read_line(seal: &Seal, line: &str) -> Read {
-        let version = |plain: &str| match Record::read(plain.as_bytes()) {
-            Some(record) => Read::Version(record),
-            None => Read::Other,
-        };
         match seal.open(line) {
-            Opened::Plain => version(line),
-            Opened::Text(plain) => version(&plain),
+            Opened::Plain => Record::read(line.as_bytes()).map_or(Read::Other, Read::Version),
+            Opened::Text(plain) => {
+                Record::read(plain.as_bytes()).map_or(Read::Later, Read::Version)
+            }
             Opened::Shut => Read::Shut,
         }
     }
@@ -156,8 +160,9 @@ impl Record {
         Ok(seal.seal(&plain, host))
     }
 
+    /// When the version was written, in unix milliseconds.
     fn written(&self) -> Option<i64> {
-        self.stamp.or(self.updated).map(|m| m.secs)
+        self.stamp.or(self.updated).map(|m| m.ms)
     }
 
     fn supersedes(&self, other: &Record) -> bool {
@@ -180,19 +185,22 @@ impl Record {
             && self.deleted == other.deleted
     }
 
-    /// Where the note falls among those placed after the same note: the newest placed first.
+    /// Where the note falls among those placed after the same note, the newest placed first, in
+    /// unix milliseconds.
     fn rank(&self) -> Option<i64> {
-        self.placed
-            .or(self.created)
-            .or(self.updated)
-            .map(|m| m.secs)
+        self.placed.or(self.created).or(self.updated).map(|m| m.ms)
     }
 }
 
-/// A moment past `latest`, or `now` if that is past it already.
+/// A moment past `latest`, in unix milliseconds, or `now` if that is past it already. The step
+/// is a millisecond, so that a burst of versions runs ahead of the clock by a millisecond each
+/// at most.
 fn past(latest: Option<i64>, now: Moment) -> Moment {
     match latest {
-        Some(held) if held >= now.secs => now.plus(held - now.secs + 1),
+        Some(held) if held >= now.ms => Moment {
+            ms: held.saturating_add(1),
+            ..now
+        },
         _ => now,
     }
 }
@@ -264,7 +272,7 @@ impl Notes {
     }
 
     /// A stamp for a new version of a note that is sure to supersede the one held, even when
-    /// two changes land in the same second or another device's clock runs ahead.
+    /// two changes land in the same millisecond or another device's clock runs ahead.
     pub fn next_stamp(&self, id: &str, now: Moment) -> Moment {
         past(self.version(id).and_then(Record::written), now)
     }
@@ -313,7 +321,7 @@ impl Notes {
                 None => tops.push(i),
             }
         }
-        // The newest placed first, and of two placed in the same second the later id.
+        // The newest placed first, and of two placed in the same millisecond the later id.
         let rank: Vec<_> = all.iter().map(|r| Reverse((r.rank(), &r.id))).collect();
         let newest = |a: &usize, b: &usize| rank[*a].cmp(&rank[*b]);
         tops.sort_unstable_by(newest);
@@ -458,22 +466,96 @@ mod tests {
             stamp: Some(Moment::utc(4_600)),
             ..rec("n1", "written by a clock running ahead", 10)
         });
-        for text in ["first change", "second change in the same second"] {
+        for text in ["first change", "second change in the same millisecond"] {
             let stamp = notes.next_stamp("n1", now);
             assert!(notes.apply(Record {
                 stamp: Some(stamp),
                 ..rec("n1", text, 10)
             }));
         }
-        assert_eq!(notes.get("n1").unwrap().stamp, Some(Moment::utc(4_602)));
+        assert_eq!(
+            notes.get("n1").unwrap().stamp.map(|m| m.ms),
+            Some(4_600_002)
+        );
         assert_eq!(notes.next_stamp("unseen", now), now);
+    }
+
+    #[test]
+    fn two_versions_in_the_same_second_are_told_apart_by_their_milliseconds() {
+        let at = |ms: i64| Some(Moment { ms, offset: 0 });
+        let earlier = Record {
+            stamp: at(1_791_892_800_100),
+            device: "dev-z".into(),
+            ..rec("boiler", "Boiler", 10)
+        };
+        let later = Record {
+            stamp: at(1_791_892_800_900),
+            device: "dev-a".into(),
+            ..rec("boiler", "Boiler: service due", 10)
+        };
+        // To the second they tie, and the writer id would have given it to the earlier one.
+        assert!(earlier.device > later.device);
+        for versions in [[&earlier, &later], [&later, &earlier]] {
+            let mut notes = Notes::new();
+            for version in versions {
+                notes.apply(version.clone());
+            }
+            assert_eq!(notes.get("boiler").unwrap().text, "Boiler: service due");
+        }
+    }
+
+    #[test]
+    fn a_line_of_this_format_reads_whatever_the_precision_of_its_times() {
+        let line = |stamp: &str| {
+            format!(r#"{{"v":3,"id":"oil","text":"Order oil","stamp":"{stamp}","device":"dev-a"}}"#)
+        };
+        for (stamp, ms) in [
+            ("2026-10-13T12:00:00.250+01:00", 1_791_889_200_250),
+            ("2026-10-13T12:00:00.25Z", 1_791_892_800_250),
+            ("2026-10-13T12:00:00.250999999Z", 1_791_892_800_250),
+            ("2026-10-13T12:00:00Z", 1_791_892_800_000),
+        ] {
+            let record = Record::read(line(stamp).as_bytes()).unwrap();
+            assert_eq!(record.stamp.map(|m| m.ms), Some(ms), "{stamp}");
+        }
+        let written = line("2026-10-13T12:00:00.250+01:00");
+        let record = Record::read(written.as_bytes()).unwrap();
+        assert_eq!(
+            Record::read(record.line().unwrap().as_bytes()),
+            Some(record)
+        );
+    }
+
+    #[test]
+    fn a_second_precision_line_from_before_still_reads_and_merges_as_it_did() {
+        // Two versions from version 2, in one second, decided by the writer id as they were.
+        let line = |text: &str, device: &str| {
+            format!(
+                r#"{{"v":2,"id":"oil","text":"{text}","stamp":"2026-10-13T12:00:00Z","device":"{device}"}}"#
+            )
+        };
+        let a = Record::read(line("Order oil", "dev-a").as_bytes()).unwrap();
+        let b = Record::read(line("Order oil by Friday", "dev-b").as_bytes()).unwrap();
+        assert_eq!(a.stamp, Some(Moment::utc(1_791_892_800)));
+        for versions in [[&a, &b], [&b, &a]] {
+            let mut notes = Notes::new();
+            for version in versions {
+                notes.apply(version.clone());
+            }
+            assert_eq!(notes.get("oil").unwrap().text, "Order oil by Friday");
+        }
+        // A version written now, a millisecond into that second, is newer than both.
+        let mut notes = Notes::new();
+        notes.apply(b.clone());
+        let stamp = notes.next_stamp("oil", Moment::utc(1_791_892_800));
+        assert_eq!(stamp.ms, 1_791_892_800_001);
     }
 
     #[test]
     fn a_line_reads_back_as_it_was_written_and_older_lines_are_still_read() {
         let record = Record {
             created: Some(Moment {
-                secs: 1_791_934_200,
+                ms: 1_791_934_200_250,
                 offset: 3600,
             }),
             links: vec!["n0".into()],
@@ -482,11 +564,11 @@ mod tests {
             ..rec("new", "written now\nwith a body", 20)
         };
         let line = record.line().unwrap();
-        assert!(line.starts_with(r#"{"v":2,"id":"new","text":"written now\nwith a body","#));
+        assert!(line.starts_with(r#"{"v":3,"id":"new","text":"written now\nwith a body","#));
         assert!(line.contains(
-            r#""created":"2026-10-14T00:30:00+01:00","updated":"1970-01-01T00:00:20Z","#
+            r#""created":"2026-10-14T00:30:00.250+01:00","updated":"1970-01-01T00:00:20.000Z","#
         ));
-        assert!(line.contains(r#""after":"n0","placed":"1970-01-01T00:00:30Z","#));
+        assert!(line.contains(r#""after":"n0","placed":"1970-01-01T00:00:30.000Z","#));
         assert!(line.ends_with('\n') && line.matches('\n').count() == 1);
         assert_eq!(Record::read(line.as_bytes()), Some(record));
 
@@ -509,10 +591,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!((&unplaced.after, unplaced.placed), (&None, None));
-        assert_eq!(unplaced.rank(), Some(10));
+        assert_eq!(unplaced.rank(), Some(10_000));
         // A line from a later format is left alone rather than misread.
         assert_eq!(
-            Record::read(br#"{"v":3,"id":"new","text":"from the future"}"#),
+            Record::read(br#"{"v":4,"id":"new","text":"from the future"}"#),
             None
         );
         assert_eq!(Record::read(b"not json"), None);
@@ -548,11 +630,13 @@ mod tests {
         let header = r#"{"compacts":["3f9a01c2"],"snapshot":293}"#;
         assert_eq!(Record::read_line(&seal, header), Read::Other);
         assert_eq!(Record::read_line(&seal, "not json"), Read::Other);
+        let later = r#"{"v":99,"id":"n1","text":"from a later build"}"#;
         assert_eq!(
-            Record::read_line(&seal, &seal.seal(header, &host)),
-            Read::Other,
-            "a sealed header is still not a version"
+            Record::read_line(&seal, &seal.seal(later, &host)),
+            Read::Later,
+            "opened, and left for a build that reads it"
         );
+        assert_eq!(Record::read_line(&seal, later), Read::Other);
     }
 
     fn placed(id: &str, after: Option<&str>, at: i64) -> Record {
@@ -609,6 +693,29 @@ mod tests {
             assert_eq!(held.after.as_deref(), Some("boiler"));
             assert!(!notes.apply(moved.clone()) && !notes.apply(edit.clone()));
         }
+    }
+
+    #[test]
+    fn placed_under_one_note_keeps_the_newest_first_order_at_millisecond_spacing() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 1_791_892_800));
+        // Written under the boiler one after another inside a second, by a clock that has not
+        // moved, and then by one that moved a millisecond.
+        let mut now = Moment::utc(1_791_892_801);
+        for id in ["gauge", "oil", "service"] {
+            let at = notes.next_placed(id, Some("boiler"), now);
+            notes.apply(Record {
+                after: Some("boiler".into()),
+                placed: Some(at),
+                ..rec(id, id, 10)
+            });
+            now.ms += 1;
+        }
+        let placed_ms = |id: &str| notes.get(id).unwrap().placed.unwrap().ms;
+        assert_eq!(placed_ms("oil") - placed_ms("gauge"), 1);
+        assert_eq!(placed_ms("service") - placed_ms("oil"), 1);
+        assert_eq!(placed_ms("service") - 1_791_892_801_000, 2, "on the clock");
+        assert_eq!(order(&notes), ["boiler", "service", "oil", "gauge"]);
     }
 
     #[test]

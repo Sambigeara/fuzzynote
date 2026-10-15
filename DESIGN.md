@@ -173,21 +173,24 @@ Nothing is added to the engine until daily use asks for it.
   one line.
 - **v1: one append-only log per writer, per space.** Each line is a full snapshot of one note
   as JSON: `v`, the version of the line format, then id, text, links, created, updated, stamp,
-  after, placed, archived, deleted, device. The format is version 2 since `after` and `placed`
-  were added. Times are RFC 3339 with the offset of the clock that wrote them,
-  `2026-10-13T10:12:56+01:00`, so a line reads without the app, and a note keeps the day it was
-  written on wherever it is read. Lines from before versions hold unix seconds and are still
-  read; a line with a later version than the build knows is left alone, not misread. `updated`
-  is when the text last changed, so archiving a note does not re-date it. `stamp` is when what
-  the version says was written, and a local change is always stamped past the version it
-  replaces. `after` is the note it sits after and `placed` when it was put there, a clock of the
-  place's own. Loading replays every log in the space and the version with the newest stamp
-  gives the text, links, times and flags, ties broken by writer id, and the version newest by
-  `placed` gives the place, ties broken by the note it is after. Last-writer-wins on what a note
-  says is the known limitation, accepted for now. Deletion is a tombstone line, kept so an
-  older version arriving later cannot resurrect the note. What a line says, and which of two
-  versions is the newer, is the engine's to settle, so that every device agrees. Where the
-  lines are kept is the face's: files under the terminal, IndexedDB in a tab.
+  after, placed, archived, deleted, device. The format is version 3 since times went to the
+  millisecond, and was version 2 from when `after` and `placed` were added. Times are RFC 3339
+  to the millisecond with the offset of the clock that wrote them,
+  `2026-10-13T10:12:56.250+01:00`, so a line reads without the app, and a note keeps the day it
+  was written on wherever it is read. Lines from before versions hold unix seconds and are still
+  read, and so are lines from before milliseconds, whose times fall on the second; a line with a
+  later version than the build knows is left alone, not misread. `updated` is when the text last
+  changed, so archiving a note does not re-date it. `stamp` is when what the version says was
+  written, and a local change is always stamped past the version it replaces, a millisecond past
+  it when the clock has not moved on since. `after` is the note it sits after and `placed` when
+  it was put there, a clock of the place's own, kept and stepped the same way. Loading replays
+  every log in the space and the version with the newest stamp gives the text, links, times and
+  flags, ties broken by writer id, and the version newest by `placed` gives the place, ties
+  broken by the note it is after. Last-writer-wins on what a note says is the known limitation,
+  accepted for now. Deletion is a tombstone line, kept so an older version arriving later
+  cannot resurrect the note. What a line says, and which of two versions is the newer, is the
+  engine's to settle, so that every device agrees. Where the lines are kept is the face's:
+  files under the terminal, IndexedDB in a tab.
 - **Lines are sealed before they are kept.** Decided 2026-10-14. What goes into a log, and so
   to the relay, is not the snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is
   a random 24-byte nonce and then the snapshot encrypted with XChaCha20-Poly1305 under the
@@ -258,13 +261,16 @@ tab and the relay all run the same code.
 - **A mark is a point in a log**: how many lines in, and a digest of those lines. The digest
   is FNV-1a, 64 bits, over each line and its newline, written as sixteen hex digits. It is a
   check against accidents, not a defence against anyone.
-- **Three messages**, each one JSON object.
+- **Four messages**, each one JSON object. A message a build does not know is passed over.
   - `{"have":{"3f9a01c2":{"lines":293,"digest":"…"}}}` is every log the sender holds and its
     mark in each. Said on connecting.
   - `{"lines":{"log":"3f9a01c2","after":{"lines":293,"digest":"…"},"lines":["…"]}}` is lines
     of a log, and the mark they come straight after.
   - `{"forked":"3f9a01c2"}` says that the sender's log of this name and the receiver's are
     not one log.
+  - `{"now":"2026-10-15T09:30:00.250Z"}` is the sender's clock. A relay says it first, before
+    `have`, so that a device can say when its own clock is far off (see "A clock far from the
+    relay's is said"). A replica makes nothing of it.
 - **Four rules.**
   1. Told what a peer has, send it the rest of every log it holds less of, having checked its
      mark against the same point in your own.
@@ -389,11 +395,13 @@ tab and the relay all run the same code.
   Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or `Esc Esc quits` where there is
   none; a status row above it exists only while there is something to say, and where the body
   has its rows it takes the last of them, so that the list keeps its height. Nothing says how
-  many notes there are or that sync is working; `not syncing` is said when it is not. Not yet
-  reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, Tab search
-  groups, Ctrl-^ export. The first time a space is opened on a machine fzn asks for its
-  passphrase, twice if the space is new, and keeps the key it derives; `fzn key` asks again,
-  for when it was mistyped. `$FZN_PASSPHRASE` answers for scripts.
+  many notes there are or that sync is working; `not syncing` is said when it is not, and in its
+  place, while syncing, how far this machine's clock is from the relay's when that is more than
+  two minutes, `this device's clock is 5 min ahead`. Not yet reinstated: Ctrl-S multi-select
+  with Enter zooming on what the selection shares, Tab search groups, Ctrl-^ export. The first
+  time a space is opened on a machine fzn asks for its passphrase, twice if the space is new,
+  and keeps the key it derives; `fzn key` asks again, for when it was mistyped.
+  `$FZN_PASSPHRASE` answers for scripts.
 - **Zoom.** Right at the end of a note's head makes it the context, and the path grows by one;
   short of the end, Right is the caret. A tag, a person or a day can be the context too (see "A
   tag is a place you can go into"): Right at the end of the line goes into what the line names,
@@ -651,7 +659,9 @@ tab and the relay all run the same code.
   the merge is deterministic in any order. What is not robust is two devices editing one note
   apart, where the newer whole text wins; that is the text CRDT, which is milestone 4 and
   which compaction and sealing were shaped not to obstruct. Pulling Yrs or Loro in now would
-  be the dependency decision Sam deferred, made in passing.
+  be the dependency decision Sam deferred, made in passing. Revised 2026-10-15 by "Stamps are
+  kept to the millisecond": the logical clock stepped a second at a time, which ran ahead of the
+  wall clock once a head was a version a keystroke, so it now steps a millisecond.
 - **Sync is part of opening the app.** Decided 2026-10-13, at Sam's suggestion, over an
   `fzn sync` to be run beside it. A second thing to run is a second thing to remember, and
   one that fails without being seen. What it cost was two things to get right: only one of
@@ -956,11 +966,73 @@ tab and the relay all run the same code.
   made, so that undoing a move leaves what has been written since, here or on another device,
   and undoing an edit leaves where the note has been moved since; putting a head back is the
   same. The line format went to version 2, so that a build that knows only version 1 leaves
-  these lines alone rather than rewriting a note without its place. The pinned flag the model
+  these lines alone rather than rewriting a note without its place. `placed` was kept to the
+  second here, and a note placed in the same second as another a second past it; since
+  2026-10-15 it is kept to the millisecond and stepped a millisecond, and the format is
+  version 3 (see "Stamps are kept to the millisecond"). The pinned flag the model
   once listed was never built, and moving a note to the top is what it was for. The order is
   walked afresh each time the list is made, O(n log n) in the notes: 5 to 7 ms over 30,000 notes
   in a release build, against under 1 ms for the sort by `updated` it replaces, so nothing is
   cached.
+- **Stamps are kept to the millisecond.** Decided 2026-10-15, at Sam's direction, revising
+  "Per-note last-writer-wins stays, for now" in what its logical clock steps by, the times in
+  the line format under Storage and sync, and `placed` in "Where a note sits is kept"; the line
+  format goes from version 2 to 3. A version's `stamp`, which decides whose text wins, and its
+  `placed`, which decides whose place wins, are a moment past what is held for the note, or the
+  clock if that is later. Moments counted whole seconds, so the step was a second, and since "A
+  head is kept as it is typed" a head is a version a keystroke: k keys a second for T seconds
+  put the note's stamp about (k−1)·T seconds ahead of the clock, half a minute for a head of
+  forty characters typed at speed. Inside that window another device's edit of the same note,
+  made later without having seen this one, lost. Now a moment is unix milliseconds with its
+  offset, every comparison and rank is in milliseconds, the step is one, and both faces read the
+  clock to the millisecond, the terminal from the system and the page from `Date.now()`. A burst
+  now runs ahead by a millisecond a key at most. Times are written with three digits of fraction;
+  a line from before reads as it did, its times on the second, and two such versions in one
+  second are still decided by writer id. Days, and every time shown, are unchanged. The format
+  went to 3 because a build of version 2 reads the fraction and drops it, so two versions of one
+  note in one second, told apart here by their milliseconds, would be a tie there decided by
+  writer id, and two devices would hold different text for the same note; by the rule under
+  Storage and sync a build that cannot read a line as it was meant leaves it alone instead. So
+  every binary moves together, as it did for version 2. The relay passes lines on unread and does
+  not care. The textbook form of this is a hybrid logical clock, wall time with a counter beside
+  it that breaks ties within a tick and carries causality past a clock that is behind; this
+  stamp already steps past what it has seen, which is the counter's work, and milliseconds take
+  most of the rest of the gain (a step small enough that typing no longer outruns the clock) for
+  the least change, one field of one type and no new field in the line. A clock that is simply
+  wrong, by minutes or hours, still wins or loses by that much; that is said, not corrected (see
+  "A clock far from the relay's is said").
+- **A clock far from the relay's is said.** Decided 2026-10-15, at Sam's direction. A device
+  whose clock is ahead stamps its versions ahead, and wins against later edits made elsewhere;
+  one behind loses to earlier ones. It cannot be put right quietly: which of two versions is
+  newer is decided on every device from the stamps alone, so a device that adjusted its own
+  stamps, or read others' through an estimate of their clock, would decide differently from one
+  that did not, and the space would hold two answers. What can be done is to make it seen, so the
+  clock gets set. The relay's first message on connecting is now its clock, `{"now":"…"}`, and a
+  device compares that with its own `Host` clock in `Device`, which both faces drive, and says
+  `this device's clock is 5 min ahead`, or behind, in the place of `not syncing` at the foot,
+  when the two are more than two minutes apart, and nothing otherwise. Two minutes is well past
+  any network's delay and well short of what loses an edit that matters. It is forgotten when the
+  connection goes and learnt again when it comes back. The clock was meant to be one field of the
+  relay's first message, which says what it holds, but a build from before reads that message
+  as exactly one key, and one with a field it does not know would be passed over whole, and
+  what the relay holds with it; a message of its own is passed over by such a build as any
+  message it does not know is, and a relay from before sends none, so nothing is said. Nothing
+  stored is touched.
+- **A line of a later format is left as it is.** Decided 2026-10-15, in review of the move to
+  version 3, revising "Compaction is a new log" in what a snapshot holds and "Lines are sealed
+  before they are kept" in what proves a key. Storage and sync says a line with a later version
+  than the build knows is left alone, not misread, but a line the key opened and the build
+  could not read was taken as garbage. So a build of version 2, given a space of nothing but
+  version 3 lines, said its passphrase did not open it, with the right one. And a build of
+  version 2 whose own log held more than a thousand lines that version 3 had written on the
+  same machine found the log grown past four times the notes it could read, and compacted it,
+  leaving those lines out of the snapshot; the header then retired them on every device, and
+  what that machine had written since was gone. Now an envelope the key opens proves the key,
+  whatever is inside; a line of a later format counts as a note when a log is judged grown; and
+  a compaction carries every such line into the new log as it was, after the snapshot, counted
+  in the header. Nothing about a line this build reads changes. It holds from version 3 on:
+  builds of version 2 behave as they did, so none is to open a space that a build of version 3
+  has written to on the same machine.
 - **A place lists what is in it; typing finds.** Decided 2026-10-15, agreed with Sam, replacing
   the neighbourhood in two parts that the Zoom paragraph and "A tag is a place you can go into"
   listed on an empty line, the facts and then the engine's suggestions with their reasons. A
@@ -1116,7 +1188,8 @@ tab and the relay all run the same code.
   stamped a second ahead so that it supersedes. A head is now a version a keystroke, so typing
   fast runs a note's stamp ahead of the clock, half a minute for a long head, and another
   device's change to that note inside that half minute loses even when it came later. Stamps
-  finer than a second are the fix if two devices ever edit one note at once.
+  finer than a second are the fix if two devices ever edit one note at once. Closed 2026-10-15
+  by "Stamps are kept to the millisecond", made before it was felt.
 - The browser's keys past the four, and Ctrl-D and Ctrl-O. Words at the foot reached with Tab
   are a start: nothing to remember, but slower than a chord for archiving ten notes in a row.
   Undo has no key at all yet.
@@ -1163,6 +1236,12 @@ tab and the relay all run the same code.
 - A log is compacted only when its device opens, and a head is now a sealed line a keystroke; a
   tab left open for days grows its log until it is reloaded. Compacting when grown, not only
   when opened, is the fix if it is felt.
+- The clock is compared once a connection, when the relay's `now` is heard, so a clock set right
+  while connected is still said to be off until the next connection. And the terminal hears the
+  relay only between keys: a connection made again while the editor has the screen is heard
+  when the editor closes, and the wait reads as this clock running ahead, two minutes after a
+  long edit. A `now` said again from time to time is the fix for the first, and the time a
+  message was heard going with it to the device for the second, if either is felt.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

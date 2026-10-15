@@ -795,7 +795,8 @@ let status = '';
 let fading = 0;
 function paintFoot() {
   // What just happened is said, and goes after five seconds. What is still true stays: that the
-  // relay cannot be reached, and that the key opens nothing here.
+  // relay cannot be reached, or that this device's clock is far from the relay's, and that the
+  // key opens nothing here.
   if (view.status !== status) {
     status = view.status;
     const node = $('status');
@@ -807,7 +808,10 @@ function paintFoot() {
   const shut = !fzn.key_verified();
   $('trouble').hidden = !shut;
   $('passphrase').hidden = shut;
-  $('sync').hidden = synced !== 'not syncing';
+  const sync = $('sync');
+  const said = synced === 'not syncing' ? synced : (fzn.clock() ?? '');
+  if (sync.textContent !== said) sync.textContent = said;
+  sync.hidden = !said;
 }
 
 function paintPath() {

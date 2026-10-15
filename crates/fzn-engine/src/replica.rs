@@ -38,6 +38,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::time::Moment;
+
 /// A peer, as the face that holds its connection numbers it.
 pub type Peer = u32;
 
@@ -116,6 +118,10 @@ pub enum Message {
     /// The log of this name held by the sender and the one held by the receiver are not one
     /// log: neither is the start of the other.
     Forked(String),
+    /// The sender's clock. A relay says it first on connecting, so that a device can say when
+    /// its own is far off; a build from before this passes over it as it would any message it
+    /// does not know. A replica makes nothing of it.
+    Now(Moment),
 }
 
 impl Message {
@@ -346,6 +352,7 @@ impl Replica {
                     out.push(Out::Forked { log, peer });
                 }
             }
+            Message::Now(_) => {}
         }
         out
     }
@@ -733,7 +740,15 @@ mod tests {
         );
         let forked = Message::Forked("dev-a".into());
         assert_eq!(forked.encode().unwrap(), r#"{"forked":"dev-a"}"#);
-        for message in [have, some, forked] {
+        let now = Message::Now(Moment {
+            ms: 1_791_892_800_250,
+            offset: 0,
+        });
+        assert_eq!(
+            now.encode().unwrap(),
+            r#"{"now":"2026-10-13T12:00:00.250Z"}"#
+        );
+        for message in [have, some, forked, now] {
             let text = message.encode().unwrap();
             assert!(!text.contains('\n'));
             assert_eq!(Message::decode(&text), Some(message));

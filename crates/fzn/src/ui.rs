@@ -34,7 +34,8 @@
 //! With a relay named, a thread holds the socket and the app hears from it between keys: what
 //! the relay says goes to the device, and what the device wants kept or said comes back here to
 //! be done, like anything else it asks for. Nothing is said while sync works, and `not syncing`
-//! while it does not. Nothing is reread from the directory while the app runs, since nothing
+//! while it does not, in the corner of the foot that also says when this machine's clock is far
+//! from the relay's. Nothing is reread from the directory while the app runs, since nothing
 //! else writes it.
 
 use std::fs;
@@ -1014,19 +1015,25 @@ impl App {
             );
         }
         let foot = height.saturating_sub(1);
-        let syncing = if self.sync.is_some() && self.not_syncing {
-            "not syncing"
+        let syncing = match (&self.sync, self.not_syncing) {
+            (None, _) => None,
+            (Some(_), true) => Some("not syncing".to_owned()),
+            (Some(_), false) => self.device.clock(),
+        }
+        .unwrap_or_default();
+        let corner = if syncing.is_empty() {
+            0
         } else {
-            ""
+            syncing.width() + 2
         };
-        let keys_room = width.saturating_sub(2 + if syncing.is_empty() { 0 } else { 13 });
+        let keys_room = width.saturating_sub(2 + corner);
         paint(
             frame,
             foot,
             1,
             Line::from(fit(&footer(&view.hints, at_end, keys_room), keys_room)).dim(),
         );
-        paint_right(frame, foot, syncing);
+        paint_right(frame, foot, &syncing);
 
         if let Some((x, y)) = cursor
             && let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y))
@@ -2485,6 +2492,18 @@ mod tests {
         tell.send(sync::Event::Connected).unwrap();
         assert!(app.hear().unwrap());
         assert!(!app.not_syncing, "nothing is said while sync works");
+        let foot = |app: &mut App| screen(app, 80, 12).rows.pop().unwrap();
+        assert!(!foot(&mut app).contains("clock"), "{}", foot(&mut app));
+        let behind = Message::Now(crate::system::now().plus_secs(600))
+            .encode()
+            .unwrap();
+        tell.send(sync::Event::Message(behind)).unwrap();
+        assert!(app.hear().unwrap());
+        assert!(
+            foot(&mut app).ends_with("this device's clock is 10 min behind"),
+            "{}",
+            foot(&mut app)
+        );
         tell.send(sync::Event::Disconnected).unwrap();
         tell.send(sync::Event::Unreachable("connection refused".into()))
             .unwrap();

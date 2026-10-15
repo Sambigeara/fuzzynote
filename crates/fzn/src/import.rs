@@ -451,7 +451,7 @@ impl Page {
             lifted.all(&nodes, &self.tags, None);
             let when = written.or(self.modified);
             return lifted.records(|i| {
-                let when = when.map(|m| m.plus(-(i as i64)));
+                let when = when.map(|m| m.plus_secs(-(i as i64)));
                 (when, when)
             });
         };
@@ -470,7 +470,7 @@ impl Page {
             lifted.all(&nodes, &self.tags, Some(&id));
             let mut records = vec![record(id, text, when)];
             records.extend(lifted.records(|i| {
-                let updated = when.1.or(when.0).map(|m| m.plus(-(i as i64) - 1));
+                let updated = when.1.or(when.0).map(|m| m.plus_secs(-(i as i64) - 1));
                 (when.0, updated)
             }));
             return records;
@@ -825,7 +825,7 @@ mod tests {
         );
         let a = store.notes().get("fzn:1:2").unwrap();
         assert!(a.archived);
-        assert_eq!(a.created.map(|m| m.secs), Some(1_642_000_000));
+        assert_eq!(a.created.map(|m| m.secs()), Some(1_642_000_000));
         assert_eq!(a.updated, a.created);
         let b = store.notes().get("fzn:1:3").unwrap();
         assert_eq!(b.text, "a head\nand a body");

@@ -44,6 +44,9 @@ const GROWTH: usize = 4;
 /// What a device says when it will not write.
 const WRONG_KEY: &str = "the passphrase does not open this space, so nothing is written";
 
+/// How far this device's clock may be from the relay's, in milliseconds, before it is said.
+const CLOCK_OFF: u64 = 2 * 60 * 1_000;
+
 /// Lines to keep at the end of a log, the first of them at `from`. A line has no newline.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Kept {
@@ -127,6 +130,10 @@ pub struct Device {
     /// Whether a peer's header has retired the log this device writes, so that it has to start
     /// another.
     superseded: bool,
+    /// How far this device's clock was ahead of the relay's, in milliseconds, when the relay
+    /// last said its own on connecting. None while there is no relay, or one from before relays
+    /// said it.
+    ahead: Option<i64>,
 }
 
 impl Device {
@@ -151,6 +158,7 @@ impl Device {
             sealed_opened: 0,
             unopened: 0,
             superseded: false,
+            ahead: None,
         }
     }
 
@@ -185,7 +193,9 @@ impl Device {
 
     /// Once, after every `load` and before `connected`: compacts this writer's log if that is
     /// due. It is due when a peer's log has retired it, when it holds lines from before sealing,
-    /// or when it has grown past [`GROWTH`] times the notes in it.
+    /// or when it has grown past [`GROWTH`] times the notes in it. A line of a later format is
+    /// counted as a note, since this build cannot tell which note it is, and a compaction keeps
+    /// every such line.
     pub fn opened(&mut self) -> Todo {
         if !self.key_verified() {
             return Todo::default();
@@ -193,13 +203,18 @@ impl Device {
         let own = self.replica.lines(&self.device);
         let mut plain = false;
         let mut ids = BTreeSet::new();
+        let mut later = 0;
         for line in own {
-            if let Read::Version(record) = Record::read_line(&self.seal, line) {
-                plain |= !is_sealed(line);
-                ids.insert(record.id);
+            match Record::read_line(&self.seal, line) {
+                Read::Version(record) => {
+                    plain |= !is_sealed(line);
+                    ids.insert(record.id);
+                }
+                Read::Later => later += 1,
+                Read::Shut | Read::Other => {}
             }
         }
-        let grown = own.len() > COMPACT_LINES && own.len() > GROWTH * ids.len();
+        let grown = own.len() > COMPACT_LINES && own.len() > GROWTH * (ids.len() + later);
         if self.superseded || plain || grown {
             self.compact()
         } else {
@@ -259,20 +274,43 @@ impl Device {
         todo
     }
 
-    /// The socket to the relay has closed.
+    /// The socket to the relay has closed. What the relay said of its clock is learnt again
+    /// when it comes back.
     pub fn disconnected(&mut self) {
         self.replica.disconnect(RELAY);
+        self.ahead = None;
     }
 
     /// The relay has said something. What this build does not know is passed over.
     pub fn received(&mut self, text: &str) -> Todo {
         let mut todo = Todo::default();
-        if let Some(message) = Message::decode(text) {
-            let out = self.replica.receive(RELAY, message);
-            self.carry_out(out, &mut todo);
+        match Message::decode(text) {
+            Some(Message::Now(relay)) => {
+                self.ahead = Some(self.host.now().ms.saturating_sub(relay.ms))
+            }
+            Some(message) => {
+                let out = self.replica.receive(RELAY, message);
+                self.carry_out(out, &mut todo);
+            }
+            None => {}
         }
         self.compact_if_superseded(&mut todo);
         todo
+    }
+
+    /// What to say of this device's clock: how far it is from the relay's, when that is more
+    /// than two minutes. Nothing is put right, since every device has to decide between the
+    /// same two stamps the same way; it is only said, so that the clock can be set.
+    pub fn clock(&self) -> Option<String> {
+        let ahead = self.ahead.filter(|ms| ms.unsigned_abs() > CLOCK_OFF)?;
+        let way = if ahead > 0 { "ahead" } else { "behind" };
+        let minutes = (ahead.unsigned_abs() + 30_000) / 60_000;
+        let by = match minutes {
+            ..60 => format!("{minutes} min"),
+            60..2_880 => format!("{} h", (minutes + 30) / 60),
+            _ => format!("{} days", (minutes + 720) / 1_440),
+        };
+        Some(format!("this device's clock is {by} {way}"))
     }
 
     /// Puts a message where the session puts its own.
@@ -303,7 +341,9 @@ impl Device {
 
     /// Starts a new log for this writer, with a header and a snapshot, and retires the old one.
     /// The snapshot is this writer's latest version of every note in its log, tombstones
-    /// included, sealed afresh.
+    /// included, sealed afresh, and then every line of a later format as it was: which of those
+    /// a later build would keep is not for this one to say, and dropping them would lose what
+    /// that build wrote here.
     pub fn compact(&mut self) -> Todo {
         let mut todo = Todo::default();
         if !self.key_verified() {
@@ -321,13 +361,18 @@ impl Device {
         // The last version of each note, in the order of those last versions.
         let mut last: BTreeMap<String, usize> = BTreeMap::new();
         let mut versions: Vec<Option<Record>> = Vec::new();
+        let mut later = Vec::new();
         for line in lines {
-            if let Read::Version(record) = Record::read_line(&self.seal, line) {
-                if let Some(&at) = last.get(&record.id) {
-                    versions[at] = None;
+            match Record::read_line(&self.seal, line) {
+                Read::Version(record) => {
+                    if let Some(&at) = last.get(&record.id) {
+                        versions[at] = None;
+                    }
+                    last.insert(record.id.clone(), versions.len());
+                    versions.push(Some(record));
                 }
-                last.insert(record.id.clone(), versions.len());
-                versions.push(Some(record));
+                Read::Later => later.push(line.clone()),
+                Read::Shut | Read::Other => {}
             }
         }
         let written = versions.len();
@@ -340,7 +385,7 @@ impl Device {
         let mut kept = vec![
             Header {
                 compacts: chain,
-                snapshot: snapshot.len() as u64,
+                snapshot: (snapshot.len() + later.len()) as u64,
             }
             .line(),
         ];
@@ -349,6 +394,7 @@ impl Device {
                 .iter()
                 .filter_map(|record| record.sealed(&self.seal, &*self.host).ok()),
         );
+        kept.extend(later);
         todo.keep.push(Kept {
             log: new.clone(),
             from: 0,
@@ -402,6 +448,7 @@ impl Device {
                     self.sealed_opened += usize::from(sealed);
                     versions.push(record);
                 }
+                Read::Later => self.sealed_opened += 1,
                 Read::Shut => self.unopened += 1,
                 Read::Other => {}
             }
@@ -568,6 +615,15 @@ mod tests {
                 let record = Record::read(line.as_bytes()).unwrap();
                 record.sealed(&seal, &host).unwrap()
             })
+            .collect()
+    }
+
+    /// Versions of `notes` notes as a later build would seal them: this key opens them, and this
+    /// build cannot read what is inside.
+    fn later_versions(notes: usize) -> Vec<String> {
+        let (seal, host) = (Seal::new(key()), host("dev-a", 0));
+        (0..notes)
+            .map(|n| seal.seal(&format!(r#"{{"v":99,"id":"note-{n}"}}"#), &*host))
             .collect()
     }
 
@@ -1072,6 +1128,31 @@ mod tests {
     }
 
     #[test]
+    fn lines_of_a_later_format_say_the_key_is_the_spaces_and_are_not_compacted_away() {
+        // A peer's log that a later build wrote: the key opens it, though nothing in it reads.
+        let mut b = device("dev-b");
+        b.load("dev-a", later_versions(3));
+        assert!(b.key_verified());
+        assert_eq!(status(&b), "", "the passphrase is not said to be wrong");
+        assert_eq!(write(&mut b, "Boiler").keep.len(), 1, "and it writes");
+
+        // This writer's own log, written mostly by a later build on this machine: the lines of
+        // that build count as notes, so the log has not grown past them, and a compaction for
+        // any other reason keeps them as they are.
+        let mut a = device("dev-a");
+        let mut lines = sealed_versions(10, 10);
+        lines.extend(later_versions(1_200));
+        a.load("dev-a", lines.clone());
+        assert_eq!(a.opened(), Todo::default());
+        let todo = a.compact();
+        let kept = &todo.keep[0].lines;
+        assert_eq!(Header::read(&kept[0]).unwrap().snapshot, 1_210);
+        assert_eq!(kept[11..], lines[10..]);
+        assert_eq!(todo.delete, ["dev-a"]);
+        assert_eq!(status(&a), "compacted 10 versions into 10");
+    }
+
+    #[test]
     fn a_second_compaction_names_the_whole_chain() {
         let mut a = device("dev-a");
         write(&mut a, "Boiler");
@@ -1254,5 +1335,62 @@ mod tests {
         let mut again = twin(&new, "dev-a", 0);
         again.load(&new, todo.keep[0].lines.clone());
         assert_eq!(heads(&again), before);
+    }
+
+    /// A device whose clock is `ahead` seconds past the relay's midday.
+    fn clocked(ahead: i64) -> Device {
+        Device::new(
+            Box::new(Stopped {
+                name: "dev-a",
+                ids: Cell::new(0),
+                random: Cell::new(0),
+                ahead,
+            }),
+            "dev-a",
+            Weights::default(),
+            key(),
+        )
+    }
+
+    #[test]
+    fn the_relays_time_far_off_gives_the_status_and_close_gives_nothing() {
+        let relay = Message::Now(Moment::utc(1_791_892_800)).encode().unwrap();
+        for (ahead, said) in [
+            (0, None),
+            (-90, None),
+            (120, None),
+            (121, Some("this device's clock is 2 min ahead")),
+            (300, Some("this device's clock is 5 min ahead")),
+            (-3_569, Some("this device's clock is 59 min behind")),
+            (3_600, Some("this device's clock is 1 h ahead")),
+            (-7_200, Some("this device's clock is 2 h behind")),
+            (3 * 86_400, Some("this device's clock is 3 days ahead")),
+        ] {
+            let mut device = clocked(ahead);
+            device.connected();
+            assert!(device.received(&relay).send.is_empty());
+            assert_eq!(device.clock().as_deref(), said, "{ahead} s");
+            assert_eq!(status(&device), "", "a passing word is not used for it");
+        }
+
+        let mut device = clocked(300);
+        device.connected();
+        device.received(&relay);
+        device.disconnected();
+        assert_eq!(device.clock(), None, "learnt again on connecting");
+
+        // A time no clock could show is still only said.
+        device.received(r#"{"now":-9223372036854775808}"#);
+        assert!(device.clock().unwrap().ends_with("days ahead"));
+    }
+
+    #[test]
+    fn a_hello_without_the_field_gives_nothing() {
+        // A relay from before clocks says what it holds first, and nothing of the time.
+        let mut device = clocked(3_600);
+        device.connected();
+        let have = Message::Have(BTreeMap::new()).encode().unwrap();
+        device.received(&have);
+        assert_eq!(device.clock(), None);
     }
 }

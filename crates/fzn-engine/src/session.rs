@@ -493,7 +493,7 @@ fn has_body(text: &str) -> bool {
 
 impl Session {
     /// Opens a space. `device` names this device in the versions it writes, and breaks ties
-    /// between versions written in the same second.
+    /// between versions written in the same millisecond.
     pub fn new(
         host: Box<dyn Host>,
         device: impl Into<String>,
@@ -2086,7 +2086,7 @@ mod tests {
 
     /// Midday on Tuesday 2026-10-13, in UTC.
     const NOON: Moment = Moment {
-        secs: 1_791_892_800,
+        ms: 1_791_892_800_000,
         offset: 0,
     };
 
@@ -2195,7 +2195,7 @@ mod tests {
 
     #[test]
     fn midday_is_when_the_tests_say_it_is() {
-        assert_eq!(NOON.to_string(), "2026-10-13T12:00:00Z");
+        assert_eq!(NOON.to_string(), "2026-10-13T12:00:00.000Z");
         assert_eq!(time::weekday(NOON.day()), 1);
     }
 
@@ -2345,7 +2345,7 @@ mod tests {
             text: "written elsewhere".into(),
             links: Vec::new(),
             created: Some(NOON),
-            updated: Some(NOON.plus(60)),
+            updated: Some(NOON.plus_secs(60)),
             stamp: Some(NOON),
             after: None,
             placed: None,
@@ -2364,7 +2364,7 @@ mod tests {
 
         assert!(s.absorb([Record {
             deleted: true,
-            stamp: Some(NOON.plus(1)),
+            stamp: Some(NOON.plus_secs(1)),
             ..theirs
         }]));
         assert!(heads(&s).is_empty(), "from the line, at once");
@@ -3118,7 +3118,7 @@ mod tests {
         assert_eq!(view["cursor"], 0);
         assert_eq!(view["rows"][0]["head"], "Boiler");
         assert_eq!(view["rows"][0]["has_body"], true);
-        assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00Z");
+        assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00.000Z");
         assert_eq!(view["notes"], 1);
         assert_eq!(view["here"], serde_json::Value::Null);
         assert_eq!(
@@ -3243,10 +3243,10 @@ mod tests {
             text: text.into(),
             links: Vec::new(),
             created: Some(NOON),
-            updated: Some(NOON.plus(at)),
-            stamp: Some(NOON.plus(at)),
+            updated: Some(NOON.plus_secs(at)),
+            stamp: Some(NOON.plus_secs(at)),
             after: None,
-            placed: Some(NOON.plus(at)),
+            placed: Some(NOON.plus_secs(at)),
             archived: false,
             deleted: false,
             device: "3f9a01c2".into(),
@@ -3482,6 +3482,27 @@ mod tests {
     }
 
     #[test]
+    fn a_burst_of_keystrokes_on_one_head_in_one_second_keeps_its_stamp_within_that_many_milliseconds_of_the_clock()
+     {
+        let mut s = session();
+        put(&mut s, "boiler", "Boiler", &[], 3_000);
+        select(&mut s, "Boiler");
+        // A key at a time with the clock stopped: each is a version, stamped a millisecond past
+        // the last, where a second a key put the head as many seconds ahead.
+        let head = "Boiler: service due, book it before win";
+        let mut stamps = Vec::new();
+        for end in "Boiler".len()..=head.len() {
+            for version in kept(&edited(&mut s, &head[..end])) {
+                stamps.extend(version.stamp);
+            }
+        }
+        assert_eq!(stamps.len(), head.len() - "Boiler".len());
+        assert!(stamps.windows(2).all(|two| two[0] < two[1]));
+        let ahead = stamps.last().unwrap().ms - NOON.ms;
+        assert!((0..=stamps.len() as i64).contains(&ahead), "{ahead} ms");
+    }
+
+    #[test]
     fn a_note_emptied_in_place_is_deleted_and_undo_brings_it_back() {
         let mut s = session();
         put(&mut s, "house", "House\nthe deeds", &[], 2_000);
@@ -3516,7 +3537,7 @@ mod tests {
         // Boiler is deleted elsewhere while the cursor walks the list, which holds still.
         let mut gone = s.notes.get("boiler").unwrap().clone();
         gone.deleted = true;
-        gone.stamp = Some(NOON.plus(120));
+        gone.stamp = Some(NOON.plus_secs(120));
         gone.device = "other".into();
         assert!(s.absorb([gone]));
         assert_eq!(heads(&s), ["Boiler", "House"], "the list holds still");
@@ -4875,7 +4896,7 @@ mod tests {
     #[test]
     fn a_person_and_a_day_are_places_too() {
         let mut s = session();
-        let friday = NOON.plus(3 * 86_400).secs;
+        let friday = NOON.plus_secs(3 * 86_400).secs();
         put(&mut s, "ladder", "@Joe has the ladder", &[], 1_000);
         put(&mut s, "call", "call @joe about the boiler", &[], 2_000);
         put(&mut s, "dentist", "dentist 2026-10-16", &[], 3_000);
@@ -4951,7 +4972,7 @@ mod tests {
     #[test]
     fn a_note_written_on_the_day_carries_it_and_one_in_another_day_has_it_written_in() {
         let mut s = session();
-        let friday = NOON.plus(3 * 86_400).secs;
+        let friday = NOON.plus_secs(3 * 86_400).secs();
         put(&mut s, "keys", "pick up the keys", &[], friday);
 
         type_in(&mut s, "/today");
@@ -5007,8 +5028,8 @@ mod tests {
     fn today_gone_into_from_a_tag_is_todays_notes_in_it_and_what_is_written_there_carries_both() {
         let mut s = session();
         house(&mut s);
-        put(&mut s, "boots", "dry the boots #house", &[], NOON.secs);
-        put(&mut s, "plants", "water the plants", &[], NOON.secs);
+        put(&mut s, "boots", "dry the boots #house", &[], NOON.secs());
+        put(&mut s, "plants", "water the plants", &[], NOON.secs());
 
         type_in(&mut s, "#house");
         s.act(Action::GoIn);
@@ -5110,14 +5131,14 @@ mod tests {
     /// A boiler tagged `#house`, with a note written in it yesterday and one today, and today
     /// two notes that are not about it, one of them in `#house` too.
     fn boiler(s: &mut Session) {
-        let today = NOON.secs - 3_600;
-        put(s, "boiler", "Boiler\n#house", &[], NOON.secs - 9 * 86_400);
+        let today = NOON.secs() - 3_600;
+        put(s, "boiler", "Boiler\n#house", &[], NOON.secs() - 9 * 86_400);
         put(
             s,
             "service",
             "Service booked",
             &["boiler"],
-            NOON.secs - 86_400,
+            NOON.secs() - 86_400,
         );
         put(s, "pressure", "Pressure dropped #house", &["boiler"], today);
         put(s, "oil", "Order oil #house", &[], today);
@@ -5136,7 +5157,7 @@ mod tests {
     fn with_nothing_on_the_line_a_place_lists_only_its_facts_in_the_order_kept_and_no_scores() {
         let mut s = session();
         boiler(&mut s);
-        put(&mut s, "gauge", "Boiler pressure gauge", &[], NOON.secs);
+        put(&mut s, "gauge", "Boiler pressure gauge", &[], NOON.secs());
         go_to(&mut s, "Boiler");
         assert_eq!(path(&s), ["Boiler"]);
         assert_eq!(
@@ -5683,7 +5704,7 @@ mod tests {
         s.act(Action::Move(1));
         let gone = Record {
             deleted: true,
-            stamp: Some(NOON.plus(120)),
+            stamp: Some(NOON.plus_secs(120)),
             device: "3f9a01c2".into(),
             ..s.notes.get("boiler").unwrap().clone()
         };
@@ -5700,7 +5721,7 @@ mod tests {
         s.act(Action::Select(None));
         let edit = Record {
             text: "House insurance".into(),
-            stamp: Some(NOON.plus(60)),
+            stamp: Some(NOON.plus_secs(60)),
             device: "3f9a01c2".into(),
             ..s.notes.get("house").unwrap().clone()
         };
@@ -5717,7 +5738,7 @@ mod tests {
         edited(&mut s, "a garden, dug over");
         let moved = Record {
             after: Some("boiler".into()),
-            placed: Some(NOON.plus(60)),
+            placed: Some(NOON.plus_secs(60)),
             ..s.notes.get("garden").unwrap().clone()
         };
         s.absorb([moved]);

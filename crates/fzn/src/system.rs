@@ -28,15 +28,23 @@ impl Host for System {
     }
 }
 
+/// Now, to the millisecond.
 pub fn now() -> Moment {
-    local(now_secs())
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Moment {
+        ms,
+        offset: local_offset(ms.div_euclid(1_000)),
+    }
 }
 
-/// A moment as this machine's clock shows it.
+/// A moment on a whole second as this machine's clock shows it.
 pub fn local(secs: i64) -> Moment {
     Moment {
-        secs,
         offset: local_offset(secs),
+        ..Moment::utc(secs)
     }
 }
 
@@ -45,8 +53,8 @@ pub fn on(day: Day, secs_into_day: i64) -> Moment {
     let wall = i64::from(day) * SECS_PER_DAY + secs_into_day;
     let offset = local_offset(wall);
     Moment {
-        secs: wall - i64::from(offset),
         offset,
+        ..Moment::utc(wall - i64::from(offset))
     }
 }
 
@@ -70,13 +78,6 @@ fn local_offset(secs: i64) -> i32 {
 #[cfg(not(unix))]
 fn local_offset(_secs: i64) -> i32 {
     0
-}
-
-pub fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// A fresh random number, seeded by the OS.
@@ -112,8 +113,12 @@ mod tests {
         // Whatever zone the tests run in, midday on a day is on that day.
         let day = time::day_from_civil(2026, 9, 7);
         assert_eq!(on(day, 12 * 3600).day(), day);
-        assert_eq!(local(1_000).secs, 1_000);
-        assert!((System.now().secs - now_secs()).abs() <= 1);
-        assert_eq!(now().offset, local(now_secs()).offset);
+        assert_eq!(local(1_000).secs(), 1_000);
+        let unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert!((System.now().ms - unix_ms).abs() <= 1_000);
+        assert_eq!(now().offset, local(unix_ms / 1_000).offset);
     }
 }

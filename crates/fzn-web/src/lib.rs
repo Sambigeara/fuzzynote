@@ -16,7 +16,7 @@ impl Host for Browser {
     fn now(&self) -> Moment {
         let now = js_sys::Date::new_0();
         Moment {
-            secs: (now.get_time() / 1000.0).floor() as i64,
+            ms: now.get_time() as i64,
             // The browser counts minutes west of UTC.
             offset: -(now.get_timezone_offset() as i32) * 60,
         }
@@ -123,6 +123,11 @@ impl Fzn {
     /// Whether the key is known to be the space's, or nothing yet says otherwise.
     pub fn key_verified(&self) -> bool {
         self.device.key_verified()
+    }
+
+    /// How far this tab's clock is from the relay's, when that is far enough to say.
+    pub fn clock(&self) -> Option<String> {
+        self.device.clock()
     }
 }
 
