@@ -16,7 +16,8 @@
 // arrows stay inside it, and Escape closes it, or with vim's keys `:q`. Touch has no chord, so a
 // second tap on the row opens it there. The arrow to the right at the end of a head goes into the
 // note, and at the end of the line into what the line names; Escape comes back a rung at a time,
-// off the row, off the text on the line, out of the place. Everything else is a word in the foot,
+// off the row, off the text on the line, out of the place. Control with an arrow moves the note
+// on the row up or down the list. Everything else is a word in the foot, moving a note included,
 // and only what applies right now gets one.
 //
 // The painting is kept cheap because it runs on every keystroke: rows are keyed by id and their
@@ -326,6 +327,7 @@ function keyFor(action) {
   if (name === 'delete' && view?.field?.whole) return '';
   // With vim's keys Escape is vim's, and the body closes as vim's quits do.
   if (name === 'done' && view?.field?.whole && editor?.vimOn) return ':q';
+  if (name === 'shift') return action.shift < 0 ? 'Ctrl ↑' : 'Ctrl ↓';
   return (
     { write: 'Enter', edit: 'Ctrl O', done: 'Esc', go_in: '→', back: 'Esc', select: 'Esc', delete: 'Ctrl D' }[name] ??
     ''
@@ -437,8 +439,10 @@ box.addEventListener('keydown', (event) => {
     case 'ArrowUp':
     case 'PageDown':
     case 'PageUp':
-      if (!plain) return;
-      act({ move: { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[event.key] });
+      // Control with an arrow moves the note, and the cursor with it.
+      if (ctrlOnly(event) && event.key.startsWith('Arrow')) act({ shift: event.key === 'ArrowUp' ? -1 : 1 });
+      else if (plain) act({ move: { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[event.key] });
+      else return;
       break;
     // The arrow goes in only from the end of the head, where the caret is put on landing; short
     // of it, it is the caret's.
@@ -1063,6 +1067,13 @@ document.addEventListener('keydown', (event) => {
   }
   const typed = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
   if (typed) {
+    follow();
+    return;
+  }
+  // Control with an arrow on a row moves the note, and the page is not scrolled.
+  if (ctrlOnly(event) && !onLine && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    act({ shift: event.key === 'ArrowUp' ? -1 : 1 });
+    event.preventDefault();
     follow();
     return;
   }

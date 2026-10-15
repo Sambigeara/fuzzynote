@@ -16,9 +16,10 @@
 //! the tag, person, day or note the line names; short of the end it is the caret's, as Left is. A
 //! chord acts on the note where on the line it acts on the line, as it did in fzn: Ctrl-D deletes
 //! or clears, Ctrl-V archives or shows archived notes, and Ctrl-U puts a changed head back before
-//! it undoes anything else. Escape comes back a rung at a time: off the row, off the text on the
-//! line, out of the place, and on an empty line outside any place two of them quit. The footer
-//! shows only the keys that apply where the cursor is.
+//! it undoes anything else. Control with an arrow moves the note under the cursor up or down a
+//! row, and the cursor with it. Escape comes back a rung at a time: off the row, off the text on
+//! the line, out of the place, and on an empty line outside any place two of them quit. The
+//! footer shows only the keys that apply where the cursor is.
 //!
 //! The screen is painted by hand and flat, in the terminal's own colours, because the cursor has
 //! to land in a row whose height depends on what is under it, and because there is nothing to
@@ -135,6 +136,8 @@ fn bound(
         (KeyCode::Char('r'), true) => Action::Redo,
         (KeyCode::Char('l'), true) => Action::Link,
         (KeyCode::Char('b'), true) => Action::ShowScores,
+        (KeyCode::Up, true) if !on_line => Action::Shift(-1),
+        (KeyCode::Down, true) if !on_line => Action::Shift(1),
         (KeyCode::Up, _) => Action::Move(-1),
         (KeyCode::Down, _) => Action::Move(1),
         (KeyCode::PageUp, _) => Action::Move(-10),
@@ -150,6 +153,8 @@ fn key_for(action: &Action) -> &'static str {
         Action::Editor => "^O",
         Action::GoIn => "→",
         Action::Move(_) => "↓",
+        Action::Shift(by) if *by < 0 => "^↑",
+        Action::Shift(_) => "^↓",
         Action::Select(_) | Action::Back | Action::Done => "Esc",
         // Clearing the line is the rung Escape takes while it has text; Ctrl-D is its second key.
         Action::Type(text) if text.is_empty() => "Esc",
@@ -1200,6 +1205,8 @@ mod tests {
                 created: Some(Moment::utc(secs)),
                 updated: Some(Moment::utc(secs)),
                 stamp: Some(Moment::utc(secs)),
+                after: None,
+                placed: None,
                 archived: false,
                 deleted: false,
                 device: WRITER.into(),
@@ -1576,6 +1583,8 @@ mod tests {
             "Enter" => (KeyCode::Enter, false),
             "Esc" => (KeyCode::Esc, false),
             "↓" => (KeyCode::Down, false),
+            "^↑" => (KeyCode::Up, true),
+            "^↓" => (KeyCode::Down, true),
             "→" => (KeyCode::Right, false),
             chord => {
                 let mut chars = chord.chars();
@@ -1685,7 +1694,7 @@ mod tests {
         assert_eq!(
             keys(&app),
             "Enter new note here  ^O editor  → go in  ^L unlink  ^V archive  ^D delete  \
-             ^C copy  ^U put back  Esc up"
+             ^C copy  ^↓ move down  ^U put back  Esc up"
         );
         done(&space);
     }
@@ -2099,6 +2108,30 @@ mod tests {
     }
 
     #[test]
+    fn control_and_an_arrow_on_a_row_moves_its_note_and_the_cursor_with_it() {
+        let (mut app, space) = app();
+        for text in ["Boiler", "House", "a garden"] {
+            write(&mut app, text);
+        }
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Down, true);
+        assert_eq!(heads(&app), ["House", "a garden", "Boiler"]);
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("a garden"),
+            "the cursor is still on it"
+        );
+        press(&mut app, KeyCode::Up, true);
+        assert_eq!(heads(&app), ["a garden", "House", "Boiler"]);
+        assert_eq!(app.device.view().cursor, Some(0));
+        // On the line the arrows are the cursor's, held or not.
+        press(&mut app, KeyCode::Esc, false);
+        press(&mut app, KeyCode::Down, true);
+        assert_eq!(app.device.view().cursor, Some(0));
+        done(&space);
+    }
+
+    #[test]
     fn backspace_on_an_empty_row_takes_it_away_and_goes_up() {
         let (mut app, space) = app();
         write(&mut app, "House");
@@ -2152,7 +2185,7 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         let picked = heads(&app)[0].clone();
         with_body(&mut app, &format!("{picked}\nThe combi under the stairs."));
-        // Written last, the note with a body is first on the list and the other under it.
+        // Written last, the note with a body is first on the list, and the other under it.
         assert_eq!(heads(&app)[0], picked);
         let other = heads(&app)[1].clone();
         let updated = app.device.view().rows[0].updated.unwrap();

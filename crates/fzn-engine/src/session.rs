@@ -1,20 +1,21 @@
 //! The session: the app itself, with no screen and no keyboard.
 //!
-//! There is one line and one list. The list shows recent notes while the line is empty and what
-//! the engine finds as it is typed, each with its reasons. A note is found by its own words and
-//! by the head of a note it links to, so the name of a note brings what was written in it, as
-//! going into the note does. The cursor is on the line or on a note of the list, and what is typed
-//! goes where the cursor is. Archived notes stay out of every list until they are asked for.
+//! There is one line and one list. The list shows the top of the space while the line is empty,
+//! in the order its notes are kept in, and what the engine finds as it is typed, each with its
+//! reasons. A note is found by its own words and by the head of a note it links to, so the name
+//! of a note brings what was written in it, as going into the note does. The cursor is on the
+//! line or on a note of the list, and what is typed goes where the cursor is. Archived notes stay
+//! out of every list until they are asked for.
 //!
 //! Going into a note makes it the place, and the path grows by one step: what is linked to or
-//! from it comes first, newest on top, and what the engine finds besides follows, best first.
-//! Where you are is what you are talking about, so a note written there is linked to it. The
-//! line comes with you under one rule: if the note contains what was typed, or its head and the
-//! heads of the notes it links to have every word of it, that was a search, so the line clears,
-//! and coming back puts it on an empty line again; otherwise it was a draft, and it stays on the
-//! line to be written there. Stepping back never throws away what is on the line; clearing it is
-//! asked for apart, and offered as the way back while there is something on it. Going into a
-//! place already on the path goes back to it, so the path never repeats. Linking or unlinking a
+//! from it comes first, in the order the space keeps, and what the engine finds besides follows,
+//! best first. Where you are is what you are talking about, so a note written there is linked to
+//! it. The line comes with you under one rule: if the note contains what was typed, or its head
+//! and the heads of the notes it links to have every word of it, that was a search, so the line
+//! clears, and coming back puts it on an empty line again; otherwise it was a draft, and it stays
+//! on the line to be written there. Stepping back never throws away what is on the line; clearing
+//! it is asked for apart, and offered as the way back while there is something on it. Going into
+//! a place already on the path goes back to it, so the path never repeats. Linking or unlinking a
 //! note of the list is a correction. A `[[head]]` typed into a note is one more way of making a
 //! link: saving the note links it to the note so headed. However it was made, a link is the
 //! target's id held on the note.
@@ -22,7 +23,7 @@
 //! A tag, a person or a day is a place too, gone into from the line when the line is that label
 //! and nothing else, as a note is gone into from the line when the line is its name: either way
 //! the line was a search for the place, so it clears and comes back on the way out. Every note
-//! carrying the label comes first, newest on top, and what the engine finds for the label's words
+//! carrying the label comes first, in the space's order, and what the engine finds for its words
 //! follows. A note written there ends its head with the label, as it would have been typed, so
 //! that it reads as one written with the label on the line always has. A new row opens with the
 //! label already in its head and the caret before it, so that what the writer sees is what is
@@ -47,13 +48,18 @@
 //! that leaves a head lands where it was aimed, and is put in order when the cursor comes back
 //! to the line.
 //!
+//! Where a note sits is kept, as it was in the original: a note opened under a row is placed
+//! after it, one opened or written from the line at the top, and it stays there on every device.
+//! An edit never moves a note; moving one is asked for, a row at a time, and what was written
+//! under it stays where it was.
+//!
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
 //! is given it, so the session is only ever told what the line now reads.
 
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +70,7 @@ use crate::score::{self, Weights};
 use crate::text;
 use crate::time::{self, Day, Moment};
 
-const RECENT_LIMIT: usize = 500;
+const TOP_LIMIT: usize = 500;
 const RELATED_LIMIT: usize = 60;
 const AROUND_LIMIT: usize = 200;
 
@@ -93,6 +99,10 @@ pub enum Action {
     Move(i64),
     /// Put the cursor on this row of the list, or on the line.
     Select(Option<usize>),
+    /// Move the note under the cursor down the list by this many rows, or up it, and keep the
+    /// cursor on it. Only where the list is in the order notes are kept in: with nothing on the
+    /// line, and in a place among its facts.
+    Shift(i64),
     /// Turn the line into a note, linked to the note being looked around, and put the cursor on
     /// it. With nothing on the line, open a new note at the top of the list to write in place.
     /// On a row, write out its date words and open a new note under it to write in place.
@@ -158,6 +168,7 @@ impl Action {
             | Action::Delete
             | Action::Erase
             | Action::Link
+            | Action::Shift(_)
             | Action::Undo
             | Action::Redo => true,
             Action::Type(_)
@@ -237,8 +248,8 @@ pub struct View<'a> {
     pub line: &'a str,
     /// The dates that the date words on the line stand for.
     pub dates: Vec<Day>,
-    /// The list: what is around the last place on the path, or what the line finds, or what is
-    /// recent when there is neither.
+    /// The list: what is around the last place on the path, or what the line finds, or the top
+    /// of the space when there is neither.
     pub rows: &'a [Row],
     /// The row the cursor is on. With none, it is on the line.
     pub cursor: Option<usize>,
@@ -441,6 +452,11 @@ fn with_label(text: &str, written: &str) -> String {
     out
 }
 
+/// The versions one change wrote, in the order it wrote them: what each note was before, and
+/// what it became. Most changes are to one note; a move is to the note and what was placed after
+/// it.
+type Change = Vec<(Option<Record>, Record)>;
+
 /// One person at one space. Create one per face.
 pub struct Session {
     host: Box<dyn Host>,
@@ -456,9 +472,9 @@ pub struct Session {
     status: String,
     /// Places being looked around, innermost last.
     pivots: Vec<Pivot>,
-    /// Versions to restore, newest last: what a note was before a change, and what it became.
-    undo: Vec<(Option<Record>, Record)>,
-    redo: Vec<(Option<Record>, Record)>,
+    /// Changes to take back, newest last.
+    undo: Vec<Change>,
+    redo: Vec<Change>,
     /// The note under the cursor as it is being written. There is one if and only if the cursor
     /// is on a row, and it is for that row.
     field: Option<Writing>,
@@ -657,6 +673,7 @@ impl Session {
             | Action::GoIn
             | Action::Archive
             | Action::Link
+            | Action::Shift(_)
             | Action::Copy
             | Action::OpenUrl
                 if field.blank() => {}
@@ -708,6 +725,7 @@ impl Session {
                         | Action::Archive
                         | Action::Delete
                         | Action::Link
+                        | Action::Shift(_)
                         | Action::Copy
                         | Action::OpenUrl
                 );
@@ -756,8 +774,9 @@ impl Session {
     }
 
     /// The first version of the new note being written in the field, linked to the note being
-    /// looked around. That is where its row was opened, since whatever moves out of a place
-    /// leaves the row first.
+    /// looked around and placed after the row above its own, or at the top. That is where its
+    /// row was opened, since whatever moves out of a place leaves the row first, and the list
+    /// holds still while the cursor is on it.
     fn created(&self, field: &Writing, text: String) -> Record {
         let around = self.around_note();
         let links = links_on_save(
@@ -774,6 +793,13 @@ impl Session {
             created: Some(field.opened),
             updated: Some(self.host.now()),
             stamp: None,
+            after: self
+                .rows
+                .iter()
+                .position(|r| r.id == field.id)
+                .and_then(|i| i.checked_sub(1))
+                .map(|i| self.rows[i].id.clone()),
+            placed: None,
             archived: false,
             deleted: false,
             device: String::new(),
@@ -798,9 +824,14 @@ impl Session {
             return;
         }
         let theirs = held.device != self.device;
-        let record = match ours.map(|i| self.undo[i].0.clone()) {
-            // The version the cursor landed on, dates and links and all.
-            Some(Some(before)) if before.text == original && !before.deleted => before,
+        let record = match ours.map(|i| self.undo[i][0].0.clone()) {
+            // What the version the cursor landed on said, dates and links and all, wherever the
+            // note has been moved since.
+            Some(Some(before)) if before.text == original && !before.deleted => Record {
+                after: held.after,
+                placed: held.placed,
+                ..before
+            },
             _ if blank => Record {
                 deleted: true,
                 ..held
@@ -890,6 +921,7 @@ impl Session {
             Action::Archive => self.archive(),
             Action::Delete => self.delete(),
             Action::Link => self.link(),
+            Action::Shift(by) => self.shift(by),
             Action::Copy => self.copy(),
             Action::OpenUrl => self.open_url(),
             Action::Undo => self.undo(),
@@ -1023,6 +1055,15 @@ impl Session {
                     // Only the one note under the cursor is read for a URL, once per view.
                     if !text::facts(&field.text).urls.is_empty() {
                         offer(Action::OpenUrl, "open URL");
+                    }
+                    let rows = self.in_order();
+                    if let Some(i) = self.cursor.filter(|&i| i < rows) {
+                        if i > 0 {
+                            offer(Action::Shift(-1), "move up");
+                        }
+                        if i + 1 < rows {
+                            offer(Action::Shift(1), "move down");
+                        }
                     }
                 }
             }
@@ -1158,7 +1199,7 @@ impl Session {
         let query = text::expand_date_words(self.line.trim(), self.today());
         let rows = match (self.pivots.last(), query.is_empty()) {
             (Some(p), _) => self.around(&p.place, &query),
-            (None, true) => self.recent(),
+            (None, true) => self.top(),
             (None, false) => self.related(&query),
         };
         self.rows = rows;
@@ -1169,16 +1210,13 @@ impl Session {
             .map(|i| i.min(self.rows.len() - 1));
     }
 
-    fn recent(&self) -> Vec<Row> {
-        let mut records: Vec<&Record> = self
-            .notes
-            .records()
-            .filter(|r| self.show_archived || !r.archived)
-            .collect();
-        records.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.id.cmp(&b.id)));
-        records
+    /// The top of the space: its notes in the order they are kept in.
+    fn top(&self) -> Vec<Row> {
+        self.notes
+            .order()
             .into_iter()
-            .take(RECENT_LIMIT)
+            .filter(|r| !r.deleted && (self.show_archived || !r.archived))
+            .take(TOP_LIMIT)
             .map(|r| Row {
                 id: r.id.clone(),
                 head: r.head().to_owned(),
@@ -1221,11 +1259,18 @@ impl Session {
             }
         };
         if query.is_empty() {
-            // The facts are a list you keep, so they come first with the newest on top. What
-            // the engine suggests follows in the order it gave, best first.
+            // The facts are a list you keep, so they come first, in the order the space keeps
+            // them in. What the engine suggests follows in the order it gave, best first.
+            let at: HashMap<&str, usize> = self
+                .notes
+                .order()
+                .into_iter()
+                .enumerate()
+                .map(|(i, r)| (r.id.as_str(), i))
+                .collect();
             let mut rows: Vec<Row> = near.iter().map(|hit| self.row(hit)).collect();
             rows.sort_by(|a, b| match (a.linked, b.linked) {
-                (true, true) => b.updated.cmp(&a.updated).then_with(|| b.id.cmp(&a.id)),
+                (true, true) => at.get(a.id.as_str()).cmp(&at.get(b.id.as_str())),
                 (true, false) => Ordering::Less,
                 (false, true) => Ordering::Greater,
                 (false, false) => Ordering::Equal,
@@ -1345,7 +1390,7 @@ impl Session {
     fn commit(&mut self, record: Record) {
         let before = self.notes.version(&record.id).cloned();
         let after = self.write(record);
-        self.undo.push((before, after));
+        self.undo.push(vec![(before, after)]);
         self.redo.clear();
     }
 
@@ -1366,15 +1411,15 @@ impl Session {
             .filter(|&i| Some(i) == top)
         {
             Some(i) => {
-                self.undo[i].1 = after;
+                self.undo[i][0].1 = after;
                 i
             }
             None => {
-                self.undo.push((before, after));
+                self.undo.push(vec![(before, after)]);
                 self.undo.len() - 1
             }
         };
-        let (before, after) = &self.undo[i];
+        let (before, after) = &self.undo[i][0];
         let nothing = match before {
             None => after.deleted,
             Some(b) => {
@@ -1396,10 +1441,28 @@ impl Session {
     }
 
     /// Stamps a version so that it supersedes the one held, here and on every other device,
-    /// takes it in, and asks for it to be kept.
+    /// takes it in, and asks for it to be kept. Each side is stamped only where it changes what
+    /// is held, so that an edit does not move the note and a move is not an edit: what the note
+    /// says, unchanged, keeps the stamp and the writer it was written with. A place that is the
+    /// one held keeps the later of its two clocks: a move to where the note already is stamps
+    /// its own, to be put before what was placed there since.
     fn write(&mut self, mut record: Record) -> Record {
-        record.stamp = Some(self.notes.next_stamp(&record.id, self.host.now()));
-        record.device = self.device.clone();
+        let now = self.host.now();
+        let held = self.notes.version(&record.id);
+        (record.stamp, record.device) = match held {
+            Some(held) if held.says_the_same(&record) => (held.stamp, held.device.clone()),
+            _ => (
+                Some(self.notes.next_stamp(&record.id, now)),
+                self.device.clone(),
+            ),
+        };
+        record.placed = match held {
+            Some(held) if held.after == record.after => record.placed.max(held.placed),
+            _ => Some(
+                self.notes
+                    .next_placed(&record.id, record.after.as_deref(), now),
+            ),
+        };
         if record.deleted {
             self.engine.remove(&NoteId::new(record.id.clone()));
         } else {
@@ -1410,39 +1473,69 @@ impl Session {
         record
     }
 
-    /// Puts a note back to a version.
-    fn restore(&mut self, version: Option<&Record>, fallback: &Record) {
-        let record = match version {
-            Some(v) => v.clone(),
-            None => Record {
-                deleted: true,
-                ..fallback.clone()
-            },
-        };
-        let id = record.id.clone();
-        self.write(record);
+    /// Puts back what each note was before a change, or after it, and the cursor on the first
+    /// note the change was to. Only the side the change made is put back, so that what has been
+    /// done to the other since, here or elsewhere, holds: taking back a move leaves what was
+    /// written since, and taking back an edit leaves where the note has been moved. The notes
+    /// are written in the order the change wrote them, not the reverse, since what was placed
+    /// after the same note is put in order by when it was placed: a run put back after its note
+    /// last to first would come out the wrong way round.
+    fn restore(&mut self, change: &Change, before: bool) {
+        for (was, became) in change {
+            let Some(held) = self.notes.version(&became.id).cloned() else {
+                continue;
+            };
+            let record = match was {
+                None if before => Record {
+                    deleted: true,
+                    ..held
+                },
+                None => became.clone(),
+                Some(was) => {
+                    let to = if before { was } else { became };
+                    if was.says_the_same(became) {
+                        Record {
+                            after: to.after.clone(),
+                            placed: to.placed,
+                            ..held
+                        }
+                    } else if (&was.after, was.placed) == (&became.after, became.placed) {
+                        Record {
+                            after: held.after,
+                            placed: held.placed,
+                            ..to.clone()
+                        }
+                    } else {
+                        to.clone()
+                    }
+                }
+            };
+            self.write(record);
+        }
         self.refresh(false);
-        self.reselect(&id);
+        if let Some((_, first)) = change.first() {
+            self.reselect(&first.id);
+        }
     }
 
     fn undo(&mut self) {
-        let Some((before, after)) = self.undo.pop() else {
+        let Some(change) = self.undo.pop() else {
             self.status = "nothing to undo".into();
             return;
         };
-        self.restore(before.as_ref(), &after);
-        self.status = format!("undid: {}", text::fit(after.head(), 40));
-        self.redo.push((before, after));
+        self.restore(&change, true);
+        self.status = format!("undid: {}", text::fit(change[0].1.head(), 40));
+        self.redo.push(change);
     }
 
     fn redo(&mut self) {
-        let Some((before, after)) = self.redo.pop() else {
+        let Some(change) = self.redo.pop() else {
             self.status = "nothing to redo".into();
             return;
         };
-        self.restore(Some(&after), &after);
-        self.status = format!("redid: {}", text::fit(after.head(), 40));
-        self.undo.push((before, after));
+        self.restore(&change, false);
+        self.status = format!("redid: {}", text::fit(change[0].1.head(), 40));
+        self.undo.push(change);
     }
 
     /// Turns the line into a note, linked to the note being looked around and to whatever it
@@ -1471,6 +1564,8 @@ impl Session {
             created: Some(now),
             updated: Some(now),
             stamp: None,
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: String::new(),
@@ -1761,6 +1856,86 @@ impl Session {
         self.refresh(false);
     }
 
+    /// How many rows at the top of the list are in the order the space keeps its notes in, and
+    /// so can be moved among: all of them with nothing on the line, the facts in a place, and
+    /// none in what the line finds, which is in the order of its scores.
+    fn in_order(&self) -> usize {
+        match (self.line.trim().is_empty(), self.pivots.is_empty()) {
+            (false, _) => 0,
+            (true, true) => self.rows.len(),
+            (true, false) => self.rows.iter().take_while(|r| r.linked).count(),
+        }
+    }
+
+    /// Moves the note under the cursor `by` rows of the list as it is shown, as the original's
+    /// move up and move down did, one note alone. Down, it is placed after the row it passes;
+    /// up, after the note that row follows in the space's order, or at the top. Either way it
+    /// lands beside that row, in any view, filtered or not, and goes past nothing else. What was
+    /// placed after it is placed instead after the note it followed, so that a run written under
+    /// it stays where it was, in its order, and no cycle is made. The whole is one change to
+    /// undo, which puts the note back after the note it followed.
+    fn shift(&mut self, by: i64) {
+        let rows = self.in_order();
+        let Some(from) = self.cursor.filter(|&i| i < rows) else {
+            return;
+        };
+        let to = (from as i64 + by).clamp(0, rows as i64 - 1) as usize;
+        if to == from {
+            return;
+        }
+        let Some(note) = self.selected_record().cloned() else {
+            return;
+        };
+        let id = note.id.clone();
+        let order = self.notes.order();
+        let at = |id: &str| order.iter().position(|r| r.id == id);
+        let ahead = |at: usize| at.checked_sub(1).map(|i| order[i].id.clone());
+        let (Some(at), Some(past)) = (at(&id), at(&self.rows[to].id)) else {
+            return;
+        };
+        let after = if to < from {
+            ahead(past)
+        } else {
+            Some(order[past].id.clone())
+        };
+        let followed = ahead(at);
+        // Oldest placed first, so that each placed after the one before it keeps its order.
+        let hanging: Vec<Record> = order
+            .iter()
+            .rev()
+            .filter(|r| r.after.as_ref() == Some(&id))
+            .map(|&r| r.clone())
+            .collect();
+        let was = Record {
+            after: followed.clone(),
+            ..note.clone()
+        };
+        // Its own moment, since it may be placed after the note it is after already, to go before
+        // what was placed there since.
+        let placed = Some(
+            self.notes
+                .next_placed(&id, after.as_deref(), self.host.now()),
+        );
+        let moved = Record {
+            after,
+            placed,
+            ..note
+        };
+        let mut change = vec![(Some(was), self.write(moved))];
+        for record in hanging {
+            let moved = Record {
+                after: followed.clone(),
+                ..record.clone()
+            };
+            change.push((Some(record), self.write(moved)));
+        }
+        self.undo.push(change);
+        self.redo.clear();
+        self.status = "moved".into();
+        self.refresh(false);
+        self.reselect(&id);
+    }
+
     /// Asks for the first URL of the note under the cursor, or its head, to be copied.
     fn copy(&mut self) {
         let Some(record) = self.selected_record() else {
@@ -1900,8 +2075,9 @@ mod tests {
         s.act(Action::Write)
     }
 
-    /// A note with its own time, so that the order of a list does not hang on the clock. The
-    /// version to keep goes out with whatever is asked next.
+    /// A note with its own time, placed at the top: the list is in the order the notes were put,
+    /// the last first, and their dates do not hang on the clock. The version to keep goes out
+    /// with whatever is asked next.
     fn put(s: &mut Session, id: &str, text: &str, links: &[&str], updated: i64) {
         s.commit(Record {
             id: id.into(),
@@ -1910,6 +2086,8 @@ mod tests {
             created: Some(Moment::utc(updated)),
             updated: Some(Moment::utc(updated)),
             stamp: None,
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: String::new(),
@@ -2009,9 +2187,9 @@ mod tests {
         let mut s = session();
         s.act(Action::Move(1));
         assert_eq!(s.cursor, None, "nothing listed, so nowhere to go");
-        put(&mut s, "a", "kettlebell swings", &[], 3_000);
-        put(&mut s, "b", "kettlebell press", &[], 2_000);
         put(&mut s, "c", "kettlebell halo", &[], 1_000);
+        put(&mut s, "b", "kettlebell press", &[], 2_000);
+        put(&mut s, "a", "kettlebell swings", &[], 3_000);
         s.act(Action::Move(1));
         assert_eq!(s.cursor, Some(0));
         assert_eq!(s.view().preview.unwrap().id, "a");
@@ -2115,6 +2293,8 @@ mod tests {
             created: Some(NOON),
             updated: Some(NOON.plus(60)),
             stamp: Some(NOON),
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: "other".into(),
@@ -2155,7 +2335,7 @@ mod tests {
         assert_eq!(
             heads(&s),
             ["some new note", "Profile", "trainingapp plan ideas"],
-            "linked first and newest on top, then what the engine suggests"
+            "linked first and last written on top, then what the engine suggests"
         );
         assert_eq!(
             s.rows.iter().map(|r| r.linked).collect::<Vec<_>>(),
@@ -2191,6 +2371,7 @@ mod tests {
     #[test]
     fn linking_and_unlinking_the_note_under_the_cursor() {
         let mut s = session();
+        put(&mut s, "near", "trainingapp plan ideas", &[], 1_000);
         put(
             &mut s,
             "profile",
@@ -2200,7 +2381,6 @@ mod tests {
         );
         let hub = "trainingapp\nthe plan, see [[Profile]]";
         put(&mut s, "hub", hub, &["profile"], 3_000);
-        put(&mut s, "near", "trainingapp plan ideas", &[], 1_000);
         go_into(&mut s, "trainingapp");
         assert_eq!(heads(&s), ["Profile", "trainingapp plan ideas"]);
 
@@ -2212,7 +2392,7 @@ mod tests {
             Some(Moment::utc(1_000))
         );
         assert_eq!(heads(&s), ["Profile", "trainingapp plan ideas"]);
-        assert!(s.rows[1].linked, "locked in, and listed by its own date");
+        assert!(s.rows[1].linked, "locked in, and listed where it is kept");
         assert_eq!(s.selected().unwrap().head, "trainingapp plan ideas");
 
         s.act(Action::Link);
@@ -2468,8 +2648,8 @@ mod tests {
             &["hub"],
             2_500,
         );
-        put(&mut s, "hub", "trainingapp\nthe plan", &["profile"], 3_000);
         put(&mut s, "near", "trainingapp plan ideas", &[], 1_000);
+        put(&mut s, "hub", "trainingapp\nthe plan", &["profile"], 3_000);
         s.say("saved");
         assert_eq!((s.view().status, s.view().notes), ("saved", 4));
         assert_eq!(
@@ -2484,7 +2664,16 @@ mod tests {
         assert_eq!(
             labels(&s),
             [
-                "new note", "body", "editor", "go in", "archive", "delete", "copy", "undo", "up"
+                "new note",
+                "body",
+                "editor",
+                "go in",
+                "archive",
+                "delete",
+                "copy",
+                "move down",
+                "undo",
+                "up"
             ]
         );
         assert_eq!(
@@ -2520,6 +2709,7 @@ mod tests {
                 "archive",
                 "delete",
                 "copy",
+                "move up",
                 "undo",
                 "up"
             ]
@@ -2537,6 +2727,7 @@ mod tests {
                 "delete",
                 "copy",
                 "open URL",
+                "move down",
                 "undo",
                 "up"
             ]
@@ -2548,7 +2739,7 @@ mod tests {
         );
 
         // The most there is to offer: a linked, archived note with a URL, with undo and redo to
-        // hand.
+        // hand. Under the top of the facts it could be moved up as well.
         s.act(Action::ShowArchived);
         select(&mut s, "Squat form video");
         s.act(Action::Archive);
@@ -2578,6 +2769,7 @@ mod tests {
             "delete",
             "copy",
             "open URL",
+            "move down",
             "undo",
             "redo",
             "up",
@@ -2601,6 +2793,7 @@ mod tests {
                 "delete",
                 "copy",
                 "open URL",
+                "move down",
                 "put back",
                 "up"
             ]
@@ -2634,6 +2827,7 @@ mod tests {
                 "archive",
                 "delete",
                 "copy",
+                "move down",
                 "put back",
                 "up"
             ],
@@ -2806,6 +3000,8 @@ mod tests {
                 created: None,
                 updated: Some(Moment::utc(updated)),
                 stamp: None,
+                after: None,
+                placed: None,
                 archived,
                 deleted: false,
                 device: "other".into(),
@@ -2986,6 +3182,8 @@ mod tests {
             created: Some(NOON),
             updated: Some(NOON.plus(at)),
             stamp: Some(NOON.plus(at)),
+            after: None,
+            placed: Some(NOON.plus(at)),
             archived: false,
             deleted: false,
             device: "3f9a01c2".into(),
@@ -3184,8 +3382,8 @@ mod tests {
     #[test]
     fn moving_off_a_row_keeps_what_was_typed_and_writes_nothing_more() {
         let mut s = session();
-        put(&mut s, "boiler", "Boiler", &[], 3_000);
         put(&mut s, "house", "House", &[], 2_000);
+        put(&mut s, "boiler", "Boiler", &[], 3_000);
         s.act(Action::Move(1));
         assert_eq!(
             kept(&edited(&mut s, "Boiler serviced"))[0].text,
@@ -3224,8 +3422,8 @@ mod tests {
     #[test]
     fn a_note_emptied_in_place_is_deleted_and_undo_brings_it_back() {
         let mut s = session();
-        put(&mut s, "boiler", "Boiler", &[], 3_000);
         put(&mut s, "house", "House\nthe deeds", &[], 2_000);
+        put(&mut s, "boiler", "Boiler", &[], 3_000);
         select(&mut s, "House");
         edited(&mut s, "");
         let done = s.act(Action::Done);
@@ -3431,11 +3629,11 @@ mod tests {
         assert!(s.rows[0].has_body);
     }
 
-    /// Three notes, newest first, with what writing them asked for already gone out.
+    /// Three notes, the last put first, with what writing them asked for already gone out.
     fn three(s: &mut Session) {
-        put(s, "boiler", "Boiler", &[], 3_000);
-        put(s, "house", "House", &[], 2_000);
         put(s, "garden", "a garden", &[], 1_000);
+        put(s, "house", "House", &[], 2_000);
+        put(s, "boiler", "Boiler", &[], 3_000);
         s.act(Action::Select(None));
     }
 
@@ -3492,17 +3690,26 @@ mod tests {
     }
 
     #[test]
-    fn the_list_is_put_in_order_when_the_cursor_comes_back_to_the_line() {
+    fn an_old_note_edited_stays_where_it_is_kept_when_the_cursor_comes_back_to_the_line() {
         let mut s = session();
         three(&mut s);
         select(&mut s, "a garden");
-        edited(&mut s, "a garden, dug over");
+        let place = s.notes.get("garden").map(|r| (r.after.clone(), r.placed));
+        let typed = edited(&mut s, "a garden, dug over");
+        let [edit] = kept(&typed)[..] else {
+            panic!("{typed:?}");
+        };
+        assert_eq!(
+            Some((edit.after.clone(), edit.placed)),
+            place,
+            "an edit is not a move"
+        );
         s.act(Action::Move(-1));
         assert_eq!(heads(&s), ["Boiler", "House", "a garden, dug over"]);
         s.act(Action::Move(-1));
         s.act(Action::Move(-1));
         assert_eq!(s.cursor, None);
-        assert_eq!(heads(&s), ["a garden, dug over", "Boiler", "House"]);
+        assert_eq!(heads(&s), ["Boiler", "House", "a garden, dug over"]);
     }
 
     #[test]
@@ -3656,9 +3863,9 @@ mod tests {
     fn enter_on_a_row_opens_a_new_note_under_it() {
         let mut s = session();
         put(&mut s, "boiler", "Boiler", &[], 1_000);
-        put(&mut s, "house", "House", &["boiler"], 4_000);
-        put(&mut s, "garden", "a garden", &["boiler"], 3_000);
         put(&mut s, "swings", "kettlebell swings", &["boiler"], 2_000);
+        put(&mut s, "garden", "a garden", &["boiler"], 3_000);
+        put(&mut s, "house", "House", &["boiler"], 4_000);
         go_into(&mut s, "Boiler");
         assert_eq!(heads(&s), ["House", "a garden", "kettlebell swings"]);
         type_in(&mut s, "");
@@ -3763,13 +3970,14 @@ mod tests {
         s.act(Action::Move(1));
         assert_eq!(s.selected().unwrap().head, "a garden");
 
-        // At the top, up is the line, and there the list is put in order.
+        // At the top, up is the line, and there the list is put in order, where an edit has
+        // not moved anything.
         s.act(Action::Select(None));
         s.act(Action::Write);
         assert_eq!(s.cursor, Some(0));
         s.act(Action::Move(-1));
         assert_eq!((s.cursor, field(&s)), (None, None));
-        assert_eq!(heads(&s), ["House insurance", "Boiler", "a garden"]);
+        assert_eq!(heads(&s), ["Boiler", "House insurance", "a garden"]);
     }
 
     #[test]
@@ -3786,6 +3994,8 @@ mod tests {
             created: Some(NOON),
             updated: Some(NOON),
             stamp: Some(NOON),
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: "other".into(),
@@ -3811,8 +4021,8 @@ mod tests {
     #[test]
     fn backspace_on_an_empty_new_row_takes_it_away_and_lands_on_the_row_above() {
         let mut s = session();
-        put(&mut s, "boiler", "Boiler", &[], 2_000);
         put(&mut s, "house", "House", &[], 1_000);
+        put(&mut s, "boiler", "Boiler", &[], 2_000);
         s.act(Action::Select(Some(0)));
         let undo = s.undo.len();
         s.act(Action::Write);
@@ -3839,8 +4049,8 @@ mod tests {
     #[test]
     fn backspace_on_a_head_emptied_deletes_the_note_and_steps_up() {
         let mut s = session();
-        put(&mut s, "boiler", "Boiler", &[], 2_000);
         put(&mut s, "house", "House", &[], 1_000);
+        put(&mut s, "boiler", "Boiler", &[], 2_000);
         select(&mut s, "House");
         edited(&mut s, "");
         let erased = s.act(Action::Erase);
@@ -4270,7 +4480,7 @@ mod tests {
                 "Boiler",
                 "house move plan"
             ],
-            "every note carrying it, newest on top, then what else says it"
+            "every note carrying it, last written on top, then what else says it"
         );
         assert_eq!(linked(&s), [true, true, true, false]);
         assert!(!s.rows[3].reasons.is_empty(), "a suggestion says why");
@@ -4307,7 +4517,7 @@ mod tests {
         let mut s = session();
         put(&mut s, "tyres", "pump the tyres #house", &[], 1_000);
         s.absorb((0..=AROUND_LIMIT).map(|i| theirs(&format!("leaves-{i:04}"), "rake #house", 1)));
-        s.absorb((0..=RECENT_LIMIT).map(|i| theirs(&format!("pump-{i:04}"), "pump it", 1)));
+        s.absorb((0..=TOP_LIMIT).map(|i| theirs(&format!("pump-{i:04}"), "pump it", 1)));
         type_in(&mut s, "#house");
         s.act(Action::GoIn);
         assert_eq!(linked(&s).iter().filter(|&&l| l).count(), AROUND_LIMIT + 2);
@@ -4775,5 +4985,354 @@ mod tests {
                 s.status
             );
         }
+    }
+
+    /// Writes a note in a new row under the one the cursor is on, or at the top from the line,
+    /// and comes back to the line. Gives back what was asked to be kept.
+    fn under(s: &mut Session, text: &str) -> Vec<Effect> {
+        let mut log = s.act(Action::Write);
+        log.extend(edited(s, text));
+        log.extend(s.act(Action::Select(None)));
+        log
+    }
+
+    /// Another device's session, given the versions this one asked to be kept.
+    fn elsewhere<'a>(effects: impl IntoIterator<Item = &'a Effect>) -> Session {
+        Session::new(
+            Box::new(Stopped::default()),
+            "3f9a01c2",
+            Weights::default(),
+            reopened(effects),
+        )
+    }
+
+    #[test]
+    fn a_note_written_under_a_row_stays_under_it_here_and_on_another_device() {
+        let mut s = session();
+        let mut log = Vec::new();
+        for text in ["Boiler", "House", "a garden"] {
+            log.extend(add(&mut s, text));
+            log.extend(s.act(Action::Select(None)));
+        }
+        assert_eq!(heads(&s), ["a garden", "House", "Boiler"]);
+        log.extend(s.act(Action::Move(2)));
+        log.extend(under(&mut s, "Order oil"));
+        let placed = ["a garden", "House", "Order oil", "Boiler"];
+        assert_eq!(heads(&s), placed, "back on the line, it has not moved");
+        let oil = s.rows[2].id.clone();
+        assert_eq!(s.notes.get(&oil).unwrap().after, Some(s.rows[1].id.clone()));
+        assert_eq!(heads(&elsewhere(&log)), placed);
+    }
+
+    #[test]
+    fn a_note_opened_or_written_on_the_line_goes_to_the_top() {
+        let mut s = session();
+        three(&mut s);
+        let opened = under(&mut s, "Order oil");
+        assert_eq!(heads(&s), ["Order oil", "Boiler", "House", "a garden"]);
+        let [first, ..] = kept(&opened)[..] else {
+            panic!("{opened:?}");
+        };
+        assert!(
+            first.after.is_none() && first.placed.is_some(),
+            "placed from its first version, so placed at once everywhere"
+        );
+        add(&mut s, "Bleed the radiators");
+        s.act(Action::Select(None));
+        assert_eq!(heads(&s)[..2], ["Bleed the radiators", "Order oil"]);
+    }
+
+    #[test]
+    fn a_note_moves_a_row_down_or_up_with_the_cursor_on_it() {
+        let mut s = session();
+        three(&mut s);
+        select(&mut s, "Boiler");
+        assert!(!labels(&s).contains(&"move up"), "nowhere up to go");
+        s.act(Action::Shift(1));
+        assert_eq!(heads(&s), ["House", "Boiler", "a garden"]);
+        assert_eq!(s.selected().unwrap().head, "Boiler");
+        assert_eq!(field(&s), Some(("Boiler".into(), false, false)));
+        s.act(Action::Shift(-1));
+        assert_eq!(heads(&s), ["Boiler", "House", "a garden"]);
+
+        select(&mut s, "a garden");
+        assert!(!labels(&s).contains(&"move down"), "nowhere down to go");
+        s.act(Action::Shift(-1));
+        assert_eq!(heads(&s), ["Boiler", "a garden", "House"]);
+        s.act(Action::Shift(-1));
+        assert_eq!(heads(&s), ["a garden", "Boiler", "House"]);
+        assert_eq!(s.notes.get("garden").unwrap().after, None, "at the top");
+
+        let undo = s.undo.len();
+        assert!(
+            s.act(Action::Shift(-1)).is_empty(),
+            "the top moved up writes nothing"
+        );
+        select(&mut s, "House");
+        assert!(s.act(Action::Shift(1)).is_empty());
+        assert_eq!(s.undo.len(), undo);
+        s.act(Action::Select(None));
+        assert_eq!(heads(&s), ["a garden", "Boiler", "House"]);
+
+        // What the line finds is in the order of its scores, so nothing there is moved.
+        type_in(&mut s, "garden");
+        s.act(Action::Move(1));
+        assert!(!labels(&s).iter().any(|l| l.starts_with("move")));
+        assert!(s.act(Action::Shift(1)).is_empty());
+    }
+
+    #[test]
+    fn a_note_moves_among_the_facts_of_a_place() {
+        let mut s = session();
+        put(&mut s, "boiler", "Boiler", &[], 1_000);
+        put(&mut s, "house", "House", &["boiler"], 2_000);
+        put(&mut s, "garden", "a garden", &["boiler"], 3_000);
+        put(&mut s, "oil", "Order oil", &["boiler"], 4_000);
+        go_into(&mut s, "Boiler");
+        assert_eq!(heads(&s), ["Order oil", "a garden", "House"]);
+        select(&mut s, "House");
+        s.act(Action::Shift(-1));
+        assert_eq!(heads(&s), ["Order oil", "House", "a garden"]);
+        s.act(Action::Shift(-1));
+        assert_eq!(heads(&s), ["House", "Order oil", "a garden"]);
+        assert_eq!(s.selected().unwrap().head, "House");
+        select(&mut s, "a garden");
+        assert!(!labels(&s).contains(&"move down"), "the facts end here");
+        s.act(Action::Back);
+        assert_eq!(heads(&s), ["House", "Order oil", "a garden", "Boiler"]);
+    }
+
+    #[test]
+    fn a_note_moves_alone_and_undo_puts_back_what_was_written_under_it_too() {
+        let mut s = session();
+        three(&mut s);
+        select(&mut s, "House");
+        under(&mut s, "Order oil");
+        select(&mut s, "House");
+        under(&mut s, "Bleed the radiators");
+        let written = [
+            "Boiler",
+            "House",
+            "Bleed the radiators",
+            "Order oil",
+            "a garden",
+        ];
+        assert_eq!(heads(&s), written);
+
+        select(&mut s, "House");
+        let undo = s.undo.len();
+        let moved = s.act(Action::Shift(-1));
+        assert_eq!(
+            kept(&moved).len(),
+            3,
+            "the note and the two placed after it"
+        );
+        assert_eq!(s.undo.len(), undo + 1, "one change");
+        s.act(Action::Select(None));
+        assert_eq!(
+            heads(&s),
+            [
+                "House",
+                "Boiler",
+                "Bleed the radiators",
+                "Order oil",
+                "a garden"
+            ],
+            "the run under it stays where it was, in its order"
+        );
+
+        select(&mut s, "House");
+        s.act(Action::Undo);
+        assert_eq!(heads(&s), written);
+        assert_eq!(s.selected().unwrap().head, "House");
+        assert_eq!(s.undo.len(), undo);
+        s.act(Action::Redo);
+        assert_eq!(
+            heads(&s),
+            [
+                "House",
+                "Boiler",
+                "Bleed the radiators",
+                "Order oil",
+                "a garden"
+            ]
+        );
+
+        // Down past what was written under it, it swaps with the row below and no more.
+        s.act(Action::Undo);
+        s.act(Action::Select(None));
+        select(&mut s, "House");
+        s.act(Action::Shift(1));
+        assert_eq!(
+            heads(&s),
+            [
+                "Boiler",
+                "Bleed the radiators",
+                "House",
+                "Order oil",
+                "a garden"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_note_placed_after_one_deleted_or_archived_keeps_its_place() {
+        let mut s = session();
+        three(&mut s);
+        select(&mut s, "House");
+        under(&mut s, "Order oil");
+        select(&mut s, "Boiler");
+        under(&mut s, "Bleed the radiators");
+        assert_eq!(
+            heads(&s),
+            [
+                "Boiler",
+                "Bleed the radiators",
+                "House",
+                "Order oil",
+                "a garden"
+            ]
+        );
+        select(&mut s, "House");
+        s.act(Action::Delete);
+        select(&mut s, "Boiler");
+        s.act(Action::Archive);
+        s.act(Action::Select(None));
+        assert_eq!(heads(&s), ["Bleed the radiators", "Order oil", "a garden"]);
+        s.act(Action::ShowArchived);
+        assert_eq!(
+            heads(&s),
+            ["Boiler", "Bleed the radiators", "Order oil", "a garden"]
+        );
+    }
+
+    #[test]
+    fn a_move_or_an_edit_carries_the_other_side_of_the_note_as_it_was_written() {
+        // Two other devices wrote the note and placed it in the same second, and this device has
+        // heard from only one of them.
+        let first = Record {
+            after: Some("house".into()),
+            ..theirs("oil", "Order oil", 60)
+        };
+        let second = Record {
+            text: "Order oil by Friday".into(),
+            after: Some("garden".into()),
+            device: "3f9a01c3".into(),
+            ..first.clone()
+        };
+        let merged = |versions: &[&Record]| {
+            let mut notes = Notes::new();
+            for version in versions {
+                notes.apply((*version).clone());
+            }
+            notes.get("oil").cloned().unwrap()
+        };
+        let both = merged(&[&first, &second]);
+        for change in [Action::Shift(-1), Action::Edited("Order oil, paid".into())] {
+            let mut s = session();
+            three(&mut s);
+            s.absorb([first.clone()]);
+            select(&mut s, "Order oil");
+            let effects = s.act(change.clone());
+            let [version] = kept(&effects)[..] else {
+                panic!("{effects:?}");
+            };
+            let all = merged(&[&first, &second, version]);
+            match change {
+                Action::Shift(_) => assert_eq!(all.text, both.text, "a move is not an edit"),
+                _ => assert_eq!(all.after, both.after, "an edit is not a move"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_fact_moved_up_goes_past_the_fact_above_it_and_nothing_else() {
+        let mut s = session();
+        put(&mut s, "boiler", "Boiler", &[], 1_000);
+        put(&mut s, "oil", "Order oil", &["boiler"], 2_000);
+        put(&mut s, "garden", "a garden", &["boiler"], 3_000);
+        put(&mut s, "house", "House", &[], 4_000);
+        put(
+            &mut s,
+            "radiators",
+            "Bleed the radiators",
+            &["boiler"],
+            5_000,
+        );
+        go_into(&mut s, "Boiler");
+        assert_eq!(
+            heads(&s)[..3],
+            ["Bleed the radiators", "a garden", "Order oil"]
+        );
+        select(&mut s, "Order oil");
+        s.act(Action::Shift(-1));
+        assert_eq!(
+            heads(&s)[..3],
+            ["Bleed the radiators", "Order oil", "a garden"]
+        );
+        s.act(Action::Back);
+        assert_eq!(
+            heads(&s),
+            [
+                "Bleed the radiators",
+                "House",
+                "Order oil",
+                "a garden",
+                "Boiler"
+            ],
+            "it has not jumped the note between the two facts"
+        );
+    }
+
+    #[test]
+    fn a_note_gone_elsewhere_is_not_moved() {
+        let mut s = session();
+        put(&mut s, "house", "House", &[], 1_000);
+        put(&mut s, "boiler", "Boiler", &[], 2_000);
+        s.act(Action::Move(1));
+        let gone = Record {
+            deleted: true,
+            stamp: Some(NOON.plus(120)),
+            device: "3f9a01c2".into(),
+            ..s.notes.get("boiler").unwrap().clone()
+        };
+        s.absorb([gone]);
+        assert!(kept(&s.act(Action::Shift(1))).is_empty());
+    }
+
+    #[test]
+    fn undoing_a_move_leaves_what_another_device_has_written_since() {
+        let mut s = session();
+        three(&mut s);
+        select(&mut s, "House");
+        s.act(Action::Shift(1));
+        s.act(Action::Select(None));
+        let edit = Record {
+            text: "House insurance".into(),
+            stamp: Some(NOON.plus(60)),
+            device: "3f9a01c2".into(),
+            ..s.notes.get("house").unwrap().clone()
+        };
+        s.absorb([edit]);
+        s.act(Action::Undo);
+        assert_eq!(heads(&s), ["Boiler", "House insurance", "a garden"]);
+    }
+
+    #[test]
+    fn putting_back_a_head_leaves_where_another_device_has_moved_its_note() {
+        let mut s = session();
+        three(&mut s);
+        select(&mut s, "a garden");
+        edited(&mut s, "a garden, dug over");
+        let moved = Record {
+            after: Some("boiler".into()),
+            placed: Some(NOON.plus(60)),
+            ..s.notes.get("garden").unwrap().clone()
+        };
+        s.absorb([moved]);
+        s.act(Action::Undo);
+        assert_eq!(field(&s).unwrap().0, "a garden");
+        s.act(Action::Select(None));
+        assert_eq!(heads(&s), ["Boiler", "a garden", "House"]);
     }
 }

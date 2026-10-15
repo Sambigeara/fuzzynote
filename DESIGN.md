@@ -61,8 +61,9 @@ other people when you choose.
   space is one directory of logs under the root. Plain `fzn` opens the space named in the config
   file (`main` to begin with) and `--space NAME` opens another. Sharing a space is later.
 - **Note**: stable id; text (a text CRDT); links; created and updated times; archived flag;
-  pinned flag. No manual position. Derived, never stored: head (first line), body, tags,
-  mentions, dates, URLs.
+  where it sits in the list, as the note it sits after, with a clock of its own (see "Where a
+  note sits is kept"). Derived, never stored: head (first line), body, tags, mentions, dates,
+  URLs.
 - **Link**: from one note to another, held on the note as the target's id. There is one kind.
   It survives a rename and adds no words to the text. Links are made by position: a note
   written while looking around another is about it, and links to it. Nobody has to say "link".
@@ -165,18 +166,21 @@ Nothing is added to the engine until daily use asks for it.
   one line.
 - **v1: one append-only log per writer, per space.** Each line is a full snapshot of one note
   as JSON: `v`, the version of the line format, then id, text, links, created, updated, stamp,
-  archived, deleted, device. Times are RFC 3339 with the offset of the clock that wrote them,
-  `2026-10-13T10:12:56+01:00`, so a line reads without the app, and a note keeps the day it
-  was written on wherever it is read. Lines from before versions hold unix seconds and are
-  still read; a line with a later version than the build knows is left alone, not misread.
-  `updated` is when the text last changed, so archiving a note does not re-date it. `stamp` is
-  when the version was written, and a local change is always stamped past the version it
-  replaces. Loading replays every log in the space and the version with the newest stamp wins,
-  ties broken by writer id. Last-writer-wins on a whole note is the known limitation, accepted
-  for now. Deletion is a tombstone line, kept so an older version arriving later cannot
-  resurrect the note. What a line says, and which of two versions is the newer, is the
-  engine's to settle, so that every device agrees. Where the lines are kept is the face's:
-  files under the terminal, IndexedDB in a tab.
+  after, placed, archived, deleted, device. The format is version 2 since `after` and `placed`
+  were added. Times are RFC 3339 with the offset of the clock that wrote them,
+  `2026-10-13T10:12:56+01:00`, so a line reads without the app, and a note keeps the day it was
+  written on wherever it is read. Lines from before versions hold unix seconds and are still
+  read; a line with a later version than the build knows is left alone, not misread. `updated`
+  is when the text last changed, so archiving a note does not re-date it. `stamp` is when what
+  the version says was written, and a local change is always stamped past the version it
+  replaces. `after` is the note it sits after and `placed` when it was put there, a clock of the
+  place's own. Loading replays every log in the space and the version with the newest stamp
+  gives the text, links, times and flags, ties broken by writer id, and the version newest by
+  `placed` gives the place, ties broken by the note it is after. Last-writer-wins on what a note
+  says is the known limitation, accepted for now. Deletion is a tombstone line, kept so an
+  older version arriving later cannot resurrect the note. What a line says, and which of two
+  versions is the newer, is the engine's to settle, so that every device agrees. Where the
+  lines are kept is the face's: files under the terminal, IndexedDB in a tab.
 - **Lines are sealed before they are kept.** Decided 2026-10-14. What goes into a log, and so
   to the relay, is not the snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is
   a random 24-byte nonce and then the snapshot encrypted with XChaCha20-Poly1305 under the
@@ -226,8 +230,8 @@ tab and the relay all run the same code.
   the end, so any copy of a log is the start of the writer's own. A *replica* is one place's
   copy of a space. What it holds of a log is one number, and what a peer lacks is the rest.
   Which log a line sits in is bookkeeping: the notes are what all the lines add up to, the
-  newest version of each, whatever order the lines come in and however many times. A log is
-  named for its writer, and a writer's id is kept with the space it writes, in the space's
+  newest of each side of each, whatever order the lines come in and however many times. A log
+  is named for its writer, and a writer's id is kept with the space it writes, in the space's
   directory under the terminal and in the browser's storage for a tab, so that the writer of
   one space is not the writer of another.
 - **Compaction is a new log.** Decided 2026-10-14. A log only grows, so a writer that wants a
@@ -340,9 +344,10 @@ tab and the relay all run the same code.
   line, as it takes an empty line away in any editor; a new row goes, a note emptied is deleted
   and undo brings it back, and a note with a body stays, since the body is not in the head to
   see. A note emptied in place is deleted when the cursor leaves it, and undo brings it back; an
-  empty file back from the editor does the same. The list holds still while the cursor walks it,
-  so that the arrow that leaves a head lands where it was aimed, and is put in order when the
-  cursor comes back to the line.
+  empty file back from the editor does the same. A note stays where it was written, and an edit
+  never moves it (see "Where a note sits is kept"). The list holds still while the cursor walks
+  it, so that the arrow that leaves a head lands where it was aimed, and what arrived from
+  elsewhere meanwhile is listed when the cursor comes back to the line.
 - **Terminal**: Rust and ratatui, with the original fzn chords where they still earn their
   place, because that is where the muscle memory is. It is a face on the session and adds four
   things: its key table, the editing of the line and of the head of the row the cursor is on,
@@ -354,9 +359,10 @@ tab and the relay all run the same code.
   empty head takes the row away, and Ctrl-O opens the note in your editor, which is how a body
   is written here; the field in the row is its head, and the body stays shown under it. Right at
   the end of a head goes into the note, and at the end of the line into what the line names;
-  short of either end it is the caret's. Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L
-  links or unlinks the note under the cursor (see Zoom), Ctrl-C copies its first URL (or its
-  head) to the clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at
+  short of either end it is the caret's. Ctrl-Up and Ctrl-Down move the note under the cursor a
+  row, the cursor with it. Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L links or unlinks
+  the note under the cursor (see Zoom), Ctrl-C copies its first URL (or its head) to the
+  clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at
   a time: off the row, writing out its date words and a new note's label, off the text on the
   line, out of the zoom, and twice on an empty line outside one quits; Ctrl-D on the line is a
   second key for clearing it. Ctrl-Q quits from anywhere, writing out the head first. The screen
@@ -384,18 +390,18 @@ tab and the relay all run the same code.
   typing a name is the way from any place to any note. A line that names neither, or names where
   you already are, leaves Right doing nothing. The path shows a label as it is written:
   `#house`, `@joe`, `2026-10-16`. The list becomes the place's neighbourhood, in two parts. The
-  facts come first, newest on top: what is linked to or from the note, or every note carrying
-  the label, which for a day is every note written on it or mentioning it. A link is a fact and
-  so is a label, and this part is a list you keep, however long it is. What the engine finds
-  besides follows, best first: shared tags and people, shared words, shared dates, each with its
-  reason; for a label, what its words find. The line comes with you, under one rule: if the note
-  you went into contains what you typed, or its head and the heads of the notes it links to have
-  every word of it, you were searching for it, so the line clears and stepping back brings it
-  back; otherwise you were writing, and the draft is carried in to be written here. A place gone
-  into from the line was searched for by definition, so the line clears. Stepping back never
-  throws away what you typed: a line written inside stays on the way out, and the search comes
-  back only to an empty line. Escape is no longer only the step back: with text on the line it
-  clears the line, and only on an empty line does it step back, so that inside a place "found
+  facts come first, in the order the space keeps them in: what is linked to or from the note, or
+  every note carrying the label, which for a day is every note written on it or mentioning it. A
+  link is a fact and so is a label, and this part is a list you keep, however long it is. What the
+  engine finds besides follows, best first: shared tags and people, shared words, shared dates,
+  each with its reason; for a label, what its words find. The line comes with you, under one rule:
+  if the note you went into contains what you typed, or its head and the heads of the notes it
+  links to have every word of it, you were searching for it, so the line clears and stepping back
+  brings it back; otherwise you were writing, and the draft is carried in to be written here. A
+  place gone into from the line was searched for by definition, so the line clears. Stepping back
+  never throws away what you typed: a line written inside stays on the way out, and the search
+  comes back only to an empty line. Escape is no longer only the step back: with text on the line
+  it clears the line, and only on an empty line does it step back, so that inside a place "found
   it, clear, stay" is one key. The faces bind Right at the end of the line to going in and
   Escape to that, and the session offers `clear` as the way back while the line has text and
   `back` once it is empty. Either way, what you write inside is about the place: inside a note
@@ -422,9 +428,9 @@ tab and the relay all run the same code.
   it is pointed at the `web` directory with `--web`.
   - *The page.* One column, centred, text left-aligned, and the line a little above a third of
     the way down, where it stays: it does not move when you type or when results arrive. The
-    blank page is the caret and, under it in faint grey, the heads of recent notes fading out by
-    the eighth. As you type, what is found takes their place; only a row that is new fades in,
-    and nothing else moves. The path, in a zoom, is in the margin above the line. No colour:
+    blank page is the caret and, under it in faint grey, the heads at the top of the list fading
+    out by the eighth. As you type, what is found takes their place; only a row that is new fades
+    in, and nothing else moves. The path, in a zoom, is in the margin above the line. No colour:
     paper, ink and two greys, light and dark by the system's preference. The note under the
     cursor is read under its row, clamped to six lines and opened with a tap; the note you are
     in is read the same way above the line, under the path and in the path's smaller size, so
@@ -438,13 +444,15 @@ tab and the relay all run the same code.
     terminal's chords are not here, because a browser keeps most of them for itself, but two it
     lets go: Ctrl-D clears the line or deletes the note under the cursor, as in the terminal,
     and inside the body box it is the browser's, and vim's in vim mode; Ctrl-O opens the body of
-    the note under the cursor, as in the terminal, and does nothing on the line. Backspace on an
-    empty head takes the row away, as in the terminal. Right at the end of the line, with
-    nothing selected, goes into what the line names, as Right at the end of a head goes into the
-    note; Escape on the line clears it while it has text, and on an empty line in a zoom steps
-    back. Every other thing that can be asked for is a word at the foot of the page, the footer
-    of the terminal made pressable, and Tab reaches them from a row without leaving it. Only
-    what applies where the cursor is gets one, and no key is written beside a word.
+    the note under the cursor, as in the terminal, and does nothing on the line; Ctrl with an
+    arrow moves the note under the cursor a row, as in the terminal, and on a phone `move up`
+    and `move down` in the foot do it. Backspace on an empty head takes the row away, as in the
+    terminal. Right at the end of the line, with nothing selected, goes into what the line
+    names, as Right at the end of a head goes into the note; Escape on the line clears it while
+    it has text, and on an empty line in a zoom steps back. Every other thing that can be asked
+    for is a word at the foot of the page, the footer of the terminal made pressable, and Tab
+    reaches them from a row without leaving it. Only what applies where the cursor is gets one,
+    and no key is written beside a word.
   - *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing
     work in it. A cross after it clears it when it has text, and a `›` after the cross, in the
     column of the selected row's, goes into what it names when it names somewhere. Each keeps
@@ -483,7 +491,7 @@ tab and the relay all run the same code.
   tags, people, links. No note contains another. The old ` >> ` convention
   imports as plain text and is found by the lexical scorer.
 - **No manual ordering (provisional).** The list is recency plus pins, so the position CRDT
-  goes. Sam to confirm.
+  goes. Sam to confirm. Reversed 2026-10-15: see "Where a note sits is kept".
 - **A link is a fact, not a score, and there is one kind.** Every link is the target's id held
   on the note, however it was made. Linked notes are listed ahead of suggestions, and no weight
   can bury one.
@@ -839,6 +847,56 @@ tab and the relay all run the same code.
   writer's than the label was, so nothing is written until a letter that is. What it costs: a
   new row holding only the start of its label, `#ho` in `#house`, is empty too and goes when it
   is left, and the label taken out from its start writes each step, as typing does.
+- **Where a note sits is kept.** Decided 2026-10-15, at Sam's direction, reversing "No manual
+  ordering (provisional)". The empty line's list was in the order of `updated`, and so were a
+  place's facts, by the Zoom paragraph and "A tag is a place you can go into", and that had two
+  faults. A note written under a row stayed there only on the device that wrote it, and only
+  until the cursor came back to the line: everywhere else, and then here too, it went to the
+  top, so Enter, type, Enter, type wrote a run that did not stay where it was written. And an
+  old note edited went to the top, so that putting a word right reordered the list. The 2022
+  corpus says the same from the other side: its order was kept by hand, because when a note was
+  written was not what its place meant. So where a note sits is stored and
+  replicated, as it was in the original fzn, whose tree CRDT comes back as one field with a
+  clock of its own. A version carries `after`, the id of the note it sits after or none for the
+  top, and `placed`, when it was put there. Two versions merge side by side, as the original
+  kept content and position in separate registers: the text, links, times and flags come from
+  the version newest by `stamp`, a tie broken by writer id, and the place from the version
+  newest by `placed`, a tie broken by the note it is after. An edit leaves `placed` as it was
+  and a move leaves `stamp`, and each carries the side it leaves as it was written, writer and
+  all, so an edit on one device and a move on another both hold, and neither decides anything
+  about the side it carries. The order is the walk of the tree that `after` makes: at the top
+  every note placed at the top, newest placed first, and each note followed by the notes placed
+  after it, newest placed first, and theirs. A note is placed at a moment past every note
+  already placed after the same one, so a note placed after another sits directly under it
+  whatever the clocks that placed the rest; two devices writing under one note at once both sit
+  under it, the later placed nearer, each run whole. A note from before places sits by when it
+  was written. A note placed after one that no version is held for sits at the top until that
+  one arrives, and then moves under it. Deleted notes, and archived ones while they are hidden,
+  are walked through and not listed, so that what was placed after them keeps its place. Two
+  devices moving at once can make a cycle, which nothing at the top reaches; it is listed as if
+  it were at the top, with what hangs from it, so that no note is lost. Enter on a row places
+  the new note after that row in its first version, so it is in its place on every device at
+  once; Enter on the line, and a note written from the line, place it at the top. The empty
+  line's list is the top of the order and an edit never moves a note, Sam's choice over a list
+  of what was recently written beside it. A move is the original's, one note alone: down places
+  it after the row below, and up after the note the row above follows in the space's order, or
+  at the top, so that either way it lands beside the row it passes and goes past nothing else,
+  in the list or among a place's facts, where the notes between two facts are not shown. What
+  was placed after it is placed after the note it followed instead, oldest first so that its
+  order holds, so a run written under a note stays where it was and no cycle is made. What the
+  line finds is in the order of its scores, so there nothing is moved and nothing is offered.
+  The terminal moves a note with Ctrl-Up and Ctrl-Down; the page with Ctrl and an arrow, and
+  with `move up` and `move down` in the foot. A move is one entry to undo, though it writes a
+  version of every note it places, and undo puts the note back after the note it followed;
+  moving the top up, or the last down, writes nothing. Undo takes back only the side a change
+  made, so that undoing a move leaves what has been written since, here or on another device,
+  and undoing an edit leaves where the note has been moved since; putting a head back is the
+  same. The line format went to version 2, so that a build that knows only version 1 leaves
+  these lines alone rather than rewriting a note without its place. The pinned flag the model
+  once listed was never built, and moving a note to the top is what it was for. The order is
+  walked afresh each time the list is made, O(n log n) in the notes: 5 to 7 ms over 30,000 notes
+  in a release build, against under 1 ms for the sort by `updated` it replaces, so nothing is
+  cached.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

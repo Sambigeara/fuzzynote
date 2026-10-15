@@ -459,17 +459,18 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    /// A machine whose clock has stopped at midday on 2026-10-13, and whose ids and randomness
-    /// count up from where they are told to start.
+    /// A machine whose clock has stopped at midday on 2026-10-13, or `ahead` seconds after it,
+    /// and whose ids and randomness count up from where they are told to start.
     struct Stopped {
         name: &'static str,
         ids: Cell<u32>,
         random: Cell<u8>,
+        ahead: i64,
     }
 
     impl Host for Stopped {
         fn now(&self) -> Moment {
-            Moment::utc(1_791_892_800)
+            Moment::utc(1_791_892_800 + self.ahead)
         }
 
         fn new_id(&self) -> String {
@@ -494,6 +495,7 @@ mod tests {
             name,
             ids: Cell::new(0),
             random: Cell::new(random),
+            ahead: 0,
         })
     }
 
@@ -537,6 +539,8 @@ mod tests {
             created: Some(Moment::utc(secs)),
             updated: Some(Moment::utc(secs)),
             stamp: Some(Moment::utc(secs)),
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: "dev-a".to_owned(),
@@ -552,6 +556,7 @@ mod tests {
             name: "dev-a",
             ids: Cell::new(0),
             random: Cell::new(0),
+            ahead: 0,
         };
         (0..versions)
             .map(|n| {
@@ -602,6 +607,49 @@ mod tests {
             let todo = self.devices[device].act(action);
             self.relay_hears(device, todo);
         }
+
+        /// Every device loses the relay, to write on its own until it is connected again.
+        fn part(&mut self) {
+            for (i, device) in self.devices.iter_mut().enumerate() {
+                self.relay.disconnect(i as Peer);
+                device.disconnected();
+            }
+        }
+
+        fn rejoin(&mut self) {
+            for i in 0..self.devices.len() {
+                self.connect(i);
+            }
+        }
+
+        /// The heads each device lists, having checked that they all list the same.
+        fn agreed(&self) -> Vec<String> {
+            let all: Vec<Vec<String>> = self.devices.iter().map(heads).collect();
+            assert!(all.windows(2).all(|w| w[0] == w[1]), "{all:?}");
+            all[0].clone()
+        }
+    }
+
+    /// Two devices and a relay, each device having written these notes from the line in turn,
+    /// and each come back to the line.
+    fn pair(texts: &[&str]) -> Net {
+        let mut net = Net {
+            relay: Replica::new(),
+            devices: vec![device("dev-a"), device("dev-b")],
+        };
+        net.rejoin();
+        for text in texts {
+            net.act(0, Action::Type((*text).to_owned()));
+            net.act(0, Action::Write);
+            net.act(0, Action::Select(None));
+        }
+        net
+    }
+
+    /// Opens a new row under the row the cursor is on and writes a note in it.
+    fn under(net: &mut Net, device: usize, text: &str) {
+        net.act(device, Action::Write);
+        net.act(device, Action::Edited(text.to_owned()));
     }
 
     #[test]
@@ -1106,5 +1154,105 @@ mod tests {
             .map(|line| opened(line).text)
             .collect();
         assert_eq!(snapshot, ["Boiler", "a garden"]);
+    }
+
+    #[test]
+    fn two_devices_writing_under_one_note_at_once_both_sit_under_it_the_later_nearest() {
+        let mut net = pair(&["Boiler"]);
+        net.devices[0] = Device::new(
+            Box::new(Stopped {
+                name: "dev-a",
+                ids: Cell::new(1),
+                random: Cell::new(0),
+                ahead: 60,
+            }),
+            "dev-a",
+            Weights::default(),
+            key(),
+        );
+        net.connect(0);
+        net.part();
+        for (device, run) in [
+            (0, ["Bleed the radiators", "Order oil"]),
+            (1, ["House", "a garden"]),
+        ] {
+            net.act(device, Action::Move(1));
+            for text in run {
+                under(&mut net, device, text);
+            }
+            net.act(device, Action::Select(None));
+        }
+        net.rejoin();
+        assert_eq!(
+            net.agreed(),
+            [
+                "Boiler",
+                "Bleed the radiators",
+                "Order oil",
+                "House",
+                "a garden"
+            ],
+            "the clock a minute ahead placed its run later, and so nearer"
+        );
+    }
+
+    #[test]
+    fn an_edit_on_one_device_and_a_move_on_another_both_hold() {
+        let mut net = pair(&["Boiler", "House", "a garden"]);
+        assert_eq!(net.agreed(), ["a garden", "House", "Boiler"]);
+        net.part();
+        net.act(0, Action::Move(2));
+        net.act(0, Action::Edited("House insurance".into()));
+        net.act(0, Action::Select(None));
+        net.act(1, Action::Move(2));
+        net.act(1, Action::Shift(-1));
+        net.act(1, Action::Select(None));
+        net.rejoin();
+        assert_eq!(net.agreed(), ["House insurance", "a garden", "Boiler"]);
+    }
+
+    #[test]
+    fn a_cycle_two_devices_make_by_moving_at_once_still_lists_every_note() {
+        let mut net = pair(&["Boiler", "House", "a garden"]);
+        net.part();
+        // One puts the top note under the last, the other the last under the top.
+        net.act(0, Action::Move(1));
+        net.act(0, Action::Shift(2));
+        net.act(1, Action::Move(3));
+        net.act(1, Action::Shift(-1));
+        assert_eq!(heads(&net.devices[0]), ["House", "Boiler", "a garden"]);
+        assert_eq!(heads(&net.devices[1]), ["a garden", "Boiler", "House"]);
+        net.act(0, Action::Select(None));
+        net.act(1, Action::Select(None));
+        net.rejoin();
+        let mut listed = net.agreed();
+        listed.sort();
+        assert_eq!(listed, ["Boiler", "House", "a garden"]);
+    }
+
+    #[test]
+    fn compacting_keeps_where_each_note_sits() {
+        let mut a = device("dev-a");
+        write(&mut a, "Boiler");
+        a.act(Action::Write);
+        a.act(Action::Edited("Order oil".into()));
+        a.act(Action::Select(None));
+        write(&mut a, "House");
+        a.act(Action::Select(None));
+        let before = heads(&a);
+        assert_eq!(before, ["House", "Boiler", "Order oil"]);
+        let todo = a.compact();
+        let oil = todo.keep[0].lines[1..]
+            .iter()
+            .map(|line| opened(line))
+            .find(|record| record.text == "Order oil")
+            .unwrap();
+        assert_eq!(oil.after.as_deref(), Some("dev-a-0001"));
+        assert!(oil.placed.is_some());
+
+        let new = todo.device.unwrap();
+        let mut again = twin(&new, "dev-a", 0);
+        again.load(&new, todo.keep[0].lines.clone());
+        assert_eq!(heads(&again), before);
     }
 }

@@ -7,11 +7,21 @@
 //! that every device agrees. When a text CRDT arrives, the lines carry updates instead of
 //! snapshots and nothing above this module changes.
 //!
+//! A version has two sides, each with a clock of its own, as the original kept a note's content
+//! and its position in separate registers. What the note says, its text, links, times and
+//! whether it is archived or deleted, is stamped by `stamp`; where it sits in the list, `after`,
+//! is stamped by `placed`. Two versions merge side by side, the newer of each, so that an edit
+//! on one device and a move on another both hold once the two have met. A version that changes
+//! one side carries the other as it was written, with its clock and what breaks a tie on it, so
+//! that the side carried is decided as if the version had never been written. The list is the
+//! walk of the tree that `after` makes, in [`Notes::order`].
+//!
 //! In a log the line is sealed, and what is sealed is exactly the plain line, so that a sealed
 //! log and an export differ by the envelope and nothing else. Logs from before sealing hold plain
 //! lines, and those are read as they are.
 
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +33,9 @@ use crate::time::Moment;
 
 /// The version of the line format this build writes. Lines with no version are from before
 /// there was one, and hold their times as unix seconds. A line with a later version is left
-/// alone rather than misread.
-const FORMAT: u32 = 1;
+/// alone rather than misread. Version 2 added the place, which a build of version 1 would drop
+/// from every note it rewrote.
+const FORMAT: u32 = 2;
 
 /// One version of one note.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,17 +55,29 @@ pub struct Record {
     /// none, and `updated` stands in.
     #[serde(default)]
     pub stamp: Option<Moment>,
+    /// The note this one sits after in the list, or none for the top. A note it names that no
+    /// version is held for is not there yet, so until it arrives this one sits at the top.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// When the note was put where it sits, which decides the newest place as `stamp` decides
+    /// the newest text. Notes from before places have none, and `created` stands in.
+    #[serde(default)]
+    pub placed: Option<Moment>,
     #[serde(default)]
     pub archived: bool,
     /// A tombstone, kept so that an older version arriving later cannot resurrect the note.
     #[serde(default)]
     pub deleted: bool,
-    /// The device that wrote this version. Breaks ties between versions with equal stamps.
+    /// The device that wrote what this version says, which a version that only moves the note
+    /// carries over with its stamp. Breaks ties between versions with equal stamps.
     #[serde(default)]
     pub device: String,
 }
 
 /// What one line of a log came to.
+// A read is taken apart as soon as it is made and never kept, so the version is not boxed: that
+// would be an allocation a line for nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Read {
     /// A version of a note.
@@ -140,9 +163,41 @@ impl Record {
     fn supersedes(&self, other: &Record) -> bool {
         (self.written(), &self.device) > (other.written(), &other.device)
     }
+
+    /// Whether this version's place is newer. A tie is broken by the note it is after, so that a
+    /// place is decided by nothing but itself, however many versions have carried it.
+    fn moves(&self, other: &Record) -> bool {
+        (self.placed, &self.after) > (other.placed, &other.after)
+    }
+
+    /// Whether two versions say the same, wherever they put the note.
+    pub fn says_the_same(&self, other: &Record) -> bool {
+        self.text == other.text
+            && self.links == other.links
+            && self.created == other.created
+            && self.updated == other.updated
+            && self.archived == other.archived
+            && self.deleted == other.deleted
+    }
+
+    /// Where the note falls among those placed after the same note: the newest placed first.
+    fn rank(&self) -> Option<i64> {
+        self.placed
+            .or(self.created)
+            .or(self.updated)
+            .map(|m| m.secs)
+    }
 }
 
-/// The notes of a space: the newest version of each, tombstones included. Versions can be
+/// A moment past `latest`, or `now` if that is past it already.
+fn past(latest: Option<i64>, now: Moment) -> Moment {
+    match latest {
+        Some(held) if held >= now.secs => now.plus(held - now.secs + 1),
+        _ => now,
+    }
+}
+
+/// The notes of a space: the newest of each side of each, tombstones included. Versions can be
 /// applied in any order, from any number of logs, and the same notes come out.
 #[derive(Default)]
 pub struct Notes {
@@ -154,15 +209,26 @@ impl Notes {
         Self::default()
     }
 
-    /// Takes a version if it is the newest of its note, and says whether it was.
+    /// Takes from a version each side that is newer than the one held, and says whether it took
+    /// either.
     pub fn apply(&mut self, record: Record) -> bool {
-        match self.newest.get(&record.id) {
-            Some(held) if !record.supersedes(held) => false,
-            _ => {
-                self.newest.insert(record.id.clone(), record);
-                true
+        let Some(held) = self.newest.get_mut(&record.id) else {
+            self.newest.insert(record.id.clone(), record);
+            return true;
+        };
+        match (record.supersedes(held), record.moves(held)) {
+            (false, false) => return false,
+            (true, true) => *held = record,
+            (true, false) => {
+                *held = Record {
+                    after: held.after.take(),
+                    placed: held.placed,
+                    ..record
+                }
             }
+            (false, true) => (held.after, held.placed) = (record.after, record.placed),
         }
+        true
     }
 
     /// Live notes, not counting tombstones.
@@ -189,13 +255,111 @@ impl Notes {
         self.newest.values().filter(|r| !r.deleted)
     }
 
+    /// The note a note sits under: the one it was placed after, if a version of that is held.
+    fn under<'a>(&self, record: &'a Record) -> Option<&'a str> {
+        record
+            .after
+            .as_deref()
+            .filter(|after| self.newest.contains_key(*after))
+    }
+
     /// A stamp for a new version of a note that is sure to supersede the one held, even when
     /// two changes land in the same second or another device's clock runs ahead.
     pub fn next_stamp(&self, id: &str, now: Moment) -> Moment {
-        match self.newest.get(id).and_then(Record::written) {
-            Some(held) if held >= now.secs => now.plus(held - now.secs + 1),
-            _ => now,
+        past(self.version(id).and_then(Record::written), now)
+    }
+
+    /// A moment to place a note at that is sure to supersede the place held for it, and to put
+    /// it before every note placed after the same note so far, so that a note placed after
+    /// another sits directly under it, wherever the clocks that placed the others were.
+    pub fn next_placed(&self, id: &str, after: Option<&str>, now: Moment) -> Moment {
+        let after = after.filter(|after| self.newest.contains_key(*after));
+        let latest = self
+            .newest
+            .values()
+            .filter(|r| {
+                r.id == id
+                    || r.after.as_deref() == after
+                    || after.is_none() && self.under(r).is_none()
+            })
+            .filter_map(Record::rank)
+            .max();
+        past(latest, now)
+    }
+
+    /// Every note in the order it is listed, tombstones and archived notes among them, so that
+    /// what was placed after one keeps its place: the walk of the tree that `after` makes, as
+    /// in the original. The top is every note placed at the top, or after a note not held, and
+    /// each note is followed by the notes placed after it, and theirs, the newest placed first.
+    /// Two devices moving at once can make a cycle, which nothing at the top reaches. It is
+    /// listed as if it were at the top, with what hangs from it, so that no note is lost.
+    pub fn order(&self) -> Vec<&Record> {
+        // A note is named by where it is in id order, the order the notes are held in, so that
+        // nothing is hashed: this runs each time the list is made.
+        let all: Vec<&Record> = self.newest.values().collect();
+        let under: Vec<Option<usize>> = all
+            .iter()
+            .map(|r| {
+                let after = r.after.as_deref()?;
+                all.binary_search_by(|held| held.id.as_str().cmp(after))
+                    .ok()
+            })
+            .collect();
+        let mut tops = Vec::new();
+        let mut hanging = vec![Vec::new(); all.len()];
+        for (i, after) in under.iter().enumerate() {
+            match after {
+                Some(after) => hanging[*after].push(i),
+                None => tops.push(i),
+            }
         }
+        // The newest placed first, and of two placed in the same second the later id.
+        let rank: Vec<_> = all.iter().map(|r| Reverse((r.rank(), &r.id))).collect();
+        let newest = |a: &usize, b: &usize| rank[*a].cmp(&rank[*b]);
+        tops.sort_unstable_by(newest);
+        for notes in &mut hanging {
+            notes.sort_unstable_by(newest);
+        }
+        let mut seen = vec![false; all.len()];
+        let mut walked = Vec::with_capacity(all.len());
+        let walk = |head: usize, seen: &mut [bool], walked: &mut Vec<usize>| {
+            let mut stack = vec![head];
+            while let Some(i) = stack.pop() {
+                if !std::mem::replace(&mut seen[i], true) {
+                    walked.push(i);
+                    stack.extend(hanging[i].iter().rev());
+                }
+            }
+        };
+        let mut runs = Vec::with_capacity(tops.len());
+        for &top in &tops {
+            let start = walked.len();
+            walk(top, &mut seen, &mut walked);
+            runs.push((top, start..walked.len()));
+        }
+        if walked.len() < all.len() {
+            let mut strays: Vec<usize> = (0..all.len()).filter(|&i| !seen[i]).collect();
+            strays.sort_unstable_by(newest);
+            for stray in strays {
+                if seen[stray] {
+                    continue;
+                }
+                // A note nothing at the top reaches hangs from a cycle. The cycle is walked
+                // from the note that climbing from this one comes back to.
+                let mut climbed = HashSet::new();
+                let mut head = stray;
+                while climbed.insert(head) {
+                    head = under[head].expect("only a note at the top hangs from nothing");
+                }
+                let start = walked.len();
+                walk(head, &mut seen, &mut walked);
+                runs.push((head, start..walked.len()));
+            }
+            runs.sort_by(|(a, _), (b, _)| newest(a, b));
+        }
+        runs.into_iter()
+            .flat_map(|(_, run)| walked[run].iter().map(|&i| all[i]))
+            .collect()
     }
 }
 
@@ -230,6 +394,8 @@ mod tests {
             created: Some(Moment::utc(updated)),
             updated: Some(Moment::utc(updated)),
             stamp: None,
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: "dev-a".into(),
@@ -311,13 +477,16 @@ mod tests {
                 offset: 3600,
             }),
             links: vec!["n0".into()],
+            after: Some("n0".into()),
+            placed: Some(Moment::utc(30)),
             ..rec("new", "written now\nwith a body", 20)
         };
         let line = record.line().unwrap();
-        assert!(line.starts_with(r#"{"v":1,"id":"new","text":"written now\nwith a body","#));
+        assert!(line.starts_with(r#"{"v":2,"id":"new","text":"written now\nwith a body","#));
         assert!(line.contains(
             r#""created":"2026-10-14T00:30:00+01:00","updated":"1970-01-01T00:00:20Z","#
         ));
+        assert!(line.contains(r#""after":"n0","placed":"1970-01-01T00:00:30Z","#));
         assert!(line.ends_with('\n') && line.matches('\n').count() == 1);
         assert_eq!(Record::read(line.as_bytes()), Some(record));
 
@@ -334,9 +503,16 @@ mod tests {
                 Some(Moment::utc(40))
             )
         );
+        // A line from before places has none, and sits by when it was written.
+        let unplaced = Record::read(
+            br#"{"v":1,"id":"v1","text":"Order oil","created":"1970-01-01T00:00:10Z","device":"dev-b"}"#,
+        )
+        .unwrap();
+        assert_eq!((&unplaced.after, unplaced.placed), (&None, None));
+        assert_eq!(unplaced.rank(), Some(10));
         // A line from a later format is left alone rather than misread.
         assert_eq!(
-            Record::read(br#"{"v":2,"id":"new","text":"from the future"}"#),
+            Record::read(br#"{"v":3,"id":"new","text":"from the future"}"#),
             None
         );
         assert_eq!(Record::read(b"not json"), None);
@@ -376,6 +552,77 @@ mod tests {
             Record::read_line(&seal, &seal.seal(header, &host)),
             Read::Other,
             "a sealed header is still not a version"
+        );
+    }
+
+    fn placed(id: &str, after: Option<&str>, at: i64) -> Record {
+        Record {
+            after: after.map(str::to_owned),
+            placed: Some(Moment::utc(at)),
+            ..rec(id, id, 10)
+        }
+    }
+
+    fn order(notes: &Notes) -> Vec<&str> {
+        notes.order().iter().map(|r| r.id.as_str()).collect()
+    }
+
+    #[test]
+    fn notes_from_before_places_are_in_the_order_they_were_written_newest_first() {
+        let mut notes = Notes::new();
+        for (id, created) in [("boiler", 20), ("house", 30), ("garden", 10)] {
+            notes.apply(rec(id, id, created));
+        }
+        assert_eq!(order(&notes), ["house", "boiler", "garden"]);
+        notes.apply(placed("oil", Some("garden"), 40));
+        assert_eq!(order(&notes), ["house", "boiler", "garden", "oil"]);
+    }
+
+    #[test]
+    fn a_note_placed_after_one_not_yet_here_is_at_the_top_until_it_arrives() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 20));
+        notes.apply(placed("oil", Some("house"), 50));
+        assert_eq!(order(&notes), ["oil", "boiler"]);
+        notes.apply(placed("house", None, 10));
+        assert_eq!(order(&notes), ["boiler", "house", "oil"]);
+    }
+
+    #[test]
+    fn the_text_and_the_place_of_a_note_merge_apart() {
+        let edit = Record {
+            stamp: Some(Moment::utc(30)),
+            ..rec("house", "House insurance", 30)
+        };
+        let moved = Record {
+            stamp: Some(Moment::utc(10)),
+            device: "dev-b".into(),
+            ..placed("house", Some("boiler"), 40)
+        };
+        for versions in [[&edit, &moved], [&moved, &edit]] {
+            let mut notes = Notes::new();
+            for version in versions {
+                assert!(notes.apply(version.clone()));
+            }
+            let held = notes.get("house").unwrap();
+            assert_eq!(held.text, "House insurance");
+            assert_eq!(held.after.as_deref(), Some("boiler"));
+            assert!(!notes.apply(moved.clone()) && !notes.apply(edit.clone()));
+        }
+    }
+
+    #[test]
+    fn a_cycle_is_listed_as_if_it_were_at_the_top() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 20));
+        notes.apply(placed("house", Some("garden"), 30));
+        notes.apply(placed("garden", Some("house"), 40));
+        notes.apply(placed("oil", Some("garden"), 50));
+        notes.apply(placed("radiators", None, 35));
+        notes.apply(placed("shed", Some("shed"), 25));
+        assert_eq!(
+            order(&notes),
+            ["garden", "oil", "house", "radiators", "shed", "boiler"]
         );
     }
 

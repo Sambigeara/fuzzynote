@@ -289,6 +289,8 @@ pub(crate) mod tests {
             created: Some(Moment::utc(updated)),
             updated: Some(Moment::utc(updated)),
             stamp: None,
+            after: None,
+            placed: None,
             archived: false,
             deleted: false,
             device: String::new(),
@@ -421,7 +423,7 @@ pub(crate) mod tests {
             concat!(
                 "{\"compacts\":[\"dev-x\"],\"snapshot\":1}\n",
                 "{\"id\":\"old\",\"text\":\"from before\",\"created\":10,\"updated\":30,\"stamp\":40,\"device\":\"dev-b\"}\n",
-                "{\"v\":2,\"id\":\"new\",\"text\":\"from the future\"}\n",
+                "{\"v\":3,\"id\":\"new\",\"text\":\"from the future\"}\n",
                 "not json\n",
             ),
         )
@@ -529,7 +531,7 @@ pub(crate) mod tests {
         let text = String::from_utf8(out).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2, "one line a note, and no history");
-        assert!(lines[1].starts_with(r#"{"v":1,"id":"n1","text":"first, done","#));
+        assert!(lines[1].starts_with(r#"{"v":2,"id":"n1","text":"first, done","#));
         assert_eq!(
             Record::read(lines[1].as_bytes()).as_ref(),
             s.notes().get("n1")
