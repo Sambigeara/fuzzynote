@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use fzn_engine::replica::{Header, names_a_log};
 use fzn_engine::seal::is_sealed;
-use fzn_engine::{Moment, Notes, Read, Record, Seal};
+use fzn_engine::{Moment, Notes, Read, Record, Seal, Session, Weights};
 
 use crate::config::DEVICE_FILE;
 use crate::system::{self, System};
@@ -261,12 +261,23 @@ impl Store {
     pub fn export(&self, out: &mut impl Write) -> Result<usize> {
         let mut records: Vec<&Record> = self.notes.records().collect();
         records.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
-        for record in &records {
-            out.write_all(record.line()?.as_bytes())?;
-        }
-        out.flush()?;
-        Ok(records.len())
+        write_lines(&records, out)
     }
+
+    /// Writes the notes a line holds at the top of the space as plain lines, in the order the app
+    /// would list them, ranked by the same weights, and every one of them, archived ones too.
+    pub fn export_found(self, line: &str, weights: Weights, out: &mut impl Write) -> Result<usize> {
+        let session = Session::new(Box::new(System), String::new(), weights, self.notes);
+        write_lines(&session.export(line), out)
+    }
+}
+
+fn write_lines(records: &[&Record], out: &mut impl Write) -> Result<usize> {
+    for record in records {
+        out.write_all(record.line()?.as_bytes())?;
+    }
+    out.flush()?;
+    Ok(records.len())
 }
 
 #[cfg(test)]
@@ -556,6 +567,42 @@ pub(crate) mod tests {
         assert_eq!(read_only.notes().len(), 2);
         let mut read_only = read_only;
         assert!(read_only.put(rec("n3", "x", 1)).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_export_with_a_query_writes_what_the_line_holds_archived_ones_too_in_its_order() {
+        let dir = temp_dir();
+        let mut s = open(&dir, "dev-a");
+        s.put(rec("gutter", "clear the gutter #house", 10)).unwrap();
+        s.put(rec("oil", "order oil #house", 20)).unwrap();
+        s.put(Record {
+            archived: true,
+            ..rec("roof", "fix the roof #house", 30)
+        })
+        .unwrap();
+        s.put(rec("cake", "cake recipe", 40)).unwrap();
+        let ids = |line: &str| {
+            let store = Store::open(&dir, String::new(), seal(), false).unwrap();
+            let mut out = Vec::new();
+            let n = store
+                .export_found(line, Weights::default(), &mut out)
+                .unwrap();
+            let text = String::from_utf8(out).unwrap();
+            let ids: Vec<String> = text
+                .lines()
+                .map(|line| Record::read(line.as_bytes()).unwrap().id)
+                .collect();
+            assert_eq!(ids.len(), n);
+            ids
+        };
+        assert_eq!(
+            ids("#house"),
+            ["roof", "oil", "gutter"],
+            "nothing to rank by: the space's order, archived ones included"
+        );
+        assert_eq!(ids("#house oil"), ["oil"], "words rank among them");
+        assert!(ids("~zzz").is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -52,7 +52,10 @@ other people when you choose.
   the arrow and is the context, and since 2026-10-15 labels gone into one after another are one
   context, and so are a note and the labels gone into after it. Selecting notes, and a context
   of plain words, are not.
-- Search groups: Tab-separated terms, `~` fuzzy, `!` inverse, substring by default.
+- One line to search with: words find and everything else holds, so `"…"` is the exact text and
+  a tag, a person, a day or a span narrows what is listed, and `~` at the start of the line is
+  the original's fuzzy, letters in order in heads (see "Words find; everything else holds"). The
+  original's Tab-separated groups and `!` inverse are not built yet.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key; show/hide archived globally.
 - Undo/redo, move up/down, copy/paste of whole notes.
@@ -78,19 +81,22 @@ other people when you choose.
   links to counts as its own head does, one hop and no further. Only explicit links are stored;
   everything else is recomputed on demand.
 - **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, and `[[note head]]`
-  as a way of typing a link. Nothing else is special. In particular the old ` >> ` prefix paths
-  are plain text; the words in them still count, the hierarchy does not.
+  as a way of typing a link. Nothing else is special in a note. In particular the old ` >> `
+  prefix paths are plain text; the words in them still count, the hierarchy does not. On the
+  line, and only there, three more forms are read: a phrase in quotes, a span of when notes were
+  written, and `~` at its start (see "Words find; everything else holds").
 - **Date**: plain text in the note, written `2026-10-16`, and never stored apart from it. The
   engine reads it on load, as it reads tags. A link is held as an id because a note's head can
   change; a date's name cannot, so it lives in the text. The day a note was written is not
   typed at all: it is the note's `created`. `/today`, `/tomorrow`, `/yesterday`, a day of the
-  week (`/fri` is the next Friday, never today) and `/+3` or `/-2` are quicker ways of typing a
-  date, and any beginning that only one of them has will do (`/tom`, `/f`). Any other slash is
-  left alone. The top line shows the date a word stands for and searches with it. Saving a
-  note, from the top line or from the editor, writes the date in its place, at the moment a
-  `[[head]]` becomes a link. A date typed as a search finds the notes that mention the day and
-  the notes written on it, and counts as a date and not as the numbers in it. The old
-  `Mon, Jan 2, 2006` form is still read.
+  week (`/fri` is the next Friday and `/-mon` the last Monday, never today) and `/+3` or `/-2`
+  are quicker ways of typing a date, and any beginning that only one of them has will do (`/tom`,
+  `/f`, `/-tu`). Any other slash is left alone. The top line shows the date a word stands for and
+  holds with it. Saving a note, from the top line or from the editor, writes the date in its
+  place, at the moment a `[[head]]` becomes a link. A date typed on the line holds the notes
+  that mention the day or were written on it, and counts as a date and not as the numbers in it;
+  until 2026-10-15 it found them among whatever else the line found (see "Words find; everything
+  else holds"). The old `Mon, Jan 2, 2006` form is still read.
 - **Context inheritance**: where you are is what you are talking about. A note created while a
   context is active (tags, people, a zoomed neighbourhood) inherits that context. This is what
   prefix prepending used to do, without a tree and without the typing: the old ` >> ` prefix was
@@ -119,8 +125,8 @@ out.
 - Out: *effects*, which are what the face has to do about an action: keep this version, put
   this note in front of the person to edit, copy this, open this URL. The session has already
   done its own part, so an effect that fails costs a message and nothing else.
-- Out: the *view*, which is everything there is to paint: the path, the line and the dates its
-  date words stand for, the rows with their reasons, where the cursor is, the note under it as
+- Out: the *view*, which is everything there is to paint: the path, the line and what its date
+  words and spans stand for, the rows with their reasons, where the cursor is, the note under it as
   it is being written, the note you are in, what just happened, and what can be asked for where
   the cursor is, each with what to call it there. A face puts its own key or button beside each.
 
@@ -145,18 +151,22 @@ and a human-readable reason. Cheapest first:
    The word under the cursor is a prefix, not a word: it stands for every vocabulary word it
    starts, in the word scorer and in the head signal, and a note earns credit for its best
    completion only. This is what makes results right while a word is still being typed.
-3. *Fuzzy*: trigram overlap, so a misspelling still finds its note.
+3. *Fuzzy*: trigram overlap, so a misspelling still finds its note. With `~` at the start of
+   the line the words are letters instead, found in order in heads and scored as fzf scores
+   them, and no other scorer runs (see "Words find; everything else holds").
 4. *Temporal*: created or edited close in time; dates written in the text.
 5. *Structural*: notes that sat adjacent in the list, notes you navigated between.
 6. *Feedback*: a locked link boosts shared terms between the two notes; a dismissal dampens.
 7. *Reserved*: a local embedding scorer, on device, if semantic similarity is ever wanted. It is
    another scorer, not a dependency.
 
-**Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. Two facts come
-before any score: what is in the place being looked around, linked to its note and carrying its
-labels, and the note headed with what was typed. With nothing on the line no scorer runs in a
-place: its facts are a set, the note's links kept to the notes on the index's list for every
-label. Budget: under five milliseconds per keystroke for ten thousand notes.
+**Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. What the line
+holds comes before anything: a note that does not hold it is not listed at all, so the scores
+only ever order what holds. Two facts come before any score: what is in the place being looked
+around, linked to its note and carrying its labels, and the note headed with what was typed.
+With nothing on the line to rank by no scorer runs, at the top or in a place: a place's facts
+are a set, the note's links kept to the notes on the index's list for every label. Budget:
+under five milliseconds per keystroke for ten thousand notes.
 
 **Tuning happens in the product.** Every suggestion shows its reasons; writing where you are
 makes a link, and a chord corrects one, stored on the note as the target's id; the weights live
@@ -223,11 +233,12 @@ Nothing is added to the engine until daily use asks for it.
 - Sharing is sharing a subset of updates. Deferred, but nothing above prevents it.
 - **The snapshot line is the way in and out, for good.** `fzn export` writes every live note
   as one plain line, by your own hand and to wherever you point it, so notes can always be
-  read and taken away without the app. `fzn import-jsonl` is the way back in; a plain file is
-  no longer read as a log by being put in the directory, since it would then be sent in the
-  clear. When the logs carry CRDT updates this format stays. It carries the facts beside the
-  text as well as the text: the 2022 corpus is what it looks like when only the text gets out
-  (creation time survives on 7% of its notes).
+  read and taken away without the app; `fzn export QUERY` writes only what that line finds at
+  the top of the space, archived notes too (see "Export takes the line"). `fzn import-jsonl`
+  is the way back in; a plain file is no longer read as a log by being put in the directory,
+  since it would then be sent in the clear. When the logs carry CRDT updates this format stays.
+  It carries the facts beside the text as well as the text: the 2022 corpus is what it looks
+  like when only the text gets out (creation time survives on 7% of its notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
 
@@ -380,11 +391,12 @@ tab and the relay all run the same code.
   on an empty line outside one quits; Ctrl-D on the line is a second key for clearing it.
   Ctrl-Q quits from anywhere, writing out the head first. The screen is flat: no borders, no
   boxes. The path is a dim row above the line and only in a zoom; the line is the first row,
-  after a dim `>` in the column the rows leave empty, so that its text lines up with theirs; a
-  date word has the date it stands for shown after it, dimmed. The rows follow the line
-  directly, each a head and then, dimmed, a `¶` if it has a body, the names of what it links to
-  after an arrow, and its reasons; the row the cursor is on has the terminal's cursor at the end
-  of its head, the head in bold, and its date at the right. The foot of the list is kept for
+  after a dim `>` in the column the rows leave empty, so that its text lines up with theirs;
+  what its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or
+  `→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then,
+  dimmed, a `¶` if it has a body, the names of what it links to after an arrow, and its reasons;
+  the row the cursor is on has the terminal's cursor at the end of its head, the head in bold,
+  and its date at the right. The foot of the list is kept for
   the body of what the cursor is on: the note on its row, and on the line in a zoom the note you
   are in. It is a row of nothing, then up to five rows of the body, dimmed, set in two columns
   from the rows' text and cut with a `…` when it goes on. The rows are kept whatever the note
@@ -398,37 +410,43 @@ tab and the relay all run the same code.
   many notes there are or that sync is working; `not syncing` is said when it is not, and in its
   place, while syncing, how far this machine's clock is from the relay's when that is more than
   two minutes, `this device's clock is 5 min ahead`. Not yet reinstated: Ctrl-S multi-select
-  with Enter zooming on what the selection shares, Tab search groups, Ctrl-^ export. The first
-  time a space is opened on a machine fzn asks for its passphrase, twice if the space is new,
-  and keeps the key it derives; `fzn key` asks again, for when it was mistyped.
-  `$FZN_PASSPHRASE` answers for scripts.
+  with Enter zooming on what the selection shares, Tab search groups and `!` inverse, Ctrl-^
+  export. The first time a space is opened on a machine fzn asks for its passphrase, twice if
+  the space is new, and keeps the key it derives; `fzn key` asks again, for when it was
+  mistyped. `$FZN_PASSPHRASE` answers for scripts.
 - **Zoom.** Right at the end of a note's head makes it the context, and the path grows by one;
   short of the end, Right is the caret. A tag, a person or a day can be the context too (see "A
-  tag is a place you can go into"): Right at the end of the line goes into what the line names,
-  the label if the line is one label and nothing else, `#house`, `@joe` or `/fri`, and otherwise
-  the one note in the space the line is the name of, by the rule in "A name is a fact too". In a
-  zoom that rule holds as it does at the top: the note the line names is listed first, saying
-  `its name`, wherever it is and whatever the limit, so Right goes where the list shows, and
-  typing a name is the way from any place to any note. A line that names neither, or names where
-  you already are, leaves Right doing nothing. The path shows a label as it is written:
-  `#house`, `@joe`, `2026-10-16`. The place is the last note on the path, if there is one,
+  tag is a place you can go into"): Right at the end of the line goes into what the line names:
+  the label if the line is one label and nothing else, `#house`, `@joe` or `/fri`, or back to it
+  if it is on the path; each label in turn if the line is several, `#house /today`, as if Right
+  had been pressed after each but passing over a label the place has already (see "The arrow at
+  the end of a line of labels goes into each"); and otherwise the one note in the space the line
+  is the name of and that holds what the line holds, by the rule in "A name is a fact too". A
+  span is not a place (see "A span is not a place"). In a zoom that rule holds as it does at the
+  top: the note the line names is listed first, saying `its name`, wherever it is and whatever
+  the limit, so Right goes where the list shows, and typing a name is the way from any place to
+  any note. A line that names neither, or names where you already are, leaves Right doing
+  nothing. The path shows a label as it is written: `#house`, `@joe`, `2026-10-16`. The place is
+  the last note on the path, if there is one,
   together with every label gone into after it (see "Labels gone into one after another are one
   place" and "A place is the last note on the path and the labels after it"); labels before the
   note are only how you got there. Its facts are the notes linked to or from the note that carry
   every one of those labels: the links alone when no label follows the note, and with no note on
   the path every note carrying all the labels, which for a day is every note written on it or
   mentioning it. A link is a fact and so is a label. The list works as the top of the space does
-  (see "A place lists what is in it; typing finds"): with nothing on the line it is what is in
-  the place, its facts in the order the space keeps them in, however many, and nothing the
-  engine suggests; a row says how it is linked, `links here`, `linked from here` or `linked both
-  ways`, and nothing scored. Typing finds: the note the line names first, then the place's facts
-  that match, then what the engine finds in its neighbourhood that matches, each best first with
-  its reasons, and a row of nothing between the last fact and the first find. Around a note the
+  (see "A place lists what is in it; typing finds"): with nothing on the line to rank by it is
+  what is in the place and holds what the line holds, its facts in the order the space keeps
+  them in, however many, and nothing the engine suggests; a row says how it is linked, `links
+  here`, `linked from here` or `linked both ways`, and nothing scored. Typing words finds: the
+  note the line names first, then the place's facts that match, then what the engine finds in
+  its neighbourhood that matches, each best first with its reasons and each holding what the
+  line holds, and a row of nothing between the last fact and the first find. Around a note the
   neighbourhood is what shares its tags and people, words and dates, or links to the same things,
   with only the notes carrying the labels counted as facts; around labels alone it is what their
   words find. The line comes with you, under one rule:
-  if the note you went into contains what you typed, or its head and the heads of the notes it
-  links to have every word of it, you were searching for it, so the line clears and stepping back
+  if the note you went into contains what you typed, or holds what the line holds and its head
+  and the heads of the notes it links to have every word of it outside its phrases (with `~`,
+  its head has the letters), you were searching for it, so the line clears and stepping back
   brings it back; otherwise you were writing, and the draft is carried in to be written here. A
   place gone into from the line was searched for by definition, so the line clears. Stepping back
   never throws away what you typed: a line written inside stays on the way out, and the search
@@ -1161,6 +1179,105 @@ tab and the relay all run the same code.
   `:` put the prompt over a line of the note. The editor is given the sheet's foot for its
   panels instead, which changed the editor's source by one extension and the bundle by 64
   bytes.
+- **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A
+  date typed as a search finds the notes that mention the day and the notes written on it" under
+  Model, and how a tag or a person typed on the line counted until now, as one more thing to
+  score: `#house boiler` listed every boiler, the one in the house first. It revises "Search
+  groups" in what stays from the original, and in "A place lists what is in it; typing finds"
+  what an empty line is: a line with nothing on it to rank by. The line has one grammar, read in
+  the engine, so that both faces have it. Words rank exactly as they did: BM25, prefixes,
+  look-alikes, the head signal, and the name rule. Everything else on the line is something a
+  note has to hold to be listed at all, and none of it changes how the words rank.
+  - `"…"` is a phrase: the note's whole text, head and body, has it, in any case, as plain text.
+    An unclosed quote runs to the end of the line, the space typed last included, so the list
+    narrows as the phrase is typed. A phone's keyboard curls quotes as they are typed, so `“`,
+    `”` and `„` are quotes too, any of them closing what any of them opened. An empty phrase holds
+    nothing. A phrase's words are words as well, so a phrase in a head outranks one in a body.
+  - `#tag`, `@person` and a day hold: the note carries the tag or the person, or is of the day,
+    by mentioning it or by having been written on it. The last thing typed holds every tag or
+    person it is the start of until whitespace follows it, `#ho` holding `#house` and
+    `#hosting`, so the list does not empty mid-word. The name rule reads a label typed as the
+    words it says, since a head says its tags as words: `oil tank #house` names the note headed
+    `Oil tank #house`.
+  - A span, `START..END`, `START..` or `..END` with no spaces round the dots, holds the notes
+    written in it. Each end is a date written out or a date word, with a 24-hour `HH:MM` after
+    it if wanted: `/-mon 18:00..` is since six on Monday evening, and `2026-10-01..2026-10-05`
+    runs through the end of the 5th; a span runs from the start of its first day or minute to
+    the end of its last. A time is read by the clock of the place each note was written in, as a
+    note's day is, a note with no time of writing is in no span, and a time anywhere else on the
+    line is words. Membership needs the moment a note was written, which the note relevance
+    sees now carries in place of its day; nothing stored changed. `/-mon`, the last Monday before
+    today, is new with spans, the mirror of `/fri`, and a date word now ends at the `..` of a
+    span. The line says what a span stands for where it says a date word's date, `→ Mon
+    2026-10-12 18:00 – now`. The engine words both, so that the faces paint text and keep no
+    calendar of their own; an open start is `…`.
+  - `~` as the first thing on the line makes its words letters, found in order in heads, as the
+    original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there.
+    They rank as fzf ranks: a letter at the start of a word earns more, twice as much for the
+    first letter typed, a letter running on from the one before earns at least what the first of
+    its run did, and a gap costs more the longer it is; then the shorter head, then the space's
+    order. Every row says `letters: bsv`. Letters name no note, so Right does nothing after
+    them, and a phrase holds in this mode without ranking. The matcher is written here; a
+    dependency for it would have been a decision of its own.
+
+  A line with nothing to rank by lists exactly what holds what it holds, in the space's order
+  and with no reasons, as a place lists its facts on an empty line: at the top it is cut at the
+  500 rows the top of the space is cut at, and in a place it is not cut. A single letter is not
+  a word, so `#house a` lists what `#house` lists. With words as well, they rank among the notes
+  that hold. The note the line names has to hold it too. Inside a place, the line narrows the
+  place's facts and its finds alike, and a line of labels in a place lists the facts that carry
+  them, which for labels not on the path is what going into them lists. The rows of such a line
+  are in the space's order, so they can be moved as the rows of an empty line can.
+
+  Going into a note with something on the line was a search for it, and the line clears, when
+  the note contains the line as typed, or holds what the line holds and is named by the words
+  outside its phrases (with `~`, has its letters in its head), or the line has nothing else but
+  what holds. A phrase that found a note in its body was a search, and so was `/today`, which
+  until now went in as a draft. A draft with a tag in it, `boiler needs bleeding #house`, is
+  still carried in, and so is a line with nothing on it to rank by or to hold, a letter or a
+  mark, as before. Enter writes the line as it reads: quotes, `~` and spans stay as typed, and
+  date words are written out as before, after a span's dots too.
+
+  It is open to more. A new kind of filter, `!word`, archived or has a body, is one more form
+  read from the line and one more way for a note to hold it; the words are not touched. Labels
+  are postings the index has, intersected once a keystroke; a span and a phrase are asked of
+  each note left after that, a phrase last since it reads the whole text, and among the
+  suggestions only until the limit is reached. Measured on synthetic spaces in a release build,
+  each line typed a key at a time: at 10,000 notes every line stays under 4 ms a keystroke (the
+  worst, a first letter of `~bo #house`, 3.6 ms; letters 2.5 to 2.9 ms; phrases and spans under
+  1.7 ms but for a first key), against 1.2 ms for words before and after. At 30,000 notes words,
+  labels, phrases and spans are 2 to 5 ms with first keys up to 12 ms, as words were before, and
+  letters are 15 ms, two cold passes over every note: the heads, and the space's order for the
+  ties.
+
+  What it costs. A draft whose words find nothing carrying its tag lists nothing to step down
+  to, where the tag alone used to list every note carrying it; going into the tag first is the
+  way to write there. `a` alone at the top lists the top of the space, where it used to list
+  nothing. A date word now ends at two dots, so `../fri` in a note is written out as a date.
+  Tab-separated groups, which the original had, and its `!` inverse stay unbuilt.
+- **A span is not a place.** Decided 2026-10-15, agreed with Sam. A span holds the notes written
+  in it, Sam's choice over the notes written or edited in it, and a note written now was not
+  written in a span gone by: one written inside a span would fall out of it as it was written.
+  So a line holding a span, a phrase or `~` is not gone into as a line of labels is, whatever
+  else is on it: Right goes only to the note the line names, if one is named and holds the line,
+  as on any line that is not labels alone, and letters name none.
+- **The arrow at the end of a line of labels goes into each.** Decided 2026-10-15, at Sam's ask,
+  so that opening the app in the morning is one keypress: `#house /today`, Right, and the path is
+  `#house › 2026-10-13`, one place by "Labels gone into one after another are one place". It
+  goes into each label in turn as Right after each would, a label on the path before the
+  place's note being gone back to, but of several a label the place has already is passed over,
+  so that the rest are added to it and the path never repeats: `#house @joe` in `#house › today`
+  goes to `#house › today › @joe`. One label alone is gone back to wherever it is on the path,
+  as before: `#house` in `#house › today` goes back to `#house`. The line comes back on the way
+  out of the first place it went into. Passing over a label typed alone too, so that `#house` in
+  `#house › today` did nothing, was tried the same day and dropped at Sam's direction: typing a
+  label on the path is how he goes back to it.
+- **Export takes the line.** Decided 2026-10-15, agreed with Sam. `fzn export QUERY` writes the
+  notes that line finds at the top of the space, every one of them and archived ones too, in the
+  order the line lists them, one JSON line each as the plain export writes them, ranked with the
+  config's weights. Archived notes are in because archiving is how a task is ticked, and a log
+  of what was done wants them; each line carries the flag. Without a query the export is as it
+  was. It takes no lock, so it runs while the app is open.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

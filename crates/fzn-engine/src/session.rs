@@ -2,35 +2,40 @@
 //!
 //! There is one line and one list. The list shows the top of the space while the line is empty,
 //! in the order its notes are kept in, and what the engine finds as it is typed, each with its
-//! reasons. A note is found by its own words and by the head of a note it links to, so the name
-//! of a note brings what was written in it, as going into the note does. The cursor is on the
-//! line or on a note of the list, and what is typed goes where the cursor is. Archived notes stay
-//! out of every list until they are asked for.
+//! reasons. On the line words find and everything else holds (see `query`): a phrase, a tag, a
+//! person, a day and a span narrow what is listed and never how it ranks, and a line of nothing
+//! but those lists exactly what holds them, in the order the top of the space is in. A note is
+//! found by its own words and by the head of a note it links to, so the name of a note brings
+//! what was written in it, as going into the note does. The cursor is on the line or on a note of
+//! the list, and what is typed goes where the cursor is. Archived notes stay out of every list
+//! until they are asked for.
 //!
 //! Going into a note makes it the place, and the path grows by one step. A place is a set and is
 //! listed as the top of the space is: with nothing on the line, what is in it, which for a note is
 //! what is linked to or from it, in the order the space keeps; with something on the line, what
 //! that finds, the place's own notes first and then the rest of its neighbourhood, each best first
 //! with its reasons. Where you are is what you are talking about, so a note written there is linked
-//! to it. The line comes with you under one rule: if the note contains what was typed, or its head
-//! and the heads of the notes it links to have every word of it, that was a search, so the line
-//! clears, and coming back puts it on an empty line again; otherwise it was a draft, and it stays
-//! on the line to be written there. Stepping back never throws away what is on the line; clearing
-//! it is asked for apart, and offered as the way back while there is something on it. Going into a
-//! place already on the path goes back to it, so the path never repeats. Linking or unlinking a
-//! note of the list is a correction. A `[[head]]` typed into a note is one more way of making a
-//! link: saving the note links it to the note so headed. However it was made, a link is the
-//! target's id held on the note.
+//! to it. The line comes with you under one rule: if the note contains what was typed, or holds
+//! what the line holds and its head and the heads of the notes it links to have every word of it
+//! outside its phrases, that was a search, so the line clears, and coming back puts it on an
+//! empty line again; otherwise it was a draft, and it stays on the line to be written there.
+//! Stepping back never throws away what is on the line; clearing it is asked for apart, and
+//! offered as the way back while there is something on it. Going into a place already on the
+//! path goes back to it, so the path never repeats. Linking or unlinking a note of the list is a
+//! correction. A `[[head]]` typed into a note is one more way of making a link: saving the note
+//! links it to the note so headed. However it was made, a link is the target's id held on the
+//! note.
 //!
-//! A tag, a person or a day is a place too, gone into from the line when the line is that label and
-//! nothing else, as a note is gone into from the line when the line is its name: either way the
-//! line was a search for the place, so it clears and comes back on the way out. What is in it is
-//! every note carrying the label, in the space's order, and typing finds among those first and then
-//! among what the label's words find. A note written there ends its head with the label, as it
-//! would have been typed, so that it reads as one written with the label on the line always has. A
-//! new row opens with the label already in its head and the caret before it, so that what the
-//! writer sees is what is written, and the note is in its place on every device from its first
-//! letter. Only a note written in the place inherits it.
+//! A tag, a person or a day is a place too, gone into from the line when the line is labels and
+//! nothing else, each in turn, as a note is gone into from the line when the line is its name:
+//! either way the line was a search for the place, so it clears and comes back on the way out. A
+//! span is not a place, since a note written now could not be written in a span gone by. What is
+//! in a label is every note carrying it, in the space's order, and typing finds among those first
+//! and then among what the label's words find. A note written there ends its head with the
+//! label, as it would have been typed, so that it reads as one written with the label on the line
+//! always has. A new row opens with the label already in its head and the caret before it, so
+//! that what the writer sees is what is written, and the note is in its place on every device
+//! from its first letter. Only a note written in the place inherits it.
 //!
 //! Labels gone into one after another are one place, so that going into today from inside a
 //! tag is today's notes in that tag: what is in it is the notes carrying every one of them, and
@@ -41,8 +46,8 @@
 //! a note gone into starts a new place.
 //!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
-//! way of typing one: the view says the date it stands for, the search uses it, and saving a
-//! note writes the date in its place.
+//! way of typing one: the view says the date it stands for, on the line it holds the notes of
+//! that day as the date written out does, and saving a note writes the date in its place.
 //!
 //! The row the cursor is on is a field: its head is there to be typed into the moment the cursor
 //! lands, and its body is opened for the rest. The face says what the note now reads as it is
@@ -68,16 +73,18 @@
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
 //! is given it, so the session is only ever told what the line now reads.
 
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{self, Engine, Hit, SearchOptions};
 use crate::note::NoteId;
+use crate::query::{Label, Query};
 use crate::record::{Notes, Record, links_on_save};
-use crate::score::{self, Weights};
+use crate::score::Weights;
 use crate::text;
-use crate::time::{self, Day, Moment};
+use crate::time::{Day, Moment};
 
 const TOP_LIMIT: usize = 500;
 const RELATED_LIMIT: usize = 60;
@@ -116,8 +123,9 @@ pub enum Action {
     /// it. With nothing on the line, open a new note at the top of the list to write in place.
     /// On a row, write out its date words and open a new note under it to write in place.
     Write,
-    /// Go into the note under the cursor. On the line, go into what the line names: the tag,
-    /// person or day it is and nothing else, or else the one note it is the name of.
+    /// Go into the note under the cursor. On the line, go into what the line names: each tag,
+    /// person or day of a line of nothing else, one after another, or else the one note it is the
+    /// name of.
     GoIn,
     /// Step back out of the place being looked around, onto the line.
     Back,
@@ -255,8 +263,9 @@ pub struct View<'a> {
     /// were typed, `#house`, `@joe` or `2026-10-16`.
     pub path: Vec<&'a str>,
     pub line: &'a str,
-    /// The dates that the date words on the line stand for.
-    pub dates: Vec<Day>,
+    /// What the date words and spans on the line stand for, in the order they were typed:
+    /// `Fri 2026-10-16`, `Mon 2026-10-12 18:00 – now`.
+    pub dates: Vec<String>,
     /// The list: what is in the place on the path, or what the line finds there or at the top,
     /// or the top of the space when there is neither.
     pub rows: &'a [Row],
@@ -382,56 +391,6 @@ impl Place {
             (Place::Note { id: a, .. }, Place::Note { id: b, .. }) => a == b,
             (Place::Label { label: a, .. }, Place::Label { label: b, .. }) => a == b,
             _ => false,
-        }
-    }
-}
-
-/// A label that is a place: a tag or a person, lowercased as the index holds them, or a day.
-#[derive(PartialEq, Eq)]
-enum Label {
-    Tag(String),
-    Mention(String),
-    Day(Day),
-}
-
-impl Label {
-    /// The label a line is, if it is one and nothing else, date words written out; and how it is
-    /// written, which for a tag or a person keeps the case it was typed in.
-    fn typed(line: &str) -> Option<(Label, String)> {
-        let facts = text::facts(line);
-        let only = |sigil: char, name: &String| {
-            line.strip_prefix(sigil)
-                .is_some_and(|rest| rest.to_lowercase() == *name)
-        };
-        let label = match (&facts.tags[..], &facts.mentions[..], &facts.dates[..]) {
-            ([tag], [], []) if only('#', tag) => Label::Tag(tag.clone()),
-            ([], [person], []) if only('@', person) => Label::Mention(person.clone()),
-            ([], [], [day]) if text::without_dates(line).trim().is_empty() => {
-                return Some((Label::Day(*day), time::format_day(*day)));
-            }
-            _ => return None,
-        };
-        Some((label, line.to_owned()))
-    }
-
-    /// The label as the index holds it.
-    fn indexed(&self) -> score::Label {
-        match self {
-            Label::Tag(tag) => score::Label::Tag(tag.clone()),
-            Label::Mention(person) => score::Label::Mention(person.clone()),
-            Label::Day(day) => score::Label::Date(*day),
-        }
-    }
-
-    /// Whether a note already carries it: anywhere in its text, or for a day by having been
-    /// written on it.
-    fn carried_by(&self, text: &str, created: Day) -> bool {
-        let facts = text::facts(text);
-        match self {
-            Label::Tag(tag) => facts.tags.contains(tag),
-            Label::Mention(person) => facts.mentions.contains(person),
-            // The day a note was written is not typed: it is the note's `created`.
-            Label::Day(day) => *day == created || facts.dates.contains(day),
         }
     }
 }
@@ -978,10 +937,7 @@ impl Session {
         View {
             path: self.pivots.iter().map(|p| p.place.name()).collect(),
             line: &self.line,
-            dates: text::date_words(&self.line, self.today())
-                .iter()
-                .map(|w| w.day)
-                .collect(),
+            dates: Query::read(&self.line, self.today()).shown(),
             rows: &self.rows,
             cursor: self.cursor,
             status: &self.status,
@@ -1074,7 +1030,7 @@ impl Session {
                     (false, true) => "write here",
                 };
                 offer(Action::Write, label);
-                if self.place_named().is_some() {
+                if !self.places_named().is_empty() {
                     offer(Action::GoIn, "go in");
                 }
                 if !self.rows.is_empty() {
@@ -1112,30 +1068,30 @@ impl Session {
         hints
     }
 
-    /// Zooms on the note under the cursor, or from the line on the place the line names: the
-    /// list becomes what is in it. If the note contains what was typed, or is named by it, in
-    /// its head and in the heads of the notes it links to, that was a search for it, so the line
-    /// clears and is kept for the way back; a place named from the line was searched for by
-    /// definition. Otherwise it was a draft, and it comes along to be written here. A place
+    /// Zooms on the note under the cursor, or from the line on what the line names: the list
+    /// becomes what is in it. If the note contains what was typed, or holds what the line holds
+    /// and is named by its words outside phrases, in its head and in the heads of the notes it
+    /// links to, or by its letters, that was a search for it, so the line clears and is kept for
+    /// the way back. Otherwise it was a draft, and it comes along to be written here. A place
     /// already on the path is gone back to rather than added again, so the path never repeats.
     fn go_in(&mut self) {
-        let (place, searched) = match self.selected() {
-            Some(row) => {
-                let id = row.id.clone();
-                let typed = text::expand_date_words(self.line.trim(), self.today());
-                let searched = typed.is_empty()
-                    || self
-                        .notes
-                        .get(&id)
-                        .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
-                    || self.engine.named_by(&NoteId::new(id.clone()), &typed);
-                let head = row.head.clone();
-                (Place::Note { id, head }, searched)
-            }
-            None => match self.place_named() {
-                Some(place) => (place, true),
-                None => return,
-            },
+        let Some(row) = self.selected() else {
+            return self.go_in_from_line();
+        };
+        let id = row.id.clone();
+        let today = self.today();
+        let typed = text::expand_date_words(self.line.trim(), today);
+        let searched = typed.is_empty()
+            || self
+                .notes
+                .get(&id)
+                .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
+            || self
+                .engine
+                .searched(&NoteId::new(id.clone()), &Query::read(&self.line, today));
+        let place = Place::Note {
+            id,
+            head: row.head.clone(),
         };
         if let Some(at) = self.pivots.iter().position(|p| p.place.is(&place)) {
             self.back_to(at + 1);
@@ -1146,27 +1102,63 @@ impl Session {
         self.refresh(true);
     }
 
-    /// The place the line names, other than the one being looked around, after date words are
-    /// written out: the label it is if it is one and nothing else, or else the one note in the
-    /// space it is the name of. That note is first on the list in a zoom as at the top, saying
-    /// `its name`, so this is where Down and then Right would go too.
-    fn place_named(&self) -> Option<Place> {
-        let typed = text::expand_date_words(self.line.trim(), self.today());
-        if typed.is_empty() {
-            return None;
+    /// Goes into what the line names, one place after another, as if the arrow had been pressed
+    /// after each: a place already on the path is gone back to, and any other is gone into. The
+    /// line was a search for where it leads, so it clears, and comes back on the way out of the
+    /// first place it went into; one that only went back stays as it is.
+    fn go_in_from_line(&mut self) {
+        let places = self.places_named();
+        if places.is_empty() {
+            return;
         }
-        let place = match Label::typed(&typed) {
-            Some((label, written)) => Place::Label { label, written },
-            None => {
-                let note = self.engine.the_note_named(&typed, self.show_archived)?;
-                Place::Note {
-                    id: note.id.as_str().to_owned(),
-                    head: note.head().to_owned(),
+        let mut went = false;
+        for place in places {
+            match self.pivots.iter().position(|p| p.place.is(&place)) {
+                Some(at) => self.pivots.truncate(at + 1),
+                None => {
+                    let restore = (!went).then(|| std::mem::take(&mut self.line));
+                    self.pivots.push(Pivot { place, restore });
+                    went = true;
                 }
             }
-        };
-        let here = self.pivots.last().is_some_and(|p| p.place.is(&place));
-        (!here).then_some(place)
+        }
+        self.refresh(true);
+    }
+
+    /// What the line names to go into: each label of a line of labels and nothing else, in the
+    /// order typed, or else the one note in the space the line is the name of and that holds what
+    /// the line holds. That note is first on the list in a zoom as at the top, saying `its name`,
+    /// so this is where Down and then Right would go too. One place is named unless it is where
+    /// you are, so that one on the path is gone back to; of several labels, those the place has
+    /// already are passed over, so that the rest are added to it.
+    fn places_named(&self) -> Vec<Place> {
+        let query = Query::read(&self.line, self.today());
+        let mut places: Vec<Place> = Vec::new();
+        if query.only_labels() {
+            for typed in query.labels {
+                let place = Place::Label {
+                    label: typed.label,
+                    written: typed.written,
+                };
+                if !places.iter().any(|p| p.is(&place)) {
+                    places.push(place);
+                }
+            }
+            if places.len() > 1 {
+                let had: Vec<&Label> = self.labels_here().map(|(label, _)| label).collect();
+                places.retain(
+                    |place| !matches!(place, Place::Label { label, .. } if had.contains(&label)),
+                );
+                return places;
+            }
+        } else if let Some(note) = self.engine.the_note_named(&query, self.show_archived) {
+            places.push(Place::Note {
+                id: note.id.as_str().to_owned(),
+                head: note.head().to_owned(),
+            });
+        }
+        places.retain(|place| !self.pivots.last().is_some_and(|p| p.place.is(place)));
+        places
     }
 
     /// The note being looked around: the last note on the path, if there is one. It is the
@@ -1210,14 +1202,12 @@ impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
     /// line.
     fn refresh(&mut self, reset: bool) {
-        // A date word searches as the date it stands for.
-        let query = text::expand_date_words(self.line.trim(), self.today());
-        let rows = match (self.pivots.is_empty(), query.is_empty()) {
+        let query = Query::read(&self.line, self.today());
+        self.rows = match (self.pivots.is_empty(), query.ranks()) {
             (false, _) => self.around(&query),
-            (true, true) => self.top(),
-            (true, false) => self.related(&query),
+            (true, true) => self.found(&query, self.show_archived, RELATED_LIMIT),
+            (true, false) => self.found(&query, self.show_archived, TOP_LIMIT),
         };
-        self.rows = rows;
         self.stale = false;
         let cursor = if reset { None } else { self.cursor };
         self.cursor = cursor
@@ -1225,20 +1215,12 @@ impl Session {
             .map(|i| i.min(self.rows.len() - 1));
     }
 
-    /// The top of the space: its notes in the order they are kept in.
-    fn top(&self) -> Vec<Row> {
-        self.kept()
-            .take(TOP_LIMIT)
-            .map(|r| self.listed(r))
-            .collect()
-    }
-
-    /// The notes to list, in the order the space keeps them in.
-    fn kept(&self) -> impl Iterator<Item = &Record> {
+    /// The notes to list, in the order the space keeps them in, the archived ones too if asked.
+    fn kept(&self, archived: bool) -> impl Iterator<Item = &Record> {
         self.notes
             .order()
             .into_iter()
-            .filter(|r| !r.deleted && (self.show_archived || !r.archived))
+            .filter(move |r| !r.deleted && (archived || !r.archived))
     }
 
     /// A note as the empty line lists it, with nothing to say why.
@@ -1256,25 +1238,81 @@ impl Session {
         }
     }
 
-    fn related(&self, query: &str) -> Vec<Row> {
+    /// What the line lists at the top of the space, at most `limit`. With nothing to rank by it
+    /// is the notes that hold what the line holds, in the order the space keeps them in and with
+    /// nothing to say why, as a place lists what is in it: on an empty line, the top of the
+    /// space. Otherwise it is what the line finds among them.
+    fn found(&self, query: &Query, archived: bool, limit: usize) -> Vec<Row> {
+        if !query.ranks() {
+            let held: Option<HashSet<&str>> = (!query.is_empty()).then(|| {
+                self.engine
+                    .holding(query)
+                    .into_iter()
+                    .map(|note| note.id.as_str())
+                    .collect()
+            });
+            return self
+                .kept(archived)
+                .filter(|r| {
+                    held.as_ref()
+                        .is_none_or(|held| held.contains(r.id.as_str()))
+                })
+                .take(limit)
+                .map(|r| self.listed(r))
+                .collect();
+        }
         let opts = SearchOptions {
-            limit: RELATED_LIMIT,
-            include_archived: self.show_archived,
+            limit,
+            include_archived: archived,
             today: Some(self.today()),
         };
-        self.engine
-            .search(query, &opts)
-            .into_iter()
-            .map(|hit| self.row(&hit))
+        let mut found = self.engine.find(query, &opts);
+        if query.letters {
+            found = self.by_letters(found);
+            found.truncate(limit);
+        }
+        found.iter().map(|hit| self.row(hit)).collect()
+    }
+
+    /// Notes found by their letters, best first: by what the letters scored, then the shorter
+    /// head, then the order the space keeps them in.
+    fn by_letters<'a>(&self, mut hits: Vec<Hit<'a>>) -> Vec<Hit<'a>> {
+        let mut rank: HashMap<&str, usize> = hits
+            .iter()
+            .map(|hit| (hit.note.id.as_str(), usize::MAX))
+            .collect();
+        for (at, record) in self.notes.order().into_iter().enumerate() {
+            if let Some(held) = rank.get_mut(record.id.as_str()) {
+                *held = at;
+            }
+        }
+        hits.sort_by_cached_key(|hit| {
+            (
+                Reverse(hit.score as i32),
+                hit.note.head().chars().count(),
+                rank[hit.note.id.as_str()],
+            )
+        });
+        hits
+    }
+
+    /// Every note the line holds at the top of the space, archived ones too, in the order the
+    /// line lists them and however many there are: what `fzn export` writes for a query.
+    pub fn export(&self, line: &str) -> Vec<&Record> {
+        let query = Query::read(line, self.today());
+        self.found(&query, true, usize::MAX)
+            .iter()
+            .filter_map(|row| self.notes.get(&row.id))
             .collect()
     }
 
-    /// The place being looked around. With nothing on the line it is what is in it, its facts
-    /// in the order the space keeps them in and nothing the engine suggests, as the top of the
-    /// space is: what is linked to or from its note and carries all of its labels. With
-    /// something on the line it is what the line finds in its neighbourhood: the note the line
-    /// names, then the facts that match, then what else the engine finds there that matches.
-    fn around(&self, query: &str) -> Vec<Row> {
+    /// The place being looked around. With nothing on the line to rank by it is what is in it
+    /// and holds what the line holds, its facts in the order the space keeps them in and nothing
+    /// the engine suggests, as the top of the space is: what is linked to or from its note and
+    /// carries all of its labels. With something to rank by it is what the line finds in its
+    /// neighbourhood: the note the line names, then the facts that match, then what else the
+    /// engine finds there that matches, all of them holding what the line holds.
+    fn around(&self, query: &Query) -> Vec<Row> {
         let note = self.around_note().map(|id| NoteId::new(id.clone()));
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
@@ -1286,15 +1324,15 @@ impl Session {
             labels: &labels,
             written: &written,
         };
-        if query.is_empty() {
+        if !query.ranks() {
             let facts: HashMap<&str, Option<&str>> = self
                 .engine
-                .facts(&place)
+                .facts(&place, query)
                 .into_iter()
                 .map(|(note, link)| (note.id.as_str(), link))
                 .collect();
             return self
-                .kept()
+                .kept(self.show_archived)
                 .filter_map(|r| {
                     // How it is linked is a fact too, and the one thing said about it.
                     let link = facts.get(r.id.as_str())?;
@@ -1324,7 +1362,10 @@ impl Session {
             limit: usize::MAX,
             ..opts
         };
-        let found = self.engine.search(query, &opts);
+        let mut found = self.engine.find(query, &opts);
+        if query.letters {
+            found = self.by_letters(found);
+        }
         let fact = |hit: &Hit| linked.contains(hit.note.id.as_str());
         let here = self.pivots.last().and_then(|p| p.place.note());
         let mut found: Vec<&Hit> = found
@@ -1336,7 +1377,7 @@ impl Session {
         // list shows where Right at the end of the line goes: the place's note too, with labels
         // gone into after it, since Right goes back to it, but not where you are, from which
         // Right goes nowhere. Then what is in the place, and then what is only found there, each
-        // in the order of its scores.
+        // in the order it was found in.
         found.sort_by_key(|&hit| (!hit.named, !fact(hit)));
         found
             .into_iter()
@@ -1905,13 +1946,13 @@ impl Session {
     }
 
     /// How many rows at the top of the list are in the order the space keeps its notes in, and
-    /// so can be moved among: all of them with nothing on the line, at the top as in a place,
-    /// and none of what the line finds, which is in the order of its scores.
+    /// so can be moved among: all of them with nothing on the line to rank by, at the top as in
+    /// a place, and none of what the line finds, which is in the order of its scores.
     fn in_order(&self) -> usize {
-        if self.line.trim().is_empty() {
-            self.rows.len()
-        } else {
+        if Query::read(&self.line, self.today()).ranks() {
             0
+        } else {
+            self.rows.len()
         }
     }
 
@@ -2905,11 +2946,11 @@ mod tests {
         add(&mut s, "dentist 2026-10-16");
         add(&mut s, "something else entirely");
 
-        // On the line the word stays as typed, the view says the date it stands for, and the
-        // search already uses the date.
+        // On the line the word stays as typed, the view says the date it stands for, and it
+        // already holds the notes of that day.
         type_in(&mut s, "/fri");
         assert_eq!(s.line, "/fri");
-        assert_eq!(s.view().dates, [time::day_from_civil(2026, 10, 16)]);
+        assert_eq!(s.view().dates, ["Fri 2026-10-16"]);
         assert_eq!(heads(&s), ["dentist 2026-10-16"]);
 
         // Going into the note it found is a search, so the line clears.
@@ -4838,6 +4879,15 @@ mod tests {
             s.line, "#HOUSE",
             "with something on the line, as for a note"
         );
+
+        // Alone on the line it is gone back to though the place has it, being one with the
+        // labels gone into after it.
+        go_to(&mut s, "/today");
+        assert_eq!(path(&s), ["#house", "2026-10-13"]);
+        type_in(&mut s, "#house");
+        assert!(labels(&s).contains(&"go in"));
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house"], "back to it");
     }
 
     #[test]
@@ -5746,5 +5796,181 @@ mod tests {
         assert_eq!(field(&s).unwrap().0, "a garden");
         s.act(Action::Select(None));
         assert_eq!(heads(&s), ["Boiler", "a garden", "House"]);
+    }
+
+    #[test]
+    fn a_line_of_nothing_but_what_holds_lists_exactly_that_in_the_spaces_order() {
+        let mut s = session();
+        house(&mut s);
+        let carrying = [
+            "fix the roof tiles #house",
+            "clear the gutter #house",
+            "Boiler",
+        ];
+        for typed in ["#house", "#ho", "#house a"] {
+            clear(&mut s);
+            type_in(&mut s, typed);
+            assert_eq!(
+                heads(&s),
+                carrying,
+                "{typed}: what carries it in the order kept, and not what says its word"
+            );
+            assert!(
+                s.rows
+                    .iter()
+                    .all(|r| r.reasons.is_empty() && r.score.is_none())
+            );
+        }
+        select(&mut s, "clear the gutter #house");
+        assert!(labels(&s).contains(&"move up") && labels(&s).contains(&"move down"));
+
+        s.act(Action::Select(None));
+        clear(&mut s);
+        type_in(&mut s, "#house roof");
+        assert_eq!(
+            heads(&s),
+            ["fix the roof tiles #house"],
+            "words rank among them"
+        );
+        assert!(!s.rows[0].reasons.is_empty());
+        clear(&mut s);
+        type_in(&mut s, "#house cake");
+        assert!(heads(&s).is_empty(), "and find nothing that does not hold");
+    }
+
+    #[test]
+    fn a_line_of_labels_is_gone_into_one_after_another() {
+        let mut s = session();
+        house(&mut s);
+        put(&mut s, "boots", "dry the boots #house", &[], NOON.secs());
+        type_in(&mut s, "#house /today");
+        assert!(labels(&s).contains(&"go in"));
+        s.act(Action::GoIn);
+        assert_eq!(
+            path(&s),
+            ["#house", "2026-10-13"],
+            "one place, as if Right after each"
+        );
+        assert_eq!(s.line, "");
+        assert_eq!(heads(&s), ["dry the boots #house"]);
+
+        type_in(&mut s, "#house @joe");
+        s.act(Action::GoIn);
+        assert_eq!(
+            path(&s),
+            ["#house", "2026-10-13", "@joe"],
+            "of several, a label the place has already is passed over"
+        );
+
+        // Out a step at a time, each line coming back on the way out of the first place it
+        // went into.
+        s.act(Action::Back);
+        assert_eq!(path(&s), ["#house", "2026-10-13"]);
+        assert_eq!(s.line, "#house @joe");
+        clear(&mut s);
+        s.act(Action::Back);
+        assert_eq!((path(&s), s.line.as_str()), (vec!["#house"], ""));
+        s.act(Action::Back);
+        assert!(path(&s).is_empty());
+        assert_eq!(s.line, "#house /today");
+    }
+
+    #[test]
+    fn a_span_is_said_beside_the_line_and_is_not_a_place() {
+        let mut s = session();
+        // Monday 16:00 and 20:00, the day before the tests' noon.
+        put(
+            &mut s,
+            "early",
+            "bled the radiators",
+            &[],
+            NOON.secs() - 20 * 3_600,
+        );
+        put(&mut s, "late", "ordered oil", &[], NOON.secs() - 16 * 3_600);
+        type_in(&mut s, "/-mon 18:00..");
+        assert_eq!(s.view().dates, ["Mon 2026-10-12 18:00 – now"]);
+        assert_eq!(heads(&s), ["ordered oil"], "written since then");
+        clear(&mut s);
+        type_in(&mut s, "#house /-mon..");
+        assert!(!labels(&s).contains(&"go in"), "a span is not a place");
+        s.act(Action::GoIn);
+        assert!(path(&s).is_empty());
+        assert_eq!(s.line, "#house /-mon..");
+
+        // Enter writes the line as it reads, its date words written out.
+        clear(&mut s);
+        type_in(&mut s, "ask about “the leak” /-mon 18:00..");
+        s.act(Action::Write);
+        let new = s.selected().unwrap().id.clone();
+        assert_eq!(
+            s.notes.get(&new).unwrap().text,
+            "ask about “the leak” 2026-10-12 18:00.."
+        );
+    }
+
+    #[test]
+    fn inside_a_place_what_the_line_holds_narrows_its_facts_and_its_finds_alike() {
+        let mut s = session();
+        boiler(&mut s);
+        go_to(&mut s, "Boiler");
+        for (typed, listed, facts) in [
+            ("#house", &["Pressure dropped #house"][..], &[true][..]),
+            ("/yesterday", &["Service booked"], &[true]),
+            ("oil /today", &["Order oil #house"], &[false]),
+            ("oil /yesterday", &[], &[]),
+        ] {
+            clear(&mut s);
+            type_in(&mut s, typed);
+            assert_eq!(heads(&s), listed, "{typed}");
+            assert_eq!(linked(&s), facts, "{typed}");
+        }
+    }
+
+    #[test]
+    fn letters_rank_by_what_they_score_then_the_shorter_head_then_the_spaces_order() {
+        let mut s = session();
+        put(&mut s, "list", "bs list", &[], 500);
+        put(&mut s, "shed", "Boiler shed", &[], 1_000);
+        put(&mut s, "sheds", "Boiler sheds", &[], 2_000);
+        put(&mut s, "shop", "Bottle shop!", &[], 3_000);
+        put(&mut s, "body", "Notes\nboiler shed in the body", &[], 4_000);
+        type_in(&mut s, "~bs");
+        assert_eq!(
+            heads(&s),
+            ["bs list", "Boiler shed", "Bottle shop!", "Boiler sheds"]
+        );
+        assert_eq!(s.rows[0].reasons, ["letters: bs"]);
+
+        clear(&mut s);
+        select(&mut s, "Boiler sheds");
+        s.act(Action::Shift(-1));
+        s.act(Action::Select(None));
+        type_in(&mut s, "~bs");
+        assert_eq!(
+            heads(&s)[2..],
+            ["Boiler sheds", "Bottle shop!"],
+            "a tie goes by the space's order"
+        );
+    }
+
+    #[test]
+    fn going_into_a_note_the_line_holds_was_a_search_and_a_draft_carrying_a_tag_is_not() {
+        let mut s = session();
+        house(&mut s);
+        for typed in ["~fr", "\"roof tiles\"", "#house roof"] {
+            clear(&mut s);
+            type_in(&mut s, typed);
+            go_into(&mut s, "fix the roof tiles #house");
+            assert_eq!(s.line, "", "{typed} was a search");
+            s.act(Action::Back);
+            assert_eq!(s.line, typed);
+        }
+        clear(&mut s);
+        type_in(&mut s, "boiler needs bleeding #house");
+        go_into(&mut s, "Boiler");
+        assert_eq!(
+            s.line, "boiler needs bleeding #house",
+            "a draft, carried in to be written"
+        );
     }
 }

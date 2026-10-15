@@ -308,9 +308,6 @@ function paintSoon() {
 }
 
 const day = (moment) => (moment ? moment.slice(0, 10) : '');
-const WEEKDAYS = ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed'];
-// A day is counted from the first of January 1970, which was a Thursday.
-const dated = (n) => `${WEEKDAYS[((n % 7) + 7) % 7]} ${new Date(n * 86400000).toISOString().slice(0, 10)}`;
 
 // What a note says past its head, without the blank lines between.
 const bodyOf = (text) => {
@@ -871,7 +868,7 @@ function paint() {
   paintPath();
   $('clear').hidden = view.line === '';
   $('go-in').hidden = !(view.cursor == null && view.hints.some((hint) => named(hint.action) === 'go_in'));
-  $('dates').textContent = view.dates.length ? `→ ${view.dates.map(dated).join(', ')}` : '';
+  $('dates').textContent = view.dates.length ? `→ ${view.dates.join(', ')}` : '';
 
   // The note you are in, when it says more than its head, clamped to six lines; a tap gives the
   // rest.

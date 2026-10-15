@@ -46,7 +46,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use fzn_engine::text::fit;
-use fzn_engine::{Action, Day, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
+use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
@@ -358,14 +358,8 @@ fn edit_in(editor: &str, id: &str, text: &str) -> Result<Result<String, String>>
     Ok(Ok(edited))
 }
 
-const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/// The dates that the date words on the line stand for, to show at the end of its row.
-fn dates_shown(dates: &[Day]) -> String {
-    let dates: Vec<String> = dates
-        .iter()
-        .map(|&day| format!("{} {}", WEEKDAYS[time::weekday(day)], time::format_day(day)))
-        .collect();
+/// What the date words and spans on the line stand for, to show at the end of its row.
+fn dates_shown(dates: &[String]) -> String {
     if dates.is_empty() {
         String::new()
     } else {
@@ -2549,14 +2543,14 @@ mod tests {
     }
 
     #[test]
-    fn date_words_are_shown_as_the_days_they_stand_for() {
+    fn what_the_line_stands_for_is_shown_after_an_arrow() {
         assert_eq!(dates_shown(&[]), "");
         assert_eq!(
             dates_shown(&[
-                time::day_from_civil(2026, 10, 16),
-                time::day_from_civil(2026, 10, 14)
+                "Fri 2026-10-16".to_owned(),
+                "Mon 2026-10-12 18:00 – now".to_owned()
             ]),
-            "→ Fri 2026-10-16, Wed 2026-10-14"
+            "→ Fri 2026-10-16, Mon 2026-10-12 18:00 – now"
         );
     }
 

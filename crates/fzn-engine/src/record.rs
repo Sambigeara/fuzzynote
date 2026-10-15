@@ -108,13 +108,14 @@ impl Record {
         self.text.lines().next().unwrap_or("").trim()
     }
 
-    /// The note as relevance sees it: the text, the links, and days in place of moments.
+    /// The note as relevance sees it: the text, the links, when it was written, and the day it
+    /// was last changed on.
     pub fn note(&self) -> Note {
         Note {
             id: NoteId::new(self.id.clone()),
             text: self.text.clone(),
             links: self.links.iter().cloned().map(NoteId::new).collect(),
-            created: self.created.map(Moment::day),
+            created: self.created,
             updated: self.updated.map(Moment::day),
             archived: self.archived,
         }
@@ -744,7 +745,7 @@ mod tests {
         let note = record.note();
         assert_eq!(note.head(), "a head");
         assert_eq!(note.links, [NoteId::new("hub")]);
-        assert_eq!((note.created, note.updated), (Some(3), Some(3)));
+        assert_eq!((note.written(), note.updated), (Some(3), Some(3)));
         assert!(note.archived);
     }
 }

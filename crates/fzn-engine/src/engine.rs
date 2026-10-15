@@ -1,10 +1,11 @@
 //! The engine: owns the notes and the index, answers queries with reasons.
 
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 
 use crate::index::{DocId, Index, TermId};
 use crate::note::{Note, NoteId};
+use crate::query::{Hold, Query};
 use crate::score::{self, Candidates, Context, Label, QueryLabel, Reason, Weights};
 use crate::text::{self, Facts};
 use crate::time::Day;
@@ -59,6 +60,35 @@ struct Ties {
     links_in: Vec<DocId>,
     links_out: Vec<DocId>,
     facts: Vec<DocId>,
+}
+
+/// What a line holds, made ready to ask of each note: the notes carrying its labels, which the
+/// index lists and which are worked out once, and the rest, which is asked of each note, a
+/// phrase last since it reads the whole text.
+#[derive(Default)]
+struct Held<'q> {
+    /// The notes carrying every label, sorted, or none when the line holds no label.
+    carrying: Option<Vec<DocId>>,
+    asked: Vec<&'q Hold>,
+}
+
+impl Held<'_> {
+    fn holds(&self, d: DocId, note: &Note) -> bool {
+        self.carrying
+            .as_ref()
+            .is_none_or(|docs| docs.binary_search(&d).is_ok())
+            && self.asked.iter().all(|hold| hold.held_by(note))
+    }
+
+    /// The notes that may hold it, of `docs`: those carrying its labels, or all of them.
+    fn within(&self, docs: usize) -> impl Iterator<Item = DocId> + '_ {
+        let all = self.carrying.is_none().then_some(0..docs as DocId);
+        self.carrying
+            .iter()
+            .flatten()
+            .copied()
+            .chain(all.into_iter().flatten())
+    }
 }
 
 /// A suggested note, its score, and why.
@@ -152,16 +182,115 @@ impl Engine {
         self.docs[d as usize].take().map(|doc| doc.note)
     }
 
-    /// What the input relates to, as it is being typed. The last word counts as a prefix unless
-    /// the input ends in whitespace. A note headed with what was typed is the note being named,
-    /// and comes first whatever it scores and whatever the limit.
-    pub fn search(&self, text: &str, opts: &SearchOptions) -> Vec<Hit<'_>> {
-        self.typed(text, opts, &[])
+    /// What the line finds among the notes holding everything else on it, best first with the
+    /// reasons: its words, ranked as words always are, the note they name first; or with `~` the
+    /// notes whose heads have its letters, which the session puts in order, since a tie goes by
+    /// the space's.
+    pub(crate) fn find(&self, query: &Query, opts: &SearchOptions) -> Vec<Hit<'_>> {
+        let held = self.held(query);
+        if query.letters {
+            return self.letters(query, &held, opts);
+        }
+        let named = self.headed(&query.name());
+        self.typed(&query.words, &named, opts, &[], &held)
     }
 
-    /// `search`, with the notes in `place`, which is sorted, listed as the facts of a place
-    /// whatever they score and whatever the limit.
-    fn typed(&self, text: &str, opts: &SearchOptions, place: &[DocId]) -> Vec<Hit<'_>> {
+    /// Every note holding what the line holds, for a line with nothing to rank by.
+    pub(crate) fn holding(&self, query: &Query) -> Vec<&Note> {
+        let held = self.held(query);
+        held.within(self.docs.len())
+            .filter_map(|d| {
+                let doc = self.docs[d as usize].as_ref()?;
+                held.holds(d, &doc.note).then_some(&doc.note)
+            })
+            .collect()
+    }
+
+    /// What a line holds, as the index has it.
+    fn held<'q>(&self, query: &'q Query) -> Held<'q> {
+        let carrying = query
+            .labels
+            .iter()
+            .map(|typed| {
+                let label = typed.label.indexed();
+                if typed.whole {
+                    return self.index.docs_with(&label).to_vec();
+                }
+                let mut docs: Vec<DocId> = self
+                    .index
+                    .docs_starting(&label)
+                    .flatten()
+                    .copied()
+                    .collect();
+                docs.sort_unstable();
+                docs.dedup();
+                docs
+            })
+            .reduce(|mut all, docs| {
+                all.retain(|d| docs.binary_search(d).is_ok());
+                all
+            });
+        let mut asked: Vec<&Hold> = query.holds.iter().collect();
+        asked.sort_by_key(|hold| matches!(hold, Hold::Phrase(_)));
+        Held { carrying, asked }
+    }
+
+    /// The notes whose heads have every word of the line's letters in order, among those holding
+    /// the rest of the line, best first and then the shorter head. Past the limit only what ties
+    /// with the last listed is kept, since the space's order, which the session knows, decides
+    /// between those.
+    fn letters(&self, query: &Query, held: &Held, opts: &SearchOptions) -> Vec<Hit<'_>> {
+        let mut letters = score::Letters::new(&query.free);
+        let mut found: Vec<(i32, usize, DocId)> = held
+            .within(self.docs.len())
+            .filter_map(|d| {
+                let doc = self.docs[d as usize].as_ref()?;
+                if !opts.include_archived && doc.note.archived {
+                    return None;
+                }
+                let head = doc.note.head();
+                let score = letters.score(head)?;
+                held.holds(d, &doc.note)
+                    .then(|| (score, head.chars().count(), d))
+            })
+            .collect();
+        found.sort_unstable_by_key(|&(score, length, d)| (Reverse(score), length, d));
+        if let Some(&(score, length, _)) = opts.limit.checked_sub(1).and_then(|n| found.get(n)) {
+            let end =
+                found.partition_point(|&(s, l, _)| (Reverse(s), l) <= (Reverse(score), length));
+            found.truncate(end);
+        }
+        let reason = Reason {
+            scorer: "letters",
+            text: query.free.split_whitespace().collect::<Vec<_>>().join(", "),
+        };
+        found
+            .into_iter()
+            .filter_map(|(score, _, d)| {
+                Some(Hit {
+                    note: &self.docs[d as usize].as_ref()?.note,
+                    score: score as f32,
+                    reasons: vec![reason.clone()],
+                    linked: false,
+                    named: false,
+                })
+            })
+            .collect()
+    }
+
+    /// What a text finds by its words, its tags, people and dates, scored, and only the notes
+    /// that hold what is held. The last word counts as a prefix unless the text ends in
+    /// whitespace. The notes in `first`, sorted, are the notes the text names, and come first
+    /// whatever they score and whatever the limit; the notes in `place`, sorted, are listed as
+    /// the facts of a place whatever they score and whatever the limit.
+    fn typed(
+        &self,
+        text: &str,
+        first: &[DocId],
+        opts: &SearchOptions,
+        place: &[DocId],
+        held: &Held,
+    ) -> Vec<Hit<'_>> {
         let (terms, prefix) = typed_words(text);
         let facts = text::facts(text);
         let mut labels = query_labels(&terms, &facts);
@@ -181,7 +310,7 @@ impl Engine {
             links_out: &[],
             named: Some(&named),
         };
-        self.run(&ctx, opts, &self.headed(text), place)
+        self.run(&ctx, opts, first, place, held)
     }
 
     /// The notes whose head is what was typed, sorted: every word of the head was typed and no
@@ -218,32 +347,34 @@ impl Engine {
         found
     }
 
-    /// Whether a note is named by what was typed: every word of it is in the note's head or in
-    /// the head of a note it links to, the word still being typed as the start of one, and every
-    /// date is a day the note mentions or was written on. The app asks this to tell a search
-    /// that found the note from something to be written in it.
-    pub fn named_by(&self, id: &NoteId, text: &str) -> bool {
-        let Some(doc) = self
+    /// Whether going into a note from the list was a search for it, and not taking a draft there
+    /// to be written in it: the note holds everything the line holds, and is named by the words
+    /// outside its phrases, every one of them in its head or in the head of a note it links to,
+    /// the word still being typed as the start of one; or with `~` it has their letters in its
+    /// head. A line with nothing on it to rank by or to hold searched for nothing.
+    pub(crate) fn searched(&self, id: &NoteId, query: &Query) -> bool {
+        let Some((d, doc)) = self
             .by_id
             .get(id)
-            .and_then(|&d| self.docs[d as usize].as_ref())
+            .and_then(|&d| Some((d, self.docs[d as usize].as_ref()?)))
         else {
             return false;
         };
-        let (terms, prefix) = typed_words(text);
-        if terms.is_empty() && prefix.is_none() {
+        if query.is_empty() || !self.held(query).holds(d, &doc.note) {
             return false;
         }
+        if query.letters {
+            return score::Letters::new(&query.free)
+                .score(doc.note.head())
+                .is_some();
+        }
+        let (terms, prefix) = typed_words(&query.free);
         let mut names = text::tokens(doc.note.head());
         for target in doc.note.links.iter().filter_map(|l| self.get(l)) {
             names.extend(text::tokens(target.head()));
         }
         terms.iter().all(|t| names.contains(t))
             && prefix.is_none_or(|p| names.iter().any(|n| n.starts_with(&p)))
-            && text::facts(text)
-                .dates
-                .iter()
-                .all(|day| doc.facts.dates.contains(day) || doc.note.created == Some(*day))
     }
 
     /// A note's head and the notes that link to it.
@@ -255,19 +386,21 @@ impl Engine {
         Some((doc.note.head(), linked))
     }
 
-    /// The facts of a place, each with how it is linked to the place's note when it has one:
-    /// the notes linked to or from the note that carry every label, or with no note the notes
-    /// carrying them all. They are a set, worked out from the links and the index and in no
-    /// order; nothing is scored.
-    pub(crate) fn facts(&self, place: &Place) -> Vec<(&Note, Option<&'static str>)> {
+    /// The facts of a place that hold what the line holds, each with how it is linked to the
+    /// place's note when it has one: the notes linked to or from the note that carry every
+    /// label, or with no note the notes carrying them all. They are a set, worked out from the
+    /// links and the index and in no order; nothing is scored.
+    pub(crate) fn facts(&self, place: &Place, query: &Query) -> Vec<(&Note, Option<&'static str>)> {
         let Some(ties) = self.ties(place) else {
             return Vec::new();
         };
+        let held = self.held(query);
         ties.facts
             .iter()
             .filter_map(|&d| {
                 let doc = self.docs[d as usize].as_ref()?;
-                Some((&doc.note, link_reason(&ties.links_in, &ties.links_out, d)))
+                held.holds(d, &doc.note)
+                    .then(|| (&doc.note, link_reason(&ties.links_in, &ties.links_out, d)))
             })
             .collect()
     }
@@ -298,7 +431,14 @@ impl Engine {
             };
             // Whitespace after it, so that the last label's word is a whole word and not the
             // start of one.
-            return self.typed(&format!("{} ", place.written), &opts, &ties.facts);
+            let written = format!("{} ", place.written);
+            return self.typed(
+                &written,
+                &self.headed(&written),
+                &opts,
+                &ties.facts,
+                &Held::default(),
+            );
         };
         let Some(doc) = self.docs[d as usize].as_ref() else {
             return Vec::new();
@@ -326,7 +466,7 @@ impl Engine {
             links_out: &ties.links_out,
             named: None,
         };
-        self.run(&ctx, opts, &[], &ties.facts)
+        self.run(&ctx, opts, &[], &ties.facts, &Held::default())
     }
 
     /// A place as the index has it, or nothing if its note is gone. Its facts are the notes
@@ -380,15 +520,18 @@ impl Engine {
         })
     }
 
-    /// The one note whose head is what was typed, by the rule that lists a name first in
-    /// `search`, if exactly one is. The app goes into it from the line.
-    pub(crate) fn the_note_named(&self, text: &str, include_archived: bool) -> Option<&Note> {
-        let mut named = self
-            .headed(text)
-            .into_iter()
-            .filter_map(|d| self.docs[d as usize].as_ref())
-            .map(|doc| &doc.note)
-            .filter(|note| include_archived || !note.archived);
+    /// The one note the line names, by the rule that lists a name first in `find`, if exactly
+    /// one is and it holds what the line holds. The app goes into it from the line. Letters name
+    /// nothing.
+    pub(crate) fn the_note_named(&self, query: &Query, include_archived: bool) -> Option<&Note> {
+        if query.letters {
+            return None;
+        }
+        let held = self.held(query);
+        let mut named = self.headed(&query.name()).into_iter().filter_map(|d| {
+            let note = &self.docs[d as usize].as_ref()?.note;
+            ((include_archived || !note.archived) && held.holds(d, note)).then_some(note)
+        });
         let one = named.next()?;
         named.next().is_none().then_some(one)
     }
@@ -450,12 +593,14 @@ impl Engine {
     /// Scores the candidates and lists them best first, after the notes in `first`, which is
     /// sorted: those are the notes being named, and they are listed whatever they score. So are
     /// the notes in `facts`, also sorted, which are the facts of the place being looked around.
+    /// Only the notes that hold what is held are listed at all.
     fn run<'a: 'c, 'c>(
         &'a self,
         ctx: &Context<'c>,
         opts: &SearchOptions,
         first: &[DocId],
         facts: &[DocId],
+        held: &Held,
     ) -> Vec<Hit<'a>> {
         let mut c = Candidates::default();
         for &d in first.iter().chain(facts) {
@@ -483,13 +628,14 @@ impl Engine {
                 if !opts.include_archived && doc.note.archived {
                     return None;
                 }
-                // The limit is on suggestions. What is a fact or named is always there.
-                if !named(d) && !fact(d) {
-                    suggestions += 1;
-                    if suggestions > opts.limit {
-                        return None;
-                    }
+                // The limit is on suggestions. What is a fact or named is always there. A
+                // suggestion past the limit is not asked whether it holds, since a phrase reads
+                // the whole text.
+                let suggested = !named(d) && !fact(d);
+                if suggested && suggestions == opts.limit || !held.holds(d, &doc.note) {
+                    return None;
                 }
+                suggestions += usize::from(suggested);
                 if let Some(text) = link_reason(ctx.links_in, ctx.links_out, d) {
                     reasons.insert(
                         0,
@@ -562,7 +708,7 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     }
     labels.extend(head_terms.into_iter().map(Label::HeadTerm));
     labels.extend(facts.dates.iter().copied().map(Label::Date));
-    if let Some(d) = note.created
+    if let Some(d) = note.written()
         && !facts.dates.contains(&d)
     {
         labels.push(Label::Date(d));
@@ -623,6 +769,17 @@ mod tests {
         e
     }
 
+    /// What a text finds by its words, its tags, people and dates, as the neighbourhood of
+    /// labels asks the scorers, the last word a prefix unless whitespace follows it.
+    fn search<'a>(e: &'a Engine, text: &str, opts: &SearchOptions) -> Vec<Hit<'a>> {
+        e.typed(text, &e.headed(text), opts, &[], &Held::default())
+    }
+
+    /// Written at midnight UTC on the day.
+    fn on(day: Day) -> Option<time::Moment> {
+        Some(time::Moment::utc(i64::from(day) * 86_400))
+    }
+
     fn ids<'a>(hits: &[Hit<'a>]) -> Vec<&'a str> {
         hits.iter().map(|h| h.note.id.as_str()).collect()
     }
@@ -653,7 +810,7 @@ mod tests {
             ("d", "the park at night"),
             ("e", "the the the"),
         ]);
-        let hits = e.search("kettlebell swings", &SearchOptions::default());
+        let hits = search(&e, "kettlebell swings", &SearchOptions::default());
         assert_eq!(ids(&hits)[0], "a");
         assert!(ids(&hits).contains(&"b") && ids(&hits).contains(&"c"));
         assert!(!ids(&hits).contains(&"e"));
@@ -663,7 +820,7 @@ mod tests {
     #[test]
     fn fuzzy_matches_misspellings_and_says_so() {
         let e = engine(&[("a", "kettlebells log"), ("b", "shopping")]);
-        let hits = e.search("kettlebels", &SearchOptions::default());
+        let hits = search(&e, "kettlebels", &SearchOptions::default());
         assert_eq!(ids(&hits), ["a"]);
         assert!(has_reason(&hits[0], "words", "kettlebels≈kettlebells"));
     }
@@ -675,10 +832,10 @@ mod tests {
             ("b", "post letters #errand"),
             ("c", "ping @joe about the roof"),
         ]);
-        let hits = e.search("#errand", &SearchOptions::default());
+        let hits = search(&e, "#errand", &SearchOptions::default());
         assert_eq!(ids(&hits).len(), 2);
         assert!(hits.iter().all(|h| has_reason(h, "explicit", "#errand")));
-        let hits = e.search("@Joe", &SearchOptions::default());
+        let hits = search(&e, "@Joe", &SearchOptions::default());
         assert_eq!(ids(&hits), ["c"]);
     }
 
@@ -795,7 +952,7 @@ mod tests {
         let opts = SearchOptions::default();
 
         // The name finds the note itself first, and then what was written about it.
-        let found = e.search("boiler ", &opts);
+        let found = search(&e, "boiler ", &opts);
         assert_eq!(found[0].note.id.as_str(), "boiler");
         let mut all = ids(&found);
         all.sort_unstable();
@@ -806,7 +963,7 @@ mod tests {
         assert!(!has_reason(hit("says"), "explicit", "about"));
 
         // A word of the note and the name of what it is about find it together.
-        let found = e.search("boiler quoted ", &opts);
+        let found = search(&e, "boiler quoted ", &opts);
         assert_eq!(found[0].note.id.as_str(), "quote");
         assert!(has_reason(
             &found[0],
@@ -815,15 +972,15 @@ mod tests {
         ));
 
         // The word still being typed stands for the name it starts.
-        assert!(ids(&e.search("boi", &opts)).contains(&"pressure"));
+        assert!(ids(&search(&e, "boi", &opts)).contains(&"pressure"));
 
         // One hop: the house finds the boiler, and not what was written about the boiler.
-        assert_eq!(ids(&e.search("house ", &opts)), ["house", "boiler"]);
+        assert_eq!(ids(&search(&e, "house ", &opts)), ["house", "boiler"]);
 
         // The name is read when it is asked for, so a rename is followed.
         e.upsert(linked_to("boiler", "Heating", "house"));
-        assert!(ids(&e.search("heating ", &opts)).contains(&"pressure"));
-        assert_eq!(ids(&e.search("boiler ", &opts)), ["says"]);
+        assert!(ids(&search(&e, "heating ", &opts)).contains(&"pressure"));
+        assert_eq!(ids(&search(&e, "boiler ", &opts)), ["says"]);
     }
 
     #[test]
@@ -837,16 +994,16 @@ mod tests {
         e.upsert(linked_to("a", "continuing with [[Boiler Service]]", "doc"));
         e.upsert(linked_to("b", "boiler service follow up", "doc"));
         let opts = SearchOptions::default();
-        let first = |typed: &str| e.search(typed, &opts)[0].note.id.to_string();
+        let first = |typed: &str| search(&e, typed, &opts)[0].note.id.to_string();
         let named = |typed: &str| -> Vec<String> {
-            e.search(typed, &opts)
+            search(&e, typed, &opts)
                 .iter()
                 .filter(|h| has_reason(h, "name", "its name"))
                 .map(|h| h.note.id.to_string())
                 .collect()
         };
 
-        let found = e.search("boiler service", &opts);
+        let found = search(&e, "boiler service", &opts);
         assert_eq!(ids(&found)[0], "doc");
         assert!(
             found[0].score < found[1].score,
@@ -871,7 +1028,7 @@ mod tests {
             limit: 0,
             ..Default::default()
         };
-        assert_eq!(ids(&e.search("boiler service", &none)), ["doc"]);
+        assert_eq!(ids(&search(&e, "boiler service", &none)), ["doc"]);
         let mut doc = e.get(&NoteId::new("doc")).unwrap().clone();
         doc.archived = true;
         e.upsert(doc);
@@ -879,7 +1036,7 @@ mod tests {
             include_archived: false,
             ..Default::default()
         };
-        assert!(!ids(&e.search("boiler service", &live)).contains(&"doc"));
+        assert!(!ids(&search(&e, "boiler service", &live)).contains(&"doc"));
 
         // A neighbourhood has no name in it to go first.
         let around = near(&e, "a", &opts);
@@ -887,31 +1044,176 @@ mod tests {
     }
 
     #[test]
-    fn what_was_typed_names_a_note_by_its_head_or_by_what_it_links_to() {
+    fn going_into_a_note_was_a_search_when_it_holds_the_line_and_its_words_name_it() {
         let mut e = engine(&[("house", "House"), ("far", "cake recipe")]);
         e.upsert(linked_to(
             "boiler",
             "Boiler\nserviced in the spring",
             "house",
         ));
-        let mut quote = linked_to("quote", "engineer quoted 240", "boiler");
-        quote.created = Some(time::day_from_civil(2026, 10, 13));
+        let mut quote = linked_to(
+            "quote",
+            "engineer quoted 240 #heating\nsaid the valve sticks",
+            "boiler",
+        );
+        quote.created = on(time::day_from_civil(2026, 10, 13));
         e.upsert(quote);
-        let named = |id: &str, typed: &str| e.named_by(&NoteId::new(id), typed);
+        let today = time::day_from_civil(2026, 10, 15);
+        let searched =
+            |id: &str, typed: &str| e.searched(&NoteId::new(id), &Query::read(typed, today));
 
-        assert!(named("quote", "boiler"));
-        assert!(named("quote", "boi"), "the word still being typed");
-        assert!(named("quote", "boiler quoted"));
-        assert!(named("quote", "Quoted BOILER"));
-        assert!(!named("quote", "boi quoted"), "a finished word is whole");
-        assert!(!named("quote", "boiler valve"));
-        assert!(!named("quote", "house"), "one hop");
-        assert!(!named("boiler", "quoted"), "the name goes one way");
-        assert!(!named("boiler", "spring"), "the head, and not the body");
-        assert!(named("quote", "boiler 2026-10-13"), "written that day");
-        assert!(!named("quote", "boiler 2026-10-14"));
-        assert!(!named("quote", ""));
-        assert!(!named("gone", "boiler"));
+        assert!(searched("quote", "boiler"));
+        assert!(searched("quote", "boi"), "the word still being typed");
+        assert!(searched("quote", "boiler quoted"));
+        assert!(searched("quote", "Quoted BOILER"));
+        assert!(!searched("quote", "boi quoted"), "a finished word is whole");
+        assert!(!searched("quote", "boiler valve"));
+        assert!(!searched("quote", "house"), "one hop");
+        assert!(!searched("boiler", "quoted"), "the name goes one way");
+        assert!(!searched("boiler", "spring"), "the head, and not the body");
+        assert!(searched("quote", "boiler 2026-10-13"), "written that day");
+        assert!(!searched("quote", "boiler 2026-10-14"));
+        assert!(searched("quote", "/-tue boiler"), "a date word is a day");
+        assert!(searched("quote", "#heating boiler"));
+        assert!(
+            !searched("quote", "#garden boiler"),
+            "it holds what is held"
+        );
+        assert!(searched("quote", "\"valve sticks\""), "a phrase is held");
+        assert!(searched("quote", "boiler “valve sticks”"));
+        assert!(
+            !searched("quote", "spring \"valve sticks\""),
+            "and the words outside it name the note"
+        );
+        assert!(searched("quote", "~eq 24"), "letters in its head");
+        assert!(!searched("quote", "~bq"));
+        assert!(searched("quote", "/-tue"), "nothing but what is held");
+        assert!(
+            !searched("quote", "e"),
+            "nothing to name it by and nothing held"
+        );
+        assert!(!searched("quote", "~"));
+        assert!(!searched("gone", "boiler"));
+    }
+
+    #[test]
+    fn the_line_holds_what_it_holds_and_its_words_rank_only_among_those() {
+        let today = time::day_from_civil(2026, 10, 15);
+        let mut e = engine(&[
+            ("tank", "Oil tank #house\ncheck the level"),
+            ("gauge", "oil gauge #garden"),
+            ("doc", "Heating\nthe oil tank is behind the shed"),
+            ("hosting", "oil for the mower #hosting"),
+            ("far", "cake recipe"),
+        ]);
+        let mut monday = Note::new("monday", "topped up the oil");
+        monday.created = Some(time::Moment {
+            ms: (i64::from(today - 3) * 86_400 + 18 * 3_600 + 30 * 60) * 1_000,
+            offset: 0,
+        });
+        e.upsert(monday);
+        let opts = SearchOptions::default();
+        let find = |typed: &str| ids(&e.find(&Query::read(typed, today), &opts));
+        let held = |typed: &str| {
+            let mut held: Vec<&str> = e
+                .holding(&Query::read(typed, today))
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect();
+            held.sort_unstable();
+            held
+        };
+
+        assert_eq!(find("oil #house"), ["tank"], "a tag holds");
+        assert_eq!(
+            held("#ho"),
+            ["hosting", "tank"],
+            "the tag still being typed"
+        );
+        assert_eq!(held("#ho "), Vec::<&str>::new(), "and once it is finished");
+        assert_eq!(
+            find("\"oil tank\""),
+            ["tank", "doc"],
+            "a phrase holds, and its words rank it in a head first"
+        );
+        assert_eq!(
+            find("“OIL TANK"),
+            ["tank", "doc"],
+            "unclosed and in any case"
+        );
+        assert_eq!(held("\"oil tank\" #garden"), Vec::<&str>::new());
+        assert_eq!(
+            held("/-mon 18:00.."),
+            ["monday"],
+            "written since Monday 18:00"
+        );
+        assert_eq!(held("/-mon 18:31.."), Vec::<&str>::new());
+        assert_eq!(held("..2026-10-12"), ["monday"], "to the end of the day");
+        assert_eq!(
+            held("..2026-10-12 18:30"),
+            ["monday"],
+            "to the end of the minute"
+        );
+        assert_eq!(held("..2026-10-12 18:29"), Vec::<&str>::new());
+        assert_eq!(
+            held("/-tue.."),
+            Vec::<&str>::new(),
+            "nor is a note with no time"
+        );
+        assert_eq!(
+            find("topped /-mon"),
+            ["monday"],
+            "a day typed holds the notes of it"
+        );
+
+        // The note the line names is listed first only if it holds what the line holds.
+        assert_eq!(find("oil tank")[0], "tank");
+        assert_eq!(
+            find("oil tank #garden"),
+            ["gauge"],
+            "the oil tank does not hold #garden, so it is not there to name"
+        );
+        let query = Query::read("oil tank #house", today);
+        assert_eq!(
+            e.the_note_named(&query, true).unwrap().id.as_str(),
+            "tank",
+            "a head says its tag as a word"
+        );
+        let query = Query::read("oil tank #garden", today);
+        assert!(e.the_note_named(&query, true).is_none());
+    }
+
+    #[test]
+    fn letters_after_a_tilde_find_heads_with_them_in_order_and_say_so() {
+        let today = time::day_from_civil(2026, 10, 15);
+        let e = engine(&[
+            ("service", "Boiler service"),
+            ("absolve", "absolve the vase"),
+            ("garden", "Garden shed #house"),
+            ("ser", "Some easy rope"),
+            ("body", "Notes\nboiler service in the body"),
+        ]);
+        let opts = SearchOptions::default();
+        let found = e.find(&Query::read("~bsv", today), &opts);
+        let mut found: Vec<(&str, f32)> = found
+            .iter()
+            .map(|h| (h.note.id.as_str(), h.score))
+            .collect();
+        found.sort_by(|a, b| b.1.total_cmp(&a.1));
+        assert_eq!(found[0].0, "service", "{found:?}");
+        assert!(found.iter().all(|&(id, _)| id != "body"), "heads only");
+        assert!(found.iter().any(|&(id, _)| id == "absolve"));
+        let mut ser = score::Letters::new("ser");
+        assert!(
+            ser.score("Boiler service") > ser.score("Some easy rope"),
+            "a run from the start of a word outranks letters scattered over words"
+        );
+        let hit = &e.find(&Query::read("~bo se", today), &opts)[0];
+        assert_eq!(hit.reasons[0].text, "bo, se", "every word must be there");
+        assert!(
+            ids(&e.find(&Query::read("~gs #house", today), &opts)) == ["garden"],
+            "what is held still holds"
+        );
     }
 
     #[test]
@@ -922,7 +1224,7 @@ mod tests {
             ("journal", "Journal\nread about horticultural trials today"),
             ("other", "the the the"),
         ]);
-        let hits = e.search("horticultural trials", &SearchOptions::default());
+        let hits = search(&e, "horticultural trials", &SearchOptions::default());
         assert_eq!(ids(&hits)[0], "page");
         assert!(has_reason(
             &hits[0],
@@ -939,7 +1241,7 @@ mod tests {
             ("other", "events are fun"),
             ("kb", "kettlebells log"),
         ]);
-        let hits = e.search("event publicatio", &SearchOptions::default());
+        let hits = search(&e, "event publicatio", &SearchOptions::default());
         assert_eq!(ids(&hits)[0], "page");
         assert!(
             has_reason(&hits[0], "explicit", "in head: event, publication"),
@@ -947,10 +1249,10 @@ mod tests {
             hits[0].reasons
         );
         assert!(has_reason(&hits[0], "words", "publication"));
-        let hits = e.search("kettl", &SearchOptions::default());
+        let hits = search(&e, "kettl", &SearchOptions::default());
         assert_eq!(ids(&hits), ["kb"]);
         assert!(
-            e.search("kettl ", &SearchOptions::default()).is_empty(),
+            search(&e, "kettl ", &SearchOptions::default()).is_empty(),
             "a trailing space makes it a whole word"
         );
     }
@@ -967,10 +1269,10 @@ mod tests {
     fn dates_connect_notes() {
         let mut e = engine(&[("a", "dentist on 2026-09-05"), ("b", "nothing here")]);
         let mut c = Note::new("c", "written that day");
-        c.created = Some(time::day_from_civil(2026, 9, 5));
+        c.created = on(time::day_from_civil(2026, 9, 5));
         e.upsert(c);
         e.upsert(Note::new("d", "05 things to do in 2026, on the 09 bus"));
-        let hits = e.search("2026-09-05", &SearchOptions::default());
+        let hits = search(&e, "2026-09-05", &SearchOptions::default());
         assert_eq!(ids(&hits).len(), 2, "the numbers in a date are not words");
         assert!(
             hits.iter()
@@ -991,7 +1293,8 @@ mod tests {
         e.upsert(old);
         e.upsert(new);
         e.upsert(unrelated);
-        let hits = e.search(
+        let hits = search(
+            &e,
             "kettlebell",
             &SearchOptions {
                 today: Some(today),
@@ -1006,15 +1309,15 @@ mod tests {
     fn upsert_replaces_and_remove_forgets() {
         let mut e = engine(&[("a", "kettlebell swings"), ("b", "shopping")]);
         e.upsert(Note::new("a", "cake recipe"));
-        assert!(e.search("kettlebell", &SearchOptions::default()).is_empty());
-        assert_eq!(ids(&e.search("cake", &SearchOptions::default())), ["a"]);
+        assert!(search(&e, "kettlebell", &SearchOptions::default()).is_empty());
+        assert_eq!(ids(&search(&e, "cake", &SearchOptions::default())), ["a"]);
         assert_eq!(e.len(), 2);
         assert!(e.remove(&NoteId::new("a")).is_some());
         assert!(e.remove(&NoteId::new("a")).is_none());
-        assert!(e.search("cake", &SearchOptions::default()).is_empty());
+        assert!(search(&e, "cake", &SearchOptions::default()).is_empty());
         assert_eq!(e.stats().notes, 1);
         e.upsert(Note::new("c", "cake again"));
-        assert_eq!(ids(&e.search("cake", &SearchOptions::default())), ["c"]);
+        assert_eq!(ids(&search(&e, "cake", &SearchOptions::default())), ["c"]);
     }
 
     #[test]
@@ -1023,9 +1326,10 @@ mod tests {
         let mut n = Note::new("a", "kettlebell swings");
         n.archived = true;
         e.upsert(n);
-        assert_eq!(e.search("kettlebell", &SearchOptions::default()).len(), 1);
+        assert_eq!(search(&e, "kettlebell", &SearchOptions::default()).len(), 1);
         assert!(
-            e.search(
+            search(
+                &e,
                 "kettlebell",
                 &SearchOptions {
                     include_archived: false,

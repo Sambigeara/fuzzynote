@@ -44,7 +44,13 @@ Boiler service #house
 Booked for /fri, ask about the pressure drop
 ```
 
-`/fri`, `/today`, `/+3` and the like are written out as dates when the note is saved.
+`/fri`, `/today`, `/+3`, `/-mon` and the like are written out as dates when the note is saved.
+
+On the line, words find and everything else holds. `"oil tank"` must be in a note, `#house`,
+`@joe` and `/fri` must be on it, and a span holds what was written in it: `/-mon 18:00..` since
+six on Monday evening, `2026-10-01..2026-10-05` those five days. `~` at the start of the line
+finds heads by their letters in order, so `~bsv` finds Boiler service. A line of nothing but
+labels, such as `#house /today`, is gone into with one press of the arrow.
 
 ## Sync
 
@@ -88,6 +94,7 @@ was loaded from.
 
 ```sh
 fzn export > notes.jsonl         # every live note, one plain JSON line each
+fzn export '#house /-mon..'      # what that line finds, archived notes too, in its order
 fzn import-jsonl notes.jsonl     # the way back in
 fzn import-markdown ~/pages      # a directory of markdown pages
 ```

@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use crate::index::{DocId, Index, TermId};
 use crate::time::{self, Day};
 
-/// Explicit structure a note carries, indexed for exact lookup.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Explicit structure a note carries, indexed for exact lookup, and in order for a tag or a
+/// person still being typed.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Label {
     Tag(String),
     Mention(String),
@@ -24,6 +25,18 @@ pub enum Label {
     Name(String),
     /// A day the note was created on or mentions.
     Date(Day),
+}
+
+impl Label {
+    /// Whether this label is one that `start`, typed so far, could be: a tag or a person whose
+    /// name starts with its name. Any other label starts only itself.
+    pub fn starts_with(&self, start: &Label) -> bool {
+        match (self, start) {
+            (Label::Tag(name), Label::Tag(start))
+            | (Label::Mention(name), Label::Mention(start)) => name.starts_with(start.as_str()),
+            _ => self == start,
+        }
+    }
 }
 
 /// What a query asks for explicitly.
@@ -488,6 +501,128 @@ pub(crate) fn temporal(
     }
     for p in c.0.values_mut() {
         p.temporal = p.temporal.min(1.0);
+    }
+}
+
+/// What letters typed after `~` earn in a head, as fzf scores them: a letter found, one at the
+/// start of a word of the head, a letter running straight on from the one before, and what a
+/// gap between two letters costs, its first letter skipped and each one after.
+const LETTER: i32 = 16;
+const WORD_START: i32 = 8;
+const RUN: i32 = 4;
+const GAP: i32 = 3;
+const GAP_ON: i32 = 1;
+
+/// The letters typed after `~`, a word of them at a time, lowercased, and room to score them.
+pub(crate) struct Letters {
+    words: Vec<Vec<char>>,
+    /// For each place in a head, the best score with the letters so far ending there, and what
+    /// a letter running on from it earns. Kept between heads, so that a head is scored without
+    /// allocating.
+    best: Vec<Option<(i32, i32)>>,
+}
+
+impl Letters {
+    pub(crate) fn new(typed: &str) -> Self {
+        Self {
+            words: typed
+                .split_whitespace()
+                .map(|word| word.chars().map(lower).collect())
+                .collect(),
+            best: Vec::new(),
+        }
+    }
+
+    /// What the letters score in a head, every word of them, or None when one is not there.
+    pub(crate) fn score(&mut self, head: &str) -> Option<i32> {
+        let mut score = 0;
+        for word in &self.words {
+            score += letters(head, word, &mut self.best)?;
+        }
+        Some(score)
+    }
+}
+
+/// What the letters of `word` score in `head`, or None when they are not all in it in order, as
+/// the original fzn's fuzzy found them. They rank as fzf ranks them: a letter at the start of a
+/// word earns more, twice as much for the first letter typed; a letter running on from the one
+/// before earns at least what the first letter of its run did; and a gap costs more the longer
+/// it is. The best placing of the letters is the one scored, so that `bsv` in "Boiler service" is
+/// the `b` of Boiler and the `s` of service.
+fn letters(head: &str, word: &[char], best: &mut Vec<Option<(i32, i32)>>) -> Option<i32> {
+    // Most heads have not got the letters at all, and saying so takes one pass.
+    let mut wanted = word.iter().peekable();
+    for c in head.chars() {
+        wanted.next_if(|&&w| w == lower(c));
+    }
+    if wanted.peek().is_some() {
+        return None;
+    }
+    let (&first, rest) = word.split_first()?;
+    let Some((&last, between)) = rest.split_last() else {
+        return places(head)
+            .filter(|&(c, _)| c == first)
+            .map(|(_, start)| LETTER + 2 * start)
+            .max();
+    };
+    best.clear();
+    best.extend(
+        places(head).map(|(c, start)| (c == first).then(|| (LETTER + 2 * start, start.max(RUN)))),
+    );
+    for &w in between {
+        next_letter(head, w, best, |at, score| *at = score);
+    }
+    let mut top = None;
+    next_letter(head, last, best, |_, score| {
+        top = top.max(score.map(|(s, _)| s))
+    });
+    top
+}
+
+/// Places the next letter after those in `best`, giving each place in the head what it scores
+/// there to `keep`, along with that place's cell in `best`.
+fn next_letter(
+    head: &str,
+    w: char,
+    best: &mut [Option<(i32, i32)>],
+    mut keep: impl FnMut(&mut Option<(i32, i32)>, Option<(i32, i32)>),
+) {
+    // The best from two or more places back, less what the gap from there costs, and what the
+    // places one and two back held for the letters before this one.
+    let (mut before, mut last, mut skipped) = (None::<i32>, None, None);
+    for ((c, start), at) in places(head).zip(best.iter_mut()) {
+        let held = *at;
+        before = before
+            .map(|s| s - GAP_ON)
+            .max(skipped.map(|(s, _): (i32, i32)| s - GAP));
+        let here = (c == w)
+            .then(|| {
+                let run = last.map(|(s, on): (i32, i32)| (s + LETTER + on.max(start), on));
+                let gap = before.map(|s| (s + LETTER + start, start.max(RUN)));
+                run.max(gap)
+            })
+            .flatten();
+        keep(at, here);
+        skipped = last;
+        last = held;
+    }
+}
+
+/// Each letter of a head, lowercased, with what it earns for starting a word.
+fn places(head: &str) -> impl Iterator<Item = (char, i32)> + '_ {
+    let mut in_word = false;
+    head.chars().map(move |c| {
+        let start = if in_word { 0 } else { WORD_START };
+        in_word = c.is_alphanumeric();
+        (lower(c), start)
+    })
+}
+
+fn lower(c: char) -> char {
+    if c.is_ascii() {
+        c.to_ascii_lowercase()
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
     }
 }
 

@@ -17,7 +17,8 @@ use fzn_engine::Seal;
 
 const USAGE: &str = "\
 fzn [--space NAME]                      open your notes
-fzn [--space NAME] export               write every note to standard output, one to a line
+fzn [--space NAME] export [QUERY]       write every note to standard output, one to a line,
+                                        or what QUERY finds at the top of the space
 fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
@@ -39,7 +40,10 @@ it. A forgotten passphrase is lost notes: there is no reset. If it was mistyped,
 again. $FZN_PASSPHRASE answers in place of the question, for scripts.
 
 export writes every note as one plain line of JSON, readable without fzn, to wherever you send
-it. import-jsonl is the way back in: a file put in a space's directory is not read.
+it. Given a query, typed as on the line, it writes the notes that line finds at the top of the
+space instead, every one of them and archived ones too, in the order the line lists them: fzn
+export '#house /-mon..' is everything tagged #house written since last Monday. import-jsonl is
+the way back in: a file put in a space's directory is not read.
 
 To sync, run fzn relay on a machine your devices can reach, and name that machine on each
 device: relay = \"ws://that-machine:3960\" in the config file, or --relay, or $FZN_RELAY. fzn then
@@ -59,13 +63,19 @@ note both wrote is kept.
 
 A date in a note is plain text, written 2026-10-16. /today, /tomorrow, /yesterday, a day of the
 week such as /fri, and /+3 or /-2 for days from today are quicker ways of typing one: saving the
-note writes the date in their place.";
+note writes the date in their place. /-mon is the last Monday before today.
+
+On the line, words find and everything else holds: \"a phrase\" must be in a note, #tag, @person
+and a day must be on it, and a span such as /-mon 18:00.., 2026-10-01..2026-10-05 or ..2026-10-05
+holds the notes written in it. ~ at the start of the line finds heads by their letters in order:
+~bsv finds Boiler service.";
 
 enum Cmd {
     Open,
     Relay,
     Key,
-    Export,
+    /// With a query, what that line finds; without one, every note.
+    Export(Option<String>),
     ImportJsonl(PathBuf),
     ImportMarkdown(PathBuf),
 }
@@ -81,7 +91,7 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args> {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
     let mut root = None;
     let mut space = None;
     let mut relay = None;
@@ -131,7 +141,7 @@ fn parse_args() -> Result<Args> {
                 println!("{USAGE}");
                 std::process::exit(0);
             }
-            "export" => cmd = Cmd::Export,
+            "export" => cmd = Cmd::Export(args.next_if(|arg| !arg.starts_with('-'))),
             "import-jsonl" => {
                 cmd = Cmd::ImportJsonl(
                     args.next()
@@ -204,11 +214,15 @@ fn main() -> Result<()> {
             println!("the key for {space} was replaced");
             return Ok(());
         }
-        Cmd::Export => {
+        Cmd::Export(query) => {
             // Reading takes no lock, and leaves a torn line for whoever holds one to cut.
             let key = key::key_for(&space, &config_dir, &dir)?;
             let store = store::Store::open(&dir, String::new(), Seal::new(key), false)?;
-            store.export(&mut std::io::stdout().lock())?;
+            let mut out = std::io::stdout().lock();
+            match query {
+                Some(line) => store.export_found(&line, cfg.weights.clone(), &mut out)?,
+                None => store.export(&mut out)?,
+            };
             return Ok(());
         }
         Cmd::ImportJsonl(path) => {

@@ -1,6 +1,6 @@
 //! The note model.
 
-use crate::time::Day;
+use crate::time::{Day, Moment};
 
 /// Stable identity of a note. Opaque to the engine and assigned by whoever stores the note.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -30,7 +30,9 @@ pub struct Note {
     /// Notes this one is linked to, by id. A link held here survives its target being renamed
     /// and adds no words to the text, unlike a `[[head]]` written into it.
     pub links: Vec<NoteId>,
-    pub created: Option<Day>,
+    /// When the note was written, to the moment, since a span typed on the line holds the notes
+    /// written in it to the minute. Relevance reads only its day.
+    pub created: Option<Moment>,
     pub updated: Option<Day>,
     pub archived: bool,
 }
@@ -57,9 +59,14 @@ impl Note {
         self.text.split_once('\n').map_or("", |(_, body)| body)
     }
 
+    /// The day the note was written on, if it is known.
+    pub fn written(&self) -> Option<Day> {
+        self.created.map(Moment::day)
+    }
+
     /// The most recent day known for the note, if any.
     pub fn day(&self) -> Option<Day> {
-        self.updated.or(self.created)
+        self.updated.or(self.written())
     }
 }
 

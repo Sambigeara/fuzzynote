@@ -30,7 +30,8 @@ pub struct Index {
     live: Vec<bool>,
     live_docs: usize,
     total_len: u64,
-    labels: HashMap<Label, Vec<DocId>>,
+    /// In order, so that a tag or a person still being typed finds every one it starts.
+    labels: BTreeMap<Label, Vec<DocId>>,
     doc_labels: Vec<Vec<Label>>,
 }
 
@@ -186,6 +187,15 @@ impl Index {
 
     pub fn docs_with(&self, label: &Label) -> &[DocId] {
         self.labels.get(label).map_or(&[], Vec::as_slice)
+    }
+
+    /// The notes carrying a label that `start` starts, each list sorted: every tag or person
+    /// whose name starts with its name, or for any other label the label itself.
+    pub fn docs_starting<'a>(&'a self, start: &'a Label) -> impl Iterator<Item = &'a [DocId]> {
+        self.labels
+            .range(start..)
+            .take_while(move |(label, _)| label.starts_with(start))
+            .map(|(_, docs)| docs.as_slice())
     }
 
     /// Every vocabulary term starting with `prefix`, in alphabetical order.

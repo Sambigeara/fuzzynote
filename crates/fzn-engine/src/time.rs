@@ -1,6 +1,7 @@
-//! Days and moments. Relevance never needs anything finer than a day. A note's times are kept to
-//! the millisecond, with the offset of the clock that recorded them, since a stamp a keystroke
-//! has to step past the one before it, and a step of a second ran ahead of the clock.
+//! Days and moments. Relevance never needs anything finer than a day; a span typed on the line
+//! holds what was written in it to the minute. A note's times are kept to the millisecond, with
+//! the offset of the clock that recorded them, since a stamp a keystroke has to step past the one
+//! before it, and a step of a second ran ahead of the clock.
 
 use std::fmt;
 
@@ -11,6 +12,8 @@ pub type Day = i32;
 
 const SECS_PER_DAY: i64 = 86_400;
 const MS_PER_SEC: i64 = 1_000;
+pub(crate) const MS_PER_MINUTE: i64 = 60 * MS_PER_SEC;
+pub(crate) const MS_PER_DAY: i64 = SECS_PER_DAY * MS_PER_SEC;
 
 /// Converts a civil date to a day number.
 pub fn day_from_civil(year: i32, month: u32, day: u32) -> Day {
@@ -84,7 +87,7 @@ impl Moment {
 
     /// The day it was where the moment was recorded.
     pub fn day(self) -> Day {
-        day_from_unix_secs(self.wall())
+        self.wall().div_euclid(MS_PER_DAY) as Day
     }
 
     pub fn plus_secs(self, secs: i64) -> Self {
@@ -94,9 +97,11 @@ impl Moment {
         }
     }
 
-    /// Seconds since 1970 by the clock that recorded it.
-    fn wall(self) -> i64 {
-        self.secs().saturating_add(i64::from(self.offset))
+    /// Milliseconds since 1970 by the clock that recorded it: the moment as it read where it was
+    /// recorded, which is how a day or a time typed on the line is read against it.
+    pub(crate) fn wall(self) -> i64 {
+        self.ms
+            .saturating_add(i64::from(self.offset).saturating_mul(MS_PER_SEC))
     }
 
     /// Reads RFC 3339. A fraction of a second is read to the millisecond, and what is finer is
@@ -149,7 +154,7 @@ impl Moment {
 
 impl fmt::Display for Moment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let wall = self.wall();
+        let wall = self.wall().div_euclid(MS_PER_SEC);
         let (y, m, d) = civil_from_day(day_from_unix_secs(wall));
         let secs = wall.rem_euclid(SECS_PER_DAY);
         write!(

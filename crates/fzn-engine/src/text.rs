@@ -183,11 +183,11 @@ pub fn without_dates(text: &str) -> String {
     out
 }
 
-fn is_word_char(c: char) -> bool {
+pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn take_tag(chars: &[char], start: usize) -> Option<(String, usize)> {
+pub(crate) fn take_tag(chars: &[char], start: usize) -> Option<(String, usize)> {
     if !chars.get(start)?.is_alphanumeric() {
         return None;
     }
@@ -204,7 +204,7 @@ fn take_tag(chars: &[char], start: usize) -> Option<(String, usize)> {
     ))
 }
 
-fn take_mention(chars: &[char], start: usize) -> Option<(String, usize)> {
+pub(crate) fn take_mention(chars: &[char], start: usize) -> Option<(String, usize)> {
     if !chars.get(start)?.is_alphanumeric() {
         return None;
     }
@@ -240,7 +240,7 @@ fn take_wikilink(chars: &[char], start: usize) -> Option<(String, usize)> {
     Some((target, j + 2))
 }
 
-fn take_url(chars: &[char], start: usize) -> Option<(String, usize)> {
+pub(crate) fn take_url(chars: &[char], start: usize) -> Option<(String, usize)> {
     let lower: String = chars[start..chars.len().min(start + 8)]
         .iter()
         .flat_map(|c| c.to_lowercase())
@@ -269,14 +269,14 @@ fn take_url(chars: &[char], start: usize) -> Option<(String, usize)> {
     Some((chars[start..end].iter().collect(), end))
 }
 
-fn digits(chars: &[char], start: usize, n: usize) -> Option<u32> {
+pub(crate) fn digits(chars: &[char], start: usize, n: usize) -> Option<u32> {
     let slice = chars.get(start..start + n)?;
     slice
         .iter()
         .try_fold(0u32, |acc, c| c.to_digit(10).map(|d| acc * 10 + d))
 }
 
-fn followed_by_digit(chars: &[char], at: usize) -> bool {
+pub(crate) fn followed_by_digit(chars: &[char], at: usize) -> bool {
     chars.get(at).is_some_and(char::is_ascii_digit)
 }
 
@@ -285,7 +285,7 @@ fn civil(year: u32, month: u32, day: u32) -> Option<Day> {
         .then(|| time::day_from_civil(year as i32, month, day))
 }
 
-fn take_iso_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
+pub(crate) fn take_iso_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
     let year = digits(chars, start, 4)?;
     if chars.get(start + 4) != Some(&'-') || chars.get(start + 7) != Some(&'-') {
         return None;
@@ -311,7 +311,7 @@ fn word3(chars: &[char], start: usize) -> Option<String> {
 }
 
 /// Parses `Mon, Jan 02, 2006` and `Mon, Jan 2, 2006`.
-fn take_fzn_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
+pub(crate) fn take_fzn_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
     let weekday = word3(chars, start)?;
     if !WEEKDAYS.contains(&weekday.as_str())
         || chars.get(start + 3) != Some(&',')
@@ -344,10 +344,10 @@ fn take_fzn_date(chars: &[char], start: usize) -> Option<(Day, usize)> {
 
 /// A word that stands for a date, and where it is in the text, slash included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DateWord {
-    pub start: usize,
-    pub end: usize,
-    pub day: Day,
+struct DateWord {
+    start: usize,
+    end: usize,
+    day: Day,
 }
 
 const DATE_NAMES: [&str; 10] = [
@@ -364,28 +364,59 @@ const DATE_NAMES: [&str; 10] = [
 ];
 
 /// Finds the words that stand for a date: a slash at the start of a word, then `today`,
-/// `tomorrow`, `yesterday`, a day of the week (the next one after today), or a number of days
-/// from today as `+3` or `-2`. Any beginning of a name that only one name has will do: `/tom`,
-/// `/f`. Anything else after a slash is left alone, a path included.
-pub fn date_words(text: &str, today: Day) -> Vec<DateWord> {
-    let mut found = Vec::new();
-    let mut at_word_start = true;
-    for (start, c) in text.char_indices() {
-        if c == '/' && at_word_start {
-            let rest = &text[start + 1..];
-            let word = rest.split(char::is_whitespace).next().unwrap_or("");
-            let word = word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')']);
-            if let Some(day) = date_named(word, today) {
-                found.push(DateWord {
-                    start,
-                    end: start + 1 + word.len(),
-                    day,
-                });
-            }
-        }
-        at_word_start = c.is_whitespace() || c == '(';
+/// `tomorrow`, `yesterday`, a day of the week (the next one after today, or with a `-` the last
+/// one before it), or a number of days from today as `+3` or `-2`. Any beginning of a name that
+/// only one name has will do: `/tom`, `/f`, `/-tu`. Anything else after a slash is left alone, a
+/// path included. A word starts after whitespace, a bracket, or the `..` of a span.
+fn date_words(text: &str, today: Day) -> Vec<DateWord> {
+    let chars: Vec<char> = text.chars().collect();
+    let at: Vec<usize> = text
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain([text.len()])
+        .collect();
+    (0..chars.len())
+        .filter(|&i| at_word_start(&chars, i))
+        .filter_map(|i| {
+            let (day, end) = take_date_word(&chars, i, today)?;
+            Some(DateWord {
+                start: at[i],
+                end: at[end],
+                day,
+            })
+        })
+        .collect()
+}
+
+/// Whether a word can start here, as a date word does: at the start, after whitespace or a
+/// bracket, or straight after the `..` of a span.
+pub(crate) fn at_word_start(chars: &[char], i: usize) -> bool {
+    i == 0
+        || chars[i - 1].is_whitespace()
+        || chars[i - 1] == '('
+        || (i >= 2 && chars[i - 2..i] == ['.', '.'])
+}
+
+/// A date word at `start`, slash included, and where it ends: at whitespace, at the `..` of a
+/// span, and short of any punctuation that ends a sentence.
+pub(crate) fn take_date_word(chars: &[char], start: usize, today: Day) -> Option<(Day, usize)> {
+    if chars.get(start) != Some(&'/') {
+        return None;
     }
-    found
+    let mut end = start + 1;
+    while end < chars.len() && !chars[end].is_whitespace() && !dots(chars, end) {
+        end += 1;
+    }
+    while end > start + 1 && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')') {
+        end -= 1;
+    }
+    let word: String = chars[start + 1..end].iter().collect();
+    Some((date_named(&word, today)?, end))
+}
+
+/// Whether the `..` of a span starts here.
+pub(crate) fn dots(chars: &[char], at: usize) -> bool {
+    chars.get(at..at + 2) == Some(&['.', '.'])
 }
 
 /// Writes out the date each date word stands for, as `2026-10-16`.
@@ -402,8 +433,10 @@ pub fn expand_date_words(text: &str, today: Day) -> String {
 }
 
 fn date_named(word: &str, today: Day) -> Option<Day> {
-    if let Some(days) = word.strip_prefix('+').or_else(|| word.strip_prefix('-')) {
-        if !(1..=4).contains(&days.len()) || !days.bytes().all(|b| b.is_ascii_digit()) {
+    if let Some(days) = word.strip_prefix('+').or_else(|| word.strip_prefix('-'))
+        && days.bytes().all(|b| b.is_ascii_digit())
+    {
+        if !(1..=4).contains(&days.len()) {
             return None;
         }
         let days: Day = days.parse().ok()?;
@@ -413,20 +446,33 @@ fn date_named(word: &str, today: Day) -> Option<Day> {
             today + days
         });
     }
+    // With a `-` only the days of the week are named, as the last one before today.
+    let (word, back) = match word.strip_prefix('-') {
+        Some(word) => (word, true),
+        None => (word, false),
+    };
     if word.is_empty() || !word.bytes().all(|b| b.is_ascii_alphabetic()) {
         return None;
     }
     let word = word.to_ascii_lowercase();
-    let mut named = (0..DATE_NAMES.len()).filter(|&i| DATE_NAMES[i].starts_with(&word));
+    let names = if back {
+        &DATE_NAMES[..7]
+    } else {
+        &DATE_NAMES[..]
+    };
+    let mut named = (0..names.len()).filter(|&i| names[i].starts_with(&word));
     let (name, None) = (named.next()?, named.next()) else {
         return None;
     };
-    Some(match DATE_NAMES[name] {
+    let weekday = time::weekday(today);
+    Some(match names[name] {
         "today" => today,
         "tomorrow" => today + 1,
         "yesterday" => today - 1,
-        // A day of the week is the next one, so never today: that is what `/today` is for.
-        _ => today + ((name + 6 - time::weekday(today)) % 7) as Day + 1,
+        // A day of the week is never today, that being what `/today` is for: it is the next one,
+        // or the last one.
+        _ if back => today - ((weekday + 6 - name) % 7) as Day - 1,
+        _ => today + ((name + 6 - weekday) % 7) as Day + 1,
     })
 }
 
@@ -463,8 +509,18 @@ mod tests {
             "2026-10-13 2026-10-14 2026-10-12 2026-10-16 2026-10-17 2026-10-18 2026-10-19 \
              2026-10-14 2026-10-15 2026-10-20"
         );
+        assert_eq!(
+            expand("/-mon /-tu /-w /-f /-Sunday"),
+            "2026-10-12 2026-10-06 2026-10-07 2026-10-09 2026-10-11",
+            "with a minus it is the last one, never today"
+        );
+        assert_eq!(
+            expand("/-mon 18:00../fri /today..."),
+            "2026-10-12 18:00..2026-10-16 2026-10-13...",
+            "a span's ends, and a word ends at two dots"
+        );
         for untouched in [
-            "/t /to /s",
+            "/t /to /s /-t /-s /-today /-y /+mon",
             "/home/sam and/or w/friday",
             "/friday/night /fridays /fr1 / /+ /+12345 /-",
             "https://example.com/today x/tomorrow",

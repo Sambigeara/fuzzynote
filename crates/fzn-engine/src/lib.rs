@@ -18,6 +18,7 @@ pub mod device;
 mod engine;
 mod index;
 mod note;
+mod query;
 mod record;
 pub mod replica;
 mod score;
@@ -27,7 +28,7 @@ pub mod text;
 pub mod time;
 
 pub use device::{Device, Editing, Kept, Todo};
-pub use engine::{Engine, Hit, SearchOptions, Stats};
+pub use engine::{Engine, Stats};
 pub use note::{Note, NoteId};
 pub use record::{Notes, Read, Record, links_on_save};
 pub use score::{Reason, Weights};
