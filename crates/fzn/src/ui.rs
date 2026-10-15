@@ -8,7 +8,7 @@
 //! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and
 //! goes to the note it wrote or, with nothing on it, opens a new row at the top to write in, and
 //! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or at
-//! the start of a new row that opens with the label of the place, and typing changes it and is
+//! the start of a new row that opens with the labels of the place, and typing changes it and is
 //! written at once, as it was in fzn, with its date words written out when the arrows up and
 //! down, or Escape, leave it. Enter opens a new note under it, so that a run of notes is Enter
 //! and typing; a new note left empty goes. Ctrl-O hands the note to your editor, which is where

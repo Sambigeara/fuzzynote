@@ -28,7 +28,13 @@
 //! that it reads as one written with the label on the line always has. A new row opens with the
 //! label already in its head and the caret before it, so that what the writer sees is what is
 //! written, and the note is in its place on every device from its first letter. Only a note
-//! written in the place inherits it, and only from the innermost place.
+//! written in the place inherits it.
+//!
+//! Labels gone into one after another are one place, so that going into today from inside a
+//! tag is today's notes in that tag: the notes carrying every one of them come first, and a note
+//! written there ends its head with each it does not carry already, in the order of the path. A
+//! note on the path starts afresh: what is written in it is linked to it and carries no label
+//! from before it, and only the labels gone into after it are taken together.
 //!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, the search uses it, and saving a
@@ -216,7 +222,7 @@ pub struct Row {
     /// Whether there is more to read than the head.
     pub has_body: bool,
     /// Whether the note is a fact of the place being looked around, and so in the first part of
-    /// its list: linked to or from the note, or carrying the label. In a label nothing is linked
+    /// its list: linked to or from the note, or carrying the labels. In labels nothing is linked
     /// or unlinked; the field says only which part a row is in.
     pub linked: bool,
     /// The heads, as they are now, of the notes this one is linked to by id. The note being
@@ -286,8 +292,8 @@ struct Writing {
     whole: bool,
     /// When the cursor landed, which is `created` for a new note.
     opened: Moment,
-    /// What a new note's head opened with: the label of the place it was opened in, after a
-    /// space, or nothing. It is not the writer's, so a row with only this in it is empty.
+    /// What a new note's head opened with: the labels of the place it was opened in, each after
+    /// a space, or nothing. It is not the writer's, so a row with only this in it is empty.
     label: String,
     /// The entry on the undo stack that this visit's versions are gathered into, once one has
     /// been written.
@@ -335,7 +341,8 @@ struct Pivot {
 }
 
 /// What can be gone into: a note, or a label typed on the line. A note written in a place
-/// inherits it, as a link to the note or as the label at the end of its head.
+/// inherits it, as a link to the note or as the label at the end of its head. Labels gone into
+/// one after another are one place, so a note written there inherits each of them.
 enum Place {
     Note {
         id: String,
@@ -363,18 +370,6 @@ impl Place {
         match self {
             Place::Note { id, .. } => Some(id),
             Place::Label { .. } => None,
-        }
-    }
-
-    /// The text of a note written from the line here, with what it inherits written into it: a
-    /// label at the end of its head, unless the note carries it already. A note's link is not in
-    /// its text. A new row has the label in its head from the start, so this is the line's alone.
-    fn hand_down(&self, text: String, created: Day) -> String {
-        match self {
-            Place::Label { label, written } if !label.carried_by(&text, created) => {
-                with_label(&text, written)
-            }
-            _ => text,
         }
     }
 
@@ -1175,6 +1170,21 @@ impl Session {
         self.pivots.last().and_then(|p| p.place.note())
     }
 
+    /// The labels being looked around, as they were typed, outermost first: those gone into one
+    /// after another at the end of the path, back to the nearest note on it or to its start.
+    /// They are one place. There are none when the innermost place is a note, which starts afresh.
+    fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> {
+        let from = self
+            .pivots
+            .iter()
+            .rposition(|p| p.place.note().is_some())
+            .map_or(0, |at| at + 1);
+        self.pivots[from..].iter().filter_map(|p| match &p.place {
+            Place::Label { label, written } => Some((label, written.as_str())),
+            Place::Note { .. } => None,
+        })
+    }
+
     /// Steps back out to `depth` places on the path, onto the line, so that what is asked next is
     /// asked of the line and not of a note. What is on the line stays as it is; only an empty
     /// line gets back the search that the first place left behind was found with, which is what
@@ -1197,10 +1207,10 @@ impl Session {
     fn refresh(&mut self, reset: bool) {
         // A date word searches as the date it stands for.
         let query = text::expand_date_words(self.line.trim(), self.today());
-        let rows = match (self.pivots.last(), query.is_empty()) {
-            (Some(p), _) => self.around(&p.place, &query),
-            (None, true) => self.top(),
-            (None, false) => self.related(&query),
+        let rows = match (self.pivots.is_empty(), query.is_empty()) {
+            (false, _) => self.around(&query),
+            (true, true) => self.top(),
+            (true, false) => self.related(&query),
         };
         self.rows = rows;
         self.stale = false;
@@ -1244,18 +1254,23 @@ impl Session {
             .collect()
     }
 
-    /// The neighbourhood of a place, narrowed by the line when there is something on it. Its
-    /// facts are what is linked to or from a note, or every note carrying a label.
-    fn around(&self, place: &Place, query: &str) -> Vec<Row> {
+    /// The neighbourhood of the place being looked around, narrowed by the line when there is
+    /// something on it. Its facts are what is linked to or from a note, or every note carrying
+    /// all of the labels.
+    fn around(&self, query: &str) -> Vec<Row> {
         let opts = SearchOptions {
             limit: AROUND_LIMIT,
             include_archived: self.show_archived,
             today: Some(self.today()),
         };
-        let near = match place {
-            Place::Note { id, .. } => self.engine.related(&NoteId::new(id.clone()), &opts),
-            Place::Label { label, written } => {
-                self.engine.labelled(&label.indexed(), written, &opts)
+        let near = match self.around_note() {
+            Some(id) => self.engine.related(&NoteId::new(id.clone()), &opts),
+            None => {
+                let (labels, written): (Vec<_>, Vec<_>) = self
+                    .labels_here()
+                    .map(|(label, written)| (label.indexed(), written))
+                    .unzip();
+                self.engine.labelled(&labels, &written.join(" "), &opts)
             }
         };
         if query.is_empty() {
@@ -1539,20 +1554,26 @@ impl Session {
     }
 
     /// Turns the line into a note, linked to the note being looked around and to whatever it
-    /// names in brackets, or ending with the label being looked around, with its date words
-    /// written out as dates, and puts the cursor on it: it is the note most likely to be gone on
-    /// with, and Enter there opens a row under it. With nothing on the line, opens a new note at
-    /// the top of the list to be written in place.
+    /// names in brackets, or ending with each label being looked around that it does not carry
+    /// already, in the order of the path, with its date words written out as dates, and puts the
+    /// cursor on it: it is the note most likely to be gone on with, and Enter there opens a row
+    /// under it. With nothing on the line, opens a new note at the top of the list to be written
+    /// in place. A note's link is not in its text, and a new row has the labels in its head from
+    /// the start.
     fn write_line(&mut self) {
-        let text = text::expand_date_words(self.line.trim(), self.today());
+        let today = self.today();
+        let text = text::expand_date_words(self.line.trim(), today);
         if text.is_empty() {
             self.draft_at(0);
             return;
         }
-        let text = match self.pivots.last() {
-            Some(p) => p.place.hand_down(text, self.today()),
-            None => text,
-        };
+        let text = self.labels_here().fold(text, |text, (label, written)| {
+            if label.carried_by(&text, today) {
+                text
+            } else {
+                with_label(&text, written)
+            }
+        });
         let around = self.around_note().map_or(&[][..], std::slice::from_ref);
         let id = self.host.new_id();
         let links = links_on_save(&self.engine, &id, "", &text, around);
@@ -1577,17 +1598,17 @@ impl Session {
     }
 
     /// Opens a new note at this row of the list, with the cursor in it. It has its id from now,
-    /// and its time, and it is written at its first letter. Inside a label its head opens with
-    /// the label, unless the note carries it already, as one written on the day it is does.
+    /// and its time, and it is written at its first letter. Inside labels its head opens with
+    /// each of them, in the order of the path, but for one the note carries already, as one
+    /// written on the day it is does.
     fn draft_at(&mut self, at: usize) {
         let id = self.host.new_id();
         let opened = self.host.now();
-        let label = match self.pivots.last().map(|p| &p.place) {
-            Some(Place::Label { label, written }) if !label.carried_by("", opened.day()) => {
-                format!(" {written}")
-            }
-            _ => String::new(),
-        };
+        let label: String = self
+            .labels_here()
+            .filter(|(label, _)| !label.carried_by("", opened.day()))
+            .map(|(_, written)| format!(" {written}"))
+            .collect();
         let at = at.min(self.rows.len());
         self.rows.insert(
             at,
@@ -1597,7 +1618,7 @@ impl Session {
                 archived: false,
                 has_body: false,
                 // Written here, it will be linked to the note being looked around, or carry the
-                // label.
+                // labels.
                 linked: !self.pivots.is_empty(),
                 links: Vec::new(),
                 reasons: Vec::new(),
@@ -1962,13 +1983,18 @@ impl Session {
     }
 
     /// Links the note under the cursor to the one being looked around, or takes that link away.
-    /// It is a correction: what is written in a zoom is linked already, and outside one, or in a
-    /// label, there is nothing to link to.
+    /// It is a correction: what is written in a zoom is linked already, and outside one, or in
+    /// labels, there is nothing to link to.
     fn link(&mut self) {
         let around = match self.pivots.last().map(|p| &p.place) {
             Some(Place::Note { id, .. }) => id.clone(),
-            Some(Place::Label { written, .. }) => {
-                self.status = format!("nothing links to {written}; what you write here carries it");
+            Some(Place::Label { .. }) => {
+                let written: Vec<&str> = self.labels_here().map(|(_, written)| written).collect();
+                let it = if written.len() == 1 { "it" } else { "them" };
+                self.status = format!(
+                    "nothing links to {}; what you write here carries {it}",
+                    written.join(" ")
+                );
                 return;
             }
             None => {
@@ -4943,6 +4969,144 @@ mod tests {
         let id = s.field.as_ref().unwrap().id.clone();
         s.act(Action::Select(None));
         assert_eq!(s.notes.get(&id).unwrap().text, "order oil 2026-10-16");
+    }
+
+    #[test]
+    fn today_gone_into_from_a_tag_is_todays_notes_in_it_and_what_is_written_there_carries_both() {
+        let mut s = session();
+        house(&mut s);
+        put(&mut s, "boots", "dry the boots #house", &[], NOON.secs);
+        put(&mut s, "plants", "water the plants", &[], NOON.secs);
+
+        type_in(&mut s, "#house");
+        s.act(Action::GoIn);
+        type_in(&mut s, "/today");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house", "2026-10-13"]);
+        let facts: Vec<&str> = s
+            .rows
+            .iter()
+            .filter(|r| r.linked)
+            .map(|r| r.head.as_str())
+            .collect();
+        assert_eq!(
+            facts,
+            ["dry the boots #house"],
+            "not the tag's notes of other days, nor today's without the tag"
+        );
+        for (typed, listed, fact) in [
+            ("boots", "dry the boots #house", true),
+            ("plants", "water the plants", false),
+            ("gutter", "clear the gutter #house", false),
+        ] {
+            type_in(&mut s, typed);
+            assert_eq!(heads(&s), [listed], "the line narrows the two as one");
+            assert_eq!(linked(&s), [fact], "{typed}");
+            clear(&mut s);
+        }
+
+        type_in(&mut s, "Order oil");
+        s.act(Action::Write);
+        let new = s.selected().unwrap().id.clone();
+        assert_eq!(
+            s.notes.get(&new).unwrap().text,
+            "Order oil #house",
+            "the tag written in, and the day carried by being written on it"
+        );
+        assert!(s.rows[0].linked, "and it is a fact of the place");
+
+        s.act(Action::Select(None));
+        s.act(Action::Write);
+        assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
+        edited(&mut s, "Bleed radiators #house");
+        let id = s.field.as_ref().unwrap().id.clone();
+        s.act(Action::Select(None));
+        assert_eq!(s.notes.get(&id).unwrap().text, "Bleed radiators #house");
+
+        s.act(Action::Back);
+        assert_eq!(path(&s), ["#house"], "back one rung at a time");
+        assert_eq!(s.line, "/today");
+    }
+
+    #[test]
+    fn labels_gone_into_one_after_another_open_a_new_row_with_each_in_the_order_of_the_path() {
+        let mut s = session();
+        house(&mut s);
+        put(&mut s, "ladder", "@joe has the ladder #house", &[], 1_500);
+        put(&mut s, "gate", "@joe fixed the gate", &[], 1_600);
+        type_in(&mut s, "#house");
+        s.act(Action::GoIn);
+        type_in(&mut s, "@joe");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house", "@joe"]);
+        assert_eq!(linked(&s).iter().filter(|&&l| l).count(), 1);
+        assert_eq!(heads(&s)[0], "@joe has the ladder #house");
+
+        s.act(Action::Write);
+        assert_eq!(field(&s), Some((" #house @joe".to_owned(), true, false)));
+        for left in (0..12).rev() {
+            assert!(
+                edited(&mut s, &" #house @joe"[..left]).is_empty(),
+                "what is left of the labels is not the writer's: {left}"
+            );
+        }
+        s.act(Action::Select(None));
+        for (typed, written) in [
+            ("Order oil", "Order oil #house @joe"),
+            ("ask @Joe about the oil", "ask @Joe about the oil #house"),
+        ] {
+            s.act(Action::Select(None));
+            type_in(&mut s, typed);
+            s.act(Action::Write);
+            let new = s.selected().unwrap().id.clone();
+            assert_eq!(s.notes.get(&new).unwrap().text, written);
+        }
+
+        select(&mut s, "@joe has the ladder #house");
+        s.act(Action::Link);
+        assert_eq!(
+            s.status,
+            "nothing links to #house @joe; what you write here carries them"
+        );
+
+        s.act(Action::Select(None));
+        s.act(Action::Back);
+        clear(&mut s);
+        type_in(&mut s, "/fri");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house", "2026-10-16"]);
+        s.act(Action::Write);
+        assert_eq!(
+            field(&s),
+            Some((" #house 2026-10-16".to_owned(), true, false))
+        );
+    }
+
+    #[test]
+    fn labels_gone_into_after_a_note_on_the_path_start_afresh() {
+        let mut s = session();
+        house(&mut s);
+        type_in(&mut s, "#house");
+        s.act(Action::GoIn);
+        type_in(&mut s, "boil");
+        s.act(Action::GoIn);
+        type_in(&mut s, "/fri");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house", "Boiler", "2026-10-16"]);
+
+        s.act(Action::Write);
+        assert_eq!(
+            field(&s),
+            Some((" 2026-10-16".to_owned(), true, false)),
+            "only the day counts"
+        );
+        s.act(Action::Select(None));
+        type_in(&mut s, "Bleed radiators");
+        s.act(Action::Write);
+        let new = s.selected().unwrap().id.clone();
+        let held = s.notes.get(&new).unwrap();
+        assert_eq!(held.text, "Bleed radiators 2026-10-16");
+        assert!(held.links.is_empty(), "nor is it linked to the note");
     }
 
     #[test]

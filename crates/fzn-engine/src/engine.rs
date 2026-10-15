@@ -49,7 +49,7 @@ pub struct Hit<'a> {
     pub note: &'a Note,
     pub score: f32,
     pub reasons: Vec<Reason>,
-    /// Whether the note is linked to or from the one being looked around, or carries the label
+    /// Whether the note is linked to or from the one being looked around, or carries the labels
     /// being looked around. That is a fact, where the rest is a guess, and such notes are
     /// returned whatever they score and whatever the limit.
     pub linked: bool,
@@ -288,26 +288,40 @@ impl Engine {
         self.run(&ctx, opts, &[], &[])
     }
 
-    /// The neighbourhood of a tag, a person or a day, which `written` is as it would be typed:
-    /// every note carrying it, marked as linked and listed whatever it scores and whatever the
-    /// limit, and what the engine finds besides for those words. A day is also the day nearness
-    /// in time is measured from, as a note's own day is in `related`, so that a note written on
-    /// it says the same date and not how far it is from today.
+    /// The neighbourhood of tags, people and days taken together, which `written` is as they
+    /// would be typed: every note carrying all of them, marked as linked and listed whatever it
+    /// scores and whatever the limit, and what the engine finds besides for those words. The
+    /// last day among them is also the day nearness in time is measured from, as a note's own
+    /// day is in `related`, so that a note written on it says the same date and not how far it
+    /// is from today.
     pub(crate) fn labelled(
         &self,
-        label: &Label,
+        labels: &[Label],
         written: &str,
         opts: &SearchOptions,
     ) -> Vec<Hit<'_>> {
+        let Some((first, rest)) = labels.split_first() else {
+            return Vec::new();
+        };
+        let mut carrying = self.index.docs_with(first).to_vec();
+        for label in rest {
+            let with = self.index.docs_with(label);
+            carrying.retain(|d| with.binary_search(d).is_ok());
+        }
         let opts = SearchOptions {
-            today: match label {
-                Label::Date(day) => Some(*day),
-                _ => opts.today,
-            },
+            today: labels
+                .iter()
+                .rev()
+                .find_map(|label| match label {
+                    Label::Date(day) => Some(*day),
+                    _ => None,
+                })
+                .or(opts.today),
             ..opts.clone()
         };
-        // Whitespace after it, so that the label's word is a whole word and not the start of one.
-        self.typed(&format!("{written} "), &opts, self.index.docs_with(label))
+        // Whitespace after it, so that the last label's word is a whole word and not the start
+        // of one.
+        self.typed(&format!("{written} "), &opts, &carrying)
     }
 
     /// The one note whose head is what was typed, by the rule that lists a name first in
@@ -379,7 +393,7 @@ impl Engine {
 
     /// Scores the candidates and lists them best first, after the notes in `first`, which is
     /// sorted: those are the notes being named, and they are listed whatever they score. So are
-    /// the notes in `carrying`, also sorted, which carry the label being looked around and are
+    /// the notes in `carrying`, also sorted, which carry the labels being looked around and are
     /// facts of it, as what is linked is of a note.
     fn run<'a: 'c, 'c>(
         &'a self,

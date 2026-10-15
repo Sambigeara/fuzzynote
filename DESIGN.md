@@ -48,8 +48,8 @@ other people when you choose.
 - Zoom on what is shared: select notes, press Enter, and whatever they have in common becomes
   the context: tags, people, rare words. The old common-prefix zoom is the special case. One
   label is reinstated (2026-10-14): a tag, a person or a day typed on the line is gone into with
-  the arrow and is the context. Selecting notes, and a context of several labels or of plain
-  words, are not.
+  the arrow and is the context, and since 2026-10-15 labels gone into one after another are one
+  context. Selecting notes, and a context of plain words, are not.
 - Search groups: Tab-separated terms, `~` fuzzy, `!` inverse, substring by default.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key; show/hide archived globally.
@@ -95,8 +95,11 @@ other people when you choose.
   this context written by hand on every line, and Ctrl-P pasted it. Built for the simplest case:
   a note created while looking around another links to it. And since 2026-10-14 for the next: a
   note created inside a tag, a person or a day ends its head with the label, as it would have
-  been typed, and since 2026-10-15 a new row there opens with the label already in it. Only the
-  innermost place is inherited.
+  been typed, and since 2026-10-15 a new row there opens with the label already in it. Also
+  since 2026-10-15, labels gone into one after another are one context and are all inherited,
+  so a note written in `#house › today` carries both. A note on the path starts afresh: what is
+  written in it links to it and carries no label from before it, and labels gone into after it
+  leave it behind.
 
 ## Engine
 The engine is a library, and it is the app. It owns no UI, opens no file, reads no clock and
@@ -147,7 +150,7 @@ and a human-readable reason. Cheapest first:
    another scorer, not a dependency.
 
 **Combiner.** Weighted sum with per-scorer caps, top-k with reasons attached. Two facts come
-before any score: what is linked to the note being looked around, or carries the label being
+before any score: what is linked to the note being looked around, or carries the labels being
 looked around, and the note headed with what was typed. Budget: under five milliseconds per
 keystroke for ten thousand notes.
 
@@ -332,10 +335,10 @@ tab and the relay all run the same code.
   head is a version at every change, a new row's from its first letter, which creates the note
   with the moment Enter was pressed as its `created`, linked to the note being looked around and
   to whatever it names in brackets; date words are written out when the cursor leaves the row,
-  and so is the label of the tag, person or day a new note was written in, and a body is kept
-  when it closes. So Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or
-  from any row, each note on every device as it is typed. A new row left with nothing in its
-  head goes when the cursor leaves it, the arrow landing past where it was, up on the row above
+  a new row in a tag, a person or a day has its labels from the start, and a body is kept when
+  it closes. So Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or from
+  any row, each note on every device as it is typed. A new row left with nothing in its head
+  goes when the cursor leaves it, the arrow landing past where it was, up on the row above
   or down on the row that was under it; one never typed into reaches neither the log nor the
   relay, and one typed into and cleared has its deletion written and leaves nothing to undo.
   Enter on a new row with nothing in its head does nothing: there is already an empty row to
@@ -362,11 +365,10 @@ tab and the relay all run the same code.
   short of either end it is the caret's. Ctrl-Up and Ctrl-Down move the note under the cursor a
   row, the cursor with it. Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L links or unlinks
   the note under the cursor (see Zoom), Ctrl-C copies its first URL (or its head) to the
-  clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at
-  a time: off the row, writing out its date words and a new note's label, off the text on the
-  line, out of the zoom, and twice on an empty line outside one quits; Ctrl-D on the line is a
-  second key for clearing it. Ctrl-Q quits from anywhere, writing out the head first. The screen
-  is flat: no borders, no panel. The path is a dim row above the line and only in a zoom; the
+  clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at a time: off
+  the row, writing out its date words, off the text on the line, out of the zoom, and twice on
+  an empty line outside one quits; Ctrl-D on the line is a second key for clearing it. Ctrl-Q
+  quits from anywhere, writing out the head first. The screen is flat: no borders, no panel. The path is a dim row above the line and only in a zoom; the
   line is the first row; a date word has the date it stands for shown after it, dimmed; in a
   zoom the body of the note you are in sits under the line, dimmed and clamped. The rows follow,
   each a head and then, dimmed, a `¶` if it has a body, the names of what it links to after an
@@ -391,10 +393,12 @@ tab and the relay all run the same code.
   you already are, leaves Right doing nothing. The path shows a label as it is written:
   `#house`, `@joe`, `2026-10-16`. The list becomes the place's neighbourhood, in two parts. The
   facts come first, in the order the space keeps them in: what is linked to or from the note, or
-  every note carrying the label, which for a day is every note written on it or mentioning it. A
-  link is a fact and so is a label, and this part is a list you keep, however long it is. What the
-  engine finds besides follows, best first: shared tags and people, shared words, shared dates,
-  each with its reason; for a label, what its words find. The line comes with you, under one rule:
+  every note carrying the label, which for a day is every note written on it or mentioning it.
+  Labels gone into one after another are one place (see "Labels gone into one after another are
+  one place"): its facts are the notes carrying every one of them. A link is a fact and so is a
+  label, and this part is a list you keep, however long it is. What the engine finds besides
+  follows, best first: shared tags and people, shared words, shared dates, each with its reason;
+  for a label, what its words find. The line comes with you, under one rule:
   if the note you went into contains what you typed, or its head and the heads of the notes it
   links to have every word of it, you were searching for it, so the line clears and stepping back
   brings it back; otherwise you were writing, and the draft is carried in to be written here. A
@@ -408,10 +412,13 @@ tab and the relay all run the same code.
   it links to it and lands at the top of the linked part, and inside a label its head ends with
   the label, as it would have been typed, unless the note carries it already: in its text, or
   for a day by being written on it, since the day a note was written is its `created`. A note
-  written from the line has it at once; one written in place has it when the cursor leaves its
-  row, as its date words are written out, so the head reads as typed while it is typed. Only a
-  note created there inherits, and only from the innermost place: in `#house › Boiler` a new
-  note links to Boiler and carries no tag. This is context inheritance in its simplest form.
+  written from the line has it added as it is written; a new row opens with it already in its
+  head. Inside labels gone into one after another the head ends with each of them it does not
+  carry, in the order of the path: in `#house › @joe` a new row opens ` #house @joe`, and in
+  `#house › today` a note reads `Order oil #house`. Only a note created there inherits, and a
+  note on the path starts afresh: in `#house › Boiler` a new note links to Boiler and carries no
+  tag, and in `#house › Boiler › today` only today counts. This is context inheritance in its
+  simplest form.
   Typing inside a context narrows the neighbourhood and ranks what is left, with the note the
   line names first. Ctrl-L moves a note between the two parts by linking or unlinking it; it is
   a correction, not the mechanism, and outside a note's zoom, at the top or inside a label, it
@@ -819,10 +826,12 @@ tab and the relay all run the same code.
   says how you got there and its last step says where you are.
   One label at a time: several labels as one context, and a plain-word search as a context, are
   left out, the second because a plain-word search could only hand down the old prefix, the same
-  words written on every line. Nothing is linked in a label, so Ctrl-L there does nothing but
-  say so, and the first part of the list is the notes that carry it, whatever the weights make
-  of them. Remembering the path across restarts is left out too: the summon key in the open
-  questions is the answer to coming back to where you were.
+  words written on every line. Revised 2026-10-15: labels gone into one after another are one
+  context (see "Labels gone into one after another are one place"); a note on the path still
+  starts afresh, and a plain-word search is still not a context. Nothing is linked in a label,
+  so Ctrl-L there does nothing but say so, and the first part of the list is the notes that
+  carry it, whatever the weights make of them. Remembering the path across restarts is left out
+  too: the summon key in the open questions is the answer to coming back to where you were.
 - **A new row in a label opens with the label.** Decided 2026-10-15, agreed with Sam, replacing
   the call in "A tag is a place you can go into" that a note written in place gets the label
   when the cursor leaves its row. A head is kept as it is typed, so the note was on every other
@@ -847,6 +856,23 @@ tab and the relay all run the same code.
   writer's than the label was, so nothing is written until a letter that is. What it costs: a
   new row holding only the start of its label, `#ho` in `#house`, is empty too and goes when it
   is left, and the label taken out from its start writes each step, as typing does.
+- **Labels gone into one after another are one place.** Decided 2026-10-15, agreed with Sam,
+  replacing "One label at a time" and "only from the innermost place" in "A tag is a place you
+  can go into", for labels. Going into today from inside `#house` reads as today's notes in that
+  tag, and it was not: the list was today's notes, and a note written there carried today by
+  being written on it and got no `#house`, so it fell out of the tag without a word. Now the
+  labels at the end of the path, back to the nearest note on it or its start, are taken
+  together. The facts are the notes that carry every one of them, as one label's are the notes
+  that carry it, and what the engine finds besides, and the narrowing by the line, are for them
+  all. A note written there inherits each label it does not carry already, in the order of the
+  path, at the end of its head as one label always was: in `#house › today` a note from the line
+  reads `Order oil #house` and a new row opens ` #house`, in `#house › @joe` one opens
+  ` #house @joe`, and in `#house › /fri` one opens ` #house 2026-10-16`. A row holding only what
+  it opened with, or a start of it, is empty as before. A note on the path starts afresh, as it
+  always did, and is never taken together with anything: in `#house › Boiler` a new note links to
+  Boiler and carries no tag, and in `#house › Boiler › today` only today counts. The path,
+  going in, going back a step at a time, and going back to a place already on it are as they
+  were; nothing about the run is kept but the path itself.
 - **Where a note sits is kept.** Decided 2026-10-15, at Sam's direction, reversing "No manual
   ordering (provisional)". The empty line's list was in the order of `updated`, and so were a
   place's facts, by the Zoom paragraph and "A tag is a place you can go into", and that had two
