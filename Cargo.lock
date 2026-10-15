@@ -569,6 +569,7 @@ dependencies = [
  "serde_json",
  "toml",
  "tungstenite",
+ "unicode-width",
 ]
 
 [[package]]

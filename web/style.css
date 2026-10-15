@@ -1,11 +1,14 @@
 /* fzn in a browser: one column and one cursor on a blank page.
  *
  * There is no colour: paper, ink and two greys, so that the only thing in ink on the resting page
- * is the caret. The line sits a little above a third of the way down and never moves; the margin
- * above it is where the path goes. What is already on the page never animates: only a row that is
- * new fades in, and nothing translates, because a keystroke repaints the list and anything still in
- * flight when the next key lands makes the list swim. The states the page can be in are classes on
- * the body, set by the painter; this file is what each of them looks like. */
+ * is the caret. The column sits a little left of centre, so that a wide page has room beside it
+ * for the body of what the cursor is on. The line sits a little above a third of the way down
+ * and never moves, with a hairline under it; the margin above it is where the path goes. An open
+ * body is a sheet over the page, which is dimmed behind it. What is already on the page never
+ * animates: only a row that is new fades in, and nothing translates, because a keystroke repaints
+ * the list and anything still in flight when the next key lands makes the list swim. The states
+ * the page can be in are classes on the body, set by the painter; this file is what each of them
+ * looks like. */
 
 :root {
   --paper: #f8f7f4;
@@ -26,6 +29,14 @@
   --ease: cubic-bezier(.2, .7, .2, 1);
   --caret: rgb(27 26 24 / 0.32);
   --select: rgb(27 26 24 / 0.12);
+  --rule: rgb(27 26 24 / 0.1);
+  --sheet: #fdfcfa;
+  --dim: rgb(27 26 24 / 0.1);
+  /* Where the column starts: a third of the room beside it, so that it sits left of centre. */
+  --left: max(var(--gutter), (100% - var(--measure)) / 3);
+  --sheet-top: max(0.75rem, var(--above) - 2.5rem);
+  --sheet-below: 4.5rem;
+  --sheet-pad: 1.5rem;
   color-scheme: light dark;
 }
 
@@ -37,6 +48,9 @@
     --faint: #6f6a62;
     --caret: rgb(232 228 220 / 0.42);
     --select: rgb(232 228 220 / 0.16);
+    --rule: rgb(232 228 220 / 0.1);
+    --sheet: #1e1d1b;
+    --dim: rgb(0 0 0 / 0.35);
   }
 }
 
@@ -66,7 +80,7 @@ button, input, textarea { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
   width: min(var(--measure), 100% - 2 * var(--gutter));
-  margin-inline: auto;
+  margin-left: var(--left);
 }
 
 /* The margin above the line: where you are, and in a zoom what the note you are in says, set
@@ -82,12 +96,16 @@ button, input, textarea { font: inherit; color: inherit; }
   font-size: var(--meta-size);
 }
 
+/* The line, with a hairline under it, so that it reads as where typing goes and not as the first
+   of the rows. */
 .top {
   position: relative;
   flex: none;
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
 }
 
 .field {
@@ -105,7 +123,7 @@ button, input, textarea { font: inherit; color: inherit; }
 
 /* The caret in the line and in the box is drawn by the page, as #caret below; the browser's own
    line is hidden there, and kept only for the passphrase. */
-#line, .row .box { caret-color: transparent; }
+#line, .box { caret-color: transparent; }
 
 /* A soft block over the letter the caret is before, the height of the line, in ink thin enough
    that the letter reads through it. It breathes rather than blinks, and the page restarts its
@@ -169,27 +187,25 @@ button, input, textarea { font: inherit; color: inherit; }
 #path button:hover, #path button:focus-visible { color: var(--ink); text-decoration: underline; outline: none; }
 #path .gone { display: none; }
 
-/* A body read: the note you are in, above the line under the path, and the selected row's, under
-   the row. Six lines, with a fade over the last two when there is more; a tap gives the rest. */
-.said-body {
+/* A body read: what the cursor is on, beside the list, and where there is no room for that the
+   note you are in, above the line under the path. */
+#here, #pane {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  color: var(--soft);
 }
-.said-body.clamp {
+
+/* Under the path, so that what is found follows the line directly, as it does outside a note. Six
+   lines, with a fade over the last two when there is more; a tap gives the rest. */
+#here { flex: none; margin-top: 0.375rem; }
+#here.clamp {
   max-height: calc(6 * 1.5em);
   overflow: hidden;
   cursor: pointer;
   mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
 }
-.said-body.clamp.open { max-height: none; mask-image: none; -webkit-mask-image: none; cursor: auto; }
-
-/* Under the path, so that what is found follows the line directly, as it does outside a note. */
-#here {
-  flex: none;
-  margin-top: 0.375rem;
-  color: var(--soft);
-}
+#here.clamp.open { max-height: none; mask-image: none; -webkit-mask-image: none; cursor: auto; }
 
 #empty, #elsewhere {
   flex: none;
@@ -197,6 +213,15 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 #empty { color: var(--faint); }
 #elsewhere { color: var(--ink); }
+
+/* The list and, beside it on a wide page, the body of the note under the cursor. */
+#lower {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 /* The list. It reaches into the gutter by --gap on both sides, so that a row's text lines up with
    the line's and a tap on the row's edge is still the row's. */
@@ -289,12 +314,12 @@ button, input, textarea { font: inherit; color: inherit; }
    the cursor reached it would be the one thing cut when it matters. The box wraps as a read head
    would, in the same face and measure, so that a head does not jump when it becomes one. */
 .row[aria-selected="true"] .head,
-.row .box {
+.box {
   font-weight: 500;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.row .box {
+.box {
   flex: 1 1 0;
   min-width: 0;
   display: block;
@@ -311,26 +336,67 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 /* The head being written in has the row to itself; the tail comes back when the cursor leaves. */
 .row[aria-selected="true"] .tail { display: none; }
-
-.row .said-body { margin-top: 0.125rem; }
-
-/* A body open: the box holds the whole note at its natural weight, and nothing else on the row
-   is shown. The other rows, and the body of the note gone into, are not shown at all, so that the
-   note is the page and sits directly under the line: rows that only went faint looked the same as
-   a row with its body shown, and nothing said the note had opened. */
-.row.editing { margin-top: 0; }
-.row.editing .box { font-weight: 400; }
-.row.editing :is(time, .chev, .score) { display: none; }
 .row.blank .chev { display: none; }
-body.editing .row:not(.editing),
-body.editing #here { display: none; }
 
-/* Once it has loaded, the open body is an editor rather than the box. It sits in the row as the
+/* The body of what the cursor is on, beside the list on a page wide enough for it: from the top
+   of the first row's text, read-only, scrolled on its own, and faded at its foot as the list is.
+   From the line that is the note you are in, so it is not read above the line too. A narrower
+   page has no room for it, and a body is read there by opening it, or above the line. */
+#pane { display: none; }
+@media (min-width: 75rem) {
+  #here { display: none; }
+  #pane {
+    display: block;
+    position: absolute;
+    top: calc(1rem + (var(--row) - 1.5em) / 2);
+    bottom: 0;
+    left: calc(100% + 3rem);
+    width: min(30rem, (100vw - var(--measure)) * 2 / 3 - 3rem - var(--gutter));
+    overflow-y: auto;
+    padding-bottom: calc(2 * var(--row));
+    scrollbar-width: none;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
+  }
+}
+
+/* A body open: a sheet over the column, the page dimmed slightly behind it, which holds the whole
+   note at its natural weight and scrolls on its own. It is placed from the top and given its
+   height, never pinned to the foot of the screen, where iOS Safari misplaces what is pinned around
+   its keyboard. The words in the foot stay above the dimming, since they are about the note. */
+#buffer {
+  position: fixed;
+  z-index: 2;
+  top: var(--sheet-top);
+  left: calc(var(--left) - var(--sheet-pad));
+  width: calc(min(var(--measure), 100% - 2 * var(--gutter)) + 2 * var(--sheet-pad));
+  height: calc(100dvh - var(--sheet-top) - var(--sheet-below));
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 0 0.75rem;
+  border-radius: 6px;
+  background: var(--sheet);
+  box-shadow: 0 0 0 100vmax var(--dim), 0 0.75rem 2rem rgb(0 0 0 / 0.08);
+}
+#sheet {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+  padding: 0 var(--sheet-pad) 0.5rem;
+}
+#sheet > :is(.box, .cm-editor) { width: 100%; min-height: 100%; }
+.box.whole { font-weight: 400; }
+#foot { position: relative; z-index: 3; }
+
+/* Once it has loaded, the open body is an editor rather than the box. It sits in the sheet as the
    box does, in the same face, size and leading, so that the text does not move by a pixel when it
    takes over; the rules are prefixed to outrank the stylesheet the editor brings. The page's caret
    is the only caret, so the editor's own cursors are hidden, and a selection is a grey. In vim's
    insert mode the caret is a bar, as a terminal shows it, and a block otherwise. */
-.row .cm-editor { flex: 1 1 0; min-width: 0; }
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
@@ -339,10 +405,18 @@ body.editing #here { display: none; }
 .cm-editor .cm-selectionBackground,
 .cm-editor.cm-focused .cm-selectionBackground { background: var(--select); }
 #caret.bar { border-radius: 1px; }
-/* Vim's prompt for a command sits under the note in the foot's voice, not in a grey bar. */
-.row .cm-editor .cm-panels { background: var(--paper); color: var(--soft); border: 0; }
-.row .cm-editor .cm-vim-panel { padding: 0.25rem 0 0; font: var(--meta-size) / 1.5 var(--face); }
-.row .cm-editor .cm-vim-panel input { font: inherit; color: var(--ink); padding: 0; }
+/* Vim's prompt for a command sits at the foot of the sheet, under the text and never over it, in
+   the foot's voice and under a hairline, as the line has one, rather than in a grey bar. */
+#sheet-foot .cm-panels {
+  position: static;
+  padding: 0.5rem var(--sheet-pad) 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: none;
+  color: var(--soft);
+}
+#sheet-foot .cm-vim-panel { padding: 0; font: var(--meta-size) / 1.5 var(--face); }
+#sheet-foot .cm-vim-panel input { font: inherit; color: var(--ink); padding: 0; }
 
 /* Resting: the line empty, the cursor on it, nowhere gone into. The recent notes are faint heads
    that fade into the paper by the eighth row. They are all still there to walk onto. */
@@ -362,7 +436,7 @@ body.resting .row .tail { display: none; }
   align-items: baseline;
   gap: 0.25rem 1.5rem;
   width: min(var(--measure), 100% - 2 * var(--gutter));
-  margin: 0 auto;
+  margin-left: var(--left);
   padding: 0.75rem 0 max(1rem, env(safe-area-inset-bottom));
   font-size: var(--meta-size);
   color: var(--faint);
@@ -403,17 +477,17 @@ body.resting .row .tail { display: none; }
 #unlocking { margin: 1rem 0 0; color: var(--faint); font-size: var(--meta-size); }
 #unlocking.trouble { color: var(--ink); }
 body.locked #above, body.locked #top, body.locked #here, body.locked #empty,
-body.locked #list, body.locked #hints { display: none !important; }
+body.locked #lower, body.locked #hints { display: none !important; }
 
 /* Another tab has the space: this page is still here, dimmed, with one sentence and a way back. */
-body.elsewhere :is(#above, #top, #here, #list, #hints, #said) { opacity: .4; pointer-events: none; }
+body.elsewhere :is(#above, #top, #here, #lower, #buffer, #hints, #said) { opacity: .4; pointer-events: none; }
 
 .scratch { position: fixed; left: -100rem; top: 0; }
 
 /* A narrow screen: the document scrolls as a whole, the line stays at the top and the foot at the
    bottom, rows are tall enough for a thumb and the tail goes under the head. */
 @media (max-width: 640px) {
-  :root { --above: 1rem; --row: 2.75rem; }
+  :root { --above: 1rem; --row: 2.75rem; --sheet-below: 6.5rem; --sheet-pad: 1rem; }
   html { scroll-padding: 4.5rem 0 6rem; }
   body { height: auto; min-height: 100dvh; overflow: visible; }
   #page { flex: 1 0 auto; }
@@ -438,13 +512,18 @@ body.elsewhere :is(#above, #top, #here, #list, #hints, #said) { opacity: .4; poi
   /* The date of the row under the cursor goes under its head too, so the head keeps the width. */
   .row time { order: 1; flex-basis: 100%; }
   .chev { min-width: 2.75rem; min-height: 1.5em; text-align: right; }
+  #buffer { left: 0.5rem; width: calc(100% - 1rem); }
   #foot {
     position: sticky;
     bottom: 0;
     width: 100%;
+    margin: 0;
     padding-inline: var(--gutter);
     background: var(--paper);
     flex-direction: column;
+    /* Unwrapped, so that the words are as wide as the screen and scroll across, rather than as
+       wide as they are and off its edge. */
+    flex-wrap: nowrap;
     align-items: stretch;
     gap: 0;
   }

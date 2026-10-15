@@ -32,8 +32,9 @@ other people when you choose.
   that apply right now. A key is justified by the flow it sits in, never inherited.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the
   caret in the head of the row the cursor is on. Nothing else is highlighted and almost nothing
-  else is drawn: no borders, no panels, no counts, no colour. What is not being asked for is not
-  on the screen.
+  else is drawn: no borders, no counts, no colour. The body read is that of what the cursor is
+  on, apart from the list, never under a row or the line (see "A body is read apart from its
+  row"). What is not being asked for is not on the screen.
 - Archived is not forgotten. The list hides archived notes; the engine still remembers them.
 
 ## What stays from the original fzn (the soul)
@@ -119,9 +120,9 @@ out.
   this note in front of the person to edit, copy this, open this URL. The session has already
   done its own part, so an effect that fails costs a message and nothing else.
 - Out: the *view*, which is everything there is to paint: the path, the line and the dates its
-  date words stand for, the rows with their reasons, where the cursor is, the note to read,
-  what just happened, and what can be asked for where the cursor is, each with what to call it
-  there. A face puts its own key or button beside each.
+  date words stand for, the rows with their reasons, where the cursor is, the note under it as
+  it is being written, the note you are in, what just happened, and what can be asked for where
+  the cursor is, each with what to call it there. A face puts its own key or button beside each.
 
 Everything decided about how the app behaves lives here: what going into a note does with the
 line, what is listed first, what a note written in place links to, what is offered where. Under
@@ -330,11 +331,11 @@ tab and the relay all run the same code.
   landing at its end, and each change is kept at once; Up, Down and Esc leave the row, Esc
   keeping what was typed, as an editor's hands expect; Enter opens a new row directly under it,
   its head the field, as the original's Enter added a line under the current one; Ctrl-O opens
-  the body, which in the terminal is your editor and in the browser the row grown to hold the
-  whole note with the other rows gone, where the arrows move within it and Esc closes it back
-  onto the head, or with vim's keys `:q`; Right at the end of the head goes in (see Zoom); undo
-  puts the head back as it was when the cursor landed, and otherwise takes back the last change,
-  which for a row is the whole visit, one key for both. A chord acts on the note as it reads. A
+  the body, which in the terminal is your editor and in the browser a sheet over the page that
+  holds the whole note, where the arrows move within it and Esc closes it back onto the head, or
+  with vim's keys `:q`; Right at the end of the head goes in (see Zoom); undo puts the head
+  back as it was when the cursor landed, and otherwise takes back the last change, which for a
+  row is the whole visit, one key for both. A chord acts on the note as it reads. A
   head is a version at every change, a new row's from its first letter, which creates the note
   with the moment Enter was pressed as its `created`, linked to the note being looked around and
   to whatever it names in brackets; date words are written out when the cursor leaves the row,
@@ -363,28 +364,36 @@ tab and the relay all run the same code.
   archived or archives. Archived notes are out of every list, typed results included, until
   Ctrl-V on the line asks for them. Enter on a row opens a new row under it, Backspace on an
   empty head takes the row away, and Ctrl-O opens the note in your editor, which is how a body
-  is written here; the field in the row is its head, and the body stays shown under it. Right at
-  the end of a head goes into the note, and at the end of the line into what the line names;
-  short of either end it is the caret's. Ctrl-Up and Ctrl-Down move the note under the cursor a
-  row, the cursor with it. Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L links or unlinks
-  the note under the cursor (see Zoom), Ctrl-C copies its first URL (or its head) to the
-  clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at a time: off
-  the row, writing out its date words, off the text on the line, out of the zoom, and twice on
-  an empty line outside one quits; Ctrl-D on the line is a second key for clearing it. Ctrl-Q
-  quits from anywhere, writing out the head first. The screen is flat: no borders, no panel. The path is a dim row above the line and only in a zoom; the
-  line is the first row; a date word has the date it stands for shown after it, dimmed; in a
-  zoom the body of the note you are in sits under the line, dimmed and clamped. The rows follow,
-  each a head and then, dimmed, a `¶` if it has a body, the names of what it links to after an
-  arrow, and its reasons; the row the cursor is on has the terminal's cursor at the end of its
-  head, the head in bold, its date at the right, and its body under it, clamped to six rows. One
-  dim footer row names the chords that apply where the cursor is, ending with Escape's next
-  rung, `Esc clear`, `Esc back` or `Esc up`, or `Esc Esc quits` where there is none; a status
-  row above it exists only while there is something to say. Nothing says how many notes there
-  are or that sync is working; `not syncing` is said when it is not. Not yet reinstated: Ctrl-S
-  multi-select with Enter zooming on what the selection shares, Tab search groups, Ctrl-^
-  export. The first time a space is opened on a machine fzn asks for its passphrase, twice if
-  the space is new, and keeps the key it derives; `fzn key` asks again, for when it was
-  mistyped. `$FZN_PASSPHRASE` answers for scripts.
+  is written here; the field in the row is its head, and the body is read at the foot of the
+  list. Right at the end of a head goes into the note, and at the end of the line into what the
+  line names; short of either end it is the caret's. Ctrl-Up and Ctrl-Down move the note under
+  the cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and redo any change, Ctrl-L links
+  or unlinks the note under the cursor (see Zoom), Ctrl-C copies its first URL (or its head) to
+  the clipboard, Ctrl-_ opens the URL, Ctrl-B shows scores. Escape comes back a rung at a time:
+  off the row, writing out its date words, off the text on the line, out of the zoom, and twice
+  on an empty line outside one quits; Ctrl-D on the line is a second key for clearing it.
+  Ctrl-Q quits from anywhere, writing out the head first. The screen is flat: no borders, no
+  boxes. The path is a dim row above the line and only in a zoom; the line is the first row,
+  after a dim `>` in the column the rows leave empty, so that its text lines up with theirs; a
+  date word has the date it stands for shown after it, dimmed. The rows follow the line
+  directly, each a head and then, dimmed, a `¶` if it has a body, the names of what it links to
+  after an arrow, and its reasons; the row the cursor is on has the terminal's cursor at the end
+  of its head, the head in bold, and its date at the right. The foot of the list is kept for
+  the body of what the cursor is on: the note on its row, and on the line in a zoom the note you
+  are in. It is a row of nothing, then up to five rows of the body, dimmed, set in two columns
+  from the rows' text and cut with a `…` when it goes on. The rows are kept whatever the note
+  holds, on a row and on the line in a zoom alike, so walking the list never changes how much
+  of it is shown; on the line outside a zoom the list has the whole height. On a short screen
+  they shrink, keeping the list at least half its room, and go when fewer than two would be
+  left. One dim footer row names the chords that apply where the cursor is, ending with
+  Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or `Esc Esc quits` where there is
+  none; a status row above it exists only while there is something to say, and where the body
+  has its rows it takes the last of them, so that the list keeps its height. Nothing says how
+  many notes there are or that sync is working; `not syncing` is said when it is not. Not yet
+  reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, Tab search
+  groups, Ctrl-^ export. The first time a space is opened on a machine fzn asks for its
+  passphrase, twice if the space is new, and keeps the key it derives; `fzn key` asks again,
+  for when it was mistyped. `$FZN_PASSPHRASE` answers for scripts.
 - **Zoom.** Right at the end of a note's head makes it the context, and the path grows by one;
   short of the end, Right is the caret. A tag, a person or a day can be the context too (see "A
   tag is a place you can go into"): Right at the end of the line goes into what the line names,
@@ -445,20 +454,26 @@ tab and the relay all run the same code.
   visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
   from, so there is one address to open and nothing to set up. A relay hands the page out when
   it is pointed at the `web` directory with `--web`.
-  - *The page.* One column, centred, text left-aligned, and the line a little above a third of
-    the way down, where it stays: it does not move when you type or when results arrive. The
-    blank page is the caret and, under it in faint grey, the heads at the top of the list fading
-    out by the eighth. As you type, what is found takes their place; only a row that is new fades
-    in, and nothing else moves. The path, in a zoom, is in the margin above the line. No colour:
-    paper, ink and two greys, light and dark by the system's preference. The note under the
-    cursor is read under its row, clamped to six lines and opened with a tap; the note you are
-    in is read the same way above the line, under the path and in the path's smaller size, so
-    that where you are is all above the line and what is found follows it directly. The margin
-    grows downwards only for a body longer than it has room for. There is no panel beside the
-    list. (Until 2026-10-14 the note you were in was read under the line; Sam found it read as
-    part of the line, and it put a gap between the line and the first result. The terminal
-    still shows it under the line, where its line is the first row and a body above it would
-    move the line.)
+  - *The page.* One column, a little left of centre, with a third of the room beside it on its
+    left, text left-aligned, and the line a little above a third of the way down, where it
+    stays: it does not move when you type or when results arrive. A faint hairline under the
+    line sets it apart from the rows. The blank page is the caret and, under it in faint grey,
+    the heads at the top of the list fading out by the eighth. As you type, what is found takes
+    their place; only a row that is new fades in, and nothing else moves. The path, in a zoom, is
+    in the margin above the line. No colour: paper, ink and two greys, light and dark by the
+    system's preference. On a page at least 75rem wide the body of what the cursor is on is read
+    beside the list: the note under the cursor, or with the cursor on the line in a zoom the note
+    you are in. It is in the soft grey, from the top of the first row's text, with no border,
+    scrolled on its own and faded at its foot as the list is. A narrower page has no room for
+    it: a note's body is read there by opening it, and the note you are in is read above the
+    line, under the path and in the path's smaller size, clamped to six lines and opened with a
+    tap, so that where you are is all above the line and what is found follows it directly. The
+    margin grows downwards only for a body longer than it has room for. (Until 2026-10-14 the
+    note you were in was read under the line; Sam found it read as part of the line, and it put
+    a gap between the line and the first result. The terminal showed it under the line until
+    2026-10-15, where its line is the first row and a body above it would move the line. Until
+    2026-10-15 the note under the cursor was read under its row, and on a wide page the note you
+    are in above the line: see "A body is read apart from its row".)
   - *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
     terminal's chords are not here, because a browser keeps most of them for itself, but two it
     lets go: Ctrl-D clears the line or deletes the note under the cursor, as in the terminal,
@@ -478,19 +493,24 @@ tab and the relay all run the same code.
     its place while it is not there, so that neither moves the other, or the dates, by coming or
     going; and since they are on the line, clearing and going in are not also words in the foot.
   - *Writing in a row.* The head of the row the cursor is on is a text box, and typing changes
-    it; Enter opens a new row under it; Ctrl-O grows the box to the whole note and takes the
-    other rows off the page, so that the note is the page and there is no mistaking that it
-    opened, and in it Enter is a line break and the arrows move within it, and Esc closes it
-    back onto the head and brings the rows back. There is no second editor: the row is the
-    editor, for a long document too. While the body is open the box is a CodeMirror editor,
-    loaded the first time one opens: soft wrap, step undo, a grey selection, and vim mode for
-    the browser that asked for it with the word in the foot, where Esc is vim's and `:q`, `ZZ`
-    or the word in the foot closes it, and `:w` writes and stays. The head stays an ordinary
-    field. Until the editor has loaded, and if it never does, the box is a plain text area. The
-    `editor` the engine offers is not shown here.
-  - *Touch.* A tap puts the cursor on a note, a second tap on it opens its body, a tap on the
-    `›` at the end of the selected row goes into the note and on the one after the line into
-    what the line names, and the path is the way back.
+    it; Enter opens a new row under it; Ctrl-O opens the whole note in the sheet, a bounded
+    overlay over the column with the page dimmed slightly behind it, which scrolls on its own,
+    and in it Enter is a line break and the arrows move within it, and Esc closes it back onto
+    the head. Leaving it for anywhere else on the page closes it, and a press on another row goes
+    there; a press in its own margin, or on its row behind it, does not, and nor does leaving the
+    window. The words in the foot stay above the dimming, since they are about the note. There
+    is no second editor: the sheet is the body's editor, for a long document too, and with it
+    shut the head is written in its row. While the body is open the sheet holds a CodeMirror
+    editor, loaded the first time one opens: soft wrap, step undo, a grey selection, and vim
+    mode for the browser that asked for it with the word in the foot, where Esc is vim's and
+    `:q`, `ZZ` or the word in the foot closes it, and `:w` writes and stays, scrolled where it
+    was. Vim's prompt for a command is at the foot of the sheet, under the text and a hairline.
+    The head stays an ordinary field. Until the editor has loaded, and if it never does, the
+    sheet holds a plain text area. The `editor` the engine offers is not shown here.
+  - *Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body
+    (the head is a text box by then, and a tap in it places the caret), a tap on the `›` at the
+    end of the selected row goes into the note and on the one after the line into what the line
+    names, and the path is the way back.
   - *One tab at a time* is the device. A tab that opens says so and the older one stands
     down, since two of them writing one log would fork it.
   - Not yet: the page itself needs the relay to load, the graph view, and anything a browser
@@ -995,6 +1015,80 @@ tab and the relay all run the same code.
   name finds what was written in it" and the open question "One hop or the whole path?"), and is
   not written onto notes. The engine is asked about every place as one thing, a note, labels or
   both, where it had one call for a note and another for labels.
+- **A body is read apart from its row.** Decided 2026-10-15, at Sam's direction, replacing the
+  body shown under the row the cursor is on in both faces: in the terminal "its body under it,
+  clamped to six rows" (the Terminal paragraph and "One cursor, no chrome"), and in the browser
+  "the note under the cursor is read under its row, clamped to six lines". It also replaces "no
+  panels" in the Principles' "One cursor", and on the page "There is no panel beside the list".
+  A row that expanded the note under it as the arrows went up and down the list was hard to follow: every row below moved down and back at each step, a note with a body
+  looked like several rows, and the eye had to find the list again after each key. Now the list
+  is one row a note wherever the cursor is, and the body is read in a place of its own. In the
+  terminal that is the foot of the list, above the status and the keys: a row of nothing, then
+  up to five rows of the body in the dim grey, set in two columns from the rows' text, wrapped
+  to the width and cut with a `…`, so that it does not read as rows. The rows are kept whenever
+  the cursor is on a row, for a note with no body too, so walking the list never changes how
+  many rows it shows; on the line the list has the whole height. They take at most half of the
+  list's room, which a short screen shrinks, and go when fewer than two would be left. The body
+  is of the note as it is being written. The note you are in stays under the path, as it was.
+  On a page 75rem wide or more the body is beside the list, read-only, in the soft grey, from
+  the top of the first row's text, with no border and nothing round it, and it scrolls by itself
+  and fades at its foot as the list does; a narrower page, a phone, has no room for it and a
+  body is read there by opening it. To leave the room, the column sits left of centre, a third
+  of the space beside it on its left, which Sam wanted anyway. The panel dropped on 2026-10-14
+  was a second copy of the text and a second place to look, read unasked even with the cursor
+  on the line; this one says nothing until the cursor is on a note and is the one place a body
+  is read, so the reasoning stands for what it was about. The view's `preview`, the note that
+  panel read, had been read by no face since, and went. Revised the same day, at Sam's
+  direction: the body read is always that of what the cursor is on, which on the line in a zoom
+  is the note you are in. It replaces, above, "The note you are in stays under the path, as it
+  was", and in the Terminal paragraph "in a zoom the body of the note you are in sits under the
+  line, dimmed and clamped". In the terminal that body still opened between the line and the
+  list, about seven dim rows ending in a `…` with the list below them, which is the fault this
+  decision was for: a body expanded under a line, pushing the list down. Now nothing is drawn
+  between the line and the list; on the line in a zoom the foot reads the note you are in, and
+  its rows are kept there as on a row, so the list keeps its height between the line and the
+  rows; outside a zoom the line still has the whole height. On a page wide enough for the body
+  beside the list it is read there from the line too, and not above the line as well; a
+  narrower page, with nowhere beside the list, still reads it above the line, under the path.
+  And the status row, which had pushed the body and the list up a row whenever there was
+  something to say, takes the last of the body's rows instead, so that a key that says
+  something and the key after it, which clears it, do not change how much of the list is shown.
+- **The line is told apart from the rows.** Decided 2026-10-15, at Sam's direction. With the
+  cursor on the line, nothing said that the first row of text was where typing goes and the
+  rows under it were not, and on the page the path above it was the only other text in the same
+  column. In the terminal the line starts with a dim `>` in the column the rows leave empty, so
+  the line reads as a prompt and its text lines up with theirs; nothing else moves. Tried: `·`,
+  which already separates the app from the space on the path and a row's reasons; `▸`, too near
+  the path's `›`, and of ambiguous width, two columns in a terminal set for East Asian text;
+  and `:`, which is vim's command line. `>` is one column everywhere and says prompt. On the
+  page a hairline runs under the line, in a grey fainter than the faint one, and under the
+  passphrase field, which stands where the line will be; the path above stays small and faint.
+  No colour.
+- **An open body is a sheet over the page.** Decided 2026-10-15, at Sam's direction, replacing
+  "Ctrl-O grows the box to the whole note and takes the other rows off the page, so that the note
+  is the page" in the Browser paragraph, and "the row is the editor" with it. Ctrl-O, or the
+  word in the foot, opens the note in the sheet: a dedicated, bounded editor over the column,
+  about the size the body had in the page, scrolled on its own, with the page dimmed slightly
+  behind it. The 2026-10-14 reason for taking the rows away was that rows only gone faint looked
+  the same as a row with its body shown, and nothing said the note had opened; a sheet says it
+  and leaves the list where it was underneath. What the keys and the engine do is unchanged:
+  Escape, or vim's `:q`, `:wq`, `:x`, `ZZ` and `ZQ`, closes it, `:w` writes and stays, a version
+  is written when it closes, leaving it for elsewhere on the page closes it, and leaving the
+  window does not. The sheet stays scrolled where it was through `:w`, which closes and opens it
+  again, where the row had gone back to the top of the note. A press in its margin, or on its
+  own row behind it, keeps it open, so that the press does not close it for the tap to open it
+  again. The words in the foot stay above the dimming, since they are about the note. The sheet
+  is placed from the top and given a height, and is not pinned to the foot of the screen,
+  which iOS Safari misplaces around its keyboard (WebKit bug 297779); with the keyboard up a
+  browser that honours `interactive-widget=resizes-content` shortens it. It is not a
+  `<dialog>`: a modal one makes the foot inert, and its Escape cancels, which vim's Escape would
+  have had to fight; it is an element with the dialog role. With the editor bundle out of reach
+  it holds the plain text area. Vim's prompt for a command now sits at the sheet's foot, under
+  the text and a hairline. It had floated over the text: CodeMirror sticks its panels to the
+  foot of whatever scrolls the editor, which was the page, so with a long body open Escape then
+  `:` put the prompt over a line of the note. The editor is given the sheet's foot for its
+  panels instead, which changed the editor's source by one extension and the bundle by 64
+  bytes.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -1028,6 +1122,13 @@ tab and the relay all run the same code.
   Undo has no key at all yet.
 - Touch. A tap puts the cursor on a note, a second opens its body, the `›` goes in, and the
   path at the top is the way back. Whether any of that is right is for use on a phone to say.
+  Seen 2026-10-15 in Chromium's and WebKit's touch emulation: once the cursor is on a row its
+  head is the text box and fills the row, so a second tap on the head puts the caret there. A
+  second tap off it, on the date under the head on a phone, opens the body when it lands there,
+  but a browser takes a tap that near a text box into the box: WebKit every time it was tried,
+  Chromium some of the time. Until 2026-10-15 the body read under the row was where a second
+  tap opened it in both, and it went with the body; on a phone the word in the foot is now the
+  one sure way to open a body, and whether the row wants a target of its own for it is open.
 - Right at the end of the head as the zoom key, or Alt-Z. Right is dead at the end of the line,
   and a hand that thinks the cursor is on the line when it is on a row goes in instead of moving
   the caret; the one cursor is the tell. Esc keeps rather than cancels, which spreadsheet hands

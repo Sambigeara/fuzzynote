@@ -262,8 +262,6 @@ pub struct View<'a> {
     pub rows: &'a [Row],
     /// The row the cursor is on. With none, it is on the line.
     pub cursor: Option<usize>,
-    /// The note to read beside the list: the one under the cursor, or the first on the list.
-    pub preview: Option<&'a Record>,
     /// What just happened.
     pub status: &'a str,
     /// How many notes there are.
@@ -977,8 +975,6 @@ impl Session {
     }
 
     pub fn view(&self) -> View<'_> {
-        // A new note with nothing in it is not held, so it has nothing to preview.
-        let shown = self.selected().or(self.rows.first());
         View {
             path: self.pivots.iter().map(|p| p.place.name()).collect(),
             line: &self.line,
@@ -988,7 +984,6 @@ impl Session {
                 .collect(),
             rows: &self.rows,
             cursor: self.cursor,
-            preview: shown.and_then(|r| self.notes.get(&r.id)),
             status: &self.status,
             notes: self.notes.len(),
             hints: self.hints(),
@@ -2251,18 +2246,12 @@ mod tests {
         put(&mut s, "a", "kettlebell swings", &[], 3_000);
         s.act(Action::Move(1));
         assert_eq!(s.cursor, Some(0));
-        assert_eq!(s.view().preview.unwrap().id, "a");
         s.act(Action::Move(10));
         assert_eq!(s.cursor, Some(2), "no further than the last note");
         s.act(Action::Move(-1));
         assert_eq!(s.cursor, Some(1));
         s.act(Action::Move(-10));
         assert_eq!(s.cursor, None, "up from the first note is the line");
-        assert_eq!(
-            s.view().preview.unwrap().id,
-            "a",
-            "from the line, the first note is the one to read"
-        );
 
         s.act(Action::Select(Some(2)));
         assert_eq!(s.cursor, Some(2));
@@ -3130,7 +3119,6 @@ mod tests {
         assert_eq!(view["rows"][0]["head"], "Boiler");
         assert_eq!(view["rows"][0]["has_body"], true);
         assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00Z");
-        assert_eq!(view["preview"]["text"], "Boiler\nthe plan");
         assert_eq!(view["notes"], 1);
         assert_eq!(view["here"], serde_json::Value::Null);
         assert_eq!(
@@ -3283,7 +3271,6 @@ mod tests {
         assert!(s.rows[0].linked, "it will be linked to where you are");
         assert_eq!(s.cursor, Some(0));
         assert_eq!(s.line, "");
-        assert!(s.view().preview.is_none());
         assert_eq!(s.view().here.unwrap().text, "Boiler");
 
         let typed = edited(&mut s, "pressure dropped to 0.8\nbleed the radiators /fri");

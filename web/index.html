@@ -19,7 +19,7 @@
   </form>
   <div id="above" class="above">
     <nav id="path" aria-label="Where you are" hidden></nav>
-    <div id="here" class="said-body" hidden></div>
+    <div id="here" hidden></div>
   </div>
   <div id="top" class="top">
     <input id="line" class="field" type="text" autocomplete="off" autocapitalize="sentences"
@@ -30,8 +30,15 @@
   </div>
   <p id="empty" hidden>Type a thought. Enter keeps it.</p>
   <p id="elsewhere" hidden>fzn is open in another tab. <button id="takeover" class="word" type="button">use it here</button></p>
-  <ol id="list" role="listbox" aria-label="Notes"></ol>
+  <div id="lower">
+    <ol id="list" role="listbox" aria-label="Notes"></ol>
+    <div id="pane" aria-label="The body of what the cursor is on"></div>
+  </div>
 </main>
+<div id="buffer" role="dialog" aria-label="The note under the cursor" hidden>
+  <div id="sheet"></div>
+  <div id="sheet-foot"></div>
+</div>
 <footer id="foot">
   <div id="hints"></div>
   <div id="said">

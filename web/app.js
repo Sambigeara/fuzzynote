@@ -11,14 +11,18 @@
 // change as it is typed. Enter with text on the line writes it and puts the box in the note it
 // wrote. Enter on a row opens a new note under it, its empty head the box, so that Enter, type,
 // Enter, type writes notes in a run, as the original's Enter did. Ctrl-O opens the body, the
-// original's chord for it: the box grows to hold the whole note, or an editor takes its place
-// once one has been fetched (see loadEditor), the other rows go so that the note is the page, the
-// arrows stay inside it, and Escape closes it, or with vim's keys `:q`. Touch has no chord, so a
-// second tap on the row opens it there. The arrow to the right at the end of a head goes into the
-// note, and at the end of the line into what the line names; Escape comes back a rung at a time,
-// off the row, off the text on the line, out of the place. Control with an arrow moves the note
-// on the row up or down the list. Everything else is a word in the foot, moving a note included,
-// and only what applies right now gets one.
+// original's chord for it, in the sheet: a bounded overlay over the dimmed page, scrolled on its
+// own, where the box holds the whole note, or an editor takes its place once one has been fetched
+// (see loadEditor). The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
+// leaving it for anywhere else on the page closes it too. Touch has no chord, so a second tap on
+// the row opens it, off its head: the head is the box by then, and a tap there is the caret's. A
+// body is never shown under its row. On a wide page the body of what the cursor is on is read
+// beside the list: the note under it, or from the line the note you are in. On a narrower one a
+// note's body is read by opening it, and the note you are in is read above the line. The arrow to
+// the right at the end of a head goes into the note, and at the end of the line into what it names;
+// Escape comes back a rung at a time, off the row, off the text on the line, out of the place.
+// Control with an arrow moves the note on the row up or down the list. Everything else is a word
+// in the foot, moving a note included, and only what applies right now gets one.
 //
 // The painting is kept cheap because it runs on every keystroke: rows are keyed by id and their
 // nodes reused, nothing measures the page but the caret, once at the end, and only a row that is
@@ -170,6 +174,11 @@ let standing = true;
 
 const line = $('line');
 const list = $('list');
+const pane = $('pane');
+// The sheet, and in it the scroll that the body is written in and, at its foot, where vim's
+// prompt for a command goes, under the text and never over it.
+const buffer = $('buffer');
+const sheet = $('sheet');
 
 function act(action) {
   if (!fzn || !standing) return;
@@ -201,8 +210,8 @@ function carryOut(json) {
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
   look();
-  // The page has no editor but the row, so a note handed to an editor has its body opened in
-  // its row, if it is on the list.
+  // The page has no editor but the sheet, so a note handed to an editor has its body opened
+  // there, if it is on the list.
   if (todo.editor) {
     const at = view.rows.findIndex((row) => row.id === todo.editor.id);
     if (at >= 0 && !view.field?.whole) queueMicrotask(() => (act({ select: at }), act('edit')));
@@ -313,12 +322,6 @@ const bodyOf = (text) => {
 // the page in the middle of a paint would cost the keystroke.
 const long = (body) => body.split('\n').reduce((n, part) => n + 1 + Math.floor(part.length / 72), 0) > 6;
 
-function said(node, body) {
-  node.textContent = body;
-  node.classList.toggle('clamp', long(body));
-  node.classList.remove('open');
-}
-
 // The key that asks for something, where one does. Nothing shows a key on the page; a word in
 // the foot says it when the pointer rests on it.
 function keyFor(action) {
@@ -354,9 +357,9 @@ const rows = new Map();
 // The text box that the head of the row under the cursor becomes. There is one, made once, and it
 // is moved into whichever row the cursor lands on, so that it is never replaced while the cursor
 // stays: it keeps the person's caret and what they have typed. On a head it holds the first line
-// of the note; with the body open it holds the whole note, until the editor has arrived and takes
-// its place there. `quiet` is set while the painter moves it about, so that a blur it causes is
-// not taken for the person leaving.
+// of the note; with the body open it is moved into the sheet and holds the whole note, until the
+// editor has arrived and takes its place there. `quiet` is set while the painter moves it about,
+// so that a blur it causes is not taken for the person leaving.
 const box = el('textarea', 'box');
 box.rows = 1;
 box.spellcheck = false;
@@ -411,8 +414,8 @@ function leftFor(event) {
   if (quiet || !view?.field?.whole) return;
   const to = event.relatedTarget;
   // A word in the foot or a step of the path reached by Tab is about the note as it is being
-  // written, so the body stays open for it.
-  if (to?.closest?.('#hints, #path')) return;
+  // written, so the body stays open for it, and anywhere in the sheet is still in it.
+  if (to?.closest?.('#hints, #path, #buffer')) return;
   if (!(to ? document.body.contains(to) : document.hasFocus())) return;
   leaving = true;
   try {
@@ -508,13 +511,13 @@ const soon = (task) =>
 function loadEditor() {
   editorSoon ??= import('./vendor/editor.js').then(
     (module) => {
-      editor = module.mount(editorHooks);
+      editor = module.mount(editorHooks, $('sheet-foot'));
       editor.setVim(vimOn);
-      // The body is the editor's but for Ctrl-O, which never reaches the browser's file dialog,
-      // and Escape, which closes it without vim's keys. With them Escape is vim's alone, since
-      // hands that press it twice to be sure of normal mode would close the note under
-      // themselves; `:q`, `ZZ` and the word in the foot close it.
-      editor.dom.addEventListener('keydown', (event) => {
+      // The sheet is the editor's but for Ctrl-O, which never reaches the browser's file dialog,
+      // from the text or from vim's prompt, and Escape, which closes it without vim's keys. With
+      // them Escape is vim's alone, since hands that press it twice to be sure of normal mode
+      // would close the note under themselves; `:q`, `ZZ` and the word in the foot close it.
+      buffer.addEventListener('keydown', (event) => {
         if (event.isComposing || editor.composing || !view?.field?.whole) return;
         if (ctrlOnly(event) && (event.key === 'o' || event.key === 'O')) return event.preventDefault();
         if (event.key !== 'Escape' || event.defaultPrevented || editor.vimOn) return;
@@ -538,22 +541,22 @@ const editorHooks = {
     held = editor.contentDOM;
     if (!quiet) caretMoved();
   },
-  // Vim's prompt for a command is in the editor's own frame, and going to it is not leaving.
-  // Nor is a blur the editor causes itself by taking its content out of the page for a moment,
-  // as the vim keys do to end a composition after a dead key.
+  // Going to vim's prompt for a command, at the foot of the sheet, is not leaving, and leftFor
+  // knows it. Nor is a blur the editor causes itself by taking its content out of the page for a
+  // moment, as the vim keys do to end a composition after a dead key.
   onBlur: (event) => {
     if (held === editor.contentDOM) held = null;
     placeCaret();
     if (!event.target.isConnected) return;
-    if (event.relatedTarget && editor.dom.contains(event.relatedTarget)) return;
     leftFor(event);
   },
   // A body is written when it closes, so vim's write closes it and opens it again under the
-  // hands, if the note is still there; its quits close it, and the one with a bang first puts
-  // the note back as it was when the cursor landed on it.
+  // hands, if the note is still there, scrolled as it was, which closing lost; its quits close
+  // it, and the one with a bang first puts the note back as it was when the cursor landed on it.
   onEx: (what) => {
     if (what === 'write') {
       const was = boxIn;
+      const scrolled = sheet.scrollTop;
       keeping = true;
       try {
         act('done');
@@ -561,6 +564,7 @@ const editorHooks = {
       } finally {
         keeping = false;
       }
+      sheet.scrollTop = scrolled;
     } else {
       // Put back is asked for only when the engine offers it, since on a body that has not
       // changed undo would take back the last version written instead, which may be another
@@ -576,13 +580,13 @@ function rowKey(row, selected, apart) {
   const field = selected ? view.field : null;
   return JSON.stringify([
     // The head of the row under the cursor is the box's, so it is left out here: a row is not
-    // filled again, taking the box out and putting it back, for a letter typed into it.
-    field ? null : row.head,
-    row.links, row.reasons, row.archived, row.has_body, apart,
+    // filled again, taking the box out and putting it back, for a letter typed into it. With the
+    // body open in the sheet the row reads its head as it is being written. Nor is its date in
+    // the key, which a new note's first letter gives it: the date is set in place, since filling
+    // the row would take the box out under a composition the first letter began.
+    field && !field.whole ? null : field ? headOf(field.text) : row.head,
+    row.links, row.reasons, row.archived, row.has_body, apart, selected,
     view.scores_shown ? row.score : null,
-    // Nor is its date, which a new note's first letter gives it: the date is set in place, since
-    // filling the row would take the box out under a composition the first letter began.
-    selected ? [!!field?.whole, !!field?.whole && !!editor, field && !field.whole ? bodyOf(field.text) : ''] : null,
   ]);
 }
 
@@ -603,7 +607,7 @@ function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  main.append(field ? (field.whole && editor ? editor.dom : box) : el('span', 'head', row.head));
+  main.append(field && !field.whole ? box : el('span', 'head', field ? headOf(field.text) : row.head));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));
@@ -617,15 +621,7 @@ function fill(li, row, selected) {
     chev.setAttribute('aria-label', 'Go in');
     main.append(chev);
   }
-  const parts = [main];
-  // The body under the head is the field's, so that it is the note as it is being written.
-  const told = field && !field.whole ? bodyOf(field.text) : '';
-  if (told) {
-    const body = el('div', 'said-body');
-    said(body, told);
-    parts.push(body);
-  }
-  li.replaceChildren(...parts);
+  li.replaceChildren(main);
 }
 
 function paintRows() {
@@ -645,10 +641,7 @@ function paintRows() {
   const landed = fieldId !== boxIn;
   if (landed && boxIn) {
     const left = rows.get(boxIn);
-    if (left) {
-      left.dataset.k = '';
-      left.classList.remove('editing');
-    }
+    if (left) left.dataset.k = '';
     box.remove();
     editor?.dom.remove();
   }
@@ -682,7 +675,6 @@ function paintRows() {
     const apart = zoomed && searching && !row.linked && i > 0 && view.rows[i - 1].linked;
     li.classList.toggle('apart', apart);
     li.classList.toggle('archived', row.archived);
-    li.classList.toggle('editing', selected && !!field?.whole);
     // A new note with nothing in it has nowhere to go in to, so its row has no arrow.
     li.classList.toggle('blank', selected && !!field?.fresh);
     const k = rowKey(row, selected, apart);
@@ -701,6 +693,12 @@ function paintRows() {
     if (li === at) at = at.nextSibling;
     else list.insertBefore(li, at);
   }
+
+  // An open body is the sheet's: the editor once it has arrived, and the box until then. Neither
+  // is left there once the body has closed, when the box is back in its row.
+  const opened = field && boxIn && field.whole ? (editor ? editor.dom : box) : null;
+  if (opened && opened.parentElement !== sheet) sheet.prepend(opened);
+  for (const other of [box, editor?.dom]) if (other && other !== opened && other.parentElement === sheet) other.remove();
 
   // The box holds what the field says, set only when that differs from what it holds, so that the
   // person's caret is left alone while they type. On landing, and when the body closes, the caret
@@ -839,42 +837,56 @@ function paintPath() {
   });
 }
 
+// The body of what the cursor is on, beside the list, which the page shows only when it is wide
+// enough to have room for it: the note under the cursor as it is being written, and on the line
+// the note you are in, which is then not read above the line as well. A note landed on is read
+// from its top. With the body open the sheet has it, and the pane says nothing.
+let paneSays = '';
+function paintPane() {
+  const field = view.field;
+  const says = field ? (field.whole ? '' : bodyOf(field.text)) : view.here ? bodyOf(view.here.text) : '';
+  if (says !== paneSays) pane.textContent = paneSays = says;
+  const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
+  if (pane.dataset.under !== under) {
+    pane.dataset.under = under;
+    pane.scrollTop = 0;
+  }
+}
+
 function paint() {
   if (!view) return;
   const zoomed = view.path.length > 0;
   const whole = !!view.field?.whole;
   const body = document.body.classList;
-  const wasWhole = body.contains('editing');
   body.toggle('resting', view.line === '' && view.cursor == null && !zoomed);
-  body.toggle('editing', whole);
   body.toggle('zoomed', zoomed);
+  // The sheet is shown before the rows are painted, which put the focus in it.
+  const wasWhole = !buffer.hidden;
+  buffer.hidden = !whole;
 
   paintPath();
   $('clear').hidden = view.line === '';
   $('go-in').hidden = !(view.cursor == null && view.hints.some((hint) => named(hint.action) === 'go_in'));
   $('dates').textContent = view.dates.length ? `→ ${view.dates.map(dated).join(', ')}` : '';
 
-  // The note you are in, when it says more than its head.
+  // The note you are in, when it says more than its head, clamped to six lines; a tap gives the
+  // rest.
   const here = $('here');
   const told = view.here ? bodyOf(view.here.text) : '';
   if (here.dataset.shows !== told) {
     here.dataset.shows = told;
-    said(here, told);
+    here.textContent = told;
+    here.classList.toggle('clamp', long(told));
+    here.classList.remove('open');
   }
   here.hidden = !told;
 
   $('empty').hidden = !(view.notes === 0 && !zoomed && view.line === '' && view.cursor == null);
 
   paintRows();
-  // An open body is the only row shown, directly under the line, so the page goes to its top to
-  // show it from its first line. When it closes the other rows come back, and the list is moved
-  // only as far as keeps the row on the screen.
-  if (whole && !wasWhole) {
-    list.scrollTop = 0;
-    window.scrollTo(0, 0);
-  } else if (wasWhole && !whole && boxIn) {
-    rows.get(boxIn)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }
+  paintPane();
+  // A body opened is read from its first line.
+  if (whole && !wasWhole) sheet.scrollTop = 0;
   paintHints();
   paintFoot();
   caretMoved();
@@ -986,7 +998,8 @@ function showCaret(left, top, wide, tall) {
 
 // In the editor there is no copy to measure: the editor says where the caret is and where the
 // letter after it ends. The block is sized and centred as it is in the box. In vim's insert mode
-// it is a bar at the caret, as a terminal draws vim's.
+// it is a bar at the caret, as a terminal draws vim's. The editor is in the sheet, which scrolls,
+// so the block is placed in what the sheet scrolls and moves with the text.
 function placeEditorCaret() {
   const c = editor.caret();
   const parent = editor.dom.parentElement;
@@ -1003,8 +1016,9 @@ function placeEditorCaret() {
   const wide = bar ? 2 : c.right ? Math.max(letter, 0.35 * size) : 0.55 * size;
   const frame = parent.getBoundingClientRect();
   const inset = bar ? 1 : c.right ? (wide - letter) / 2 : 0;
-  const left = c.rect.left - frame.left - parent.clientLeft - inset;
-  const top = c.rect.top - frame.top - parent.clientTop - (tall - (c.rect.bottom - c.rect.top)) / 2;
+  const left = c.rect.left - frame.left - parent.clientLeft + parent.scrollLeft - inset;
+  const top =
+    c.rect.top - frame.top - parent.clientTop + parent.scrollTop - (tall - (c.rect.bottom - c.rect.top)) / 2;
   if (caret.parentElement !== parent) parent.append(caret);
   caret.classList.toggle('bar', bar);
   showCaret(left, top, wide, tall);
@@ -1040,12 +1054,14 @@ window.addEventListener('resize', placeCaret);
 
 const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey;
 
-// The keys, wherever the focus has got to but the box and the editor, which have their own.
-// Typing goes to the field the cursor is in, so a letter pressed on a word in the foot takes the
-// focus there before it lands. A button that has the focus keeps Enter and Space.
+// The keys, wherever the focus has got to but the box and the sheet, which have their own. A key
+// that closes the sheet takes what it was pressed in out of the page, so the sheet is looked for
+// on the way the key came rather than round where it was pressed. Typing goes to the field the
+// cursor is in, so a letter pressed on a word in the foot takes the focus there before it lands.
+// A button that has the focus keeps Enter and Space.
 document.addEventListener('keydown', (event) => {
   if (event.isComposing || !view || !standing || !fzn) return;
-  if (event.target === box || editor?.dom.contains(event.target)) return;
+  if (event.target === box || event.composedPath().includes(buffer)) return;
   const onButton = event.target instanceof HTMLButtonElement;
   if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
   if (event.key === 'Tab') return;
@@ -1126,28 +1142,26 @@ $('go-in').onclick = () => {
   follow();
 };
 
-// While a body is open, a press elsewhere in its own row keeps the focus in the box, so that it
-// is not closed by the press and opened again by the tap.
+// While a body is open, a press on its row behind the sheet keeps the focus in the sheet, so that
+// the body is not closed by the press and opened again by the tap; so does a press in the sheet
+// around the text. A press anywhere else leaves the sheet, and closes it.
 list.addEventListener('mousedown', (event) => {
-  if (!view?.field?.whole || event.target === box || editor?.dom.contains(event.target)) return;
-  if (event.target.closest('.row')?.dataset.id === boxIn) event.preventDefault();
+  if (view?.field?.whole && event.target.closest('.row')?.dataset.id === boxIn) event.preventDefault();
+});
+buffer.addEventListener('mousedown', (event) => {
+  if (event.target === buffer || event.target === sheet) event.preventDefault();
 });
 
-// A tap puts the cursor on a note, and a second opens its body. The arrow on the selected row
-// goes in, and a clamped body gives the rest of itself.
+// A tap puts the cursor on a note, and a second, off the head, which is the box's, opens its body.
+// The arrow on the selected row goes in.
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
-  if (!item || event.target === box || editor?.dom.contains(event.target)) return;
+  if (!item || event.target === box) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
-  if (event.target.closest('.chev')) {
-    act('go_in');
-  } else {
-    const body = event.target.closest('.said-body.clamp:not(.open)');
-    if (body) return body.classList.add('open');
-    if (at !== view.cursor) act({ select: at });
-    else if (!view.field?.whole) act('edit');
-  }
+  if (event.target.closest('.chev')) act('go_in');
+  else if (at !== view.cursor) act({ select: at });
+  else if (!view.field?.whole) act('edit');
   follow();
 });
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));

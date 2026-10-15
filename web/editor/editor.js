@@ -2,17 +2,19 @@
 //
 // It is a plain-text editor and nothing more. The page owns everything else: when a body opens
 // and closes, what the engine is told, where the focus goes and the caret, which the page draws
-// itself from the coordinates asked for here. So this is one view, made once and moved between
-// rows as the page's text box is, and a handful of plain functions the page calls. Its state is
-// made afresh each time a body opens, so the step undo belongs to one visit; after that the
+// itself from the coordinates asked for here. So this is one view, made once and put in the
+// page's sheet whenever a body opens, and a handful of plain functions the page calls. Its state
+// is made afresh each time a body opens, so the step undo belongs to one visit; after that the
 // engine's undo is the only one.
 //
 // Vim's Ex commands are its own, global to the module, so they reach whichever page mounted the
 // view last. In vim a write stays and a quit goes; here a version is written when the body
-// closes, so `:w` asks the page to close and open again, and the quits ask it to close.
+// closes, so `:w` asks the page to close and open again, and the quits ask it to close. Vim's
+// prompt for a command is a panel, which the editor would stick to the foot of whatever scrolls
+// it, over the text; it goes in the element the page gives for it instead, under the text.
 
 import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from '@codemirror/state';
-import { EditorView, drawSelection, keymap } from '@codemirror/view';
+import { EditorView, drawSelection, keymap, panels } from '@codemirror/view';
 import { history, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
 
@@ -34,7 +36,7 @@ Vim.mapCommand('ZQ', 'action', 'fznDiscard', {}, { context: 'normal' });
 // A change the page makes is not one to tell the page about.
 const fromPage = Annotation.define();
 
-export function mount(hooks) {
+export function mount(hooks, foot) {
   current = hooks;
   const vimSlot = new Compartment();
   let vimWanted = false;
@@ -52,6 +54,7 @@ export function mount(hooks) {
       ...standardKeymap,
     ]),
     history(),
+    panels({ bottomContainer: foot }),
     drawSelection(),
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({

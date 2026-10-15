@@ -14,6 +14,8 @@ serde_json.workspace = true
 toml = "1"
 getrandom = "0.3"
 ratatui = "0.30"
+# How many columns a letter takes, as ratatui counts them when it draws; it brings it in already.
+unicode-width = "0.2"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 
 # For the offset of the local clock from UTC, which the standard library cannot say.

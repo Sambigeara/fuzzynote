@@ -21,11 +21,15 @@
 //! the line, out of the place, and on an empty line outside any place two of them quit. The
 //! footer shows only the keys that apply where the cursor is.
 //!
-//! The screen is painted by hand and flat, in the terminal's own colours, because the cursor has
-//! to land in a row whose height depends on what is under it, and because there is nothing to
-//! frame: the terminal's cursor in a bold head is the row being written in, and dim is what can
-//! be ignored. A status row is there only while there is something to say, and each key clears
-//! what the one before it said.
+//! The screen is painted by hand and flat, in the terminal's own colours, because there is
+//! nothing to frame: the terminal's cursor in a bold head is the row being written in, and dim is
+//! what can be ignored. The line starts with a dim `>` in the column the rows leave empty, so that
+//! it reads as where typing goes and its text lines up with theirs. Nothing is drawn between the
+//! line and the list, nor under a row, where a body would open and close as the cursor walks past
+//! and move every row below. The body read is that of what the cursor is on, the note under it or,
+//! on the line in a place, the place's note, in rows kept at the foot of the list, the same rows
+//! whatever the note holds. A status row is there only while there is something to say, and each
+//! key clears what the one before it said.
 //!
 //! With a relay named, a thread holds the socket and the app hears from it between keys: what
 //! the relay says goes to the device, and what the device wants kept or said comes back here to
@@ -47,6 +51,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::{DefaultTerminal, Frame};
+use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::store::{self, Logs};
 use crate::sync::{self, Link};
@@ -54,8 +59,11 @@ use crate::system::System;
 
 /// How long the keyboard is waited on before the relay is listened to.
 const TICK: Duration = Duration::from_millis(50);
-/// The most of a body shown under its row before the rest is left to a `…`.
-const BODY_ROWS: usize = 6;
+/// The most rows the body of what the cursor is on takes at the foot of the list.
+const PREVIEW_ROWS: usize = 5;
+/// The mark before the text of the line, in the column the rows leave empty, so that the line
+/// reads as where typing goes and the rows' text lines up under its own.
+const PROMPT: &str = ">";
 /// What the status row says for as long as the passphrase opens nothing the relay has sent.
 const WRONG_KEY: &str =
     "the passphrase does not open this space: quit, and run fzn key to enter it again";
@@ -398,15 +406,17 @@ fn tail(row: &Row) -> String {
     tail
 }
 
-/// Text broken between words into rows of at most `width` characters, a word longer than a row
-/// across as many as it takes. Each line of the text starts a row of its own.
+/// Text broken between words into rows at most `width` columns wide, a word longer than a row
+/// across as many as it takes. Each line of the text starts a row of its own. A letter is as wide
+/// as the terminal draws it, so that a row of wide letters, Chinese say, is broken where it meets
+/// the edge rather than cut off there.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut rows = Vec::new();
     for line in text.lines() {
         let (mut row, mut len) = (String::new(), 0);
         for word in line.split(' ') {
-            let n = word.chars().count();
+            let n = word.width();
             if len > 0 && len + 1 + n > width {
                 rows.push(std::mem::take(&mut row));
                 len = 0;
@@ -415,12 +425,13 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
                 len += 1;
             }
             for c in word.chars() {
-                if len == width {
+                let n = c.width().unwrap_or(0);
+                if len > 0 && len + n > width {
                     rows.push(std::mem::take(&mut row));
                     len = 0;
                 }
                 row.push(c);
-                len += 1;
+                len += n;
             }
         }
         rows.push(row);
@@ -428,24 +439,31 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
-/// A body as rows indented by `indent` in a screen `width` wide, at most [`BODY_ROWS`] of them
-/// and a dim `…` when there is more.
-fn body_rows(body: &str, indent: usize, width: usize) -> Vec<Line<'static>> {
-    if body.is_empty() {
-        return Vec::new();
-    }
-    let pad = " ".repeat(indent);
-    let wrapped = wrap(body, width.saturating_sub(indent + 1));
-    let more = wrapped.len() > BODY_ROWS;
+/// A body as at most `most` rows, set in two columns from the rows' text in a screen `width`
+/// wide so that it does not read as one of them, the last a dim `…` when there is more.
+fn body_rows(body: &str, width: usize, most: usize) -> Vec<Line<'static>> {
+    let pad = "   ";
+    let wrapped = wrap(body, width.saturating_sub(pad.len() + 1));
+    let more = wrapped.len() > most;
     let mut rows: Vec<Line> = wrapped
         .into_iter()
-        .take(BODY_ROWS)
+        .take(if more { most.saturating_sub(1) } else { most })
         .map(|row| Line::from(format!("{pad}{row}")))
         .collect();
     if more {
         rows.push(Line::from(format!("{pad}…")).dim());
     }
     rows
+}
+
+/// How many rows the body of what the cursor is on is given at the foot of the list, out of the
+/// `room` there is for the list: as many as [`PREVIEW_ROWS`], and a row of nothing above them,
+/// while that leaves the list at least half the room, and none when that would be fewer than two.
+fn preview_rows(room: usize) -> usize {
+    match (room / 2).saturating_sub(1).min(PREVIEW_ROWS) {
+        0 | 1 => 0,
+        rows => rows,
+    }
 }
 
 /// The score before a row's head, when scores are shown.
@@ -856,9 +874,8 @@ impl App {
         Ok(())
     }
 
-    /// Paints the view from the top down: the path in a zoom, the line, the body of the note
-    /// being looked around, the list, and at the foot the status when there is one and the
-    /// keys.
+    /// Paints the view from the top down: the path in a zoom, the line, the list, the body of what
+    /// the cursor is on, and at the foot the status when there is one and the keys.
     fn draw(&mut self, frame: &mut Frame) {
         let status = self.status();
         let view = self.device.view();
@@ -892,26 +909,13 @@ impl App {
             .max(1);
         let scroll = self.cursor.saturating_sub(room - 1);
         let shown: String = view.line.chars().skip(scroll).take(room).collect();
+        paint(frame, y, 0, Line::from(PROMPT).dim());
         paint(frame, y, 1, Line::from(shown));
         paint_right(frame, y, &right);
         if view.cursor.is_none() {
             cursor = Some((1 + self.cursor - scroll, y));
         }
         y += 1;
-
-        // The first result sits right under the line. Only a body shown there is set apart from
-        // the list by a row of nothing, so that its last line does not read as a row.
-        if let Some(here) = view.here.filter(|_| zoomed) {
-            let rows = body_rows(head_and_body(&here.text).1, 1, width);
-            let shown = !rows.is_empty();
-            for row in rows {
-                paint(frame, y, 0, row.dim());
-                y += 1;
-            }
-            if shown {
-                y += 1;
-            }
-        }
 
         let mut blocks: Vec<Painted> = Vec::new();
         for (i, row) in view.rows.iter().enumerate() {
@@ -931,11 +935,12 @@ impl App {
             // The row the cursor is on is drawn from the note as it is being typed, with the
             // terminal's cursor in its head.
             if view.cursor == Some(i) {
-                let text = view.field.as_ref().map_or(row.head.as_str(), |f| f.text);
-                let (head, body) = head_and_body(text);
+                let head = view
+                    .field
+                    .as_ref()
+                    .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
                 let (rows, x) = selected_rows(row, head, self.row_cursor, view.scores_shown, width);
                 lines.extend(rows);
-                lines.extend(body_rows(body, 3, width));
                 at_cursor = Some((at, x));
             } else {
                 lines.push(row_line(row, view.scores_shown, width));
@@ -946,8 +951,28 @@ impl App {
             });
         }
 
-        // The list moves only as far as it must to keep the cursor's row and its body in sight.
-        let bottom = height.saturating_sub(1 + usize::from(status.is_some()));
+        // The foot of the list is kept for the body of what the cursor is on, under a row of
+        // nothing: on a row its note as it is being written, and on the line in a place the
+        // place's note, if there is one. It is kept whatever the note holds, and in a place on the
+        // line too, so that walking the list never changes how much of it there is; at the top
+        // the line has the whole height. The status row takes the last of the rows kept, so that
+        // it does not move the list either by coming or by going.
+        let read = match &view.field {
+            Some(field) => Some(field.text),
+            None if zoomed => Some(view.here.map_or("", |here| here.text.as_str())),
+            None => None,
+        };
+        let status_row = usize::from(status.is_some());
+        let preview = read.map_or(0, |_| preview_rows(height.saturating_sub(1 + y)));
+        let bottom = height.saturating_sub(1 + if preview > 0 { preview + 1 } else { status_row });
+        if let Some(text) = read.filter(|_| preview > 0) {
+            let rows = body_rows(head_and_body(text).1, width, preview - status_row);
+            for (k, row) in rows.into_iter().enumerate() {
+                paint(frame, bottom + 1 + k, 0, row.dim());
+            }
+        }
+
+        // The list moves only as far as it must to keep the cursor's row in sight.
         let room = bottom.saturating_sub(y);
         match view.cursor {
             None => self.top = 0,
@@ -1888,7 +1913,7 @@ mod tests {
         app.act(Action::Save { id, text: edited }).unwrap();
         let view = app.device.view();
         assert_eq!(view.status, "saved");
-        assert_eq!(view.preview.unwrap().text, "The plan\nwith a body");
+        assert_eq!(view.field.unwrap().text, "The plan\nwith a body");
         assert!(view.rows[0].has_body);
         let written = fs::read_to_string(space.join(format!("{WRITER}.jsonl"))).unwrap();
         assert_eq!(
@@ -2206,10 +2231,19 @@ mod tests {
     }
 
     #[test]
-    fn the_row_under_the_cursor_has_the_cursor_in_its_head_its_head_bold_and_its_body_under_it() {
+    fn the_cursors_row_has_the_cursor_in_its_head_its_head_bold_and_its_body_at_the_foot() {
         let (mut app, space) = app();
         write(&mut app, "House");
         write(&mut app, "Boiler");
+        let shot = screen(&mut app, 60, 10);
+        assert_eq!(shot.rows[0], ">", "the line, empty after its mark");
+        assert_eq!(shot.cursor, (1, 0), "where the rows' text starts");
+        assert!(
+            shot.rows[1..9].iter().filter(|r| !r.is_empty()).count() == 2,
+            "on the line nothing is kept for a body: {:?}",
+            shot.rows
+        );
+
         press(&mut app, KeyCode::Down, false);
         let picked = heads(&app)[0].clone();
         with_body(&mut app, &format!("{picked}\nThe combi under the stairs."));
@@ -2219,22 +2253,25 @@ mod tests {
         let updated = app.device.view().rows[0].updated.unwrap();
         let date = format!(" {}", time::format_day(updated.day()));
         let shot = screen(&mut app, 60, 10);
-        assert_eq!(shot.rows[0], "", "the line, empty");
         assert!(
             shot.rows[1].starts_with(&format!(" {picked} ¶")) && shot.rows[1].ends_with(&date),
             "{:?}",
             shot.rows[1]
         );
         assert!(shot.bold[1] && !shot.dim[1]);
-        assert_eq!(shot.rows[2], "   The combi under the stairs.");
-        assert_eq!(shot.rows[3], format!(" {other}"));
-        assert!(!shot.dim[3] && !shot.bold[3], "no other row is dimmed");
+        assert_eq!(shot.rows[2], format!(" {other}"), "nothing under the row");
+        assert!(!shot.dim[2] && !shot.bold[2], "no other row is dimmed");
         let x = u16::try_from(1 + picked.len()).unwrap();
         assert_eq!(
             shot.cursor,
             (x, 1),
             "the terminal's own cursor, at the end of the head, right under the line"
         );
+        // The body is at the foot of the list, set in and dimmed under a row of nothing, in the
+        // three rows that leave the list half of its eight, the last of them the status's.
+        assert_eq!(shot.rows[3..6], ["", "", ""]);
+        assert_eq!(shot.rows[6], "   The combi under the stairs.");
+        assert!(shot.dim[6]);
         assert_eq!(shot.rows[8], " saved", "what the last thing asked for did");
         assert!(
             shot.rows[9].starts_with(" Enter new note  ^O editor  → go in  ^V archive"),
@@ -2248,6 +2285,17 @@ mod tests {
         let shot = screen(&mut app, 60, 10);
         assert_eq!(shot.rows[8], "");
         assert_eq!(shot.cursor, (x - 1, 1), "one back from the end of the head");
+        assert_eq!(shot.rows[6], "   The combi under the stairs.");
+
+        // A note with no body keeps the room, and shows nothing in it.
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 60, 10);
+        assert!(shot.rows[2].starts_with(&format!(" {other}")) && shot.bold[2]);
+        assert!(
+            shot.rows[3..9].iter().all(String::is_empty),
+            "{:?}",
+            shot.rows
+        );
 
         // A new row opens at the top, empty, with the cursor in it.
         press(&mut app, KeyCode::Esc, false);
@@ -2274,33 +2322,40 @@ mod tests {
         let listed = heads(&app);
         // The head a painted row shows, without the date the selected one has at its end.
         let head = |row: &str| row.trim().split("  ").next().unwrap().to_owned();
-        // Seven rows of list, from the second row: the line and the footer take the rest.
-        let shown = |app: &mut App| -> Vec<String> {
-            screen(app, 40, 9).rows[1..8]
+        // From the second row, as many rows of list as there are: seven from the line, where the
+        // line and the footer take the rest, and four from a row, whose note's body takes three.
+        let shown = |app: &mut App, rows: usize| -> Vec<String> {
+            screen(app, 40, 9).rows[1..1 + rows]
                 .iter()
                 .map(|r| head(r))
                 .collect()
         };
+        assert_eq!(shown(&mut app, 7), listed[..7]);
         press(&mut app, KeyCode::Down, false);
-        assert_eq!(shown(&mut app), listed[..7]);
-        for _ in 0..7 {
+        assert_eq!(shown(&mut app, 4), listed[..4]);
+        assert_eq!(screen(&mut app, 40, 9).rows[5..8], ["", "", ""]);
+        for _ in 0..4 {
             press(&mut app, KeyCode::Down, false);
         }
-        assert_eq!(shown(&mut app), listed[1..8]);
-        let x = u16::try_from(1 + listed[7].len()).unwrap();
+        assert_eq!(shown(&mut app, 4), listed[1..5]);
+        let x = u16::try_from(1 + listed[4].len()).unwrap();
         assert_eq!(
             screen(&mut app, 40, 9).cursor,
-            (x, 7),
+            (x, 4),
             "the cursor's row is the last in sight"
         );
         press(&mut app, KeyCode::Up, false);
         assert_eq!(
-            shown(&mut app),
-            listed[1..8],
+            shown(&mut app, 4),
+            listed[1..5],
             "moving back up within sight moves nothing"
         );
         press(&mut app, KeyCode::Esc, false);
-        assert_eq!(shown(&mut app), listed[..7], "and from the line, the top");
+        assert_eq!(
+            shown(&mut app, 7),
+            listed[..7],
+            "and from the line, the top, with the whole height"
+        );
         done(&space);
     }
 
@@ -2320,9 +2375,92 @@ mod tests {
             .map(|n| format!("line {n}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let rows = body_rows(&long, 3, 40);
-        assert_eq!(rows.len(), BODY_ROWS + 1);
-        assert_eq!(rows[BODY_ROWS].to_string(), "   …");
+        let rows = body_rows(&long, 40, 5);
+        assert_eq!(rows.len(), 5, "cut at its height");
+        assert_eq!(rows[3].to_string(), "   line 3");
+        assert_eq!(rows[4].to_string(), "   …", "with a sign that it goes on");
+        assert_eq!(body_rows(&long, 40, 9).len(), 9, "and whole when it fits");
+        assert!(body_rows("", 40, 5).is_empty());
+    }
+
+    #[test]
+    fn a_wide_letter_takes_the_two_columns_it_is_drawn_in() {
+        assert_eq!(wrap("浴室的瓷砖", 6), ["浴室的", "瓷砖"]);
+        assert_eq!(wrap("瓷砖 tiles", 5), ["瓷砖", "tiles"]);
+        assert_eq!(wrap("浴室", 1), ["浴", "室"], "even where it cannot fit");
+    }
+
+    #[test]
+    fn in_a_place_the_foot_reads_the_place_from_the_line_and_the_note_from_a_row() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, "Boiler\nThe combi under the stairs.");
+        press(&mut app, KeyCode::Esc, false);
+        type_in(&mut app, "Boiler");
+        press(&mut app, KeyCode::Right, false);
+        for n in 0..6 {
+            write(&mut app, &format!("valve {n}"));
+        }
+        assert_eq!(path(&app), ["Boiler"]);
+        // Under the path and the line, five rows of list, a row of nothing, and three of body.
+        let listed = |shot: &Screen| shot.rows[2..8].iter().filter(|r| !r.is_empty()).count();
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(shot.rows[1], ">");
+        assert!(
+            shot.rows[2].starts_with(" valve"),
+            "nothing between the line and the list: {:?}",
+            shot.rows
+        );
+        assert_eq!(listed(&shot), 5);
+        assert_eq!(
+            shot.rows[8], "   The combi under the stairs.",
+            "the place's"
+        );
+        assert!(shot.dim[8]);
+
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(listed(&shot), 5, "the list keeps its height onto a row");
+        assert!(
+            shot.rows[8..11].iter().all(String::is_empty),
+            "where the row's note, with no body, is read: {:?}",
+            shot.rows
+        );
+
+        let picked = heads(&app)[0].clone();
+        with_body(&mut app, &format!("{picked}\nA quarter turn."));
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(shot.rows[10], " saved");
+        assert_eq!(listed(&shot), 5, "a status takes a row of the body's");
+        assert_eq!(shot.rows[8], "   A quarter turn.");
+        press(&mut app, KeyCode::Left, false);
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(shot.rows[10], "");
+        assert_eq!(listed(&shot), 5, "and gives it back");
+        assert_eq!(shot.rows[8], "   A quarter turn.");
+
+        // At the top, on the line, nothing is kept and the list has the whole height.
+        press(&mut app, KeyCode::Esc, false);
+        press(&mut app, KeyCode::Esc, false);
+        assert!(path(&app).is_empty());
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(
+            shot.rows[1..11].iter().filter(|r| !r.is_empty()).count(),
+            7,
+            "{:?}",
+            shot.rows
+        );
+        assert!(!shot.rows.iter().any(|r| r.contains("combi")));
+        done(&space);
+    }
+
+    #[test]
+    fn the_body_under_the_cursor_is_given_the_foot_of_the_list_while_it_leaves_the_list_half() {
+        assert_eq!(preview_rows(28), PREVIEW_ROWS);
+        assert_eq!(preview_rows(10), 4);
+        assert_eq!(preview_rows(6), 2);
+        assert_eq!(preview_rows(5), 0, "too short for it, and it goes");
     }
 
     #[test]
