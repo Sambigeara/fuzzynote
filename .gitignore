@@ -14,7 +14,7 @@ tags
 # The engine built for the browser, by web/build.sh
 /web/pkg/
 
-# The editor's packages, fetched by web/editor/build.sh
+# The packages of the page's markdown and the body's editor, fetched by web/editor/build.sh
 /web/editor/node_modules/
 
 # Claude Code worktrees and local settings.

@@ -188,7 +188,8 @@ button, input, textarea { font: inherit; color: inherit; }
 #path .gone { display: none; }
 
 /* A body read: what the cursor is on, beside the list, and where there is no room for that the
-   note you are in, above the line under the path. */
+   note you are in, above the line under the path. It is rendered (see below), and as typed until
+   the page's reading of markdown has arrived. */
 #here, #pane {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -198,14 +199,12 @@ button, input, textarea { font: inherit; color: inherit; }
 /* Under the path, so that what is found follows the line directly, as it does outside a note. Six
    lines, with a fade over the last two when there is more; a tap gives the rest. */
 #here { flex: none; margin-top: 0.375rem; }
-#here.clamp {
-  max-height: calc(6 * 1.5em);
-  overflow: hidden;
+#here:not(.open) { max-height: calc(6 * 1.5em); overflow: hidden; }
+#here.clamp:not(.open) {
   cursor: pointer;
   mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
 }
-#here.clamp.open { max-height: none; mask-image: none; -webkit-mask-image: none; cursor: auto; }
 
 #empty, #elsewhere {
   flex: none;
@@ -340,11 +339,11 @@ button, input, textarea { font: inherit; color: inherit; }
 
 /* The body of what the cursor is on, beside the list on a page wide enough for it: from the top
    of the first row's text, read-only, scrolled on its own, and faded at its foot as the list is.
-   From the line that is the note you are in, so it is not read above the line too. A narrower
-   page has no room for it, and a body is read there by opening it, or above the line. */
+   From the line that is the note you are in, which the painter then does not read above the line
+   too. A narrower page has no room for it, and a body is read there by opening it, or above the
+   line. */
 #pane { display: none; }
 @media (min-width: 75rem) {
-  #here { display: none; }
   #pane {
     display: block;
     position: absolute;
@@ -359,6 +358,60 @@ button, input, textarea { font: inherit; color: inherit; }
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
   }
 }
+
+/* A body read is rendered: blocks a little apart and none of them a box, headings set apart by
+   weight alone and in the type's one size, a quote and a table's head marked by a hairline, a
+   task's box drawn and never pressed, and code in ink with the editor's highlighting, so that
+   what would be copied out reads crisply. Paragraphs keep the lines they were written on. */
+:is(#here, #pane) :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table, hr) { margin: 0.625em 0 0; }
+:is(#here, #pane) :is(h1, h2, h3, h4, h5, h6) { margin-top: 1em; }
+:is(#here, #pane) :is(:first-child, li > *) { margin-top: 0; }
+:is(#here, #pane) > * { white-space: pre-line; }
+:is(#here, #pane) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
+:is(#here, #pane) :is(ul, ol) { padding-left: 1.25em; }
+:is(#here, #pane) li::marker { color: var(--faint); }
+:is(#here, #pane) li:has(> .task) { list-style: none; }
+.task > .check {
+  position: relative;
+  display: inline-block;
+  width: 0.75em;
+  height: 0.75em;
+  margin: 0 0.25em 0 -1.25em;
+  border: 1px solid var(--faint);
+  border-radius: 2px;
+  vertical-align: -0.05em;
+}
+.task.done { color: var(--faint); }
+.task.done > .check::after {
+  content: "";
+  position: absolute;
+  left: 0.21em;
+  top: 0.04em;
+  width: 0.2em;
+  height: 0.4em;
+  border: solid var(--soft);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+:is(#here, #pane) blockquote { margin-inline: 0; padding-left: 0.75em; border-left: 1px solid var(--rule); }
+:is(#here, #pane) hr { height: 0; border: 0; border-top: 1px solid var(--rule); }
+:is(#here, #pane) pre { white-space: pre-wrap; color: var(--ink); }
+:is(#here, #pane) code { font-family: var(--mono); font-size: 0.9em; line-height: 1; }
+:is(#here, #pane) pre code { line-height: inherit; }
+:is(#here, #pane) table { display: block; overflow-x: auto; border-collapse: collapse; }
+:is(#here, #pane) :is(th, td) { padding: 0.125em 1.25em 0.125em 0; text-align: left; vertical-align: top; }
+:is(#here, #pane) th { border-bottom: 1px solid var(--rule); }
+
+/* A link has no colour: it is in the colour of what it is in, underlined in a faint grey. It is
+   followed in a tab of its own, and the cursor stays where it was. */
+a {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: var(--faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+a:hover { text-decoration-color: currentColor; }
 
 /* A body open: a sheet over the column, the page dimmed slightly behind it, which holds the whole
    note at its natural weight and scrolls on its own. It is placed from the top and given its
@@ -417,6 +470,20 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 #sheet-foot .cm-vim-panel { padding: 0; font: var(--meta-size) / 1.5 var(--face); }
 #sheet-foot .cm-vim-panel input { font: inherit; color: var(--ink); padding: 0; }
+
+/* Highlighting, the same in the body's editor and in code read, where it is set in ink: marks
+   and punctuation faint, comments faint and slanting, what strings, numbers and constants say
+   soft, and headings, strong text, keywords and definitions heavier. */
+.hl-heavy { font-weight: 600; }
+.hl-soft { color: var(--soft); }
+.hl-faint { color: var(--faint); }
+.hl-slant { font-style: italic; }
+.hl-mono { font-family: var(--mono); font-size: 0.9em; }
+.hl-struck { text-decoration: line-through; }
+/* In the editor a block of code is in the monospace a line at a time, fences and all, on lines as
+   high as the others; what it holds is not made smaller again. */
+.cm-line.hl-code { font-family: var(--mono); font-size: 0.9em; line-height: calc(1.5 / 0.9); }
+.hl-code .hl-mono { font-size: inherit; }
 
 /* Resting: the line empty, the cursor on it, nowhere gone into. The recent notes are faint heads
    that fade into the paper by the eighth row. They are all still there to walk onto. */

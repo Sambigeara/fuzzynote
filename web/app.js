@@ -18,15 +18,16 @@
 // the row opens it, off its head: the head is the box by then, and a tap there is the caret's. A
 // body is never shown under its row. On a wide page the body of what the cursor is on is read
 // beside the list: the note under it, or from the line the note you are in. On a narrower one a
-// note's body is read by opening it, and the note you are in is read above the line. The arrow to
-// the right at the end of a head goes into the note, and at the end of the line into what it names;
-// Escape comes back a rung at a time, off the row, off the text on the line, out of the place.
-// Control with an arrow moves the note on the row up or down the list. Everything else is a word
-// in the foot, moving a note included, and only what applies right now gets one.
+// note's body is read by opening it, and the note you are in is read above the line. A body read
+// is rendered as markdown, and a row's links are links (see render). The arrow to the right at
+// the end of a head goes into the note, and at the end of the line into what it names; Escape
+// comes back a rung at a time, off the row, off the text on the line, out of the place. Control
+// with an arrow moves the note on the row up or down the list. Everything else is a word in the
+// foot, moving a note included, and only what applies right now gets one.
 //
 // The painting is kept cheap because it runs on every keystroke: rows are keyed by id and their
-// nodes reused, nothing measures the page but the caret, once at the end, and only a row that is
-// new fades in.
+// nodes reused, nothing measures the page but the caret, once at the end, and the note you are in
+// when it changes, and only a row that is new fades in.
 
 import init, { Fzn, deriveKey } from './pkg/fzn_web.js';
 
@@ -315,9 +316,28 @@ const bodyOf = (text) => {
   return at < 0 ? '' : text.slice(at + 1).replace(/^\s*\n/, '').replace(/\s+$/, '');
 };
 
-// Whether a body runs past six lines and so is clamped. Counted from the text, since measuring
-// the page in the middle of a paint would cost the keystroke.
-const long = (body) => body.split('\n').reduce((n, part) => n + 1 + Math.floor(part.length / 72), 0) > 6;
+// The page's reading of markdown, a module of its own fetched as the page starts and never waited
+// for. With it a body read beside the list or above the line is rendered, and a row's head shows
+// its links as links; until it is here, and for good if it cannot be fetched, both read as they
+// were typed. What it paints is painted again when it arrives, and when a language arrives for
+// code it showed plain, which `readings` counts.
+let render = null;
+let readings = 0;
+const reread = () => {
+  readings++;
+  paintSoon();
+};
+import('./vendor/render.js').then((module) => {
+  render = module;
+  render.onLanguage(reread);
+  reread();
+}, () => {});
+const readHead = (text) => {
+  const head = el('span', 'head');
+  head.append(render ? render.head(text) : text);
+  return head;
+};
+const readBody = (text, upTo) => (render ? render.body(text, upTo) : text);
 
 // The key that asks for something, where one does. Nothing shows a key on the page; a word in
 // the foot says it when the pointer rests on it.
@@ -338,14 +358,26 @@ const named = (action) => (typeof action === 'string' ? action : Object.keys(act
 
 const narrow = window.matchMedia('(max-width: 640px)');
 narrow.addEventListener('change', () => view && paintSoon());
+// Wide enough for the body to be read beside the list, as style.css lays it out there; otherwise
+// it is read above the line. Only the one shown is painted.
+const wide = window.matchMedia('(min-width: 75rem)');
+wide.addEventListener('change', () => view && paintSoon());
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-// Sets what a part of the page holds, but only when that has changed. Buttons that are put back
-// the same as they were would lose the focus for nothing.
+// Sets what a part of the page holds, but only when that has changed, and says whether it had.
+// Buttons that are put back the same as they were would lose the focus for nothing.
 function set(node, key, make) {
-  if (node.dataset.shows === key) return;
+  if (node.dataset.shows === key) return false;
   node.dataset.shows = key;
   node.replaceChildren(...make());
+  return true;
+}
+
+// Whether the note you are in runs past its six lines is seen once it is laid out, so it is read
+// only when that note changes and when the page's width does, rather than at every key.
+function clampHere() {
+  const here = $('here');
+  here.classList.toggle('clamp', here.scrollHeight > here.clientHeight);
 }
 
 // The rows on the page by note id.
@@ -378,7 +410,7 @@ const headOf = (text) => {
 const boxText = (field) => (field.whole ? field.text : headOf(field.text));
 
 // Its size follows its text: by the browser where it can, and otherwise from the number of lines,
-// counted as long() counts them, since measuring would cost the keystroke.
+// each counted 72 letters wide, since measuring would cost the keystroke.
 const sizes = CSS.supports?.('field-sizing', 'content');
 function fit() {
   if (!sizes) box.rows = box.value.split('\n').reduce((n, part) => n + 1 + Math.floor(part.length / 72), 0);
@@ -581,7 +613,7 @@ function rowKey(row, selected, apart) {
     // body open in the sheet the row reads its head as it is being written. Nor is its date in
     // the key, which a new note's first letter gives it: the date is set in place, since filling
     // the row would take the box out under a composition the first letter began.
-    field && !field.whole ? null : field ? headOf(field.text) : row.head,
+    field && !field.whole ? null : field ? headOf(field.text) : row.head, !!render,
     row.links, row.reasons, row.archived, row.has_body, apart, selected,
     view.scores_shown ? row.score : null,
   ]);
@@ -604,7 +636,7 @@ function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  main.append(field && !field.whole ? box : el('span', 'head', field ? headOf(field.text) : row.head));
+  main.append(field && !field.whole ? box : readHead(field ? headOf(field.text) : row.head));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));
@@ -838,15 +870,31 @@ function paintPath() {
   });
 }
 
+// A body read, beside the list or above the line, is painted when it has changed, and says
+// whether it had. A long one is rendered at first only as far as either shows, and whole once the
+// page is idle, so that the arrows walk onto a long document without waiting for all of it to be
+// laid out.
+const GLANCE = 5000;
+function paintBody(node, says) {
+  const key = `${readings} ${says}`;
+  if (!set(node, key, () => [readBody(says, GLANCE)])) return false;
+  if (render && says.length > GLANCE) {
+    soon(() => {
+      if (node.dataset.shows === key) node.replaceChildren(readBody(says));
+    });
+  }
+  return true;
+}
+
 // The body of what the cursor is on, beside the list, which the page shows only when it is wide
 // enough to have room for it: the note under the cursor as it is being written, and on the line
 // the note you are in, which is then not read above the line as well. A note landed on is read
 // from its top. With the body open the sheet has it, and the pane says nothing.
-let paneSays = '';
 function paintPane() {
   const field = view.field;
-  const says = field ? (field.whole ? '' : bodyOf(field.text)) : view.here ? bodyOf(view.here.text) : '';
-  if (says !== paneSays) pane.textContent = paneSays = says;
+  const says =
+    !wide.matches || field?.whole ? '' : field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
+  paintBody(pane, says);
   const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
   if (pane.dataset.under !== under) {
     pane.dataset.under = under;
@@ -870,17 +918,18 @@ function paint() {
   $('go-in').hidden = !(view.cursor == null && view.hints.some((hint) => named(hint.action) === 'go_in'));
   $('dates').textContent = view.dates.length ? `→ ${view.dates.join(', ')}` : '';
 
-  // The note you are in, when it says more than its head, clamped to six lines; a tap gives the
-  // rest.
+  // The note you are in, when it says more than its head and the page has no room for it beside
+  // the list, clamped to six lines; a tap gives the rest, until another note is gone into.
   const here = $('here');
-  const told = view.here ? bodyOf(view.here.text) : '';
-  if (here.dataset.shows !== told) {
-    here.dataset.shows = told;
-    here.textContent = told;
-    here.classList.toggle('clamp', long(told));
+  const told = view.here && !wide.matches ? bodyOf(view.here.text) : '';
+  here.hidden = !told;
+  const into = view.here?.id ?? '';
+  const arrived = here.dataset.into !== into;
+  if (arrived) {
+    here.dataset.into = into;
     here.classList.remove('open');
   }
-  here.hidden = !told;
+  if (paintBody(here, told) || arrived) clampHere();
 
   $('empty').hidden = !(view.notes === 0 && !zoomed && view.line === '' && view.cursor == null);
 
@@ -1051,7 +1100,10 @@ for (const field of [line, box]) {
 document.addEventListener('selectionchange', () => {
   if (held && document.activeElement === held) caretMoved();
 });
-window.addEventListener('resize', placeCaret);
+window.addEventListener('resize', () => {
+  placeCaret();
+  clampHere();
+});
 
 const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey;
 
@@ -1152,12 +1204,16 @@ list.addEventListener('mousedown', (event) => {
 buffer.addEventListener('mousedown', (event) => {
   if (event.target === buffer || event.target === sheet) event.preventDefault();
 });
+// A press on a link, in a row or a body read, leaves the focus where it was, as the cursor stays.
+document.addEventListener('mousedown', (event) => {
+  if (event.target.closest('a')) event.preventDefault();
+});
 
 // A tap puts the cursor on a note, and a second, off the head, which is the box's, opens its body.
-// The arrow on the selected row goes in.
+// The arrow on the selected row goes in, and a link in a row opens and does nothing else.
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
-  if (!item || event.target === box) return;
+  if (!item || event.target === box || event.target.closest('a')) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
   if (event.target.closest('.chev')) act('go_in');
@@ -1167,7 +1223,11 @@ list.addEventListener('click', (event) => {
 });
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));
 
-$('here').addEventListener('click', () => $('here').classList.add('open'));
+// A tap on the note you are in gives the rest of it, unless it was on a link, which opens and does
+// nothing else.
+$('here').addEventListener('click', (event) => {
+  if (!event.target.closest('a')) $('here').classList.add('open');
+});
 
 // Each step of the path goes back to where it was.
 $('path').addEventListener('click', (event) => {

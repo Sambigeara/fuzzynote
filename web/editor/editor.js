@@ -7,16 +7,69 @@
 // is made afresh each time a body opens, so the step undo belongs to one visit; after that the
 // engine's undo is the only one.
 //
+// The text is markdown, written as source: every mark stays where it was typed and in sight,
+// only styled, so that nothing moves as the caret walks and vim's motions go over what is shown.
+// The parser, the highlighting and the languages of code are the page's reading of markdown,
+// imported from it, so that a body written and a body read look alike.
+//
 // Vim's Ex commands are its own, global to the module, so they reach whichever page mounted the
 // view last. In vim a write stays and a quit goes; here a version is written when the body
 // closes, so `:w` asks the page to close and open again, and the quits ask it to close. Vim's
 // prompt for a command is a panel, which the editor would stick to the foot of whatever scrolls
 // it, over the text; it goes in the element the page gives for it instead, under the text.
 
-import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from '@codemirror/state';
-import { EditorView, drawSelection, keymap, panels } from '@codemirror/view';
+import { Annotation, Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, drawSelection, keymap, panels } from '@codemirror/view';
 import { history, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
+import {
+  Language, ParseContext, StreamLanguage, defineLanguageFacet, syntaxHighlighting, syntaxTree,
+} from '@codemirror/language';
+import { parseCode } from '@lezer/markdown';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
+import { highlighter, language, markdown } from './render.js';
+
+// A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
+// and while the language is on its way it is passed over, to be parsed again when it arrives.
+const streams = new WeakMap();
+const codeParser = (info) => {
+  const found = language(info);
+  if (found instanceof Promise) return ParseContext.getSkippingParser(found);
+  if (!found?.token) return found;
+  if (!streams.has(found)) streams.set(found, StreamLanguage.define(found).parser);
+  return streams.get(found);
+};
+const note = new Language(defineLanguageFacet(), markdown.configure(parseCode({ codeParser })), [], 'markdown');
+
+// A block of code is set in the monospace a line at a time, fences and all, as far as the view
+// reaches. The highlighting cannot give it the face, since a language's own starts afresh inside
+// the block.
+const codeLine = Decoration.line({ class: 'hl-code' });
+const codeLines = (view) => {
+  const lines = new RangeSetBuilder();
+  const { doc } = view.state;
+  syntaxTree(view.state).iterate({
+    ...view.viewport,
+    enter(node) {
+      if (node.name !== 'FencedCode' && node.name !== 'CodeBlock') return;
+      for (let line = doc.lineAt(node.from); ; line = doc.line(line.number + 1)) {
+        lines.add(line.from, line.from, codeLine);
+        if (line.to >= node.to) return false;
+      }
+    },
+  });
+  return lines.finish();
+};
+const codeInMonospace = ViewPlugin.define(
+  (view) => ({
+    lines: codeLines(view),
+    update(u) {
+      if (u.docChanged || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+        this.lines = codeLines(u.view);
+      }
+    },
+  }),
+  { decorations: (plugin) => plugin.lines },
+);
 
 let current = null;
 
@@ -54,6 +107,9 @@ export function mount(hooks, foot) {
       ...standardKeymap,
     ]),
     history(),
+    note,
+    syntaxHighlighting(highlighter),
+    codeInMonospace,
     panels({ bottomContainer: foot }),
     drawSelection(),
     EditorView.lineWrapping,

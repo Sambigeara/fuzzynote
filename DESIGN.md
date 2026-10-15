@@ -474,12 +474,14 @@ tab and the relay all run the same code.
   the path goes back to it, so the path never repeats; stepping back goes one hop, onto the line.
   This is the ego graph as a flat list; following a link is picking its target here.
 - **Browser**: the engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain
-  JavaScript and CSS to drive it: no framework, and one dependency, the body's editor, built by
-  hand into one committed file (see the decision). A tab is one more device. It has a writer id
-  and a log of its own for each space, keeps every log of the space in the browser between
-  visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
-  from, so there is one address to open and nothing to set up. A relay hands the page out when
-  it is pointed at the `web` directory with `--web`.
+  JavaScript and CSS to drive it: no framework, and one family of dependencies, CodeMirror and
+  its parser Lezer, for the body's editor and the page's reading of markdown, built by hand into
+  committed files (see "The body is a CodeMirror editor, loaded when a body first opens" and "A
+  body's markdown is rendered where it is read and styled where it is written"). A tab is one
+  more device. It has a writer id and a log of its own for each space, keeps every log of the
+  space in the browser between visits, asks for the passphrase once and keeps the key, and
+  syncs with the relay it was loaded from, so there is one address to open and nothing to set
+  up. A relay hands the page out when it is pointed at the `web` directory with `--web`.
   - *The page.* One column, a little left of centre, with a third of the room beside it on its
     left, text left-aligned, and the line a little above a third of the way down, where it
     stays: it does not move when you type or when results arrive. A faint hairline under the
@@ -489,17 +491,19 @@ tab and the relay all run the same code.
     in the margin above the line. No colour: paper, ink and two greys, light and dark by the
     system's preference. On a page at least 75rem wide the body of what the cursor is on is read
     beside the list: the note under the cursor, or with the cursor on the line in a zoom the note
-    you are in. It is in the soft grey, from the top of the first row's text, with no border,
-    scrolled on its own and faded at its foot as the list is. A narrower page has no room for
-    it: a note's body is read there by opening it, and the note you are in is read above the
-    line, under the path and in the path's smaller size, clamped to six lines and opened with a
-    tap, so that where you are is all above the line and what is found follows it directly. The
-    margin grows downwards only for a body longer than it has room for. (Until 2026-10-14 the
-    note you were in was read under the line; Sam found it read as part of the line, and it put
-    a gap between the line and the first result. The terminal showed it under the line until
-    2026-10-15, where its line is the first row and a body above it would move the line. Until
-    2026-10-15 the note under the cursor was read under its row, and on a wide page the note you
-    are in above the line: see "A body is read apart from its row".)
+    you are in. It is rendered as markdown, in the soft grey, from the top of the first row's
+    text, with no border, scrolled on its own and faded at its foot as the list is. A narrower
+    page has no room for it: a note's body is read there by opening it, and the note you are in
+    is read above the line, rendered, under the path and in the path's smaller size, clamped to
+    six lines and opened with a tap, so that where you are is all above the line and what is
+    found follows it directly. The margin grows downwards only for a body longer than it has
+    room for. A row's head shows a markdown link as its text and a bare address as itself, each
+    a link, and a press on one opens it in a tab of its own and moves nothing. (Until 2026-10-14
+    the note you were in was read under the line; Sam found it read as part of the line, and it
+    put a gap between the line and the first result. The terminal showed it under the line
+    until 2026-10-15, where its line is the first row and a body above it would move the line.
+    Until 2026-10-15 the note under the cursor was read under its row, and on a wide page the
+    note you are in above the line: see "A body is read apart from its row".)
   - *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
     terminal's chords are not here, because a browser keeps most of them for itself, but two it
     lets go: Ctrl-D clears the line or deletes the note under the cursor, as in the terminal,
@@ -527,16 +531,18 @@ tab and the relay all run the same code.
     window. The words in the foot stay above the dimming, since they are about the note. There
     is no second editor: the sheet is the body's editor, for a long document too, and with it
     shut the head is written in its row. While the body is open the sheet holds a CodeMirror
-    editor, loaded the first time one opens: soft wrap, step undo, a grey selection, and vim
-    mode for the browser that asked for it with the word in the foot, where Esc is vim's and
-    `:q`, `ZZ` or the word in the foot closes it, and `:w` writes and stays, scrolled where it
-    was. Vim's prompt for a command is at the foot of the sheet, under the text and a hairline.
-    The head stays an ordinary field. Until the editor has loaded, and if it never does, the
-    sheet holds a plain text area. The `editor` the engine offers is not shown here.
+    editor, loaded the first time one opens: the markdown styled where it stands with every mark
+    in sight, soft wrap, step undo, a grey selection, and vim mode for the browser that asked
+    for it with the word in the foot, where Esc is vim's and `:q`, `ZZ` or the word in the foot
+    closes it, and `:w` writes and stays, scrolled where it was. Vim's prompt for a command is
+    at the foot of the sheet, under the text and a hairline. The head stays an ordinary field.
+    Until the editor has loaded, and if it never does, the sheet holds a plain text area. The
+    `editor` the engine offers is not shown here.
   - *Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body
     (the head is a text box by then, and a tap in it places the caret), a tap on the `›` at the
     end of the selected row goes into the note and on the one after the line into what the line
-    names, and the path is the way back.
+    names, a tap on a link in a row opens it and leaves the cursor where it was, and the path is
+    the way back.
   - *One tab at a time* is the device. A tab that opens says so and the older one stands
     down, since two of them writing one log would fork it.
   - Not yet: the page itself needs the relay to load, the graph view, and anything a browser
@@ -842,7 +848,11 @@ tab and the relay all run the same code.
   never closes the body. Hands that press Esc twice to be sure of normal mode closed the note
   under themselves. The body closes with `:q`, `:wq`, `:x` or `ZZ`, with `:q!` or `ZQ` putting
   the text back first, with the word in the foot, or by leaving it for somewhere else on the
-  page.
+  page. Revised 2026-10-15 by "A body's markdown is rendered where it is read and styled where it
+  is written": the note stays plain text, and the editor now reads it as markdown, with every
+  mark in sight. The grammar is Lezer's own at 39 KB, not the 85 KB measured here, and it reads
+  `#house` as a tag. The editor is 392 KB of its own and 470 KB with what it shares with the
+  page's reading of markdown, which the page fetches as it starts.
 - **A tag is a place you can go into.** Decided 2026-10-14, at Sam's direction. A tag, a person
   or a day typed on the line is gone into with the arrow at the end of the line, as a note is
   gone into from the end of its head, and the context of the zoom is then the label: every note
@@ -1179,6 +1189,79 @@ tab and the relay all run the same code.
   `:` put the prompt over a line of the note. The editor is given the sheet's foot for its
   panels instead, which changed the editor's source by one extension and the bundle by 64
   bytes.
+- **A body's markdown is rendered where it is read and styled where it is written.** Decided
+  2026-10-15, agreed with Sam, revising "The body is a CodeMirror editor, loaded when a body
+  first opens" where it says "The note stays plain text: no document model, no markdown grammar
+  (measured at 85 KB for syntax the notes do not use, and it would read `#house` as a heading);
+  nothing is rendered". Sam asked for markdown rendered, at least in an open body, a link in a row shown as a link, and code blocks highlighted. Each reason for the old call has gone.
+  CommonMark wants a space after `#`, so to the grammar `#house` is a tag too, at the start of a
+  line as anywhere. Since the SilverBullet import the documents in `main` are markdown, so the
+  syntax is used. And Lezer's markdown parser with GitHub's tables, tasks, strikethrough and bare
+  addresses costs 39 KB taken directly (13 KB gzipped), not 85; `@codemirror/lang-markdown`,
+  which brings the HTML, CSS and JavaScript parsers for HTML in a note, would have cost 233 KB.
+  The note stays plain text, and neither the engine nor the terminal changes: this is how the
+  page reads.
+
+  What is being written shows its marks; what is being read is rendered. One parse and one
+  highlighting serve three places. *The sheet* is styled source, as iA Writer writes, which Sam
+  chose over a live preview: every character stays where it was typed and in sight, the marks
+  (`#`, `**`, `_`, backticks, brackets and the address after them, list and quote marks, fences)
+  in the faint grey and the text in ink, headings and strong text heavier, emphasis slanted, and
+  code in the monospace, highlighted by its language. Nothing is hidden and nothing is drawn in
+  the place of text, so nothing moves as the caret walks, vim's motions go over exactly what is
+  shown, and the caret the page draws from the editor's coordinates needs nothing new: headings
+  are set apart by weight and not size, so the page keeps its three sizes and every line is as
+  high as the next, and a block of code, a tenth smaller in the monospace to match the sans by
+  eye, keeps that height too. The plain text area the sheet holds until the editor arrives stays
+  plain. *Where a body is only read*, beside the list and above the line, it is rendered:
+  headings, paragraphs, lists, tasks as a drawn box, ticked and faint when done, never pressed,
+  quotes, rules, tables with their columns aligned, code highlighted by its language, and in a
+  line emphasis, strong text, code, strikethrough and links. A paragraph keeps the lines it was
+  written on, where markdown would run them together, since most bodies are lines written one
+  under another. It is built as nodes, never as markup. *A row's head* reads as one line of
+  markdown, only as far as a list bears: a link shows its text, a bare `http(s)` address is a
+  link, a leading heading mark is dropped, and every other mark stays as typed. The row under
+  the cursor is its text box and shows the source, as it always did. A press on a link opens it
+  and moves nothing; a press anywhere else on the row is what it was.
+
+  A link goes only to `http:`, `https:` or `mailto:`, in a tab of its own and with no referrer.
+  Any other address, a link by reference to an address given elsewhere in the note, raw HTML, an
+  entity such as `&amp;`, and `[[Boiler]]`, which is read whole as fzn's way of typing a link
+  rather than as a markdown link in brackets, are shown as typed. An image is never loaded but
+  is a link reading its alt text, and inside a link only its alt text: the page never calls out
+  ("Private by construction"), and the relay's `img-src 'self' data:` would refuse it anyway. There is still no colour: the
+  highlighting is in paper, ink and the two greys, light and dark, with keywords and
+  definitions heavier, strings, numbers and constants soft, comments faint and slanted, and
+  punctuation and a diff's removed lines faint. Code read is set in ink where the rest of a body
+  read is in the soft grey, so that what would be copied out reads crisply. A link is in the
+  colour of what it is in, with a faint underline.
+
+  It is built as the editor was, by hand from pinned packages by one script, the same bytes
+  from the same inputs, into committed files that are now several. `web/editor/render.js` is the
+  page's reading of markdown, the parser, the highlighter and the renderer; the page imports it
+  as it starts and never waits for it, so until it arrives, and for good if it cannot be
+  fetched, everything reads as typed, and is painted again when it comes. The editor imports
+  the parser and the highlighter from it, and the two share chunks rather than each carry a
+  copy. Each language of code is a file of its own under `web/vendor/code/`, fetched the first
+  time a block in it is read or written: shell, JavaScript, TypeScript, JSON, Python, Rust, Go,
+  SQL, YAML, TOML, HTML, CSS, diff, Dockerfile, C and C++, and Java, each under its usual short
+  names too. A language is a Lezer grammar where there is one, and otherwise CodeMirror 5's
+  stream mode, as shell, SQL, TOML, diff and Dockerfile are, run by CodeMirror in the editor and
+  by a few lines over CodeMirror's string stream in the page. `@codemirror/language-data` would
+  have had every language, as about 124 files and 1.7 MB committed. Sizes raw, since the relay
+  sends no compression, and gzipped after: the page fetches 78 KB (27 KB) more as it starts,
+  the render module and the two chunks it shares with the editor; the editor, 411 KB (133 KB)
+  in one file before, is 392 KB (127 KB) fetched when a body first opens and 470 KB (154 KB) with
+  what it shares; a language is from 0.3 KB for diff to 103 KB for C++, and the grammars share
+  27 KB of Lezer's parser. Only the one place a body is read that the page's width shows, beside
+  the list or above the line, is rendered. A long body is rendered at first only as far as
+  either shows, its first 5,000 letters, and whole once the page is idle: a note of 6,300 words
+  took 7 to 12 ms to render and 10 to 15 more to lay out, against 3 to 7 to lay out as plain
+  text, and so cost the arrow that landed on it a frame; its first 5,000 letters take 4 to 6 ms,
+  laid out. A head with no colon holds no address the page would follow and is not parsed: the
+  500 rows the top of the list paints when the line is cleared took 5 to 6 ms to read as
+  markdown, against well under 1 as text. Nested past what the stack holds, 1,500 lists or 3,000
+  quotes deep in Chrome, a body is read as typed.
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A
   date typed as a search finds the notes that mention the day and the notes written on it" under
   Model, and how a tag or a person typed on the line counted until now, as one more thing to
@@ -1341,12 +1424,14 @@ tab and the relay all run the same code.
 - A summon key. Starting should feel like switching a window, so the terminal build wants a
   keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
 - Vim mode: whether the caret's shape is enough to say the mode, and whether the word in the
-  foot is where the switch belongs; daily use with it on decides. Marking the engine's syntax
-  (tags, people, dates, URLs, bracketed names) in place in the body, in the two greys, is a 1 KB
-  decoration left until use asks.
-- The editor is one file of about 409 KB fetched on each page load in which a body opens, since
-  the relay sends no validators or compression; whether that is felt on the phone is for use to
-  say, and `Last-Modified` with 304s or a hashed name is the fix.
+  foot is where the switch belongs; daily use with it on decides. Marking the rest of the
+  engine's syntax (tags, people, dates) in place in the body, in the two greys, is a small
+  decoration left until use asks; URLs and bracketed names are marked as markdown since
+  2026-10-15.
+- The page's reading of markdown, 78 KB, is fetched on every page load, and the editor, 392 KB
+  more, on each one in which a body opens, since the relay sends no validators or compression;
+  whether that is felt on the phone is for use to say, and `Last-Modified` with 304s, or long
+  caching for the files whose names are already their hashes, is the fix.
 - Whether the body should be kept as it is typed too. A version is the whole note, so a
   keystroke in a long body writes all of it; it is kept when it closes, as the terminal's editor
   keeps it. Use will say whether that is felt.
