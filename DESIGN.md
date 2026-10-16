@@ -1457,28 +1457,28 @@ repeats it only where the reason needs it.
   built (`web/build.sh`) carries none and says so, one whose page is older than the engine's
   sources says that, and a release builds the page itself first.
 - **A release is one static binary that a script fetches.** Decided 2026-10-16, at Sam's
-  direction. Three builds, static musl for Linux on x86_64 and arm64 and one for Apple silicon,
-  made by a workflow on a tag `v<version>` equal to the workspace version, into a draft release
-  that is published by hand after a look. `install.sh` is POSIX sh: it checks the archive's
-  SHA-256, puts the binary in `~/.local/bin` by one rename so a running relay keeps the file it
-  has open, touches no rc file and keeps no receipt, does nothing when the version asked for is
-  already there, and `--uninstall` takes the binary and leaves the notes and keys. `release.sh`
-  builds and lays a release out as GitHub lays releases out, and the workflow runs it per
-  platform, so a release built there and one built by hand cannot drift, and the installer can be
-  pointed at either. One variable, `FZN_RELEASES`, names where releases live, since the
-  repository may move or go private; a mirror directory is the answer to a private one, rather
-  than teaching the installer tokens. `fzn --version` says the version, the commit and the day,
-  so a machine can be asked what it runs. The version continues the Go app's line at 0.26.0,
-  since its tags are in this repository and tools that take the highest tag as the latest would
-  otherwise take `v0.25.5`. The release profile is fat LTO, one codegen unit and no symbols for
-  the binary and the wasm alike: a third off the binary (3.6 MB to 2.4 MB before the page) and a
-  quarter off the wasm (1,058 KB to 788 KB). Not `wasm-opt`, which took 6% more and would be one
-  more downloaded tool rewriting the module every release carries. Not `panic = "abort"`, which would make a panic in one of the relay's connections the end of the
-  relay, and not `opt-level = "z"`, which halves the wasm but is slower on the loops a keystroke
-  runs. Not cargo-dist, which generates ten times the lines for the same three builds and an
-  installer with a receipt and an updater; not signatures yet, since attestations need an
-  enterprise plan on a private repository and minisign a key to keep: a signed tag and the sums
-  are what there is. Intel Macs and Windows are left out until someone has one.
+  direction. Three builds, static musl for Linux on x86_64 and arm64 and one for Apple silicon, made
+  by a workflow on a tag `v<version>` equal to the workspace version, into a draft release that is
+  published by hand after a look. `install.sh` is POSIX sh: it checks the archive's SHA-256, puts
+  the binary in `~/.local/bin` by one rename so a running relay keeps the file it has open, touches
+  no rc file and keeps no receipt, does nothing when the version asked for is already there, and
+  `--uninstall` takes the binary and leaves the notes and keys. `release.sh` builds and lays a
+  release out as GitHub lays releases out, and the workflow runs it per platform, so a release built
+  there and one built by hand cannot drift, and the installer can be pointed at either. One
+  variable, `FZN_RELEASES`, names where releases live, since the repository may move or go private;
+  a mirror directory is the answer to a private one, rather than teaching the installer tokens. `fzn
+  --version` says the version, the commit and the day, so a machine can be asked what it runs. The
+  version continues the Go app's line at 0.26.0, since its tags are in this repository and tools
+  that take the highest tag as the latest would otherwise take `v0.25.5`. The release profile is fat
+  LTO, one codegen unit and no symbols for the binary and the wasm alike: a third off the binary
+  (3.6 MB to 2.4 MB before the page) and a quarter off the wasm (1,058 KB to 788 KB). Not
+  `wasm-opt`, which took 6% more and would be one more downloaded tool rewriting the module every
+  release carries. Not `panic = "abort"`, which would make a panic in one of the relay's connections
+  the end of the relay, and not `opt-level = "z"`, which halves the wasm but is slower on the loops
+  a keystroke runs. Not cargo-dist, which generates ten times the lines for the same three builds
+  and an installer with a receipt and an updater; not signatures yet, since attestations need an
+  enterprise plan on a private repository and minisign a key to keep: a signed tag and the sums are
+  what there is. Intel Macs and Windows are left out until someone has one.
 - **Tab goes in.** Decided 2026-10-16, at Sam's direction, reversing the part of "Enter edits, the
   arrow goes in" (2026-10-14) that made Right the key that goes in and rejected Tab, and with it the
   rule of "Enter opens the body; Right goes in from the end of the head" that it went in only from
