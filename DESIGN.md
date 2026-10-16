@@ -735,9 +735,12 @@ is on is read beside the list: the note under the cursor, or with the cursor on 
 the note you are in. It is rendered as markdown, in the soft grey, from the top of the first row's
 text, with no border, scrolled on its own and faded at its foot as the list is. A narrower page has
 no room for it: a note's body is read there by opening it, and the note you are in is read above the
-line, rendered, under the path and in the path's smaller size, clamped to six lines and opened with
-a tap, so that where you are is all above the line and what is found follows it directly. The margin
-grows downwards only for a body longer than it has room for.
+line, rendered, under the path and in the path's smaller size, clamped to six lines, three on a
+phone and none while its keyboard is up, and opened with a tap, so that where you are is all above
+the line and what is found follows it directly. The margin grows downwards only for a body longer
+than it has room for. A phone has the column the width of the screen, the line at the top, and the
+foot as a bar at the foot of a frame the size of what the keyboard leaves (see "The phone is a frame
+with a bar").
 
 *Markdown.* A body is rendered where it is only read and styled where it is written; the note stays
 plain text, and neither the engine nor the terminal reads markdown. Read, a body shows headings,
@@ -768,7 +771,7 @@ lets go: Ctrl-D clears the line or deletes the note under the cursor, as in the 
 inside the sheet it is the browser's, and vim's in vim mode; Ctrl-O opens the body of the note
 under the cursor, as in the terminal, and does nothing on the line. Ctrl with an arrow moves the
 note under the cursor a row, as in the terminal, and on a phone `move up` and `move down` in the
-foot do it. PageUp and PageDown move the cursor by ten. Backspace on an empty head takes the row
+bar do it. PageUp and PageDown move the cursor by ten. Backspace on an empty head takes the row
 away, as in the terminal. Tab goes into what the line names from anywhere in the line, and into
 the note from anywhere in its head, as in the terminal; the arrows to the side are the caret's.
 Shift-Tab does nothing, so no key takes the focus off the page's text. The page is not marked as
@@ -776,7 +779,8 @@ an application for assistive technology, which would stop a screen reader readin
 the list as a document; the line and the head are text fields, and that says enough. Escape on the
 line clears it while it has text, and on an empty line in a place steps back. Every other thing
 that can be asked for is a word at the foot of the page, pressed or tapped, the footer of the
-terminal made pressable. Only what applies where the cursor is gets one, and no key is written
+terminal made pressable, and on a phone the foot is a bar at the frame's foot, the way back pinned
+at its right. Only what applies where the cursor is gets one, and no key is written
 beside a word; a word says its key when the pointer rests on it. Undo has no key: it is the word
 `undo`, or `put back` on a row whose head has changed.
 
@@ -2008,6 +2012,39 @@ repeats it only where the reason needs it.
   page it is the build of already answers `HEAD` and a deploy between fetching the script and asking
   would leave the tab believing it was new; and `sessionStorage` for the guard and the place, which
   works, but the history's entry goes with Back and Forward and so carries the right place with it.
+- **The phone is a frame with a bar.** Decided 2026-10-16, at Sam's direction: he had not used the
+  page on a phone and asked for the best that can be made there. It ends the narrow page's exception
+  in "Only the rows that can be seen are made". The page on a phone was the desktop page squeezed:
+  the document scrolled as a whole, with the line stuck to its top and the foot's words stuck to the
+  foot of the layout, where iOS Safari leaves them under the keyboard, since it does not shrink its
+  layout for one and does not implement `interactive-widget`; the words ran off the screen's edge
+  with nothing to say so, the way back last among them; and the cross, the path's steps and the
+  words were too small for a thumb.
+
+  Now on a phone the page is a frame the size of the visual viewport, the part of the screen the
+  keyboard and the browser's bars have left: the path and the line at its top, the list scrolling
+  between, and the foot's words as a bar at its foot, one row of them, each as tall as a thumb, the
+  way back (`back`, `up` or `done`) pinned at the right and the rest scrolling under a fade when
+  there are more than fit. Nothing is pinned to the screen. The frame follows `visualViewport`
+  through two variables, and a browser that does shrink its layout for the keyboard gives the same
+  numbers; the viewport's numbers are trusted only while a field has the focus, since iOS has been
+  seen to leave its offset where the keyboard put it. The document never scrolls, so Safari has
+  nothing to scroll when the keyboard comes, and the list scrolls inside the frame as it does on a
+  wide page, so only the rows that can be seen are made there too. Every target on a touch screen is
+  44px each way, drawn small and given its room. What was said floats above the bar at the right,
+  and nothing is drawn there when nothing is said. The note you are in reads three lines and hides
+  while the keyboard is up. The sheet is the whole frame above the bar, and the bar is the sheet's
+  colour while it is open; on a tablet the sheet keeps its place in the column and is sized from the
+  frame too. The bar's words go back to the left when the cursor moves to another row, not only when
+  the words change, since two rows mostly offer the same words and a bar left scrolled would hide
+  the first of them.
+
+  The line stays at the top rather than riding the keyboard as a message composer does, since the
+  order path, line, what is found is the app's in both faces and the keyboard brings the line to the
+  thumb anyway. A bar moved by `visualViewport` under a scrolling document, the common fix, was
+  rejected because it leaves Safari a document to scroll on every focus, which the sticky line, the
+  bar and the sheet would each have to correct; and a bar wrapped to two rows, because it would
+  change height between states and move the list.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -2051,7 +2088,7 @@ repeats it only where the reason needs it.
   `wss` when it was loaded over `https`.
 - The browser's keys past the four, and Ctrl-D, Ctrl-O and Tab. Words at the foot, pressed or
   tapped, are a start: nothing to remember, but slower than a chord for archiving ten notes in a
-  row. Undo has no key at all yet.
+  row. Undo has no key at all yet. On a phone every one of them is a word in the bar.
 - Touch. A tap puts the cursor on a note, a second opens its body, the `›` goes in, and the
   path at the top is the way back. Whether any of that is right is for use on a phone to say.
   Seen 2026-10-15 in Chromium's and WebKit's touch emulation: once the cursor is on a row its

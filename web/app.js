@@ -628,6 +628,53 @@ function keyFor(action) {
 
 const narrow = window.matchMedia('(max-width: 640px)');
 narrow.addEventListener('change', () => view && paintSoon());
+// A touch screen: a coarse pointer and nothing to hover with. A field with the focus there is a
+// keyboard up.
+const coarse = window.matchMedia('(hover: none) and (pointer: coarse)');
+const typing = () => [line, box, $('secret')].includes(document.activeElement) || !!editor?.hasFocus;
+
+// On a touch screen the page is a frame the size of the visual viewport, the part of the screen
+// that the keyboard and the browser's bars leave (see style.css). Two variables say where it is
+// and how tall, read once a frame when the visual viewport says it has changed, and when a field
+// gains or loses the focus. A browser that shrinks its layout for the keyboard gives the numbers
+// of its layout; iOS Safari, which does not, gives the part still in view. Only while a field
+// has the focus are they trusted: an iOS has been seen to leave the viewport's offset where the
+// keyboard put it after the keyboard has gone, which would leave the frame hanging in the air.
+function frame() {
+  const seen = window.visualViewport;
+  const up = seen && typing();
+  const root = document.documentElement.style;
+  root.setProperty('--vvt', `${up ? Math.max(0, Math.round(seen.offsetTop)) : 0}px`);
+  root.setProperty('--vvh', `${up ? Math.round(seen.height) : innerHeight}px`);
+}
+let framing = false;
+function reframe() {
+  if (framing) return;
+  framing = true;
+  requestAnimationFrame(() => {
+    framing = false;
+    frame();
+    fits = 0;
+    placeCaret();
+    // The head being written stays above the keyboard as it comes up.
+    if (document.activeElement === box && !view?.field?.whole) box.scrollIntoView({ block: 'nearest' });
+  });
+}
+window.visualViewport?.addEventListener('resize', reframe);
+window.visualViewport?.addEventListener('scroll', reframe);
+window.addEventListener('resize', reframe);
+// The body says whether a field has the focus, which on a phone hides the note you are in, and
+// the frame is read again. A field losing the focus to another is not a keyboard going down, so
+// what has the focus is read once the move is over.
+function typed() {
+  const now = typing();
+  if (document.body.classList.contains('typing') === now) return;
+  document.body.classList.toggle('typing', now);
+  if (!now) clampHere();
+  reframe();
+}
+document.addEventListener('focusin', typed);
+document.addEventListener('focusout', () => queueMicrotask(typed));
 // Wide enough for the body to be read beside the list, as style.css lays it out there; otherwise
 // it is read above the line. Only the one shown is painted.
 const wide = window.matchMedia('(min-width: 75rem)');
@@ -941,9 +988,9 @@ function fill(li, row, selected) {
 // or walked towards its end: the engine lists up to 500, and a list cleared made all of them anew,
 // with their style and layout, in 40 ms or more, four frames for one key. How many fit is read once
 // and again only when the window's size changes, from the list's height and a row's, the `--row`
-// of the stylesheet, 2.5rem. A new list, for another line or another place, starts again from what
-// fits. The row under the cursor is always made, so the list can follow it. A narrow page scrolls
-// the document rather than the list, and makes every row.
+// of the stylesheet, 2.5rem, or a phone's, a little more, which makes a few rows more than fit. A
+// new list, for another line or another place, starts again from what fits. The row under the
+// cursor is always made, so the list can follow it.
 const MARGIN = 20;
 let fits = 0;
 let further = 0;
@@ -952,7 +999,6 @@ let listFor = '';
 let listed = new Set();
 const rowHeight = () => 2.5 * parseFloat(getComputedStyle(document.documentElement).fontSize);
 function reach() {
-  if (narrow.matches) return Infinity;
   if (!fits) fits = Math.ceil((list.clientHeight || innerHeight) / rowHeight());
   return Math.max(fits + MARGIN, (view.cursor ?? 0) + MARGIN, further);
 }
@@ -966,9 +1012,6 @@ list.addEventListener(
   },
   { passive: true },
 );
-window.addEventListener('resize', () => {
-  fits = 0;
-});
 
 // The focus follows the cursor at the end of every painting: no key moves it off a field, so
 // wherever else it is, a press put it there and the field takes it back. Only a field being left
@@ -1129,18 +1172,14 @@ function paintHints() {
   // Vim's keys are this browser's to ask for, and only where they apply: in an open body, once
   // the editor is there to have them.
   const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
-  set($('hints'), JSON.stringify([hints, vimWord]), () => {
-    const words = hints.map((hint) => {
-      const button = el('button', 'word', hint.label);
-      button.type = 'button';
-      const key = keyFor(hint.action);
-      if (key) button.title = key;
-      button.onclick = () => {
-        act(hint.action);
-        follow();
-      };
-      return button;
-    });
+  // On a phone the way back, which the engine offers last, is pinned at the right of the bar,
+  // where a thumb finds it without reading; the rest scroll.
+  const last = hints.length ? named(hints[hints.length - 1].action) : '';
+  const way = narrow.matches && ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
+  set($('way'), JSON.stringify(way), () => (way ? [word(way)] : []));
+  const words = $('hints');
+  const changed = set(words, JSON.stringify([hints, vimWord]), () => {
+    const words = hints.map(word);
     if (vimWord) {
       const button = el('button', 'word vim', vimWord);
       button.type = 'button';
@@ -1155,6 +1194,27 @@ function paintHints() {
     }
     return words;
   });
+  // New words, and the words of another row, start from the left, and a fade at the right says
+  // when there are more than fit.
+  const under = view.cursor != null ? (view.rows[view.cursor]?.id ?? '') : '';
+  const moved = words.dataset.under !== under;
+  words.dataset.under = under;
+  if ((changed || moved) && narrow.matches) {
+    words.scrollLeft = 0;
+    words.classList.toggle('more', words.scrollWidth > words.clientWidth + 1);
+  } else if (changed) words.classList.remove('more');
+}
+
+function word(hint) {
+  const button = el('button', 'word', hint.label);
+  button.type = 'button';
+  const key = keyFor(hint.action);
+  if (key) button.title = key;
+  button.onclick = () => {
+    act(hint.action);
+    follow();
+  };
+  return button;
 }
 
 let status = '';
@@ -1605,7 +1665,7 @@ $('path').addEventListener('click', (event) => {
 
 // A word in the foot is pressed without taking the focus from the box, so that "put back" is
 // about the note and an open body is not closed first.
-$('hints').addEventListener('mousedown', (event) => {
+$('foot').addEventListener('mousedown', (event) => {
   if (view?.field && event.target.closest('button')) event.preventDefault();
 });
 
@@ -1716,12 +1776,11 @@ function whereNow() {
   } catch {
     // No path is still a place to come back to.
   }
-  const scroller = narrow.matches ? document.scrollingElement : list;
   return {
     where,
     line: view.line,
     cursor: view.cursor != null ? (view.rows[view.cursor]?.id ?? null) : null,
-    scroll: scroller.scrollTop,
+    scroll: list.scrollTop,
   };
 }
 
@@ -1798,7 +1857,7 @@ function restore() {
     further = Math.ceil(scroll / rowHeight()) + MARGIN;
     paintSoon();
     requestAnimationFrame(() => {
-      (narrow.matches ? document.scrollingElement : list).scrollTop = scroll;
+      list.scrollTop = scroll;
     });
   }
 }
@@ -1812,6 +1871,7 @@ $('passphrase').onclick = retype;
 $('again').onclick = retype;
 
 async function start() {
+  frame();
   await init();
   let why = '';
   let id = null;

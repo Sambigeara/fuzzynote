@@ -35,7 +35,6 @@
   /* Where the column starts: a third of the room beside it, so that it sits left of centre. */
   --left: max(var(--gutter), (100% - var(--measure)) / 3);
   --sheet-top: max(0.75rem, var(--above) - 2.5rem);
-  --sheet-below: 4.5rem;
   --sheet-pad: 1.5rem;
   color-scheme: light dark;
 }
@@ -429,7 +428,7 @@ a:hover { text-decoration-color: currentColor; }
   top: var(--sheet-top);
   left: calc(var(--left) - var(--sheet-pad));
   width: calc(min(var(--measure), 100% - 2 * var(--gutter)) + 2 * var(--sheet-pad));
-  height: calc(100dvh - var(--sheet-top) - var(--sheet-below));
+  height: calc(100dvh - var(--sheet-top) - 4.5rem);
   display: flex;
   flex-direction: column;
   padding: 1.25rem 0 0.75rem;
@@ -555,29 +554,44 @@ body.resting .row .tail { display: none; }
 #unlocking { margin: 1rem 0 0; color: var(--faint); font-size: var(--meta-size); }
 #unlocking.trouble { color: var(--ink); }
 body.locked #above, body.locked #top, body.locked #here, body.locked #empty,
-body.locked #lower, body.locked #hints { display: none !important; }
+body.locked #lower, body.locked #hints, body.locked #way { display: none !important; }
 
 .scratch { position: fixed; left: -100rem; top: 0; }
 
-/* A narrow screen: the document scrolls as a whole, the line stays at the top and the foot at the
-   bottom, rows are tall enough for a thumb and the tail goes under the head. */
+/* A phone: one column the width of the screen, rows tall enough for a thumb with the tail under
+   the head, and the foot's words as a bar at the foot of the page, one row of them, each as tall
+   as a thumb, the way back pinned at the right where it is found without looking and the rest
+   scrolling under a fade when there are more than fit. The list scrolls between the line and the
+   bar, as it does on a wide page; the document never does. On a touch screen the page is also a
+   frame the size of what the keyboard has left (below), so the bar sits on the keyboard. */
 @media (max-width: 640px) {
-  :root { --above: 1rem; --row: 2.75rem; --sheet-below: 6.5rem; --sheet-pad: 1rem; }
-  html { scroll-padding: 4.5rem 0 6rem; }
-  body { height: auto; min-height: 100dvh; overflow: visible; }
-  #page { flex: 1 0 auto; }
-  body.zoomed .above { height: auto; padding-top: 1rem; }
-  #top {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    padding: 0.75rem 0;
-    background: var(--paper);
+  :root {
+    --above: 0.25rem;
+    --row: 2.75rem;
+    --sheet-pad: 1rem;
+    --bar: 3.25rem;
+    /* Still over the 16px under which Safari zooms into a field. */
+    --line-size: 1.25rem;
+    --meta-size: 0.875rem;
+    --gutter: 1.25rem;
   }
-  #list { overflow: visible; mask-image: none; -webkit-mask-image: none; padding-bottom: 1rem; }
+  /* The home indicator's margin is the keyboard's while it is up. */
+  body { --below: env(safe-area-inset-bottom); }
+  body.typing { --below: 0px; }
+  #page { width: 100%; margin: 0; padding: 0 var(--gutter); }
+  .above { padding-top: 0.5rem; padding-bottom: 0.25rem; }
+  /* Where you are: the steps in the path's size, and the note you are in three lines of it, and
+     none while the keyboard is up, so that what is found stays in sight. */
+  #path { font-size: 0.9375rem; gap: 0.5rem; }
+  #here:not(.open) { max-height: calc(3 * 1.5em); }
+  #here.clamp:not(.open) {
+    mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
+  }
+  body.typing #here { display: none; }
+  #top { padding: 0.625rem 0 0.5rem; gap: 0.25rem; }
+  #list { margin: 0 calc(-1 * var(--gutter)); padding: 0.5rem 0 calc(2 * var(--row)); }
   body.resting #list {
-    max-height: calc(5 * var(--row));
-    overflow: hidden;
     mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
   }
@@ -586,31 +600,130 @@ body.locked #lower, body.locked #hints { display: none !important; }
   .tail { order: 1; flex-basis: 100%; }
   /* The date of the row under the cursor goes under its head too, so the head keeps the width. */
   .row time { order: 1; flex-basis: 100%; }
-  .chev { min-width: 2.75rem; min-height: 1.5em; text-align: right; }
-  #buffer { left: 0.5rem; width: calc(100% - 1rem); }
+  .row { padding-inline: var(--gutter); }
+
   #foot {
-    position: sticky;
-    bottom: 0;
     width: 100%;
+    min-height: calc(var(--bar) + var(--below));
     margin: 0;
-    padding-inline: var(--gutter);
-    background: var(--paper);
-    flex-direction: column;
-    /* Unwrapped, so that the words are as wide as the screen and scroll across, rather than as
-       wide as they are and off its edge. */
+    padding: 0 var(--gutter) var(--below);
     flex-wrap: nowrap;
-    align-items: stretch;
+    align-items: center;
     gap: 0;
+    background: var(--paper);
   }
-  #hints { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  #hints .word { min-height: 44px; white-space: nowrap; }
-  #said { margin-left: 0; }
-  #said:empty { display: none; }
+  /* The list fades into the bar; there is no line between them. Under an open body the bar is the
+     sheet's, so the two read as one. */
+  body:has(#buffer:not([hidden])) #foot { --behind: var(--sheet); background: var(--sheet); }
+  #foot::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: 1.5rem;
+    background: linear-gradient(to bottom, transparent, var(--behind, var(--paper)));
+    pointer-events: none;
+  }
+  #hints {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 0;
+    margin-left: -0.75rem;
+  }
+  #hints::-webkit-scrollbar { display: none; }
+  #hints.more {
+    mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+  }
+  .word {
+    flex: none;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 0.75rem;
+    font-size: 0.9375rem;
+    white-space: nowrap;
+  }
+  #way { flex: none; margin-left: auto; padding-left: 0.5rem; }
+  #way .word { margin-right: -0.75rem; color: var(--soft); }
+  /* What is said floats above the bar at the right, and goes as it does elsewhere; with nothing
+     said, nothing is drawn there. */
+  #said {
+    position: absolute;
+    right: var(--gutter);
+    bottom: calc(100% + 0.125rem);
+    margin: 0;
+    padding: 0.125rem 0.5rem;
+    border-radius: 3px;
+    background: var(--behind, var(--paper));
+    pointer-events: none;
+  }
+  #said:not(:has(#status:not(.faded):not(:empty), #trouble:not([hidden]), #sync:not([hidden]),
+    #passphrase:not([hidden]))) { display: none; }
+  #said .word { position: relative; min-height: 0; min-width: 0; padding: 0; font-size: inherit; pointer-events: auto; }
+  #said .word::before { content: ""; position: absolute; inset: -0.75rem -0.5rem; }
+
+  /* The sheet is the whole frame but for the bar: from its top to the words, with no margin and
+     no shadow, since on a phone there is nothing beside it to see. */
+  #buffer {
+    top: calc(var(--vvt, 0px) + env(safe-area-inset-top));
+    left: 0;
+    width: 100%;
+    height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - var(--bar) - var(--below));
+    padding-top: 0.75rem;
+    border-radius: 0;
+    box-shadow: none;
+  }
 }
 
-/* A phone's keyboard has no Escape, so vim's keys are not offered there. */
+/* A touch screen, of any width. The page is a frame the size of the visual viewport, which is the
+   screen less the keyboard and the browser's own bars: iOS Safari does not shrink its layout for
+   the keyboard, so anything pinned to the screen's foot would be under it. The frame follows the
+   visual viewport by two variables the page sets (see frame in app.js), and a browser that does
+   shrink its layout gives the same numbers. Every target is 44px each way, drawn small and given
+   its room by margins that move nothing else. A phone's keyboard has no Escape, so vim's keys are
+   not offered. A tap is a tap: no double-tap zoom waited for, no grey flash on what was pressed.
+   The caret rests where the cursor is while the keyboard is down, still rather than breathing. */
 @media (hover: none) and (pointer: coarse) {
+  body {
+    position: fixed;
+    top: var(--vvt, 0px);
+    left: 0;
+    width: 100%;
+    height: var(--vvh, 100dvh);
+    padding-top: env(safe-area-inset-top);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #path button { min-height: 44px; display: inline-flex; align-items: center; }
+  #clear, #go-in, .chev {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: calc(-1 * (44px - 1.5em) / 2) 0;
+  }
+  #top > button[hidden] { display: inline-flex !important; }
+  .chev { margin-right: calc(-22px + 0.5rem); }
+  /* A long press on a row is not a text selection: the row is a thing, and the head under the
+     cursor is the one text in it to select in. */
+  .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .box { -webkit-user-select: text; user-select: text; }
+  .word { min-height: 44px; }
   .word.vim { display: none; }
+  #caret.still { animation: none; }
+}
+/* A touch screen wider than a phone keeps the sheet in the column, sized from the frame, so that
+   its foot is not under the keyboard. */
+@media (hover: none) and (pointer: coarse) and (min-width: 641px) {
+  #buffer {
+    top: calc(var(--vvt, 0px) + var(--sheet-top));
+    height: calc(var(--vvh, 100dvh) - var(--sheet-top) - 4.5rem);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
