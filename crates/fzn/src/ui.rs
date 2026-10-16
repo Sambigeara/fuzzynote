@@ -1296,16 +1296,9 @@ impl App {
             }
         }
 
-        // In a zoom, what the line finds in the place is kept apart from what it only finds
-        // there by a row of nothing, counted with the row it comes before. With nothing on the
-        // line the place lists only what is in it.
-        let apart = |i: usize| {
-            zoomed
-                && !view.line.trim().is_empty()
-                && i > 0
-                && view.rows[i - 1].linked
-                && !view.rows[i].linked
-        };
+        // In a place, what the line finds there is kept apart from what it only finds by a row
+        // of nothing, where the view says the finds begin, counted with the row it comes before.
+        let apart = |i: usize| view.finds_from == Some(i);
         // The row the cursor is on is drawn from the note as it is being typed, with the
         // terminal's cursor in its head, and may take a second row for its tail.
         let selected = view
