@@ -312,7 +312,7 @@ button, input, textarea { font: inherit; color: inherit; }
    row keeps its whole head, on as many lines as it takes: a head that lost words at the moment
    the cursor reached it would be the one thing cut when it matters. The box wraps as a read head
    would, in the same face and measure, so that a head does not jump when it becomes one. */
-.row[aria-selected="true"] .head,
+.row[aria-current="true"] .head,
 .box {
   font-weight: 500;
   white-space: pre-wrap;
@@ -334,7 +334,7 @@ button, input, textarea { font: inherit; color: inherit; }
   field-sizing: content;
 }
 /* The head being written in has the row to itself; the tail comes back when the cursor leaves. */
-.row[aria-selected="true"] .tail { display: none; }
+.row[aria-current="true"] .tail { display: none; }
 .row.blank .chev { display: none; }
 
 /* The body of what the cursor is on, beside the list on a page wide enough for it: from the top

@@ -788,7 +788,6 @@ function paintRows() {
     let li = rows.get(row.id);
     if (!li) {
       li = el('li', 'row');
-      li.setAttribute('role', 'option');
       li.dataset.id = row.id;
       li.dataset.k = '';
       rows.set(row.id, li);
@@ -798,7 +797,10 @@ function paintRows() {
       }
     }
     const selected = i === view.cursor;
-    if (li.getAttribute('aria-selected') !== String(selected)) li.setAttribute('aria-selected', selected);
+    // The row under the cursor is the list's current one, to the eye and to a screen reader alike;
+    // its head is a text box, which an option of a listbox could not hold.
+    if (selected && !li.hasAttribute('aria-current')) li.setAttribute('aria-current', 'true');
+    else if (!selected && li.hasAttribute('aria-current')) li.removeAttribute('aria-current');
     // In a place, what the line finds in it is set apart from what it only finds there.
     const apart = zoomed && searching && !row.linked && i > 0 && view.rows[i - 1].linked;
     li.classList.toggle('apart', apart);
