@@ -38,7 +38,8 @@
 //! whatever the note holds. A status row is there only while there is something to say, and each
 //! key clears what the one before it said.
 //!
-//! With a relay named, a thread holds the socket and the app hears from it between keys: what
+//! With a relay named, a thread holds the socket and the app hears from it between keys, waiting
+//! on the keyboard a twentieth of a second at a time; with none it waits as long as it looks: what
 //! the relay says goes to the device, and what the device wants kept or said comes back here to
 //! be done, like anything else it asks for. Nothing is said while sync works, and `not syncing`
 //! while it does not, in the corner of the foot that also says when this machine's clock is far
@@ -70,7 +71,7 @@ use crate::store::{self, Logs, Writer};
 use crate::sync::{self, Link};
 use crate::system::System;
 
-/// How long the keyboard is waited on before the relay is listened to.
+/// How long the keyboard is waited on before the relay is listened to, when there is one.
 const TICK: Duration = Duration::from_millis(50);
 /// How often the space's directory is looked at for what another writer here has added.
 const LOOK: Duration = Duration::from_secs(1);
@@ -105,6 +106,24 @@ pub struct App {
     unreachable: Option<String>,
     /// When the space's directory was last looked at for what another writer here added.
     looked: Instant,
+}
+
+/// What the act of a key is measured against: the line, the note under the cursor and whether
+/// it is a new one, as they were before it.
+struct Before {
+    line: String,
+    on: Option<String>,
+    fresh: bool,
+}
+
+impl Before {
+    fn of(view: &View) -> Self {
+        Self {
+            line: view.line.to_owned(),
+            on: under_cursor(view),
+            fresh: view.field.as_ref().and_then(|field| field.fresh).is_some(),
+        }
+    }
 }
 
 enum Flow {
@@ -729,13 +748,6 @@ fn selected_rows(
     (rows, x)
 }
 
-/// A row of the list as the rows of the screen it takes, and where in them the cursor is when it
-/// is on that row: which of them, and how far along.
-struct Painted {
-    lines: Vec<Line<'static>>,
-    cursor: Option<(usize, usize)>,
-}
-
 /// Paints one row of the screen, `y` rows down, if the screen reaches that far.
 fn paint(frame: &mut Frame, y: usize, x: usize, line: Line) {
     let area = frame.area();
@@ -823,7 +835,7 @@ impl App {
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            while !event::poll(TICK)? {
+            while !event::poll(self.wait())? {
                 let mut changed = self.hear()?;
                 if self.looked.elapsed() >= LOOK {
                     self.looked = Instant::now();
@@ -846,26 +858,39 @@ impl App {
         }
     }
 
+    /// How long the keyboard is waited on before the app hears the relay or looks again: a
+    /// twentieth of a second with a relay to hear, and with none what is left until it is time
+    /// to look, so that a run of keys never keeps it from looking.
+    fn wait(&self) -> Duration {
+        if self.sync.is_some() {
+            TICK
+        } else {
+            LOOK.saturating_sub(self.looked.elapsed())
+        }
+    }
+
     fn handle(&mut self, key: KeyEvent) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
-        let (zoomed, line, field, (place, empty)) = {
+        // What the key acts on is read from this view, so that it costs two views and not five.
+        let (zoomed, before, field, (place, empty)) = {
             let view = self.device.view();
             let field = view.field.as_ref().map(|field| field.text.to_owned());
             let caret = self.caret(&view);
-            (!view.path.is_empty(), view.line.to_owned(), field, caret)
+            (!view.path.is_empty(), Before::of(&view), field, caret)
         };
+        let line = before.line.clone();
         // Each key clears what the one before it said, so the status row says only what this
         // one did.
         self.device.say("");
         if (key.code, ctrl) == (KeyCode::Char('q'), true) {
             if place == Place::Row {
-                self.act(Action::Done)?;
+                self.act_from(before, Action::Done)?;
             }
             return Ok(Flow::Quit);
         }
         if let Some(action) = bound(key.code, ctrl, place, zoomed, empty) {
-            return self.act(action);
+            return self.act_from(before, action);
         }
         match key.code {
             KeyCode::Esc if escaped => return Ok(Flow::Quit),
@@ -889,7 +914,7 @@ impl App {
                             Some(body) => format!("{to}\n{body}"),
                             None => to,
                         };
-                        return self.act(Action::Edited(text));
+                        return self.act_from(before, Action::Edited(text));
                     }
                     Some((_, cursor)) => self.row_cursor = cursor,
                     None => {}
@@ -898,7 +923,7 @@ impl App {
             // On the line typing goes to the line, so the device is told what it now reads.
             code => match edited(&line, self.cursor, code, ctrl) {
                 Some((to, cursor)) if to != line => {
-                    let flow = self.act(Action::Type(to))?;
+                    let flow = self.act_from(before, Action::Type(to))?;
                     self.cursor = cursor;
                     return Ok(flow);
                 }
@@ -956,11 +981,17 @@ impl App {
 
     /// Asks the device for something, and carries out what it asks for in return.
     fn act(&mut self, action: Action) -> Result<Flow> {
-        let (line, was_on, was_fresh) = {
-            let view = self.device.view();
-            let fresh = view.field.as_ref().and_then(|field| field.fresh).is_some();
-            (view.line.to_owned(), under_cursor(&view), fresh)
-        };
+        let before = Before::of(&self.device.view());
+        self.act_from(before, action)
+    }
+
+    /// Acts as [`App::act`] does, with the view before it already taken.
+    fn act_from(&mut self, before: Before, action: Action) -> Result<Flow> {
+        let Before {
+            line,
+            on: was_on,
+            fresh: was_fresh,
+        } = before;
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
         let view = self.device.view();
@@ -1065,8 +1096,8 @@ impl App {
 
     /// What the status row says: what the last key did, or what happened since, and when
     /// nothing did, the trouble that lasts until it is put right. With none, there is no row.
-    fn status(&self) -> Option<String> {
-        let said = self.device.view().status;
+    fn status_of(&self, view: &View) -> Option<String> {
+        let said = view.status;
         if !said.is_empty() {
             Some(said.to_owned())
         } else if !self.device.key_verified() {
@@ -1108,8 +1139,8 @@ impl App {
     /// Paints the view from the top down: the path in a zoom, the line, the list, the body of what
     /// the cursor is on, and at the foot the status when there is one and the keys.
     fn draw(&mut self, frame: &mut Frame) {
-        let status = self.status();
         let view = self.device.view();
+        let status = self.status_of(&view);
         let width = usize::from(frame.area().width);
         let height = usize::from(frame.area().height);
         let zoomed = !view.path.is_empty();
@@ -1144,40 +1175,6 @@ impl App {
         }
         y += 1;
 
-        let mut blocks: Vec<Painted> = Vec::new();
-        for (i, row) in view.rows.iter().enumerate() {
-            let mut lines = Vec::new();
-            // In a zoom, what the line finds in the place is kept apart from what it only finds
-            // there. With nothing on the line the place lists only what is in it.
-            if zoomed
-                && !view.line.trim().is_empty()
-                && i > 0
-                && view.rows[i - 1].linked
-                && !row.linked
-            {
-                lines.push(Line::default());
-            }
-            let at = lines.len();
-            let mut at_cursor = None;
-            // The row the cursor is on is drawn from the note as it is being typed, with the
-            // terminal's cursor in its head.
-            if view.cursor == Some(i) {
-                let head = view
-                    .field
-                    .as_ref()
-                    .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
-                let (rows, x) = selected_rows(row, head, self.row_cursor, view.scores_shown, width);
-                lines.extend(rows);
-                at_cursor = Some((at, x));
-            } else {
-                lines.push(row_line(row, view.scores_shown, width));
-            }
-            blocks.push(Painted {
-                lines,
-                cursor: at_cursor,
-            });
-        }
-
         // The foot of the list is kept for the body of what the cursor is on, under a row of
         // nothing: on a row its note as it is being written, and on the line in a place the
         // place's note, if there is one. It is kept whatever the note holds, and in a place on the
@@ -1199,35 +1196,78 @@ impl App {
             }
         }
 
-        // The list moves only as far as it must to keep the cursor's row in sight.
+        // In a zoom, what the line finds in the place is kept apart from what it only finds
+        // there by a row of nothing, counted with the row it comes before. With nothing on the
+        // line the place lists only what is in it.
+        let apart = |i: usize| {
+            zoomed
+                && !view.line.trim().is_empty()
+                && i > 0
+                && view.rows[i - 1].linked
+                && !view.rows[i].linked
+        };
+        // The row the cursor is on is drawn from the note as it is being typed, with the
+        // terminal's cursor in its head, and may take a second row for its tail.
+        let selected = view
+            .cursor
+            .and_then(|i| view.rows.get(i).map(|row| (i, row)))
+            .map(|(i, row)| {
+                let head = view
+                    .field
+                    .as_ref()
+                    .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
+                let painted = selected_rows(row, head, self.row_cursor, view.scores_shown, width);
+                (i, painted)
+            });
+        let tall = |i: usize| {
+            usize::from(apart(i))
+                + match &selected {
+                    Some((focus, (rows, _))) if *focus == i => rows.len(),
+                    _ => 1,
+                }
+        };
+
+        // The list moves only as far as it must to keep the cursor's row in sight, and only the
+        // rows in sight are painted, however long the list is.
         let room = bottom.saturating_sub(y);
-        match view.cursor {
+        match &selected {
             None => self.top = 0,
-            Some(focus) => {
+            Some((focus, _)) => {
+                let focus = *focus;
                 self.top = self.top.min(focus);
-                while self.top < focus
-                    && blocks[self.top..=focus]
-                        .iter()
-                        .map(|painted| painted.lines.len())
-                        .sum::<usize>()
-                        > room
-                {
+                let mut taken: usize = (self.top..=focus).map(tall).sum();
+                while self.top < focus && taken > room {
+                    taken -= tall(self.top);
                     self.top += 1;
                 }
             }
         }
-        'list: for painted in blocks.into_iter().skip(self.top) {
-            for (k, line) in painted.lines.into_iter().enumerate() {
-                if y >= bottom {
-                    break 'list;
-                }
-                if let Some((at, x)) = painted.cursor
-                    && at == k
-                {
-                    cursor = Some((x, y));
-                }
-                paint(frame, y, 0, line);
+        let mut selected = selected;
+        for (i, row) in view.rows.iter().enumerate().skip(self.top) {
+            if y >= bottom {
+                break;
+            }
+            if apart(i) {
                 y += 1;
+            }
+            match selected.take_if(|(focus, _)| *focus == i) {
+                Some((_, (rows, x))) => {
+                    for (k, line) in rows.into_iter().enumerate() {
+                        if y >= bottom {
+                            break;
+                        }
+                        if k == 0 {
+                            cursor = Some((x, y));
+                        }
+                        paint(frame, y, 0, line);
+                        y += 1;
+                    }
+                }
+                None if y < bottom => {
+                    paint(frame, y, 0, row_line(row, view.scores_shown, width));
+                    y += 1;
+                }
+                None => {}
             }
         }
 
@@ -1427,7 +1467,7 @@ mod tests {
         let reopened = open_with(&space, key()).unwrap();
         assert_eq!(heads(&reopened), ["kettlebell swings"]);
         assert_eq!(
-            reopened.status(),
+            reopened.status_of(&reopened.device.view()),
             None,
             "a space with notes in it says nothing"
         );
@@ -1689,7 +1729,7 @@ mod tests {
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(line(&app), "");
         assert_eq!(
-            app.status(),
+            app.status_of(&app.device.view()),
             None,
             "a rung was taken, so nothing about quitting"
         );
@@ -1698,7 +1738,10 @@ mod tests {
             press(&mut app, KeyCode::Esc, false),
             Flow::Continue
         ));
-        assert_eq!(app.status().as_deref(), Some("Escape again to quit"));
+        assert_eq!(
+            app.status_of(&app.device.view()).as_deref(),
+            Some("Escape again to quit")
+        );
         assert!(matches!(press(&mut app, KeyCode::Esc, false), Flow::Quit));
 
         // Ctrl-D on the line is a second key for clearing it.
@@ -2225,7 +2268,7 @@ mod tests {
         drop(app);
         let reopened = open_with(&space, key()).unwrap();
         assert_eq!(heads(&reopened), ["Boiler", "[ ] Order oil #house"]);
-        assert_eq!(reopened.status(), None);
+        assert_eq!(reopened.status_of(&reopened.device.view()), None);
         done(&space);
     }
 
@@ -2242,16 +2285,16 @@ mod tests {
         connect(&mut app, &mut relay, &sent, &tell);
         assert!(heads(&app).is_empty());
         assert_eq!(
-            app.status().as_deref(),
+            app.status_of(&app.device.view()).as_deref(),
             Some(WRONG_KEY),
             "said as soon as it comes"
         );
         write(&mut app, "a garden");
-        let said = app.status().unwrap_or_default();
+        let said = app.status_of(&app.device.view()).unwrap_or_default();
         assert!(said.contains("passphrase"), "{said}");
         press(&mut app, KeyCode::Left, false);
         assert_eq!(
-            app.status().as_deref(),
+            app.status_of(&app.device.view()).as_deref(),
             Some(WRONG_KEY),
             "and it is said until it is put right"
         );
@@ -2385,7 +2428,7 @@ mod tests {
         let edited = edit_in(&app.editor, &id, &text);
         app.edited(id, edited).unwrap();
         assert_eq!(
-            app.status().as_deref(),
+            app.status_of(&app.device.view()).as_deref(),
             Some("could not run no-such-editor-3f9a01c2: No such file or directory")
         );
         assert_eq!(
@@ -2469,11 +2512,15 @@ mod tests {
         let stray = format!("{}s", heads(&app)[0]);
         type_in(&mut app, "s");
         assert_eq!(field(&app), Some(stray.clone()));
-        assert_eq!(app.status(), None, "a letter says nothing");
+        assert_eq!(
+            app.status_of(&app.device.view()),
+            None,
+            "a letter says nothing"
+        );
         assert_eq!(count(), 3, "and is written");
 
         press(&mut app, KeyCode::Down, false);
-        assert_eq!(app.status(), None);
+        assert_eq!(app.status_of(&app.device.view()), None);
         assert_eq!(count(), 3, "and down writes nothing more");
         assert_eq!(
             heads(&app)[0],
@@ -2614,7 +2661,7 @@ mod tests {
             "and the cursor is back on the line for the next"
         );
         assert_eq!(
-            app.status(),
+            app.status_of(&app.device.view()),
             None,
             "kept as it was typed, so nothing is said"
         );
@@ -2866,6 +2913,53 @@ mod tests {
     }
 
     #[test]
+    fn with_no_relay_the_app_looks_about_once_a_second_however_fast_the_keys_come() {
+        let (mut app, space) = app();
+        app.looked = Instant::now() - Duration::from_millis(600);
+        assert!(app.wait() <= Duration::from_millis(400), "{:?}", app.wait());
+        app.looked = Instant::now() - LOOK;
+        assert_eq!(app.wait(), Duration::ZERO, "it is time to look");
+        let _link = link(&mut app);
+        assert_eq!(
+            app.wait(),
+            TICK,
+            "with a relay it listens a twentieth of a second at a time"
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn a_long_list_below_the_cursor_leaves_the_screen_as_a_short_one_does() {
+        let (mut few, space) = app();
+        for n in 0..12 {
+            write(&mut few, &format!("garden bed {n}"));
+        }
+        for _ in 0..7 {
+            press(&mut few, KeyCode::Down, false);
+        }
+        let short = screen(&mut few, 40, 9);
+        drop(few);
+        // The same notes, and three hundred more written before them, below them on the list.
+        let (mut app, other) = app();
+        for n in 0..300 {
+            write(&mut app, &format!("compost turn {n}"));
+        }
+        for n in 0..12 {
+            write(&mut app, &format!("garden bed {n}"));
+        }
+        for _ in 0..7 {
+            press(&mut app, KeyCode::Down, false);
+        }
+        let long = screen(&mut app, 40, 9);
+        assert_eq!(long.rows, short.rows);
+        assert_eq!(long.dim, short.dim);
+        assert_eq!(long.bold, short.bold);
+        assert_eq!(long.cursor, short.cursor);
+        done(&space);
+        done(&other);
+    }
+
+    #[test]
     fn a_body_is_broken_between_words() {
         assert_eq!(
             wrap("the combi under the stairs", 10),
@@ -2972,14 +3066,29 @@ mod tests {
     #[test]
     fn the_status_says_what_the_last_key_did_and_trouble_until_it_is_put_right() {
         let (mut app, space) = app();
-        assert!(app.status().unwrap().starts_with("no notes yet"));
+        assert!(
+            app.status_of(&app.device.view())
+                .unwrap()
+                .starts_with("no notes yet")
+        );
         type_in(&mut app, "x");
-        assert_eq!(app.status(), None, "the first key clears what opening said");
+        assert_eq!(
+            app.status_of(&app.device.view()),
+            None,
+            "the first key clears what opening said"
+        );
         chord(&mut app, 'd');
         press(&mut app, KeyCode::Esc, false);
-        assert_eq!(app.status().as_deref(), Some("Escape again to quit"));
+        assert_eq!(
+            app.status_of(&app.device.view()).as_deref(),
+            Some("Escape again to quit")
+        );
         press(&mut app, KeyCode::Left, false);
-        assert_eq!(app.status(), None, "and so does every key after");
+        assert_eq!(
+            app.status_of(&app.device.view()),
+            None,
+            "and so does every key after"
+        );
 
         assert!(
             !app.hear().unwrap(),
@@ -3010,7 +3119,7 @@ mod tests {
         assert!(app.not_syncing);
         press(&mut app, KeyCode::Left, false);
         assert_eq!(
-            app.status().as_deref(),
+            app.status_of(&app.device.view()).as_deref(),
             Some("nas.local: connection refused"),
             "why is said until the relay is back"
         );
