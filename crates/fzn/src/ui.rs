@@ -76,8 +76,8 @@ pub struct App {
     device: Device,
     logs: Logs,
     editor: String,
-    /// What the path row is headed with: the app's name, and the space when it is not the usual one.
-    title: String,
+    /// The space's name, which heads the path.
+    space: String,
     /// Cursor position in the line, in characters.
     cursor: usize,
     /// Cursor position in the head of the row the cursor is on, in characters.
@@ -249,15 +249,15 @@ fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(Strin
     })
 }
 
-/// Where you are: the app, then each place gone into, outermost first, in at most `max`
+/// Where you are: the space, then each place gone into, outermost first, in at most `max`
 /// characters. Past three steps the middle ones give way to `…`. Every step gets an equal share
 /// of the room, and what a short step does not use goes to the longer ones.
-fn breadcrumb(title: &str, heads: &[&str], max: usize) -> String {
+fn breadcrumb(space: &str, heads: &[&str], max: usize) -> String {
     let steps: Vec<&str> = match heads {
         [first, .., before, last] if heads.len() > 3 => vec![first, "…", before, last],
         _ => heads.to_vec(),
     };
-    let mut room = max.saturating_sub(title.chars().count() + 2 + 3 * steps.len());
+    let mut room = max.saturating_sub(space.chars().count() + 2 + 3 * steps.len());
     let mut widths = vec![0; steps.len()];
     let mut order: Vec<usize> = (0..steps.len()).collect();
     order.sort_by_key(|&i| steps[i].chars().count());
@@ -265,7 +265,7 @@ fn breadcrumb(title: &str, heads: &[&str], max: usize) -> String {
         widths[i] = steps[i].chars().count().min(room / (steps.len() - k));
         room -= widths[i];
     }
-    let mut crumb = format!(" {title}");
+    let mut crumb = format!(" {space}");
     for (step, width) in steps.iter().zip(widths) {
         crumb.push_str(" › ");
         crumb.push_str(&fit(step, width));
@@ -572,7 +572,6 @@ impl App {
         key: Key,
         weights: Weights,
         editor: String,
-        title: String,
     ) -> Result<Self> {
         let mut device = Device::new(Box::new(System), writer, weights, key);
         let logs = store::open(dir, space, Writer::App, &mut device)?;
@@ -580,7 +579,7 @@ impl App {
             device,
             logs,
             editor,
-            title,
+            space: space.to_owned(),
             cursor: 0,
             row_cursor: 0,
             top: 0,
@@ -874,7 +873,7 @@ impl App {
         let mut y = 0;
 
         if zoomed {
-            let crumb = breadcrumb(&self.title, &view.path, width.saturating_sub(1));
+            let crumb = breadcrumb(&self.space, &view.path, width.saturating_sub(1));
             paint(frame, y, 0, Line::from(crumb).dim());
             y += 1;
         }
@@ -1056,7 +1055,6 @@ mod tests {
             key,
             Weights::default(),
             "true".into(),
-            "fzn".into(),
         )
     }
 
@@ -2678,24 +2676,36 @@ mod tests {
     }
 
     #[test]
-    fn the_title_says_where_you_are_and_fits() {
-        assert_eq!(breadcrumb("fzn", &[], 70), " fzn ");
+    fn the_path_starts_with_the_space_and_fits() {
+        assert_eq!(breadcrumb("main", &[], 70), " main ");
         assert_eq!(
-            breadcrumb("fzn", &["trainingapp", "Profile"], 70),
-            " fzn › trainingapp › Profile "
+            breadcrumb("main", &["trainingapp", "Profile"], 70),
+            " main › trainingapp › Profile "
         );
         let long = "a very long head that goes on and on about the training plan for the year";
-        let crumb = breadcrumb("fzn · fzn-2022", &["trainingapp", long], 70);
+        let crumb = breadcrumb("garden", &["trainingapp", long], 70);
         assert_eq!(crumb.chars().count(), 70);
         assert!(
-            crumb.starts_with(" fzn · fzn-2022 › trainingapp › a very long")
-                && crumb.ends_with("… "),
+            crumb.starts_with(" garden › trainingapp › a very long") && crumb.ends_with("… "),
             "a short head keeps its length and the long one takes what is left: {crumb}"
         );
         assert_eq!(
-            breadcrumb("fzn", &["one", "two", "three", "four", "five"], 70),
-            " fzn › one › … › four › five "
+            breadcrumb("main", &["one", "two", "three", "four", "five"], 70),
+            " main › one › … › four › five "
         );
+    }
+
+    #[test]
+    fn in_a_place_the_path_row_is_headed_by_the_space() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler service #house");
+        assert_eq!(screen(&mut app, 40, 6).rows[0], ">", "no path at the top");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::Tab, false);
+        let shot = screen(&mut app, 40, 6);
+        assert_eq!(shot.rows[0], " main › #house");
+        assert!(shot.dim[0]);
+        done(&space);
     }
 
     #[test]

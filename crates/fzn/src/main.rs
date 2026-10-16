@@ -313,12 +313,6 @@ fn main() -> Result<()> {
     let _lock = hold(&dir, &space)?;
     let writer = store::writer(&dir, &config_dir)?;
     let key = key::key_for(&space, &config_dir, &dir)?;
-    // The space you live in needs no label. Any other one says where you are.
-    let title = if space == config::resolve_space(None, &cfg)? {
-        "fzn".to_owned()
-    } else {
-        format!("fzn · {space}")
-    };
     // The device is the app. The terminal is one face on it, and the directory is where it
     // keeps its lines.
     let opened = ui::App::open(
@@ -328,7 +322,6 @@ fn main() -> Result<()> {
         key,
         cfg.weights.clone(),
         config::editor(&cfg),
-        title,
     );
     let mut app = match opened {
         Ok(app) => app,

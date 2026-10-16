@@ -557,8 +557,9 @@ empty line outside one quits, the first saying `Escape again to quit`. Ctrl-Q qu
 anywhere, writing out the head first.
 
 The screen is flat: no borders, no boxes, the terminal's own colours. The path is a dim row
-above the line and only in a place, ` fzn › Boiler › #house `, or ` fzn · garden › …` in a space
-that is not the one the config names, the middle of a long path given up to `…`. The line is the
+above the line and only in a place, headed by the space's name, ` main › Boiler › #house `, the
+middle of a long path given up to `…`; at the top there is no path row, and the app sets no
+window title. The line is the
 first row, after a dim `>` in the column the rows leave empty, so that its text lines up with
 theirs; what its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or
 `→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then, dimmed,
@@ -1504,6 +1505,18 @@ repeats it only where the reason needs it.
   keeping the engine's label, which the page's `›` in the foot shares. Alt-Z is no longer a
   fallback, since Tab is everywhere. The Tab-to-link that "Position is the link" dropped stays
   dropped: this Tab links nothing. The Open question is closed.
+- **The path starts with the space.** Decided 2026-10-16, at Sam's direction. The path read `fzn ›
+  #house`, or `fzn · garden › #house` in a space that was not the usual one. The app's name says
+  nothing the person does not know; the space's name says where they are, which is what the path is
+  for. Now the first step of the path is the space, in both faces: ` main › #house `, and in the
+  page that first step is pressed to go back to the top, as every step is a way back to it; the
+  page's title stays `fzn`, or `fzn · garden`, which is for the tab and not for where you are in it.
+  At the top, outside any place, the terminal still draws no path row, since the space does not
+  change while the app is open and what is not asked for is not on the screen; a dim `main` above
+  the line at all times was weighed for knowing which space a window is on, and left to Sam to ask
+  for. The terminal sets no window title: a window rule matches the terminal's class, which the
+  launch sets (`--class fzn`), and a title that followed the path would change on every zoom. Were a
+  summon key ever to want one, it would be the app's name and not the path.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
