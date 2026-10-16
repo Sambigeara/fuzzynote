@@ -511,16 +511,15 @@ box.addEventListener('input', () => {
 
 // Leaving an open body for somewhere else on the page closes it, writing it if it changed.
 // Leaving the window does not: the body is there, still open, when the person comes back. Leaving
-// a head does nothing: the field stays the cursor's, so that a word in the foot reached by Tab is
-// about the note, and a click on the line or a row says where the cursor goes.
+// a head does nothing: the field stays the cursor's, and a click on the line or a row says where
+// the cursor goes.
 box.addEventListener('blur', (event) => leftFor(event));
 
 function leftFor(event) {
   if (quiet || !view?.field?.whole) return;
   const to = event.relatedTarget;
-  // A word in the foot or a step of the path reached by Tab is about the note as it is being
-  // written, so the body stays open for it, and anywhere in the sheet is still in it.
-  if (to?.closest?.('#hints, #path, #buffer')) return;
+  // Anywhere in the sheet is still in it.
+  if (to?.closest?.('#buffer')) return;
   if (!(to ? document.body.contains(to) : document.hasFocus())) return;
   leaving = true;
   try {
@@ -761,12 +760,24 @@ function fill(li, row, selected) {
   li.replaceChildren(main);
 }
 
+// The focus follows the cursor at the end of every painting: no key moves it off a field, so
+// wherever else it is, a press put it there and the field takes it back. Only a field being left
+// for somewhere else keeps its hands off, and vim's prompt for a command, at the sheet's foot, which
+// is still in the body, and text the person has selected outside the fields, in the body beside the
+// list or above the line, to copy it: a painting for a line from the relay must not take that away.
+// The next key typed brings the focus back.
+const reading = () => document.activeElement === document.body && getSelection()?.type === 'Range';
+const takesFocus = (field) =>
+  !leaving &&
+  !reading() &&
+  document.activeElement !== field &&
+  !$('sheet-foot').contains(document.activeElement);
+
 function paintRows() {
   const zoomed = view.path.length > 0;
   const searching = view.line.trim() !== '';
   const field = view.field;
   const fieldId = view.cursor != null && field ? view.rows[view.cursor]?.id ?? null : null;
-  const focused = document.activeElement === box || !!editor?.hasFocus;
   const [from, to] = [box.selectionStart, box.selectionEnd];
   // The box's class says whether the field was the whole note last time, whichever of the two
   // held it.
@@ -860,8 +871,7 @@ function paintRows() {
     if (!keeping && toggled) editor.open(field.text, field.fresh ?? headOf(field.text).length);
     else if (!keeping && !hadEditor) editor.open(field.text, Math.min(from, field.text.length));
     else if (kept(editor.text()) !== kept(field.text)) editor.setText(field.text);
-    const lost = [document.body, line].includes(document.activeElement);
-    if (!leaving && (landed || toggled || focused || lost)) editor.focus();
+    if (takesFocus(editor.contentDOM)) editor.focus();
   } else if (field && boxIn) {
     box.classList.toggle('whole', field.whole);
     const want = boxText(field);
@@ -875,11 +885,8 @@ function paintRows() {
     const at = field.fresh ?? end;
     if (landed || (toggled && !field.whole) || (told && field.fresh != null)) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
-    // A word in the foot reached by Tab keeps the focus. The box takes it when the cursor has
-    // just arrived, when the body opens or closes, and when it had it before the painting.
-    const lost = [document.body, line].includes(document.activeElement);
-    if (!leaving && (landed || toggled || focused || lost)) box.focus({ preventScroll: true });
-  } else if (landed && (focused || document.activeElement === document.body)) {
+    if (takesFocus(box)) box.focus({ preventScroll: true });
+  } else if (takesFocus(line)) {
     line.focus({ preventScroll: true });
   }
   quiet = false;
