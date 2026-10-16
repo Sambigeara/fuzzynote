@@ -287,6 +287,36 @@ button, input, textarea { font: inherit; color: inherit; }
 
 .row.archived .head { color: var(--soft); }
 
+/* A task's box at the start of its head, drawn as a body read draws one, a little larger, and
+   pressed to tick the task where it reads. Round it is room for a pointer, and on a touch screen
+   for a thumb. */
+.tick {
+  position: relative;
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin: 0 0.5em 0 0;
+  padding: 0;
+  vertical-align: -0.05em;
+  border: 1px solid var(--faint);
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+}
+.tick::before { content: ""; position: absolute; inset: -0.5em -0.4em -0.5em -0.5em; }
+.tick:hover { border-color: var(--ink); }
+.tick.done::after {
+  content: "";
+  position: absolute;
+  left: 0.23em;
+  top: 0.05em;
+  width: 0.2em;
+  height: 0.4em;
+  border: solid var(--soft);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
 .row time {
   flex: none;
   color: var(--faint);
@@ -713,6 +743,9 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
      cursor is the one text in it to select in. */
   .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .box { -webkit-user-select: text; user-select: text; }
+  /* A thumb's room round a task's box grows into the margin before it, and stops at the space
+     after it, short of the head's first letter, so that a tap meant to write never ticks. */
+  .tick::before { inset: calc((0.8em - 44px) / 2) -0.4em calc((0.8em - 44px) / 2) calc(1.2em - 44px); }
   .word { min-height: 44px; }
   .word.vim { display: none; }
   #caret.still { animation: none; }

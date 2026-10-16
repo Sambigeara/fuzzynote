@@ -816,13 +816,16 @@ away leaves it open, and `done`, or the back gesture, closes it.
 *Touch.* A tap on the words of a head puts the cursor on the note and the caret under the finger,
 and the keyboard comes; a tap beside the words puts the cursor there and nothing more, and a second
 tap beside them, the head being a text box by then, opens the body, though while the head is being
-written a tap in it is the caret's. The `›` at the end of the selected row goes into the note and
-the one after the line into what the line names; a link in a row opens and leaves the cursor where
-it was; the path is the way back, and so is the phone's own back gesture, since each step in is a
-step of the browser's history. The keyboard is never raised by the page, only by a finger on text, a
-key pressed, or the word `new note`, and never dropped by a tap on a control. The caret is drawn
-where the cursor is whether or not the keyboard is up, still while it is down. There is no gesture
-of the app's own: tap, scroll and the system's back are the whole of it.
+written a tap in it is the caret's. The box at the start of a task is drawn in its row, on every
+width, and a tap or a click on it ticks the task where it reads, the cursor and the caret staying
+where they were; the room round it for a finger stops short of the head's first letter. The `›` at
+the end of the selected row goes into the note and the one after the line into what the line names;
+a link in a row opens and leaves the cursor where it was; the path is the way back, and so is the
+phone's own back gesture, since each step in is a step of the browser's history. The keyboard is
+never raised by the page, only by a finger on text, a key pressed, or the word `new note`, and never
+dropped by a tap on a control. The caret is drawn where the cursor is whether or not the keyboard is
+up, still while it is down. There is no gesture of the app's own: tap, scroll and the system's back
+are the whole of it.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own (see "A client is a writer of its own, leased from a pool"). Where the browser gives
@@ -2080,6 +2083,15 @@ repeats it only where the reason needs it.
   with a word anyway, a sideways swipe fights the edge swipe back and the bar's own scroll, and sync
   is live, so there is nothing to pull for.
 
+  A task's box is drawn at the start of its row and a tap on it ticks the task, on a desktop too,
+  where a click does: the one new control, and the row reading as it does on paper, where a phone
+  could tick only by finding `tick` in the bar. The cursor stays where it was, and so does the caret
+  in a head being written, so that boxes can be ticked down what the line found. The room round the
+  box for a finger grows into the margin before it and stops short of the head's first letter, so
+  that a tap meant to write never ticks. The engine says which rows are tasks, and `Row.task` says
+  that the box is the head's first three characters, so the page does not judge a task by its text.
+  This closes the open question on a box in the page's row.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document.
@@ -2168,8 +2180,8 @@ repeats it only where the reason needs it.
   when the editor closes, and the wait reads as this clock running ahead, two minutes after a
   long edit. A `now` said again from time to time is the fix for the first, and the time a
   message was heard going with it to the device for the second, if either is felt.
-- A box in the page's row to tap, so that a task is ticked on a phone the way it reads. The word
-  in the foot ticks it until then.
+- A box in the page's row to tap, so that a task is ticked on a phone the way it reads. Closed
+  2026-10-16 by "The phone is a frame with a bar": the box is drawn in the row and ticks.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

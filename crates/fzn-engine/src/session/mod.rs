@@ -283,7 +283,9 @@ pub struct Row {
     /// and they end it. None when it reads as it is. The row under the cursor shows its text as
     /// it is, whatever this says.
     pub shown: Option<String>,
-    /// Whether the note is a task, and if it is, whether its box is ticked.
+    /// Whether the note is a task, and if it is, whether its box is ticked. A task's head starts
+    /// with its box, `[ ]` or `[x]`, so a face that draws the box takes the head's first three
+    /// characters off, and the space after them that a box is written with.
     pub task: Option<bool>,
     pub archived: bool,
     /// Whether there is more to read than the head.

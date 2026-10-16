@@ -605,8 +605,22 @@ import('./vendor/render.js').then((module) => {
   render.onLanguage(reread);
   reread();
 }, () => {});
-const readHead = (text) => {
+// A task's head starts with its box, as the engine says it does, and the box is drawn, as a body
+// read draws one, and ticks the task when it is pressed (see tick); the rest of the head reads as
+// any head does. The box is the head's first three letters and the space after them, as `task`
+// on the engine's row says, and how much of the text it was is kept for placing the caret.
+const readHead = (text, task) => {
   const head = el('span', 'head');
+  if (task != null) {
+    const button = el('button', task ? 'tick done' : 'tick');
+    button.type = 'button';
+    button.tabIndex = -1;
+    button.setAttribute('aria-label', task ? 'Untick' : 'Tick');
+    const cut = text[3] === ' ' ? 4 : 3;
+    head.dataset.boxed = cut;
+    head.append(button);
+    text = text.slice(cut);
+  }
   head.append(render ? render.head(text) : text);
   return head;
 };
@@ -958,7 +972,7 @@ function rowKey(row, selected, apart) {
     // the row would take the box out under a composition the first letter began.
     field && !field.whole ? null : field ? headOf(field.text) : row.shown ?? row.head,
     !!render,
-    row.links, row.reasons, row.archived, row.has_body, apart, selected,
+    row.task, row.links, row.reasons, row.archived, row.has_body, apart, selected,
     view.scores_shown ? row.score : null,
   ]);
 }
@@ -983,7 +997,7 @@ function fill(li, row, selected) {
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
   // Off the cursor a row reads as the engine shows it, without the place's labels at its end.
   const head = field ? headOf(field.text) : row.shown ?? row.head;
-  main.append(field && !field.whole ? box : readHead(head));
+  main.append(field && !field.whole ? box : readHead(head, row.task));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));
@@ -1040,6 +1054,7 @@ const reading = () => document.activeElement === document.body && getSelection()
 let wasTyping = false;
 const takesFocus = (field) =>
   (!coarse.matches || wasTyping || wantsText !== false) &&
+  !holdFocus &&
   !leaving &&
   !reading() &&
   document.activeElement !== field &&
@@ -1733,15 +1748,46 @@ function hitText(head, x, y) {
   const words = document.createRange();
   words.selectNodeContents(head);
   if (![...words.getClientRects()].some((r) => near(r, x, y))) return false;
-  const parts = [...head.childNodes];
+  const parts = [...head.childNodes].filter((node) => !node.classList?.contains('tick'));
   if (!parts.every((node) => node.nodeType === Node.TEXT_NODE)) return true;
   const at = letterAt(x, y);
-  let before = 0;
+  let before = Number(head.dataset.boxed ?? 0);
   for (const node of parts) {
     if (node === at?.offsetNode) return before + at.offset;
     before += node.length;
   }
   return true;
+}
+
+// A task's box ticks it where it reads, and the cursor stays where it was: on the line, so that
+// boxes can be ticked down a list the line found, or on the note it was on. The engine ticks the
+// note under the cursor, so the cursor goes to the task and back, and the focus is held where it
+// was meanwhile, a field that had it keeping it.
+let holdFocus = false;
+function tick(at) {
+  if (view.field?.whole) return;
+  const had = typing();
+  const was = view.cursor != null ? (view.rows[view.cursor]?.id ?? null) : null;
+  const task = view.rows[at].id;
+  // A head being written keeps its caret, which landing on it again would put at its end.
+  const writing = was != null && boxIn === was ? [box.selectionStart, box.selectionEnd] : null;
+  holdFocus = true;
+  try {
+    act({ select: at });
+    act('archive');
+    const back = view.rows.findIndex((row) => row.id === was);
+    if (was == null) act({ select: null });
+    else if (was !== task && back >= 0) {
+      act({ select: back });
+      if (writing && boxIn === was) box.setSelectionRange(...writing);
+    }
+  } finally {
+    holdFocus = false;
+  }
+  if (!had) return;
+  wantsText = true;
+  follow();
+  wantsText = false;
 }
 
 // The text and the place in it under a point, by the standard's call or by WebKit's older one,
@@ -1756,14 +1802,32 @@ function letterAt(x, y) {
 // box's by then, opens its body; a tap on the words puts the cursor there too and writes in it,
 // with the caret where it landed, which on a phone is what raises the keyboard. The arrow on the
 // selected row goes in, and a link in a row opens and does nothing else.
+// Where the last touch on the list landed, as the finger put it. A browser moves a tap onto a
+// control near it, a task's box among them, and the click's point with it, so a tap on a task's
+// first letter would tick it; the box is pressed only where the finger landed on its room.
+let touched = null;
+list.addEventListener(
+  'touchstart',
+  (event) => {
+    const [touch] = event.touches;
+    touched = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+  },
+  { passive: true },
+);
+
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
   if (!item || event.target === box || event.target.closest('a')) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
+  const fresh = touched && Date.now() - touched.at < 1000;
+  const [x, y] = fresh ? [touched.x, touched.y] : [event.clientX, event.clientY];
+  const ticker = event.target.closest('.tick');
+  const reach = (node) => node.getBoundingClientRect().right + 0.4 * parseFloat(getComputedStyle(node).fontSize);
+  if (ticker && (!fresh || x <= reach(ticker))) return tick(at);
   if (event.target.closest('.chev')) act('go_in');
   else if (at !== view.cursor) {
-    wantsText = hitText(item.querySelector('.head'), event.clientX, event.clientY);
+    wantsText = hitText(item.querySelector('.head'), x, y);
     act({ select: at });
   } else if (!view.field?.whole) act('open');
   follow();
