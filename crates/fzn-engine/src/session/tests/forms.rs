@@ -54,7 +54,7 @@ fn a_line_of_labels_is_gone_into_one_after_another() {
     assert_eq!(
         path(&s),
         ["#house", "2026-10-13"],
-        "one place, as if Right after each"
+        "one place, as if Tab after each"
     );
     assert_eq!(s.line, "");
     assert_eq!(heads(&s), ["dry the boots #house"]);

@@ -218,9 +218,9 @@ impl Session {
             .filter(|hit| Some(hit.note.id.as_str()) != here.map(String::as_str))
             .collect();
         // The note the line names is listed first wherever it is, as at the top, so that the
-        // list shows where Right at the end of the line goes: the place's note too, with labels
-        // gone into after it, since Right goes back to it, but not where you are, from which
-        // Right goes nowhere. Then what is in the place, and then what is only found there, each
+        // list shows where Tab on the line goes: the place's note too, with labels gone into
+        // after it, since Tab goes back to it, but not where you are, from which Tab goes
+        // nowhere. Then what is in the place, and then what is only found there, each
         // in the order it was found in.
         found.sort_by_key(|&hit| (!hit.named, !fact(hit)));
         let first = found.iter().position(|&hit| !hit.named && !fact(hit));

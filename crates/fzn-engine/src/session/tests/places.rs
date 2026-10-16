@@ -710,7 +710,7 @@ fn a_note_and_the_labels_gone_into_after_it_are_one_place() {
         ["Bleed the radiators", "Pressure dropped #house"]
     );
 
-    // Ctrl-L there is the note's, as in its own zoom.
+    // Ctrl-L there is the note's, as in its own place.
     select(&mut s, "Bleed the radiators");
     assert!(labels(&s).contains(&"unlink"));
     s.act(Action::Link);
@@ -761,12 +761,12 @@ fn the_note_of_a_place_with_labels_after_it_is_listed_when_named_and_gone_back_t
     type_in(&mut s, "Boiler");
     assert!(
         !labels(&s).contains(&"go in") && !heads(&s).contains(&"Boiler"),
-        "in its own zoom it names where you are"
+        "in its own place it names where you are"
     );
 
     go_to(&mut s, "/today");
     type_in(&mut s, "Boiler");
-    assert_eq!(heads(&s)[0], "Boiler", "where Right goes");
+    assert_eq!(heads(&s)[0], "Boiler", "where Tab goes");
     assert_eq!(s.rows[0].reasons[0], "its name");
     assert!(!s.rows[0].linked, "named, not a fact of the place");
     assert!(labels(&s).contains(&"go in"));

@@ -164,7 +164,7 @@ fn with_label(text: &str, label: &Label, written: &str) -> String {
 }
 
 impl Session {
-    /// Zooms on the note under the cursor, or from the line on what the line names: the list
+    /// Goes into the note under the cursor, or from the line into what the line names: the list
     /// becomes what is in it. If the note contains what was typed, or holds what the line holds
     /// and is named by its words outside phrases, in its head and in the heads of the notes it
     /// links to, or by its letters, that was a search for it, so the line clears and is kept for
@@ -195,8 +195,8 @@ impl Session {
         self.refresh(true);
     }
 
-    /// Goes into what the line names, one place after another, as if the arrow had been pressed
-    /// after each: a place already on the path is gone back to, and any other is gone into. The
+    /// Goes into what the line names, one place after another, as if Tab had been pressed after
+    /// each: a place already on the path is gone back to, and any other is gone into. The
     /// line was a search for where it leads, so it clears, and comes back on the way out of the
     /// first place it went into; one that only went back stays as it is.
     fn go_in_from_line(&mut self) {
@@ -220,10 +220,10 @@ impl Session {
 
     /// What the line names to go into: each label of a line of labels and nothing else, in the
     /// order typed, or else the one note in the space the line is the name of and that holds what
-    /// the line holds. That note is first on the list in a zoom as at the top, saying `its name`,
-    /// so this is where Down and then Right would go too. One place is named unless it is where
-    /// you are, so that one on the path is gone back to; of several labels, those the place has
-    /// already are passed over, so that the rest are added to it.
+    /// the line holds, by [`Session::named_here`]. That note is first on the list in a place as at
+    /// the top, saying `its name`, so this is where Down and then Tab would go too. One place is
+    /// named unless it is where you are, so that one on the path is gone back to; of several
+    /// labels, those the place has already are passed over, so that the rest are added to it.
     pub(super) fn places_named(&self) -> Vec<Step> {
         let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
@@ -374,7 +374,7 @@ impl Session {
     }
 
     /// Links the note under the cursor to the one being looked around, or takes that link away.
-    /// It is a correction: what is written in a zoom is linked already, and outside one, or in
+    /// It is a correction: what is written in a note's place is linked already, and outside one, or in
     /// labels with no note before them, there is nothing to link to.
     pub(super) fn link(&mut self) {
         let Some(around) = self.place_note().cloned() else {

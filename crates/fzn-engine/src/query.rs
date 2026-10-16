@@ -343,8 +343,7 @@ impl Query {
         !self.ranks() && self.labels.is_empty() && self.holds.is_empty()
     }
 
-    /// Whether the line is labels and nothing else, which the arrow at its end goes into one
-    /// after another.
+    /// Whether the line is labels and nothing else, which Tab goes into one after another.
     pub(crate) fn only_labels(&self) -> bool {
         !self.letters
             && self.holds.is_empty()

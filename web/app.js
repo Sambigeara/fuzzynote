@@ -1017,7 +1017,7 @@ function fill(li, row, selected) {
   li.replaceChildren(main);
 }
 
-// The rows made are those that can be seen and a screenful more, and more as the list is scrolled
+// The rows made are those that can be seen and twenty more, and more as the list is scrolled
 // or walked towards its end: the engine lists up to 500, and a list cleared made all of them anew,
 // with their style and layout, in 40 ms or more, four frames for one key. How many fit is read once
 // and again only when the window's size changes, from the list's height and a row's, the `--row`
