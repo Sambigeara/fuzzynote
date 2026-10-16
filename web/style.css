@@ -206,12 +206,11 @@ button, input, textarea { font: inherit; color: inherit; }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
 }
 
-#empty, #elsewhere {
+#empty {
   flex: none;
   margin: 1.25rem 0 0;
+  color: var(--faint);
 }
-#empty { color: var(--faint); }
-#elsewhere { color: var(--ink); }
 
 /* The list and, beside it on a wide page, the body of the note under the cursor. */
 #lower {
@@ -557,9 +556,6 @@ body.resting .row .tail { display: none; }
 #unlocking.trouble { color: var(--ink); }
 body.locked #above, body.locked #top, body.locked #here, body.locked #empty,
 body.locked #lower, body.locked #hints { display: none !important; }
-
-/* Another tab has the space: this page is still here, dimmed, with one sentence and a way back. */
-body.elsewhere :is(#above, #top, #here, #lower, #buffer, #hints, #said) { opacity: .4; pointer-events: none; }
 
 .scratch { position: fixed; left: -100rem; top: 0; }
 

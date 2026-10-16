@@ -804,9 +804,26 @@ the selected row goes into the note and on the one after the line into what the 
 tap on a link in a row opens it and leaves the cursor where it was, and the path, or the phone's
 own back gesture, is the way back.
 
-*One tab at a time* is the device. A tab that opens says so over a broadcast channel and the
-older one stands down, closing its socket and offering `use it here`, since two of them writing
-one log would fork it.
+*Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
+log of its own (see "A client is a writer of its own, leased from a pool"). Where the browser gives
+the page Web Locks, a tab writes under the id of a slot it holds while it is open, the lowest no
+other tab holds, so that the next tab to hold it goes on with its log; slot 0's id is kept where a
+browser kept its one id before, and the browser lets the lock go when the tab closes or dies. A
+browser gives Web Locks only to a page served over TLS or from the machine itself, and a relay
+elsewhere serves neither. Without them a tab cannot tell a tab that has gone from one the browser
+has frozen, so it pools nothing: its id is its own while the browser keeps the tab, in the tab's own
+storage, and is gone on with only when the page before it said as it went that it had left. What it
+leaves is a token one page alone can spend, a random word in the tab's storage and the same in the
+browser's under the id, taken as the id is gone on with, since a tab's storage can be copied after
+its page has left, into a window it opened or by Duplicate, and only the first of the copies to open
+may have the log. A reload, the reload onto a new build and a closed tab opened again keep their
+log; a new tab, a duplicated one and one the browser killed write a new one. A log for every tab
+that writes is a few lines on the relay; a log shared would be a fork. Over a broadcast channel the
+tabs are peers of one another, as the relay is over the socket, and each has a socket of its own:
+what one writes is listed in the others in the next frame or two, what one hears from the relay it
+passes on, and with the relay gone they still converge. Nothing stands down and nothing has to be
+pressed; a page of the build before this one, which knew one tab at a time, is told to stand down as
+it did.
 
 Not yet: the page itself needs the relay to load, the graph view, and anything a browser only
 allows a page served over TLS, which a relay does not do.

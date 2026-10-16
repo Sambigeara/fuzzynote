@@ -2,8 +2,8 @@
 //
 // The engine is the app. It runs here as WebAssembly and is told what was asked for, as an
 // action, and says what to show. This file is what a page adds to it: which key or tap asks
-// for what, painting the view, the socket to the relay this page came from, and somewhere to
-// keep lines between visits.
+// for what, painting the view, the socket to the relay this page came from, the other tabs open
+// on the space, and somewhere to keep lines between visits.
 //
 // There is one cursor on the page and it moves. On the line it is the caret, and typing finds.
 // Down puts it on a row, whose head becomes a text box with the caret at its end, so typing there
@@ -45,42 +45,159 @@ const space = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(asked) ? asked : 'main'
 const title = space === 'main' ? 'fzn' : `fzn · ${space}`;
 document.title = title;
 
-// What this browser keeps for a space, besides its lines: the writer id, and the key.
-const WRITER = `fzn.writer.${space}`;
+// What this browser keeps for a space, besides its lines: the key, and the writer ids.
 const KEY = `fzn.key.${space}`;
 
-function kept(name) {
+// The browser's storage, and the tab's own, which a reload keeps and another tab does not have.
+const local = () => localStorage;
+const session = () => sessionStorage;
+
+function kept(name, where = local) {
   try {
-    return localStorage.getItem(name);
+    return where().getItem(name);
   } catch {
     return null;
   }
 }
 
-function keep(name, value) {
+function keep(name, value, where = local) {
   try {
-    if (value == null) localStorage.removeItem(name);
-    else localStorage.setItem(name, value);
+    if (value == null) where().removeItem(name);
+    else where().setItem(name, value);
   } catch {
     // Nowhere to keep it, so it is asked for or made again next time.
   }
 }
 
-// This browser's writer id for the space: its name in the versions it writes, and so the name
-// of its log. Made once and kept, since two logs under one name are a fork. A browser from
-// before writer ids were kept a space at a time had one for every space, and each space takes
-// that one over.
-function writer() {
-  const fresh = () =>
-    [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('');
-  const plain = (id) => /^[0-9a-f]{8}$/.test(id || '');
-  let id = kept(WRITER);
-  if (!plain(id)) {
-    const old = kept('fzn.device');
-    id = plain(old) ? old : fresh();
-    keep(WRITER, id);
+const hex = (bytes) =>
+  [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+const plain = (id) => /^[0-9a-f]{8}$/.test(id || '');
+
+// A tab's writer id for the space: its name in the versions it writes, and so the name of its log.
+// Every tab open on the space writes a log of its own, since two writing one would fork it.
+//
+// With Web Locks the tabs share a pool of ids. A tab holds a slot for as long as it is open, the
+// lowest that no other tab holds, by a lock the browser lets go when the tab is closed or dies; the
+// lock's callback never settles, so it is held for the page's life. The id is kept under the slot,
+// made once, so the next tab to hold the slot goes on with the same log. Slot 0's id is kept where
+// the one id a browser had was kept before tabs had slots, and a browser from before ids were kept
+// a space at a time had one for every space, which each space's slot 0 takes over.
+//
+// A browser gives Web Locks only to a page served over TLS or from the machine itself, and a relay
+// elsewhere serves neither. Without them nothing tells a tab that has gone from one the browser has
+// frozen, so a tab never goes on with a log another may still write: its id is its own for as long
+// as the browser keeps the tab, in the tab's own storage. It is gone on with only after the page
+// before it said, as it went, that it had left, so a reload, the reload onto a new build and a
+// closed tab opened again keep their log, and a tab duplicated, whose storage is copied from a page
+// still open, a new tab, or one the browser killed, start another. That is a log for every tab that
+// writes, a few lines each on the relay, where a log shared would be a fork. A tab's storage can
+// also be copied after its page has left, by a window it opens or by Duplicate, and then the copy
+// and the tab would both find that it had left; so what the page leaves is a token that one page
+// alone can spend: the same random word in the tab's storage and in the browser's under the id,
+// taken from the browser's as the id is gone on with. Whichever copy opens first has the log, and
+// the others start their own.
+let WRITER = '';
+let writerIn = local;
+const LEFT = `fzn.left.${space}`;
+const leftBy = (id) => `${LEFT}.${id}`;
+async function writer() {
+  if (navigator.locks) {
+    const forever = new Promise(() => {});
+    for (let n = 0; ; n++) {
+      const got = await new Promise((done) =>
+        navigator.locks.request(`fzn:${space}:writer:${n}`, { ifAvailable: true }, (lock) => {
+          done(lock !== null);
+          return lock && forever;
+        }),
+      );
+      if (!got) continue;
+      WRITER = n === 0 ? `fzn.writer.${space}` : `fzn.writer.${space}.${n}`;
+      let id = kept(WRITER);
+      if (!plain(id)) {
+        const old = n === 0 ? kept('fzn.device') : null;
+        id = plain(old) ? old : hex(4);
+        keep(WRITER, id);
+      }
+      return id;
+    }
   }
+  WRITER = `fzn.writer.${space}`;
+  writerIn = session;
+  const left = kept(LEFT, session);
+  keep(LEFT, null, session);
+  let id = kept(WRITER, session);
+  if (plain(id) && left && kept(leftBy(id)) === left) keep(leftBy(id), null);
+  else keep(WRITER, (id = hex(4)), session);
+  forgetOldLeavings();
   return id;
+}
+
+// A token is left behind for every tab closed and never opened again, which is bytes; the newest
+// fifty are kept, by the time each begins with.
+function forgetOldLeavings() {
+  try {
+    const leavings = Object.keys(localStorage).filter((name) => name.startsWith('fzn.left.'));
+    leavings.sort((a, b) => (kept(b) ?? '').localeCompare(kept(a) ?? ''));
+    for (const name of leavings.slice(50)) keep(name, null);
+  } catch {
+    // Left where they are, they are pruned another time.
+  }
+}
+
+// The tabs open on the space find each other over a channel, as `tab`, an id made afresh each
+// time a page loads. Once open each is a peer of the others, numbered from 1, the relay being 0:
+// what one writes reaches the others as a line from any peer does, in the next frame or two, and
+// what one hears from the relay it passes on, so a tab whose socket is down still syncs through
+// another.
+const tab = hex(4);
+const tabs = 'BroadcastChannel' in window ? new BroadcastChannel(`fzn:${space}`) : null;
+
+// The other tabs, each a peer: a tab's id to its number, and back.
+const peers = new Map();
+const tabOf = new Map();
+let nextPeer = 1;
+// Whether this tab has opened the space, and so can take in what the others send.
+let joined = false;
+function peerOf(id) {
+  if (!peers.has(id)) {
+    const n = nextPeer++;
+    peers.set(id, n);
+    tabOf.set(n, id);
+    // Says what this tab holds, to that tab only.
+    carryOut(fzn.connected(n));
+  }
+  return peers.get(id);
+}
+
+// A bridge for pages of the build before tabs were peers, which knew one tab at a time: such a
+// page stands down when it hears `here`, and writes the log slot 0 now goes on with. So this page
+// says `here` as it opens, and says it back to a page that opens later, but not straight after
+// saying it itself, or two pages of this build would answer each other for ever. It goes once no
+// page of that build can still be open.
+let hereAt = 0;
+const here = () => {
+  hereAt = Date.now();
+  tabs?.postMessage('here');
+};
+
+if (tabs) {
+  tabs.onmessage = ({ data }) => {
+    if (data === 'here') return Date.now() - hereAt > 1000 && here();
+    if (!data || typeof data !== 'object' || data.from === tab || (data.to && data.to !== tab)) return;
+    if (!joined) return;
+    if (data.bye) {
+      const n = peers.get(data.from);
+      if (n == null) return;
+      fzn.disconnected(n);
+      peers.delete(data.from);
+      tabOf.delete(n);
+    } else if (data.hello) {
+      peerOf(data.from);
+      if (!data.to) tabs.postMessage({ from: tab, to: data.from, hello: true });
+    } else if (typeof data.text === 'string') {
+      carryOut(fzn.received(peerOf(data.from), data.text));
+    }
+  };
 }
 
 // The space's key, from what was kept or from the passphrase. The field is where the line will
@@ -185,7 +302,6 @@ let view = null;
 let socket = null;
 let wait = 1000;
 let synced = 'connecting';
-let standing = true;
 
 const line = $('line');
 const list = $('list');
@@ -202,7 +318,7 @@ const sheet = $('sheet');
 // engine as it was when it failed for good.
 let failures = 0;
 function act(action) {
-  if (!fzn || !standing) return;
+  if (!fzn) return;
   let todo;
   try {
     todo = fzn.act(JSON.stringify(action));
@@ -241,7 +357,7 @@ function couldNotKeep(cause) {
   }
   return false;
 }
-const forgetWriter = () => keep(WRITER, null);
+const forgetWriter = () => keep(WRITER, null, writerIn);
 
 // Everything kept so far, settled: what a page about to be reloaded waits for.
 let stored = Promise.resolve();
@@ -261,7 +377,7 @@ function carryOut(json) {
   const kept = store ? todo.keep.map((lines) => store.keep(lines).then(() => true, couldNotKeep)) : [];
   // A log not deleted is deleted the next time the page opens.
   for (const log of todo.delete) store?.forget(log).catch(() => {});
-  if (todo.device && !unkept) keep(WRITER, todo.device);
+  if (todo.device && !unkept) keep(WRITER, todo.device, writerIn);
   if (kept.length) stored = Promise.all([stored, ...kept]);
   if (todo.send.length) {
     const ready = stored;
@@ -318,7 +434,7 @@ const entry = () => history.state ?? {};
 const deep = () => (view ? view.path.length + (view.field?.whole ? 1 : 0) : 0);
 
 function keepHistory() {
-  if (!view || !standing || travelling || keeping || document.visibilityState !== 'visible') return;
+  if (!view || travelling || keeping || document.visibilityState !== 'visible') return;
   const want = deep();
   if (want > depth) {
     while (depth < want) history.pushState({ depth: ++depth }, '');
@@ -338,7 +454,7 @@ function keepHistory() {
 }
 
 window.addEventListener('popstate', () => {
-  if (!view || !standing) return;
+  if (!view) return;
   const at = entry().depth ?? 0;
   if (travelling) {
     travelling = false;
@@ -363,13 +479,17 @@ window.addEventListener('popstate', () => {
 });
 document.addEventListener('visibilitychange', () => keepHistory());
 
-// Says something to a peer. The relay is peer 0, and for now the page's only one.
+// Says something to a peer: the relay, over the socket, or another tab, over the channel.
 function send({ to, text }) {
-  if (to === 0 && socket?.readyState === WebSocket.OPEN) socket.send(text);
+  if (to === 0) {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(text);
+  } else if (tabOf.has(to)) {
+    tabs.postMessage({ from: tab, to: tabOf.get(to), text });
+  }
 }
 
 function connect() {
-  if (!standing || socket) return;
+  if (socket) return;
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   const opened = new WebSocket(`${scheme}://${location.host}/1/${space}`);
   socket = opened;
@@ -385,7 +505,7 @@ function connect() {
     fzn.disconnected(0);
     synced = 'not syncing';
     look();
-    if (standing) setTimeout(connect, wait);
+    setTimeout(connect, wait);
     wait = Math.min(wait * 2, 30000);
   };
 }
@@ -1204,7 +1324,7 @@ const inEditor = () => !!editor && held === editor.contentDOM;
 const asMeasured = () =>
   held &&
   [held, held.selectionStart, held.selectionEnd, held.value, held.parentElement, held.className,
-    $('dates').textContent, view?.cursor, composing, standing,
+    $('dates').textContent, view?.cursor, composing,
     inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
       editor.composing, editor.dom.parentElement] : ''].join('\u0000');
 const caretMoved = () => {
@@ -1216,7 +1336,6 @@ function placeCaret() {
   const shown =
     field &&
     view &&
-    standing &&
     !composing &&
     !document.body.classList.contains('locked') &&
     field.selectionStart === field.selectionEnd &&
@@ -1284,7 +1403,7 @@ function showCaret(left, top, wide, tall) {
 function placeEditorCaret() {
   const c = editor.caret();
   const parent = editor.dom.parentElement;
-  if (!view || !standing || !parent || !c.empty || !c.rect || composing || editor.composing) {
+  if (!view || !parent || !c.empty || !c.rect || composing || editor.composing) {
     caret.hidden = true;
     caretWas = '';
     return;
@@ -1344,7 +1463,7 @@ const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey &
 // cursor is in, so a letter pressed on a word in the foot takes the focus there before it lands.
 // A button that has the focus keeps Enter and Space.
 document.addEventListener('keydown', (event) => {
-  if (event.isComposing || !view || !standing || !fzn) return;
+  if (event.isComposing || !view || !fzn) return;
   if (event.target === box || event.composedPath().includes(buffer)) return;
   const onButton = event.target instanceof HTMLButtonElement;
   if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
@@ -1493,17 +1612,17 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') putAway(false);
 });
 
-// Only one tab at a time is this device. A tab that opens says so, and the one that was open
-// stands down: two of them writing one log would fork it.
-const tabs = 'BroadcastChannel' in window ? new BroadcastChannel(`fzn:${space}`) : null;
-function standDown() {
-  standing = false;
-  socket?.close();
-  $('elsewhere').hidden = false;
-  document.body.classList.add('elsewhere');
-  placeCaret();
-}
-$('takeover').onclick = () => location.reload();
+// A tab that goes says so, so that the others stop sending to it, and that it has left, so that
+// the next page in the tab goes on with its log (see writer). This comes after putAway's, so that
+// what that writes comes first. A page put in the back-forward cache has not left.
+window.addEventListener('pagehide', (event) => {
+  tabs?.postMessage({ from: tab, bye: true });
+  const id = kept(WRITER, session);
+  if (event.persisted || writerIn !== session || !plain(id)) return;
+  const token = `${Date.now().toString(36).padStart(10, '0')}.${hex(4)}`;
+  keep(leftBy(id), token);
+  keep(LEFT, token, session);
+});
 
 // For a passphrase mistyped: the key is forgotten and the page asks again.
 const retype = () => {
@@ -1515,11 +1634,18 @@ $('again').onclick = retype;
 
 async function start() {
   await init();
-  const id = writer();
   let why = '';
+  let id = null;
   for (;;) {
     try {
-      fzn = new Fzn(id, await key(why));
+      const secret = await key(why);
+      // The id is taken before the store is read, so that whatever the log's last writer kept is
+      // there to be read, and that writer, which let the id go, writes no more.
+      if (id == null) {
+        here();
+        id = await writer();
+      }
+      fzn = new Fzn(id, secret);
       break;
     } catch (cause) {
       keep(KEY, null);
@@ -1527,13 +1653,11 @@ async function start() {
     }
   }
   document.body.classList.remove('locked');
-  if (tabs) {
-    tabs.onmessage = (event) => event.data === 'here' && standDown();
-    tabs.postMessage('here');
-  }
   store = await openStore().catch(() => null);
   if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
   carryOut(fzn.opened());
+  joined = true;
+  tabs?.postMessage({ from: tab, hello: true });
   // The page opens at the top, so the entry it opens in is the top, whatever it was before.
   history.replaceState({ ...entry(), depth }, '');
   look();
