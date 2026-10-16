@@ -3,6 +3,7 @@
 mod config;
 mod import;
 mod key;
+mod names;
 mod relay;
 mod store;
 mod sync;
@@ -27,6 +28,8 @@ fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
 fzn relay [--listen ADDRESS] [--web DIR]  pass notes between your devices
+fzn relay add NAME                      let NAME make spaces on this relay, and print the token once
+fzn relay token                         the same for the spaces at the relay's root
 fzn --help
 fzn --version                           say the version, and the commit and day it was built from
 
@@ -60,9 +63,14 @@ device: relay = \"ws://that-machine:3960\" in the config file, or --relay, or $F
 syncs whichever space it opens for as long as it is open, and works as before when the relay is
 out of reach. A relay serves every space under its root and holds their sealed lines, which it
 cannot read. Its root is its own: fzn will not open a space the relay holds. It listens on
-127.0.0.1:3960 unless --listen says otherwise. It has no password and no TLS yet, so anyone who
-can reach it can take a copy of the sealed lines, or add lines that no device can open: let it
-listen only where your own devices reach it. It also hands out the web app, which is built into
+127.0.0.1:3960 unless --listen says otherwise. A space is entered with its passphrase: the relay
+asks each connection to prove the key and sends nothing before it does. A space is made with a
+token: fzn relay add NAME prints one for NAME's spaces, which live under NAME in the relay's
+root and are asked for as ws://NAME:TOKEN@host; fzn relay token prints one for the spaces at the
+root, which anyone who connects may make until then. Put the token in the relay's address on a
+device that makes spaces; a device that only opens spaces that exist needs none. The relay has
+no TLS, so let it listen only on a private network, or behind a proxy that has it. It also
+hands out the web app, which is built into
 fzn, so that a browser can open the relay's address and be one more device. With --web DIR it
 hands out the page in that directory instead, the web directory of this repository, which is
 how the page is worked on.
@@ -87,6 +95,10 @@ finds heads by their letters in order: ~bsv finds Boiler service.";
 enum Cmd {
     Open,
     Relay,
+    /// Let this name make spaces on the relay.
+    RelayAdd(String),
+    /// Let only the holder of a token make spaces at the relay's root.
+    RelayToken,
     Key,
     /// With a query, what that line finds; without one, every note.
     Export(Option<String>),
@@ -154,7 +166,17 @@ fn parse_args() -> Result<Args> {
                         .ok_or_else(|| anyhow::anyhow!("--web needs a directory"))?,
                 )
             }
-            "relay" => cmd = Cmd::Relay,
+            "relay" => {
+                cmd = match args.next_if(|a| a == "add" || a == "token").as_deref() {
+                    Some("add") => Cmd::RelayAdd(
+                        args.next()
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| anyhow::anyhow!("relay add needs a name"))?,
+                    ),
+                    Some(_) => Cmd::RelayToken,
+                    None => Cmd::Relay,
+                }
+            }
             "key" => cmd = Cmd::Key,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -216,16 +238,36 @@ fn main() -> Result<()> {
     let cfg = config::load_or_create(&config_dir)?;
     let env_root = std::env::var("FZN_ROOT").ok();
     let root = config::resolve_root(root_flag.as_deref(), env_root.as_deref(), &cfg);
+    match &cmd {
+        Cmd::RelayAdd(name) => {
+            let token = names::add(&config_dir, &root, name)?;
+            println!("{}", names::told(&config_dir, &root, Some(name), &token));
+            return Ok(());
+        }
+        Cmd::RelayToken => {
+            let token = names::close_root(&config_dir)?;
+            println!("{}", names::told(&config_dir, &root, None, &token));
+            return Ok(());
+        }
+        _ => {}
+    }
     if let Cmd::Relay = cmd {
         // A relay is nobody's device: it writes nothing of its own, so it has no id.
         let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", wire::PORT));
-        let relay = relay::Relay::bind(root.clone(), &listen, web.clone())?;
+        let relay = relay::Relay::bind(root.clone(), config_dir.clone(), &listen, web.clone())?;
         println!("fzn relay: {}", version());
         println!(
-            "fzn relay: passing on the spaces under {} to whoever connects to {}",
+            "fzn relay: passing on the spaces under {} to the devices that connect to {}",
             root.display(),
             relay.address()?
         );
+        println!(
+            "fzn relay: a space is entered with its passphrase and made with a token; there is \
+             no TLS, so run it on a private network or behind a proxy that has it"
+        );
+        for line in names::said_at_start(&config_dir) {
+            println!("fzn relay: {line}");
+        }
         let address = relay.address()?;
         match (relay.build(), &web) {
             (Some(build), Some(web)) => println!(
@@ -239,10 +281,6 @@ fn main() -> Result<()> {
                 "fzn relay: no web app: this build has none built in and --web names no directory"
             ),
         }
-        println!(
-            "fzn relay: there is no password and no TLS yet, so anyone who can reach that \
-             address can take a copy of the sealed lines and add lines of their own"
-        );
         return relay.serve();
     }
     let space = config::resolve_space(space_flag.as_deref(), &cfg)?;
@@ -306,7 +344,7 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Cmd::Open | Cmd::Relay => {}
+        Cmd::Open | Cmd::Relay | Cmd::RelayAdd(_) | Cmd::RelayToken => {}
     }
 
     // This process is the only writer of the space's directory for as long as it is open.

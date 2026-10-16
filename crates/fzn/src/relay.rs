@@ -9,6 +9,18 @@
 //! refused. If writing a space fails, the space is closed and its connections dropped: each
 //! device connects again and the space is opened again from what is on disk.
 //!
+//! A space is entered with its key and made with a token. The relay keeps, beside each space's
+//! logs, an auth key derived one way from the space's key, which lets it check a device and
+//! read nothing, and it challenges every connection before it opens the space or says anything
+//! of it; the first device to answer for a space it keeps no auth key for gives it that key.
+//! Until a connection is let in, nothing is opened, made or written for it, so a peer that can
+//! reach the relay and has no key costs a thread for at most three greetings' time, about
+//! fifteen seconds, and nothing on disk; and no more than a few dozen connections are in their
+//! greeting at once, a handful of them from any one address, so that one peer cannot keep the
+//! rest out. A space's key is kept only with the token of the name it is under (see
+//! `names`), which is when the space is made, and everything that can be refused before the
+//! challenge is, so that a device can tell a refusal of its key from any other.
+//!
 //! A relay also hands out the web app, so that a browser has one address to open: the page
 //! comes from the relay and connects back to it. The page is built into fzn, so it and the
 //! policy it is served under are always of one release; `--web` points the relay at a directory
@@ -18,10 +30,10 @@
 //! answered `304` with nothing, and gzipped when the browser takes it.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{ErrorKind, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender, TryRecvError};
@@ -29,18 +41,38 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fzn_engine::replica::{Message, Out, Peer, Replica, names_a_log};
+use fzn_engine::seal::is_sealed;
+use fzn_engine::{Host, Key, Opened, Seal};
 use tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tungstenite::http::StatusCode;
+use tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
+use tungstenite::http::{HeaderValue, StatusCode};
 use tungstenite::protocol::WebSocketConfig;
 
+use crate::names;
 use crate::system;
 use crate::web_files;
 use crate::wire::{GREETING, MESSAGE_MAX, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
 const LOCK_FILE: &str = ".lock";
+/// The file a space's auth key is kept in, once a device has claimed the space.
+const AUTH_FILE: &str = ".auth";
+/// How many sealed lines of a space with no key a challenge offers at most, one a log.
+const LINES_OFFERED: usize = 16;
+/// How many connections may be in their greeting at once. Past it a new one is closed at once,
+/// so that a peer cannot hold every thread the machine has, nor fill the log with refusals.
+const GREETINGS_MAX: usize = 64;
+/// How many of those places one address may hold, so that one peer opening bare connections over
+/// and over cannot keep everyone else out.
+const GREETINGS_FROM_ONE: usize = 8;
+/// The subprotocol a device offers, which the relay says back.
+const PROTOCOL: &str = "fzn";
+/// How a token is offered: as a subprotocol, the one place a browser can put a credential in its
+/// greeting, and one that a proxy in front of the relay does not write into its log as it would
+/// a query.
+const TOKEN_PROTOCOL: &str = "fzn.token.";
 /// What a page of the web app may do: load its own files and its own WebAssembly, talk to the
 /// relay it came from, and use inline styles, because the body's editor injects its stylesheet.
 /// No script from anywhere else; and the page writes nothing into itself as markup, which is its
@@ -273,6 +305,8 @@ impl Page {
 
 struct Hub {
     root: PathBuf,
+    /// fzn's config directory, where the relay finds who may make spaces on it.
+    config: PathBuf,
     /// Where the page's files are read from, when a directory was given with --web.
     web: Option<PathBuf>,
     /// The page served when no directory was given.
@@ -280,9 +314,17 @@ struct Hub {
     /// For a directory, its build as last worked out and when, worked out again at most once a
     /// second, so that a page being worked on is named anew within a second of a change.
     dir_build: Mutex<Option<(Instant, String)>>,
+    /// The spaces open, by the name the relay knows each by: `main` at the root, `joe/main`
+    /// under a name.
     spaces: Mutex<HashMap<String, Space>>,
-    /// Spaces held by another process, said once each.
-    refused: Mutex<HashSet<String>>,
+    /// Taken while a space's auth key is kept, so that two devices claiming one space at once
+    /// cannot both be let in under different keys.
+    claiming: Mutex<()>,
+    /// The connections taken and not yet let in or let go, in all and from each address.
+    greeting: Mutex<Greetings>,
+    /// When the relay last said it was closing connections at once, so that it says so at most
+    /// once a minute however many come.
+    crowded: Mutex<Option<Instant>>,
     peers: AtomicU32,
 }
 
@@ -291,32 +333,20 @@ impl Hub {
         self.spaces.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Opens a space if it is not open, or says why a connection asking for it is refused.
-    fn open(&self, name: &str) -> Result<(), StatusCode> {
+    /// Opens a space if it is not open, or says why it cannot be, which is the relay's trouble
+    /// and not the device's, and so is not said to it.
+    fn open(&self, label: &str, dir: &Path) -> Result<(), Refusal> {
         let mut spaces = self.spaces();
-        if spaces.contains_key(name) {
+        if spaces.contains_key(label) {
             return Ok(());
         }
-        let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
-        match Space::open(name, &self.root.join(name)) {
+        match Space::open(label, dir) {
             Ok(Some(space)) => {
-                refused.remove(name);
-                spaces.insert(name.to_owned(), space);
+                spaces.insert(label.to_owned(), space);
                 Ok(())
             }
-            Ok(None) => {
-                if refused.insert(name.to_owned()) {
-                    eprintln!(
-                        "fzn relay: {name} is held by another process, so devices asking for it \
-                         are turned away"
-                    );
-                }
-                Err(StatusCode::LOCKED)
-            }
-            Err(why) => {
-                eprintln!("fzn relay: {name}: {why:#}");
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
+            Ok(None) => Err(Refusal::fault("the space is held by another process")),
+            Err(why) => Err(Refusal::fault("the space could not be opened").with(why)),
         }
     }
 
@@ -333,28 +363,284 @@ impl Hub {
             spaces.remove(name);
         }
     }
+
+    /// Sealed lines of a space, for a device to open one of before it claims the space as its
+    /// key's: the first of each log, up to [`LINES_OFFERED`], from the replica if the space is
+    /// open, else from its logs on disk, each read only as far as its first sealed line. One a
+    /// log, so that a log under another key, a passphrase once mistyped and written with, does
+    /// not shut the space to the key that opens the rest.
+    fn sealed_lines(&self, label: &str, dir: &Path) -> Vec<String> {
+        if let Some(space) = self.spaces().get(label) {
+            return space
+                .replica
+                .have()
+                .keys()
+                .filter_map(|log| {
+                    let lines = space.replica.lines(log);
+                    lines.iter().find(|line| is_sealed(line)).cloned()
+                })
+                .take(LINES_OFFERED)
+                .collect();
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut logs: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .collect();
+        logs.sort();
+        logs.into_iter()
+            .filter_map(|path| {
+                let file = File::open(path).ok()?;
+                BufReader::new(file)
+                    .lines()
+                    .map_while(Result::ok)
+                    .find(|line| is_sealed(line))
+            })
+            .take(LINES_OFFERED)
+            .collect()
+    }
+
+    /// Keeps the auth key a space is first claimed with, readable only by the relay, and says
+    /// whether this claim was the first. A space claimed already, even a moment ago by another
+    /// device, is let in only under the key it was claimed with. The key is written whole to a
+    /// file of its own and then linked into place, which fails if a key is there already, so
+    /// `.auth` is either missing or whole, whoever reads it and whenever the relay stops.
+    fn claim(&self, dir: &Path, key: &Key) -> Result<bool, Refusal> {
+        let _claiming = self.claiming.lock().unwrap_or_else(PoisonError::into_inner);
+        let cannot = |why: std::io::Error| {
+            Refusal::fault("the space's key could not be kept").with(why.into())
+        };
+        fs::create_dir_all(dir).map_err(cannot)?;
+        let mut random = [0u8; 8];
+        system::System.random(&mut random);
+        let fresh = dir.join(format!(
+            "{AUTH_FILE}.{}",
+            random
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let written = options.open(&fresh).and_then(|mut file| {
+            writeln!(file, "{}", key.encode())?;
+            file.sync_all()
+        });
+        if let Err(why) = written {
+            let _ = fs::remove_file(&fresh);
+            return Err(cannot(why));
+        }
+        let linked = fs::hard_link(&fresh, dir.join(AUTH_FILE));
+        let _ = fs::remove_file(&fresh);
+        match linked {
+            Ok(()) => {
+                // The link is kept only once the directory that holds it is.
+                File::open(dir).and_then(|d| d.sync_all()).map_err(cannot)?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => match kept_auth(dir) {
+                Ok(Some(kept))
+                    if names::same(kept.encode().as_bytes(), key.encode().as_bytes()) =>
+                {
+                    Ok(false)
+                }
+                Ok(_) => Err(Refusal::wrong_key()),
+                Err(why) => Err(Refusal::fault("the space's key could not be read").with(why)),
+            },
+            Err(e) => Err(cannot(e)),
+        }
+    }
+
+    fn greetings(&self) -> MutexGuard<'_, Greetings> {
+        self.greeting.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Takes a connection from an address into its greeting, unless too many are in theirs
+    /// already, in all or from that address, which is said at most once a minute.
+    fn take(self: &Arc<Self>, from: IpAddr) -> Option<Greeting> {
+        let mut greetings = self.greetings();
+        let held = greetings.from.get(&from).copied().unwrap_or(0);
+        if greetings.all >= GREETINGS_MAX || held >= GREETINGS_FROM_ONE {
+            drop(greetings);
+            let mut crowded = self.crowded.lock().unwrap_or_else(PoisonError::into_inner);
+            if crowded.is_none_or(|when| when.elapsed() >= Duration::from_secs(60)) {
+                *crowded = Some(Instant::now());
+                eprintln!(
+                    "fzn relay: too many connections are in their greeting, {GREETINGS_MAX} in \
+                     all or {GREETINGS_FROM_ONE} from one address, so new ones are closed at once"
+                );
+            }
+            return None;
+        }
+        greetings.all += 1;
+        greetings.from.insert(from, held + 1);
+        Some(Greeting {
+            hub: Arc::clone(self),
+            from,
+        })
+    }
 }
 
-/// What a connection asks for, from the path it asks with: `/1/main` is the space `main`, in
-/// version 1 of the exchange.
-fn asked_for(path: &str) -> Result<&str, StatusCode> {
+/// How many connections are in their greeting, in all and from each address.
+#[derive(Default)]
+struct Greetings {
+    all: usize,
+    from: HashMap<IpAddr, usize>,
+}
+
+/// A connection's place among those in their greeting, given up however it ends: let in, let
+/// go, or its thread never started.
+struct Greeting {
+    hub: Arc<Hub>,
+    from: IpAddr,
+}
+
+impl Drop for Greeting {
+    fn drop(&mut self) {
+        let mut greetings = self.hub.greetings();
+        greetings.all = greetings.all.saturating_sub(1);
+        if let Some(held) = greetings.from.get_mut(&self.from) {
+            *held -= 1;
+            if *held == 0 {
+                greetings.from.remove(&self.from);
+            }
+        }
+    }
+}
+
+/// The auth key kept for a space, or nothing if none has been kept yet.
+fn kept_auth(dir: &Path) -> Result<Option<Key>> {
+    let path = dir.join(AUTH_FILE);
+    match fs::read_to_string(&path) {
+        Ok(text) => Key::decode(&text)
+            .map(Some)
+            .with_context(|| format!("{} holds no key", path.display())),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// Why a connection was let go: what the device is told, if anything, and what only the relay's
+/// log hears, which never holds a token, a nonce or a key. A device is told why it is refused
+/// only of its name, its token or its key; the relay's own trouble is logged and the connection
+/// closed, so that a device tries again and does not doubt a passphrase that is right.
+struct Refusal {
+    said: Option<String>,
+    logged: Option<String>,
+}
+
+impl Refusal {
+    fn said(why: String) -> Self {
+        Self {
+            said: Some(why),
+            logged: None,
+        }
+    }
+
+    /// The device went, or the relay is at fault: nobody is told.
+    fn fault(why: &str) -> Self {
+        Self {
+            said: None,
+            logged: Some(why.to_owned()),
+        }
+    }
+
+    /// With what only the log is told.
+    fn with(mut self, why: anyhow::Error) -> Self {
+        self.logged = Some(match self.logged.take() {
+            Some(logged) => format!("{logged}: {why:#}"),
+            None => format!("{why:#}"),
+        });
+        self
+    }
+
+    fn wrong_key() -> Self {
+        Self::said("the passphrase does not open this space on the relay".to_owned())
+    }
+
+    /// The line the relay's log holds for this refusal of a connection from `from` for `label`.
+    fn logged(&self, from: &str, label: &str) -> String {
+        let why = match (&self.said, &self.logged) {
+            (Some(said), Some(logged)) => format!("{said} ({logged})"),
+            (Some(said), None) => said.clone(),
+            (None, Some(logged)) => logged.clone(),
+            (None, None) => "let go".to_owned(),
+        };
+        format!("fzn relay: {from} {label}: {why}")
+    }
+}
+
+/// What a connection asks for, from the path it asks with, in version 1 of the exchange:
+/// `/1/main` is the space `main` at the relay's root, and `/1/joe/main` is joe's `main`.
+fn asked_for(path: &str) -> Result<(Option<&str>, &str), StatusCode> {
     let mut parts = path.trim_start_matches('/').split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(VERSION), Some(space), None) if names_a_log(space) => Ok(space),
-        (Some(version), Some(_), None) if version != VERSION => Err(StatusCode::NOT_IMPLEMENTED),
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(VERSION), Some(space), None, _) if names_a_log(space) => Ok((None, space)),
+        (Some(VERSION), Some(name), Some(space), None)
+            if names_a_log(name) && names_a_log(space) =>
+        {
+            Ok((Some(name), space))
+        }
+        (Some(version), Some(_), _, _) if version != VERSION => Err(StatusCode::NOT_IMPLEMENTED),
         _ => Err(StatusCode::NOT_FOUND),
     }
 }
 
+/// What a connection asked for when it was greeted.
+struct Asked {
+    /// The name the space is under, or none for a space at the relay's root.
+    name: Option<String>,
+    space: String,
+    /// The token offered among the subprotocols, if one was.
+    token: Option<String>,
+}
+
+impl Asked {
+    /// The space as the relay's log and its open spaces name it: `main`, or `joe/main`.
+    fn label(&self) -> String {
+        match &self.name {
+            Some(name) => format!("{name}/{}", self.space),
+            None => self.space.clone(),
+        }
+    }
+}
+
+/// The subprotocols a request offers, from every header that names them.
+fn offered(request: &Request) -> Vec<String> {
+    request
+        .headers()
+        .get_all(SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|protocol| protocol.trim().to_owned())
+        .filter(|protocol| !protocol.is_empty())
+        .collect()
+}
+
 impl Relay {
     /// Starts listening. Nothing is served until [`Relay::serve`]. The relay hands out the page
-    /// built into fzn, or with a directory for `web`, the files in it.
-    pub fn bind(root: PathBuf, listen: &str, web: Option<PathBuf>) -> Result<Self> {
-        Self::bind_with(root, listen, web, Page::built_in())
+    /// built into fzn, or with a directory for `web`, the files in it, and finds who may make
+    /// spaces on it under `config`, fzn's config directory.
+    pub fn bind(
+        root: PathBuf,
+        config: PathBuf,
+        listen: &str,
+        web: Option<PathBuf>,
+    ) -> Result<Self> {
+        Self::bind_with(root, config, listen, web, Page::built_in())
     }
 
     fn bind_with(
         root: PathBuf,
+        config: PathBuf,
         listen: &str,
         web: Option<PathBuf>,
         page: Option<Page>,
@@ -364,11 +650,14 @@ impl Relay {
             listener,
             hub: Arc::new(Hub {
                 root,
+                config,
                 web,
                 page,
                 dir_build: Mutex::new(None),
                 spaces: Mutex::new(HashMap::new()),
-                refused: Mutex::new(HashSet::new()),
+                claiming: Mutex::new(()),
+                greeting: Mutex::new(Greetings::default()),
+                crowded: Mutex::new(None),
                 peers: AtomicU32::new(1),
             }),
         })
@@ -389,11 +678,12 @@ impl Relay {
             let Ok(stream) = stream else {
                 continue;
             };
+            let Some(greeting) = stream.peer_addr().ok().and_then(|a| self.hub.take(a.ip())) else {
+                continue;
+            };
             let hub = Arc::clone(&self.hub);
-            thread::spawn(move || {
-                // A connection that ends, however it ends, is only a device that will be back.
-                let _ = serve(&hub, stream);
-            });
+            // A machine out of threads drops the connection, which the device makes again.
+            let _ = thread::Builder::new().spawn(move || serve(&hub, stream, greeting));
         }
         Ok(())
     }
@@ -646,33 +936,65 @@ fn page(hub: &Hub, mut stream: TcpStream, head: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// One connection to a relay, from its greeting to its end.
-// The refusal a greeting can end in is the websocket library's type, and it is a large one.
+/// One connection to a relay, from its greeting to its end. A request for a page is answered;
+/// a request for a space is let in by [`enter`], or let go, and every refusal is logged. A
+/// connection that ends once it is in is only a device that will be back, and is not. Each step
+/// of the greeting has a greeting's time, so a peer that says nothing is let go within one, and
+/// one that is greeted and answers nothing within three.
+// The greeting's callback refuses with the websocket library's own type, a large one.
 #[allow(clippy::result_large_err)]
-fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
-    stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(GREETING))?;
-    stream.set_write_timeout(Some(GREETING))?;
-    let head = opening(&stream)?;
-    if !asks_for_a_socket(&String::from_utf8_lossy(&head)) {
-        return page(hub, stream, &head);
+fn serve(hub: &Hub, stream: TcpStream, greeting: Greeting) {
+    let from = stream
+        .peer_addr()
+        .map_or_else(|_| "somewhere".to_owned(), |a| a.to_string());
+    let timed = stream
+        .set_nodelay(true)
+        .and_then(|()| stream.set_read_timeout(Some(GREETING)))
+        .and_then(|()| stream.set_write_timeout(Some(GREETING)));
+    if timed.is_err() {
+        return;
     }
-    // The space is opened before the greeting is answered, so that a device asking for one that
-    // is held elsewhere is refused, and not greeted and then dropped.
-    let mut name = String::new();
+    let Ok(head) = opening(&stream) else {
+        return;
+    };
+    if !asks_for_a_socket(&String::from_utf8_lossy(&head)) {
+        // A page that fails to go has nobody to tell.
+        let _ = page(hub, stream, &head);
+        return;
+    }
+    let mut asked = None;
+    let mut turned_away = None;
     let config = WebSocketConfig::default()
         .max_message_size(Some(MESSAGE_MAX))
         .max_frame_size(Some(MESSAGE_MAX));
+    // The greeting only takes note of what is asked for. Nothing is opened or made for it until
+    // the device has shown it holds the space's key.
     let socket = tungstenite::accept_hdr_with_config(
         stream,
-        |request: &Request, response: Response| match asked_for(request.uri().path())
-            .and_then(|space| hub.open(space).map(|()| space))
-        {
-            Ok(space) => {
-                name = space.to_owned();
+        |request: &Request, mut response: Response| match asked_for(request.uri().path()) {
+            Ok((name, space)) => {
+                let offered = offered(request);
+                // The token is never said back: `fzn` is, to a device that offers it.
+                if offered.iter().any(|p| p == PROTOCOL) {
+                    response
+                        .headers_mut()
+                        .insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PROTOCOL));
+                }
+                asked = Some(Asked {
+                    name: name.map(str::to_owned),
+                    space: space.to_owned(),
+                    token: offered
+                        .iter()
+                        .find_map(|p| p.strip_prefix(TOKEN_PROTOCOL))
+                        .map(str::to_owned),
+                });
                 Ok(response)
             }
             Err(status) => {
+                turned_away = Some(format!(
+                    "{:?} is not a space, so it was turned away with {status}",
+                    request.uri().path()
+                ));
                 let mut refusal = ErrorResponse::new(None);
                 *refusal.status_mut() = status;
                 Err(refusal)
@@ -680,16 +1002,216 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
         },
         Some(config),
     )
-    .map_err(|e| anyhow!("{e}"))?;
-    let mut wire = Wire::new(socket)?;
+    // The error holds the greeting, and with it what the greeting borrows.
+    .map_err(|why| why.to_string());
+    let (socket, asked) = match (socket, asked) {
+        (Ok(socket), Some(asked)) => (socket, asked),
+        (Ok(_), None) => return,
+        (Err(why), _) => {
+            let why = turned_away.unwrap_or_else(|| format!("the greeting failed: {why}"));
+            eprintln!("fzn relay: {from}: {why}");
+            return;
+        }
+    };
+    let label = asked.label();
+    let Ok(mut wire) = Wire::new(socket) else {
+        return;
+    };
     // The relay's clock is said first, so that a device can say when its own is far off.
-    wire.say(Message::Now(system::now()).encode()?)?;
+    let Ok(now) = Message::Now(system::now()).encode() else {
+        return;
+    };
+    let _ = wire.say(now);
+    if let Err(refusal) = enter(hub, &mut wire, &asked, &label, &from) {
+        eprintln!("{}", refusal.logged(&from, &label));
+        if let Some(said) = refusal.said
+            && let Ok(text) = Message::Refused(said).encode()
+        {
+            let _ = wire.say(text);
+        }
+        wire.close();
+        return;
+    }
+    drop(greeting);
+    let _ = connected(hub, wire, &label);
+}
 
+/// Where a space asked for lives, and the auth key kept for it, once everything that is not a
+/// matter of the key has been settled.
+struct Admitted {
+    dir: PathBuf,
+    kept: Option<Key>,
+}
+
+/// Settles everything about a connection that is not its key, before the challenge, so that a
+/// device can tell a refusal of its name or its token from a refusal of its key. A space's key
+/// is kept only with the token of the name it is under, or at an open root with none: that is
+/// when the space is made, and again if its key file is ever lost, so that nobody without the
+/// token can claim a space that has no key. A token file is read only then, so one that cannot
+/// be read keeps nobody out of a space that has its key.
+fn admit(hub: &Hub, asked: &Asked, label: &str) -> Result<Admitted, Refusal> {
+    let space = &asked.space;
+    let dir = match &asked.name {
+        Some(name) => {
+            if !names::is_name(&hub.config, name) {
+                return Err(Refusal::said(format!("there is no {name} on this relay")));
+            }
+            hub.root.join(name).join(space)
+        }
+        None => {
+            if names::is_name(&hub.config, space) {
+                return Err(Refusal::said(format!(
+                    "{space} is a name on this relay, not a space"
+                )));
+            }
+            let dir = hub.root.join(space);
+            // A name taken off the relay leaves its spaces' directories, which are not a space.
+            if fs::read_dir(&dir).is_ok_and(|mut entries| {
+                entries.any(|entry| entry.is_ok_and(|e| e.path().is_dir()))
+            }) {
+                return Err(Refusal::said(format!(
+                    "{space} holds spaces on this relay, and is not one"
+                )));
+            }
+            dir
+        }
+    };
+    let kept = kept_auth(&dir).map_err(|why| {
+        Refusal::said("the relay cannot read the key it keeps for this space".to_owned()).with(why)
+    })?;
+    if kept.is_some() {
+        return Ok(Admitted { dir, kept });
+    }
+    let whose = match &asked.name {
+        Some(name) => format!("{name}'s"),
+        None => "the relay's".to_owned(),
+    };
+    let unreadable = |why| Refusal::said(format!("{whose} token cannot be read")).with(why);
+    let token = match &asked.name {
+        Some(name) => match names::of_name(&hub.config, name) {
+            Ok(Some(hash)) => Some(hash),
+            Ok(None) => return Err(Refusal::said(format!("there is no {name} on this relay"))),
+            Err(why) => return Err(unreadable(why)),
+        },
+        None => names::of_root(&hub.config).map_err(unreadable)?,
+    };
+    if let Some(wanted) = token {
+        let made = hub.spaces().contains_key(label) || names::holds_a_space(&dir);
+        match &asked.token {
+            None if made => {
+                return Err(Refusal::said(format!(
+                    "{space} has no key on the relay yet, and keeping one needs {whose} token"
+                )));
+            }
+            None => {
+                return Err(Refusal::said(format!(
+                    "{space} is not on the relay, and making it needs {whose} token"
+                )));
+            }
+            Some(offered) if !names::same(&names::hash(offered), &wanted) => {
+                return Err(Refusal::said(format!("the token is not {whose}")));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(Admitted { dir, kept })
+}
+
+/// Lets a connection into the space it asked for, or says why not. What is not a matter of the
+/// key is settled first, by [`admit`]. Then the challenge, and what the device says before it
+/// answers is passed over, since a device says what it holds as soon as it connects and again
+/// once it is let in. The answer is a proof under the auth key the relay keeps, or for a space
+/// it keeps none for, the auth key itself, which it keeps from then on. Only then is the space
+/// opened. After the answer the device is told only of its key; the relay's own trouble then is
+/// logged and the connection closed.
+fn enter(
+    hub: &Hub,
+    wire: &mut Wire,
+    asked: &Asked,
+    label: &str,
+    from: &str,
+) -> Result<(), Refusal> {
+    let Admitted { dir, kept } = admit(hub, asked, label)?;
+    let lines = match kept {
+        Some(_) => Vec::new(),
+        None => hub.sealed_lines(label, &dir),
+    };
+    let mut nonce = [0u8; 32];
+    system::System.random(&mut nonce);
+    // A key's text is 32 bytes in base64, which is what a nonce is on the wire.
+    let nonce = Key::from_bytes(nonce).encode();
+    let challenge = Message::Challenge {
+        nonce: nonce.clone(),
+        claimed: kept.is_some(),
+        lines,
+    };
+    let said = challenge
+        .encode()
+        .map_err(|why| Refusal::fault(&format!("the challenge could not be written: {why}")))?;
+    wire.say(said)
+        .map_err(|why| Refusal::fault(&format!("went before the challenge: {why}")))?;
+
+    let deadline = Instant::now() + GREETING;
+    let mut passed_over = 0;
+    let answer = loop {
+        if Instant::now() > deadline {
+            let mut refusal =
+                Refusal::said("no proof of the key came, so the relay let go".to_owned());
+            if passed_over > 0 {
+                refusal.logged = Some(format!(
+                    "{passed_over} other messages came instead: a build from before auth?"
+                ));
+            }
+            return Err(refusal);
+        }
+        match wire.hear() {
+            // Only an answer is read; anything else, up to a message's bound, is passed over
+            // without being parsed.
+            Ok(Some(text)) if text.starts_with("{\"proof\"") || text.starts_with("{\"claim\"") => {
+                match Message::decode(&text) {
+                    Some(answer @ (Message::Proof(_) | Message::Claim(_))) => break answer,
+                    _ => passed_over += 1,
+                }
+            }
+            Ok(Some(_)) => passed_over += 1,
+            Ok(None) => {}
+            Err(_) => return Err(Refusal::fault("went before it answered the challenge")),
+        }
+        wire.keep_up()
+            .map_err(|_| Refusal::fault("went before it answered the challenge"))?;
+    };
+
+    match (kept, answer) {
+        (Some(kept), Message::Proof(proof)) => {
+            if Seal::new(kept).open(&proof) != Opened::Text(nonce) {
+                return Err(Refusal::wrong_key());
+            }
+        }
+        (None, Message::Claim(claim)) => {
+            let key = Key::decode(&claim)
+                .ok_or_else(|| Refusal::said("a claim has to be a key".to_owned()))?;
+            if hub.claim(&dir, &key)? {
+                eprintln!("fzn relay: {from} {label}: claimed by its first key");
+            }
+        }
+        // A device told the relay keeps a key proves it, and one told it keeps none claims, so
+        // the key itself is never taken for a space that has one.
+        _ => {
+            return Err(Refusal::said(
+                "the answer is not the one the challenge asked for".to_owned(),
+            ));
+        }
+    }
+    hub.open(label, &dir)
+}
+
+/// A connection let into a space, from the replica's first word to the connection's end.
+fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
     let peer = hub.peers.fetch_add(1, Ordering::Relaxed);
     let (to, waiting) = mpsc::channel();
-    // If the space was closed since it was opened above, `to` is dropped here and the
-    // connection ends below, to be made again.
-    hub.with(&name, |space| {
+    // If the space was closed since it was opened, `to` is dropped here and the connection
+    // ends below, to be made again.
+    hub.with(label, |space| {
         space.peers.insert(peer, to);
         let out = space.replica.connect(peer);
         space.carry_out(out)
@@ -700,7 +1222,7 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
             if let Some(text) = wire.hear()?
                 && let Some(message) = Message::decode(&text)
             {
-                hub.with(&name, |space| {
+                hub.with(label, |space| {
                     let out = space.replica.receive(peer, message);
                     space.carry_out(out)
                 });
@@ -710,13 +1232,13 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
                     Ok(text) => wire.say(text)?,
                     Err(TryRecvError::Empty) => break,
                     // The space was closed under this connection.
-                    Err(TryRecvError::Disconnected) => bail!("{name} was closed"),
+                    Err(TryRecvError::Disconnected) => bail!("{label} was closed"),
                 }
             }
             wire.keep_up()?;
         }
     })();
-    hub.with(&name, |space| {
+    hub.with(label, |space| {
         if space.peers.remove(&peer).is_some() {
             space.replica.disconnect(peer);
         }
@@ -731,6 +1253,9 @@ pub(crate) mod tests {
     use crate::sync::{Event, Link, start};
     use crate::system::random_u64;
     use fzn_engine::replica::Header;
+    use std::net::Ipv4Addr;
+    use tungstenite::http::Uri;
+    use tungstenite::{ClientRequestBuilder, Message as Frame, WebSocket};
 
     pub(crate) fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fzn-sync-test-{:x}", random_u64()));
@@ -764,36 +1289,63 @@ pub(crate) mod tests {
         false
     }
 
-    /// A relay on a port of its own choosing, serving a root, and where to find it.
+    /// A relay on a port of its own choosing, serving a root, and where to find it. Who may
+    /// make spaces on it is under `.config` in the root, where no test writes unless it means to.
     pub(crate) fn relay(root: &Path) -> String {
         relay_with(root, None)
     }
 
     pub(crate) fn relay_with(root: &Path, web: Option<PathBuf>) -> String {
-        let relay = Relay::bind(root.to_owned(), "127.0.0.1:0", web).unwrap();
+        relay_in(root, &config_of(root), web)
+    }
+
+    /// Where a relay started by [`relay`] finds who may make spaces on it.
+    fn config_of(root: &Path) -> PathBuf {
+        root.join(".config")
+    }
+
+    fn relay_in(root: &Path, config: &Path, web: Option<PathBuf>) -> String {
+        let relay = Relay::bind(root.to_owned(), config.to_owned(), "127.0.0.1:0", web).unwrap();
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         address
     }
 
+    /// The key the clients of a test hold unless it gives them another.
+    fn a_key() -> Key {
+        Key::from_bytes([7; 32])
+    }
+
     /// A device as a relay sees one: a replica on the end of a link, holding its logs in
-    /// memory, with what it has been told.
+    /// memory, with what it has been told. It answers a challenge as a device does, from its
+    /// key; with no key it is a build from before auth, which answers none.
     pub(crate) struct Client {
         replica: Replica,
         link: Link,
+        key: Option<Key>,
         connected: bool,
+        /// Whether the relay has let it in, which its saying what it holds shows.
+        let_in: bool,
         forked: Vec<String>,
         unreachable: Vec<String>,
+        refused: Vec<String>,
     }
 
     impl Client {
         pub(crate) fn start(relay: &str, space: &str) -> Self {
+            Self::with_key(relay, space, Some(a_key()))
+        }
+
+        fn with_key(relay: &str, space: &str, key: Option<Key>) -> Self {
             Self {
                 replica: Replica::new(),
                 link: start(relay.to_owned(), space.to_owned()),
+                key,
                 connected: false,
+                let_in: false,
                 forked: Vec::new(),
                 unreachable: Vec::new(),
+                refused: Vec::new(),
             }
         }
 
@@ -806,8 +1358,25 @@ pub(crate) mod tests {
                         self.connected = true;
                         self.replica.connect(0)
                     }
-                    Event::Message(text) => Message::decode(&text)
-                        .map_or_else(Vec::new, |message| self.replica.receive(0, message)),
+                    Event::Message(text) => match Message::decode(&text) {
+                        Some(Message::Challenge {
+                            nonce,
+                            claimed,
+                            lines,
+                        }) => {
+                            self.answer(&nonce, claimed, &lines);
+                            Vec::new()
+                        }
+                        Some(Message::Refused(why)) => {
+                            self.refused.push(why);
+                            Vec::new()
+                        }
+                        Some(message) => {
+                            self.let_in |= matches!(message, Message::Have(_));
+                            self.replica.receive(0, message)
+                        }
+                        None => Vec::new(),
+                    },
                     Event::Disconnected => {
                         self.connected = false;
                         self.replica.disconnect(0);
@@ -819,6 +1388,29 @@ pub(crate) mod tests {
                     }
                 };
                 self.carry_out(out);
+            }
+        }
+
+        /// Answers a challenge as a device does: a proof when the relay keeps an auth key, a
+        /// claim when it keeps none and its key opens one of the lines offered, if any are, and
+        /// then what it holds.
+        fn answer(&mut self, nonce: &str, claimed: bool, lines: &[String]) {
+            let Some(key) = &self.key else {
+                return;
+            };
+            let answer = if claimed {
+                Message::Proof(Seal::new(key.auth()).seal(nonce, &system::System))
+            } else if !lines.is_empty()
+                && lines
+                    .iter()
+                    .all(|line| Seal::new(key.clone()).open(line) == Opened::Shut)
+            {
+                return;
+            } else {
+                Message::Claim(key.auth().encode())
+            };
+            for message in [answer, Message::Have(self.replica.have())] {
+                let _ = self.link.to_relay.send(message.encode().unwrap());
             }
         }
 
@@ -858,20 +1450,135 @@ pub(crate) mod tests {
             })
         }
 
+        /// Waits for the relay to let it in.
         fn connects(&mut self) {
             assert!(eventually(|| {
                 self.hear();
-                self.connected
+                self.let_in
             }));
         }
+
+        /// Waits for the relay to refuse it, and gives why.
+        fn refused(&mut self) -> String {
+            assert!(eventually(|| {
+                self.hear();
+                !self.refused.is_empty()
+            }));
+            self.refused[0].clone()
+        }
+    }
+
+    /// A connection made by hand, for what a link does not do: ask for a space under a name,
+    /// offer a token, see the greeting's answer, and answer the challenge or not.
+    struct Raw {
+        socket: WebSocket<TcpStream>,
+        /// The subprotocol the relay said back.
+        protocol: Option<String>,
+    }
+
+    impl Raw {
+        fn knock(address: &str, path: &str, token: Option<&str>) -> Self {
+            let stream = TcpStream::connect(address).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let uri: Uri = format!("ws://{address}{path}").parse().unwrap();
+            let mut request = ClientRequestBuilder::new(uri).with_sub_protocol(PROTOCOL);
+            if let Some(token) = token {
+                request = request.with_sub_protocol(format!("{TOKEN_PROTOCOL}{token}"));
+            }
+            let (socket, response) = tungstenite::client(request, stream).unwrap();
+            let protocol = response
+                .headers()
+                .get(SEC_WEBSOCKET_PROTOCOL)
+                .map(|value| value.to_str().unwrap().to_owned());
+            Self { socket, protocol }
+        }
+
+        /// The next message, or nothing once the relay has closed.
+        fn next(&mut self) -> Option<Message> {
+            loop {
+                match self.socket.read() {
+                    Ok(Frame::Text(text)) => return Message::decode(&text),
+                    Ok(Frame::Close(_)) | Err(_) => return None,
+                    Ok(_) => {}
+                }
+            }
+        }
+
+        fn say(&mut self, message: &Message) {
+            let text = message.encode().unwrap();
+            self.socket.send(Frame::text(text)).unwrap();
+        }
+
+        /// Hears the clock, and then the challenge or a refusal before it.
+        fn challenged(&mut self) -> Result<(String, bool, Vec<String>), String> {
+            assert!(matches!(self.next(), Some(Message::Now(_))));
+            match self.next() {
+                Some(Message::Challenge {
+                    nonce,
+                    claimed,
+                    lines,
+                }) => Ok((nonce, claimed, lines)),
+                Some(Message::Refused(why)) => Err(why),
+                other => panic!("{other:?}"),
+            }
+        }
+
+        /// Answers a challenge as a device holding this key does, and says what it holds.
+        fn answer(&mut self, key: &Key, nonce: &str, claimed: bool) {
+            let answer = if claimed {
+                Message::Proof(Seal::new(key.auth()).seal(nonce, &system::System))
+            } else {
+                Message::Claim(key.auth().encode())
+            };
+            self.say(&answer);
+            self.say(&Message::Have(Default::default()));
+        }
+
+        /// What came of the answer: let in, which the relay's saying what it holds shows, or
+        /// refused, and why. Nothing else may come before either.
+        fn outcome(&mut self) -> Result<(), String> {
+            match self.next() {
+                Some(Message::Have(_)) => Ok(()),
+                Some(Message::Refused(why)) => {
+                    assert_eq!(self.next(), None, "and the relay closes");
+                    Err(why)
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+
+        /// Enters a space with a key, or says why it could not.
+        fn enter(&mut self, key: &Key) -> Result<(), String> {
+            let (nonce, claimed, _) = self.challenged()?;
+            self.answer(key, &nonce, claimed);
+            self.outcome()
+        }
+    }
+
+    fn enters(address: &str, path: &str, token: Option<&str>, key: &Key) -> Result<(), String> {
+        Raw::knock(address, path, token).enter(key)
     }
 
     #[test]
     fn a_connection_asks_for_a_space_by_the_version_and_its_name() {
-        assert_eq!(asked_for("/1/main"), Ok("main"));
-        assert_eq!(asked_for("/1/fzn-2022"), Ok("fzn-2022"));
+        assert_eq!(asked_for("/1/main"), Ok((None, "main")));
+        assert_eq!(asked_for("/1/garden-2022"), Ok((None, "garden-2022")));
+        assert_eq!(asked_for("/1/joe/main"), Ok((Some("joe"), "main")));
         assert_eq!(asked_for("/2/main"), Err(StatusCode::NOT_IMPLEMENTED));
-        for path in ["/", "/main", "/1/", "/1/main/more", "/1/..", "/1/a b"] {
+        assert_eq!(asked_for("/2/joe/main"), Err(StatusCode::NOT_IMPLEMENTED));
+        for path in [
+            "/",
+            "/main",
+            "/1/",
+            "/1/joe/",
+            "/1/a/b/c",
+            "/1/../main",
+            "/1/joe/..",
+            "/1/..",
+            "/1/a b",
+        ] {
             assert_eq!(asked_for(path), Err(StatusCode::NOT_FOUND), "{path}");
         }
     }
@@ -992,20 +1699,19 @@ pub(crate) mod tests {
         let space = hub.join("main");
         assert!(a.until(|| read(&space, "dev-a") == "a1\n"));
 
+        // The second relay lets the device prove its key, and then cannot open the space. That
+        // is the relay's trouble, not the device's, so it is not told it was refused, which a
+        // device would take as doubt about its passphrase: the connection only ends.
         let mut b = Client::start(&second, "main");
         b.write("dev-b", "b1\n");
-        assert!(eventually(|| {
-            b.hear();
-            !b.unreachable.is_empty()
-        }));
         thread::sleep(Duration::from_secs(3));
         b.hear();
-        assert_eq!(
-            b.unreachable.len(),
-            1,
-            "and is not let in when it tries again, which is said once"
-        );
-        assert!(!b.connected);
+        assert!(!b.let_in, "and is not let in when it tries again");
+        assert!(b.refused.is_empty(), "{:?}", b.refused);
+        let mut raw = Raw::knock(&second, "/1/main", None);
+        let (nonce, claimed, _) = raw.challenged().unwrap();
+        raw.answer(&a_key(), &nonce, claimed);
+        assert_eq!(raw.next(), None, "closed with nothing said");
         assert_eq!(read(&space, "dev-b"), "");
         assert_eq!(b.read("dev-a"), "");
 
@@ -1095,7 +1801,8 @@ pub(crate) mod tests {
 
     /// A relay that carries this page and was given no directory.
     fn relay_page(root: &Path, page: Option<Page>) -> String {
-        let relay = Relay::bind_with(root.to_owned(), "127.0.0.1:0", None, page).unwrap();
+        let relay =
+            Relay::bind_with(root.to_owned(), config_of(root), "127.0.0.1:0", None, page).unwrap();
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         address
@@ -1281,6 +1988,7 @@ pub(crate) mod tests {
         write_page(&web, &[("app.js", "export const fromDisk = 1;".into())]);
         let relay = Relay::bind_with(
             root.join("relay"),
+            config_of(&root),
             "127.0.0.1:0",
             Some(web),
             Some(Page::from_files(a_page())),
@@ -1411,5 +2119,527 @@ pub(crate) mod tests {
             "the device whose log the relay has is told nothing"
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_is_claimed_by_the_first_key_and_refuses_another() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut a = Client::start(&address, "main");
+        a.write("dev-a", "a1\n");
+        a.connects();
+        let space = root.join("main");
+        assert!(a.until(|| read(&space, "dev-a") == "a1\n"));
+        let kept = fs::read_to_string(space.join(AUTH_FILE)).unwrap();
+        assert_eq!(Key::decode(&kept), Some(a_key().auth()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(space.join(AUTH_FILE)).unwrap().permissions();
+            assert_eq!(mode.mode() & 0o777, 0o600);
+        }
+
+        // Another passphrase is told so, and is sent nothing of the space.
+        let mut b = Client::with_key(&address, "main", Some(Key::from_bytes([9; 32])));
+        b.write("dev-b", "b1\n");
+        assert_eq!(
+            b.refused(),
+            "the passphrase does not open this space on the relay"
+        );
+        thread::sleep(Duration::from_millis(500));
+        assert_eq!(b.read("dev-a"), "");
+        assert_eq!(read(&space, "dev-b"), "");
+
+        // The first key is let in again, by its proof.
+        let mut again = Client::start(&address, "main");
+        again.connects();
+        assert!(eventually(|| again.read("dev-a") == "a1\n"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_proof_under_the_wrong_key_is_refused_before_anything_of_the_space_is_said() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut a = Client::start(&address, "main");
+        a.write("dev-a", "a1\n");
+        a.connects();
+        assert!(a.until(|| read(&root.join("main"), "dev-a") == "a1\n"));
+
+        // `outcome` takes the next message after the answer, and nothing may come before it.
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        let (nonce, claimed, lines) = raw.challenged().unwrap();
+        assert!(claimed);
+        assert!(lines.is_empty());
+        assert_eq!(nonce.len(), 44, "{nonce}");
+        raw.answer(&Key::from_bytes([9; 32]), &nonce, claimed);
+        assert_eq!(
+            raw.outcome(),
+            Err("the passphrase does not open this space on the relay".into())
+        );
+
+        // A proof of another nonce is no proof either.
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        let (nonce, claimed, _) = raw.challenged().unwrap();
+        raw.answer(&a_key(), &format!("{nonce}x"), claimed);
+        assert!(raw.outcome().is_err());
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_device_that_says_what_it_holds_before_its_proof_is_let_in_after_it() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        let (nonce, claimed, _) = raw.challenged().unwrap();
+        raw.say(&Message::Have(Default::default()));
+        raw.say(&Message::Now(system::now()));
+        thread::sleep(Duration::from_millis(300));
+        raw.answer(&a_key(), &nonce, claimed);
+        assert_eq!(raw.outcome(), Ok(()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_device_from_before_auth_is_refused_after_the_greeting() {
+        let root = temp_dir();
+        let space = root.join("main");
+        fs::create_dir_all(&space).unwrap();
+        write(&space, "dev-a", "a1\n");
+        let address = relay(&root);
+        let mut old = Client::with_key(&address, "main", None);
+        old.write("dev-b", "b1\n");
+        assert_eq!(
+            old.refused(),
+            "no proof of the key came, so the relay let go"
+        );
+        assert!(!old.let_in);
+        assert_eq!(old.read("dev-a"), "");
+        assert_eq!(read(&space, "dev-b"), "");
+        assert!(!space.join(AUTH_FILE).exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_unclaimed_space_that_holds_lines_offers_a_sealed_line_of_each_log_with_its_challenge() {
+        let root = temp_dir();
+        let space = root.join("main");
+        fs::create_dir_all(&space).unwrap();
+        let sealed = Seal::new(a_key()).seal("a note", &system::System);
+        let stray = Seal::new(Key::from_bytes([9; 32])).seal("a stray note", &system::System);
+        // A plain line from before sealing comes first, and is not one offered; and a log
+        // written under another key comes first by its name, and does not shut the space.
+        write(&space, "dev-a", &format!("{stray}\n"));
+        write(&space, "dev-b", &format!("plain\n{sealed}\n{sealed}\n"));
+        let address = relay(&root);
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        let (_, claimed, lines) = raw.challenged().unwrap();
+        assert!(!claimed);
+        assert_eq!(lines, [stray.clone(), sealed.clone()]);
+
+        // An empty space offers none.
+        let mut raw = Raw::knock(&address, "/1/empty", None);
+        let (_, claimed, lines) = raw.challenged().unwrap();
+        assert!(!claimed);
+        assert!(lines.is_empty());
+        assert!(
+            !root.join("empty").exists(),
+            "and nothing is made by asking"
+        );
+
+        // A device whose key opens none of the lines does not claim the space, and one whose
+        // key opens one of them does.
+        let mut wrong = Client::with_key(&address, "main", Some(Key::from_bytes([8; 32])));
+        thread::sleep(Duration::from_millis(500));
+        wrong.hear();
+        assert!(!wrong.let_in);
+        let mut right = Client::start(&address, "main");
+        right.connects();
+        assert!(eventually(|| right.read("dev-b").lines().count() == 3));
+        let kept = fs::read_to_string(space.join(AUTH_FILE)).unwrap();
+        assert_eq!(Key::decode(&kept), Some(a_key().auth()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_is_made_under_a_name_with_its_token_and_not_without() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let token = names::add(&config, &spaces, "joe").unwrap();
+        let address = relay_in(&spaces, &config, None);
+        let made = spaces.join("joe").join("main");
+
+        let refused = |path: &str, token: Option<&str>| {
+            Raw::knock(&address, path, token).challenged().unwrap_err()
+        };
+        assert_eq!(
+            refused("/1/joe/main", None),
+            "main is not on the relay, and making it needs joe's token"
+        );
+        let wrong = "0".repeat(32);
+        assert_eq!(
+            refused("/1/joe/main", Some(&wrong)),
+            "the token is not joe's"
+        );
+        assert_eq!(
+            refused("/1/nobody/main", Some(&token)),
+            "there is no nobody on this relay"
+        );
+        assert!(!spaces.join("joe").exists(), "and nothing was made");
+
+        assert_eq!(
+            enters(&address, "/1/joe/main", Some(&token), &a_key()),
+            Ok(())
+        );
+        assert!(made.join(AUTH_FILE).is_file());
+
+        // Once made, the space is entered with its key and no token, from anywhere.
+        assert_eq!(enters(&address, "/1/joe/main", None, &a_key()), Ok(()));
+        assert_eq!(
+            enters(&address, "/1/joe/main", None, &Key::from_bytes([9; 32])),
+            Err("the passphrase does not open this space on the relay".into())
+        );
+        // joe's main is not the root's main.
+        assert_eq!(
+            enters(&address, "/1/main", None, &Key::from_bytes([9; 32])),
+            Ok(())
+        );
+        assert!(spaces.join("main").join(AUTH_FILE).is_file());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_root_is_open_without_a_token_file_and_closed_with_one() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let address = relay_in(&spaces, &config, None);
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+
+        let token = names::close_root(&config).unwrap();
+        assert_eq!(
+            Raw::knock(&address, "/1/garden", None)
+                .challenged()
+                .unwrap_err(),
+            "garden is not on the relay, and making it needs the relay's token"
+        );
+        assert_eq!(
+            Raw::knock(&address, "/1/garden", Some(&"0".repeat(32)))
+                .challenged()
+                .unwrap_err(),
+            "the token is not the relay's"
+        );
+        assert!(!spaces.join("garden").exists());
+        assert_eq!(
+            enters(&address, "/1/garden", Some(&token), &a_key()),
+            Ok(())
+        );
+        // A space there already needs no token.
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_at_the_root_named_like_a_name_is_refused() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        names::add(&config, &spaces, "joe").unwrap();
+        let address = relay_in(&spaces, &config, None);
+        assert_eq!(
+            Raw::knock(&address, "/1/joe", None)
+                .challenged()
+                .unwrap_err(),
+            "joe is a name on this relay, not a space"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_relay_says_fzn_back_and_never_the_token() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let token = names::add(&config, &spaces, "joe").unwrap();
+        let address = relay_in(&spaces, &config, None);
+        let raw = Raw::knock(&address, "/1/joe/main", Some(&token));
+        assert_eq!(raw.protocol.as_deref(), Some(PROTOCOL));
+
+        // A request offering no subprotocol is answered with none.
+        let stream = TcpStream::connect(&address).unwrap();
+        let (_, response) = tungstenite::client(format!("ws://{address}/1/main"), stream).unwrap();
+        assert!(response.headers().get(SEC_WEBSOCKET_PROTOCOL).is_none());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn two_claims_at_once_keep_one_key() {
+        let root = temp_dir();
+        let address = relay(&root);
+        for round in 0..5 {
+            let space = format!("race-{round}");
+            let path = format!("/1/{space}");
+            let mut first = Raw::knock(&address, &path, None);
+            let mut second = Raw::knock(&address, &path, None);
+            let (one, claimed_one, _) = first.challenged().unwrap();
+            let (two, claimed_two, _) = second.challenged().unwrap();
+            assert!(!claimed_one && !claimed_two);
+            let (a, b) = (Key::from_bytes([1; 32]), Key::from_bytes([2; 32]));
+            let racing = thread::spawn(move || {
+                second.answer(&b, &two, false);
+                second.outcome()
+            });
+            first.answer(&a, &one, false);
+            let outcomes = [first.outcome(), racing.join().unwrap()];
+            assert_eq!(
+                outcomes.iter().filter(|o| o.is_ok()).count(),
+                1,
+                "{outcomes:?}"
+            );
+            let kept = fs::read_to_string(root.join(&space).join(AUTH_FILE)).unwrap();
+            let winner = if outcomes[0].is_ok() {
+                [1; 32]
+            } else {
+                [2; 32]
+            };
+            assert_eq!(Key::decode(&kept), Some(Key::from_bytes(winner).auth()));
+        }
+
+        // Two claims with one key are both let in.
+        let mut first = Raw::knock(&address, "/1/same", None);
+        let mut second = Raw::knock(&address, "/1/same", None);
+        let (one, _, _) = first.challenged().unwrap();
+        let (two, _, _) = second.challenged().unwrap();
+        first.answer(&a_key(), &one, false);
+        second.answer(&a_key(), &two, false);
+        assert_eq!(first.outcome(), Ok(()));
+        assert_eq!(second.outcome(), Ok(()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_message_larger_than_the_bound_ends_the_connection() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        raw.enter(&a_key()).unwrap();
+        let line = "x".repeat(MESSAGE_MAX + 1);
+        let _ = raw.socket.send(Frame::text(line));
+        let ended = loop {
+            match raw.socket.read() {
+                Ok(_) => {}
+                Err(e) => break e,
+            }
+        };
+        // Reading gave up because the relay closed, not for want of anything to read.
+        assert!(!crate::wire::would_wait(&ended), "{ended}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_with_no_key_cannot_be_claimed_at_a_closed_root_without_the_token() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        // A space from before keys: lines and no key.
+        fs::create_dir_all(spaces.join("main")).unwrap();
+        write(&spaces.join("main"), "dev-a", "a1\n");
+        let token = names::close_root(&config).unwrap();
+        let address = relay_in(&spaces, &config, None);
+        assert_eq!(
+            Raw::knock(&address, "/1/main", None)
+                .challenged()
+                .unwrap_err(),
+            "main has no key on the relay yet, and keeping one needs the relay's token"
+        );
+        assert!(!spaces.join("main").join(AUTH_FILE).exists());
+        assert_eq!(enters(&address, "/1/main", Some(&token), &a_key()), Ok(()));
+        // Once it has its key, the token is not asked for.
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_whose_key_file_was_deleted_while_open_is_claimed_only_with_the_token() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let token = names::close_root(&config).unwrap();
+        let address = relay_in(&spaces, &config, None);
+        // Held open by a device that stays.
+        let mut held = Raw::knock(&address, "/1/main", Some(&token));
+        held.enter(&a_key()).unwrap();
+        fs::remove_file(spaces.join("main").join(AUTH_FILE)).unwrap();
+
+        let stranger = Key::from_bytes([9; 32]);
+        assert_eq!(
+            Raw::knock(&address, "/1/main", None)
+                .challenged()
+                .unwrap_err(),
+            "main has no key on the relay yet, and keeping one needs the relay's token"
+        );
+        assert_eq!(enters(&address, "/1/main", Some(&token), &stranger), Ok(()));
+        let kept = fs::read_to_string(spaces.join("main").join(AUTH_FILE)).unwrap();
+        assert_eq!(Key::decode(&kept), Some(stranger.auth()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_connection_that_says_nothing_is_let_go_within_a_greeting() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut silent = TcpStream::connect(&address).unwrap();
+        silent
+            .set_read_timeout(Some(GREETING + Duration::from_secs(1)))
+            .unwrap();
+        let began = Instant::now();
+        let mut got = [0u8; 1];
+        // Nothing comes back, and the relay closes: a read of nothing, not a timeout.
+        assert_eq!(silent.read(&mut got).unwrap(), 0);
+        assert!(began.elapsed() <= GREETING + Duration::from_secs(1));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_more_than_so_many_connections_are_in_their_greeting_at_once() {
+        let root = temp_dir();
+        let relay =
+            Relay::bind_with(root.clone(), config_of(&root), "127.0.0.1:0", None, None).unwrap();
+        let address = |n: usize| IpAddr::V4(Ipv4Addr::new(10, 0, (n >> 8) as u8, n as u8));
+        let held: Vec<Greeting> = (0..GREETINGS_MAX)
+            .map(|n| relay.hub.take(address(n)).unwrap())
+            .collect();
+        assert!(relay.hub.take(address(GREETINGS_MAX)).is_none());
+        drop(held);
+        assert!(relay.hub.take(address(0)).is_some());
+        assert_eq!(relay.hub.greetings().all, 0, "every place given back");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn one_address_holding_its_share_of_the_greeting_does_not_keep_another_out() {
+        let root = temp_dir();
+        let relay =
+            Relay::bind_with(root.clone(), config_of(&root), "127.0.0.1:0", None, None).unwrap();
+        let hub = Arc::clone(&relay.hub);
+        let address = relay.address().unwrap().to_string();
+        thread::spawn(move || relay.serve());
+
+        let busy = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+        let held: Vec<Greeting> = (0..GREETINGS_FROM_ONE)
+            .map(|_| hub.take(busy).unwrap())
+            .collect();
+        assert!(hub.take(busy).is_none(), "that address has had its share");
+        // A device from another address is still greeted, and let in.
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        drop(held);
+        assert!(hub.take(busy).is_some());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_key_file_is_whole_or_not_there_and_leaves_nothing_beside_it() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let space = root.join("main");
+        let readers = {
+            let space = space.clone();
+            thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    // Whenever it is there, it holds a key.
+                    assert!(kept_auth(&space).is_ok());
+                }
+            })
+        };
+        for _ in 0..5 {
+            let _ = enters(&address, "/1/main", None, &a_key());
+        }
+        readers.join().unwrap();
+        let kept = fs::read_to_string(space.join(AUTH_FILE)).unwrap();
+        assert_eq!(Key::decode(&kept), Some(a_key().auth()));
+        let beside: Vec<_> = fs::read_dir(&space)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".auth."))
+            .collect();
+        assert!(beside.is_empty(), "{beside:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_root_token_file_that_cannot_be_read_keeps_nobody_out_of_a_space_that_is_there() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let address = relay_in(&spaces, &config, None);
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        fs::create_dir_all(names::dir(&config)).unwrap();
+        fs::write(names::dir(&config).join("token"), "garbled").unwrap();
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        // Making a space does need it read.
+        assert_eq!(
+            Raw::knock(&address, "/1/garden", None)
+                .challenged()
+                .unwrap_err(),
+            "the relay's token cannot be read"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_claim_sent_for_a_space_that_has_its_key_is_refused() {
+        let root = temp_dir();
+        let address = relay(&root);
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        let (_, claimed, _) = raw.challenged().unwrap();
+        assert!(claimed);
+        raw.say(&Message::Claim(a_key().auth().encode()));
+        assert_eq!(
+            raw.outcome(),
+            Err("the answer is not the one the challenge asked for".into())
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_line_of_the_relays_log_holds_the_token_offered() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let token = names::add(&config, &spaces, "joe").unwrap();
+        let relay =
+            Relay::bind_with(spaces.clone(), config.clone(), "127.0.0.1:0", None, None).unwrap();
+        let wrong = "0123456789abcdef0123456789abcdef";
+        fs::write(names::dir(&config).join("token"), "garbled").unwrap();
+        for (name, space, offered) in [
+            (Some("joe"), "main", wrong),
+            (Some("nobody"), "main", token.as_str()),
+            (None, "joe", token.as_str()),
+            (None, "garden", token.as_str()),
+        ] {
+            let asked = Asked {
+                name: name.map(str::to_owned),
+                space: space.to_owned(),
+                token: Some(offered.to_owned()),
+            };
+            let label = asked.label();
+            let Err(refusal) = admit(&relay.hub, &asked, &label) else {
+                panic!("{label} was let in");
+            };
+            let logged = refusal.logged("127.0.0.1:4000", &label);
+            assert!(!logged.contains(offered), "{logged}");
+            assert!(!logged.contains(&hex_of(&names::hash(offered))), "{logged}");
+            let said = refusal.said.unwrap_or_default();
+            assert!(!said.contains(offered), "{said}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn hex_of(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 }

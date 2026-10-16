@@ -77,6 +77,19 @@ impl Wire {
         }
     }
 
+    /// Sends what is waiting to go, then closes, giving the peer a greeting's time to hear it.
+    pub fn close(mut self) {
+        let deadline = Instant::now() + GREETING;
+        let _ = self.socket.close(None);
+        // Reading drives the close: it sends what is queued and ends when the peer closes too.
+        while Instant::now() < deadline {
+            match self.socket.read() {
+                Err(e) if !would_wait(&e) => break,
+                _ => {}
+            }
+        }
+    }
+
     /// Sends on what is waiting to go, pings a quiet peer, and gives up on a silent one.
     pub fn keep_up(&mut self) -> Result<()> {
         if self.heard.elapsed() > SILENCE {

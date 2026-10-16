@@ -97,8 +97,28 @@ passphrase on another device opens the same notes. A forgotten passphrase cannot
 `fzn --version` says the version and the commit and day it was built from, so
 `ssh nas.local fzn --version` says what the relay runs.
 
-The relay has no authentication and no TLS yet. Anyone who can reach it can copy the sealed
-lines or add lines of their own, so keep it on a private network.
+A space on the relay is entered with its passphrase: the relay asks each device to prove it holds
+the space's key, and sends nothing before it does. The first device to open a space there claims
+it for its key, which needs the token below once the relay has one.
+
+A space is made with a token. Anyone who reaches the relay may make spaces at its root until
+`fzn relay token` is run on it. To let someone make spaces of their own, run on the relay
+
+```sh
+fzn relay add joe
+```
+
+which prints a token once, in the two forms it is used in: `relay =
+"ws://joe:TOKEN@nas.local:3960"` in a terminal's config, and `http://nas.local:3960/#joe:TOKEN`
+opened once in a browser. joe's spaces live under `joe` in the relay's root, and a device of
+joe's that only opens spaces already there needs no token. Run both commands as the user the
+relay runs as, with the same config directory, since the relay reads `relay/` in it. Deleting
+`relay/tenants/joe` there takes the name off the relay: its spaces stay on disk under `joe`,
+and nobody can reach them.
+
+The relay has no TLS. On a private network the network encrypts the wire; anywhere else, put a
+proxy that has TLS in front of it, passing the websocket and its `Sec-WebSocket-Protocol` header
+through. Without either, the token and a space's first claim cross the wire as they are.
 
 ## Browser
 

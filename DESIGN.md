@@ -258,8 +258,9 @@ Nothing is added to the engine until daily use asks for it.
   Forgetting a passphrase is losing the notes; there is no recovery and no reset, and sharing a
   space will be sharing its passphrase until there is something better. What the relay still
   sees: the names of the logs, how many lines each has and how long they are, when they arrive,
-  and the compaction headers. What a relay can still do: withhold lines, or hand back an old
-  prefix; it cannot forge, alter or reorder one.
+  the compaction headers, and each space's auth key, from which nothing of the space's key can be
+  had (see Sync). What a relay can still do: withhold lines, or hand back an old prefix; it
+  cannot forge, alter or reorder one.
 - **Who writes a space's directory.** The app, one window at a time, settled by a lock on a file
   in the directory: a second window is told so and stops, and so is a relay asked to serve a
   space an fzn has open, or an fzn opening a space a relay holds. The importers take the same
@@ -374,19 +375,45 @@ tab and the relay all run the same code.
   whether it is a compaction header, which is bookkeeping about logs and not about notes.
   This is what lets the text CRDT arrive without the relay changing.
 - **A connection** is a websocket to `/1/main` on the relay: the version of this exchange,
-  then the space. Each end pings a quiet peer every fifteen seconds and gives up on one silent
-  for 45. A lost relay is dialled again, waiting longer each time up to half a minute, and a
-  device says what it holds whenever it connects, so nothing said while there was no connection
-  needs keeping.
-- **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves
-  every space under its root and keeps each as the same files a device keeps, sealed, and holds
-  the same lock on each, so nothing else writes them while it runs. It listens on
-  `127.0.0.1:3960` until told otherwise. It has no password and no TLS yet (`wss://` is refused):
-  anyone who can connect can take a copy of the sealed lines and add lines of their own, which
-  no device will be able to open. What keeps it private is the key, which it never has; what
-  keeps it tidy is the address it listens on and whom the machine lets reach it. As a systemd
-  service, `IPAddressAllow=` says whom. It carries the page and hands it out on the same
-  address, so a browser has one address to open; `--web` points it at a directory instead.
+  then the space, or for a space under a name, `/1/joe/main`. It is entered with the space's
+  key: the relay says its clock and then its challenge, and nothing of the space until the
+  device has answered. A device that makes a space offers a token in its greeting, as the
+  subprotocol `fzn.token.<hex>` beside `fzn`, and the relay says back `fzn` alone. A message is
+  at most 8 MiB at either end, which only a single note larger than that could reach. Each end
+  pings a quiet peer every fifteen seconds and gives up on one silent for 45. A lost relay is
+  dialled again, waiting longer each time up to half a minute, and a device says what it holds
+  whenever it connects, so nothing said while there was no connection needs keeping.
+- **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves every
+  space under its root and keeps each as the same files a device keeps, sealed, and holds the same
+  lock on each, so nothing else writes them while it runs. It listens on `127.0.0.1:3960` until told
+  otherwise. Beside each space's logs it keeps the space's auth key, in `.auth`, readable only by
+  itself, and it lets a connection in only once the device has proved that key; the first device to
+  answer for a space it keeps none for gives it the key, and the space is that key's from then on. A
+  connection goes in this order: the clock; the name resolved, and one the relay does not have
+  refused; for a space with no key kept yet, the token offered checked against the name's, or
+  nothing checked at an open root; the challenge, with the first sealed line of each of the space's
+  logs, up to sixteen, when it keeps no key but holds lines; whatever the device says before its
+  answer passed over, for five seconds; the answer checked, or the claim kept; and only then the
+  space opened and the device given what it lacks. Nothing is opened, made or written for a
+  connection before that, and each step of the greeting has five seconds, so a peer with no key
+  holds a thread for fifteen seconds at most and puts nothing on disk; past 64 connections in their
+  greeting at once, or 8 from one address, so that one peer cannot keep the rest out, a new one is
+  closed straight away. A refusal of a name, a token or a key is said as `{"refused":"…"}` after the
+  greeting, since a browser is never shown why a greeting failed, and logged with the address, the
+  name and the space, never a token, a nonce or a key; the relay's own trouble after the answer, a
+  space it cannot open or a key it cannot keep, is only logged, and the connection closed, so that a
+  device tries again and does not doubt its passphrase. A space's key is kept only with a token:
+  under a name the relay's admin has given one, `fzn relay add joe` for joe's spaces, under `joe` in
+  its root, and `fzn relay token` for the spaces at the root, which anyone who connects may make
+  until then, as the relay says when it starts. That is when a space is made, and again if its key
+  file is ever lost. It keeps only the SHA-256 of each token, in its config directory as
+  `relay/tenants/joe` and `relay/token`; whether a name is there is looked at on every connection
+  and its token read whenever a space has no key yet, so a copy of its files gives no token and a
+  name given or taken away holds without a restart. It has no TLS, and the terminal refuses
+  `wss://`: on a private network the network encrypts the wire, and elsewhere a proxy in front of
+  the relay has to. What keeps a relay private is the key, which it never has; what keeps its disk
+  is the token. It carries the page and hands it out on the same address, so a browser has one
+  address to open; `--web` points it at a directory instead.
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with
   `--relay`. There is no command for it. While the app is open a thread keeps the space's logs
   in step with the relay, and the foot says only when that is not going. With no relay named,
@@ -412,12 +439,12 @@ tab and the relay all run the same code.
   a device told that its own log is forked compacts, taking a new id, and its header retires
   the forked name. Both machines do this, each from its own copy, so nothing either wrote is
   lost, and the relay ends up with two logs where it had one shared name.
-- Not covered yet: who may connect to a relay, TLS, and history beyond what compaction keeps.
-  The header is taken on trust, and it is the one line a replica acts on: anyone who can
-  connect could send a log whose header names other writers' logs, and every replica but
-  each writer's own would retire them until that writer compacted again. Nothing is lost,
-  since a writer's own log is never retired on a peer's word, but it is the first thing
-  that authenticating a connection, or a header, has to close.
+- Not covered yet: TLS, history beyond what compaction keeps, and two devices syncing with no
+  relay between them, which would each have to challenge the other. The header is taken on
+  trust inside a space, and that is where it belongs: it is the one line a replica acts on, and
+  it reaches a replica only from a device that proved the space's key, which holds every note in
+  the space already. A writer's own log is never retired on a peer's word, so even a member's
+  header loses nothing.
 
 ## Clients
 
@@ -917,7 +944,8 @@ repeats it only where the reason needs it.
   from the space's name, was chosen over a generated key copied between devices because a phone
   has a keyboard and not a clipboard from the terminal. There is no auth and no TLS yet, by the
   same decision: the key is what protects the notes, and the address is what protects the
-  relay's disk and time.
+  relay's disk and time. Revised 2026-10-16 by "A space is entered with its key, and made with
+  a token": there is auth now, made from the same key, and still no TLS.
 - **Per-note last-writer-wins stays, for now.** Revisited 2026-10-14 when asked whether the
   CRDT could be made more robust. The stamp is already a per-note logical clock (a local change
   is always stamped past the version it replaces, whatever the wall clock says), and the merge
@@ -1527,6 +1555,58 @@ repeats it only where the reason needs it.
   0.7 MB of gzip twins, the terminal's included, which never serves it. A build with no page
   built (`web/build.sh`) carries none and says so, one whose page is older than the engine's
   sources says that, and a release builds the page itself first.
+- **A space is entered with its key, and made with a token.** Decided 2026-10-16, at Sam's direction
+  that other people should be able to use his relay, revising "Sealed on the device, from now" where
+  it says there is no auth yet. The relay had no gate but its address: anyone who could connect
+  could copy the sealed lines, add lines no device could open, and send a log whose header retired
+  other writers' logs on every replica but each writer's own; and two people's `main` on one relay
+  would have been one directory, the second told only that the passphrase was wrong. Now the relay
+  challenges every connection. After its clock it sends a nonce, and the device answers with the
+  nonce sealed under an auth key, SHA-256 of `fzn/auth/` and the space's key, by the seal it already
+  has; the relay keeps that auth key and can read nothing with it. Nothing new is remembered, since
+  the proof is made from the key the device already holds, and the passphrase stays the one thing a
+  person types. The first device to answer for a space the relay keeps no auth key for claims it by
+  sending the auth key itself. That is every space on a relay when it first learns this, so it is
+  trust on first use, bounded by whatever let the device reach the relay then, and once the relay
+  has a token, by the token. A device never claims when its key has opened nothing of what it holds,
+  and a relay's challenge for a space it keeps no key for but holds lines of carries the first
+  sealed line of each of its logs, of which the device must open one before it claims: a passphrase
+  mistyped on a new device would otherwise make its key the space's and shut out every device with
+  the right one. One line a log, not one for the space, so that a log once written under another key
+  cannot shut out the right one. That check rests on the device being honest, and is for a person's
+  own mistake; the gate against a stranger is the token. A space is made under a name the relay's
+  admin gave a token, carried in the relay's address in the config and given to a browser once in a
+  link, so that making spaces, and the disk they take, is the admin's to grant and two people's
+  spaces are two directories; the relay's own spaces stay at its root, so every device that had them
+  keeps them. The token is offered as a subprotocol, the one place a browser can put a credential in
+  its greeting and one a proxy does not log as it logs a query, and is checked whenever a space has
+  no key yet, which is when it is made, or when its key file has been lost, so a space that has its
+  key is entered from any name with its passphrase alone, which is what sharing will need, and
+  nobody without the token claims one that has none. The order of a connection is what lets a device
+  tell why it was refused: the name and the token are settled before the challenge and the key only
+  after the answer, so a refusal after its answer is a reason to doubt the passphrase and one before
+  it is not, and the relay's own trouble after the answer is not said as a refusal at all. The relay
+  passes over whatever a device says before its answer, because a device says what it holds as soon
+  as it connects, so that it still syncs with a relay from before this, and says it again once it is
+  let in. Nothing is opened or made for a connection until it is let in. A build from before this is
+  refused after the greeting, and the relay's log says that is the likely reason; every binary moves
+  together, as for a new line format. The header stays unsigned, because membership of a space is
+  the boundary: whoever has the key has the notes, and could compact a tombstone of every one. No
+  quotas yet: the token already bounds who may take the disk, the first names are people the admin
+  knows, and a quota is a number to choose and a full space to explain, for a problem nobody has
+  had. Not covered: there is no channel binding, so a man in the middle can relay a proof live, and
+  the one claim of a space crosses the wire as it is, so whoever listens then has the auth key and
+  can pose as a member to that relay, which only the private network or TLS covers; and the auth key
+  is symmetric, so a copy of the relay's disk lets its holder pose as a member to that relay until
+  the key is replaced (see Open questions). Rejected: accounts with a password the relay checks, a
+  second secret for a server that reads nothing, with registration and sessions to build; the
+  private network's identity of a machine, which ties the relay to one network and has holes for
+  shared and tagged machines; a directory named by a hash of the key, where a mistyped passphrase
+  lands in a new empty space and writes there unseen; a key per device, which a phone has no
+  clipboard to receive; a MAC on every line, a change to the line's format for what the gate already
+  gives; a signature over the challenge, better against a stolen disk but a signature dependency in
+  the page's build, and the upgrade if that is wanted, in the same message's shape; and a token on
+  every connection, which would shut out every device that has none and stand in the way of sharing.
 - **A release is one static binary that a script fetches.** Decided 2026-10-16, at Sam's
   direction. Three builds, static musl for Linux on x86_64 and arm64 and one for Apple silicon, made
   by a workflow on a tag `v<version>` equal to the workspace version, into a draft release that is
@@ -1781,8 +1861,21 @@ repeats it only where the reason needs it.
 - Key rotation. A space's key is for life. Changing a passphrase would mean every device
   compacting under the new key and the relay keeping both until all have, which is the
   compaction machinery and nothing more, but nobody has asked for it.
-- What the relay still sees: log names, counts, sizes and timing, and the compaction headers.
-  Padding lines to a few sizes would hide the sizes; nothing hides the timing.
+- What the relay still sees: log names, counts, sizes and timing, the compaction headers, and
+  each space's auth key. Padding lines to a few sizes would hide the sizes; nothing hides the
+  timing.
+- The relay's auth key is symmetric: a copy of the relay's disk lets its holder pose as a member
+  to that relay, adding lines and retiring logs there, until the key is replaced. A signature
+  over the challenge would close that in the same message's shape, for a signature dependency
+  the page's build would carry.
+- A shared space keeps its name on every device, because the key's salt is the name. Sharing
+  will want the salt to travel with the space, or a space's name on a device to differ from its
+  name on the relay.
+- Quotas. A name may make as many spaces, as large, as it likes; its token is the only bound. A
+  quota per name, with a compaction always let through so that a full space can shrink, is the
+  answer once a name is someone the admin does not know.
+- `wss://` from the terminal, for a relay behind a proxy that has TLS. The page already takes
+  `wss` when it was loaded over `https`.
 - The browser's keys past the four, and Ctrl-D, Ctrl-O and Tab. Words at the foot, pressed or
   tapped, are a start: nothing to remember, but slower than a chord for archiving ten notes in a
   row. Undo has no key at all yet.
@@ -1852,4 +1945,5 @@ repeats it only where the reason needs it.
    kept, the session and the replica; `crates/fzn` is the terminal face, the log files, the
    relay, the system clock, config and the importers.
 4. **Text CRDT per note.** Behind the store module.
-5. **Sharing and collaboration.**
+5. **Sharing and collaboration.** The relay is ready for it: a space there is entered by whoever
+   has its passphrase, whatever name they make their own spaces under.
