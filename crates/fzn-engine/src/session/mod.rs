@@ -95,12 +95,12 @@ mod path;
 mod undo;
 
 use field::Writing;
-use path::Pivot;
+use path::Step;
 use undo::Change;
 
 const TOP_LIMIT: usize = 500;
-const RELATED_LIMIT: usize = 60;
-const AROUND_LIMIT: usize = 200;
+const FOUND_LIMIT: usize = 60;
+const PLACE_LIMIT: usize = 200;
 
 /// What a session needs from the machine it runs on.
 pub trait Host {
@@ -314,7 +314,7 @@ pub struct Session {
     show_scores: bool,
     status: String,
     /// The path, the last step gone into last.
-    pivots: Vec<Pivot>,
+    path: Vec<Step>,
     /// Changes to take back, newest last.
     undo: Vec<Change>,
     redo: Vec<Change>,
@@ -361,7 +361,7 @@ impl Session {
             show_archived: false,
             show_scores: false,
             status: String::new(),
-            pivots: Vec::new(),
+            path: Vec::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             field: None,
@@ -406,7 +406,7 @@ impl Session {
             }
             Action::Write => self.write_line(),
             Action::GoIn => self.go_in(),
-            Action::Back => self.back_to(self.pivots.len().saturating_sub(1)),
+            Action::Back => self.back_to(self.path.len().saturating_sub(1)),
             // On the line there is no note to open, change, write, hand to the editor or take
             // away.
             Action::Edit | Action::Edited(_) | Action::Done | Action::Editor | Action::Erase => {}
@@ -472,7 +472,7 @@ impl Session {
 
     pub fn view(&self) -> View<'_> {
         View {
-            path: self.pivots.iter().map(|p| p.place.name()).collect(),
+            path: self.path.iter().map(Step::name).collect(),
             line: &self.line,
             dates: Query::read(&self.line, self.today()).shown(),
             rows: &self.rows,
@@ -482,7 +482,7 @@ impl Session {
             hints: self.hints(),
             archived_shown: self.show_archived,
             scores_shown: self.show_scores,
-            here: self.around_note().and_then(|id| self.notes.get(id)),
+            here: self.place_note().and_then(|id| self.notes.get(id)),
             field: self.field.as_ref().map(|field| Field {
                 text: &field.text,
                 fresh: field.blank().then(|| field.start()),
@@ -498,7 +498,7 @@ impl Session {
 
     /// What can be asked for where the cursor is. The way back is always last.
     fn hints(&self) -> Vec<Hint> {
-        let zoomed = !self.pivots.is_empty();
+        let zoomed = !self.path.is_empty();
         let mut hints = Vec::new();
         let mut offer = |action, label| hints.push(Hint { action, label });
         let field = self.field.as_ref();
@@ -531,7 +531,7 @@ impl Session {
                     offer(Action::GoIn, "go in");
                     // Labels alone have nothing to link to: what is written there carries them.
                     // Nor has the place's own note, listed when the line names it.
-                    if let Some(around) = self.around_note().filter(|&around| *around != row.id) {
+                    if let Some(around) = self.place_note().filter(|&around| *around != row.id) {
                         let holds = |from: &String, to: &String| {
                             self.notes.get(from).is_some_and(|n| n.links.contains(to))
                         };

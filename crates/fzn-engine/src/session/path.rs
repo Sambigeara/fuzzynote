@@ -11,55 +11,68 @@ use crate::time::Day;
 
 use super::Session;
 
-/// A step of the path. The last note on it and the labels after it are the place looked around.
-pub(super) struct Pivot {
-    pub(super) place: Place,
-    /// The search the place was found with, put back on the way out if the line is empty by
-    /// then. A draft carried in has nothing to put back: it is still on the line.
-    restore: Option<String>,
-}
-
-/// What can be gone into: a note, or a label typed on the line. A note written in a place
-/// inherits it, as a link to the note or as the label at the end of its head. Labels gone into
-/// one after another are one place, with the last note before them if there is one, so a note
-/// written there inherits each of them.
-pub(super) enum Place {
+/// A step of the path: what was gone into, a note or a label typed on the line, with the search
+/// it was found with. A note written in a place inherits it, as a link to the note or as the label
+/// at the end of its head. Labels gone into one after another are one place, with the last note
+/// before them if there is one, so a note written there inherits each of them: the last note on
+/// the path and the labels after it are the place looked around.
+///
+/// `search` is the search the step was found with, put back on the way out if the line is empty
+/// by then. A draft carried in has nothing to put back: it is still on the line.
+pub(super) enum Step {
     Note {
         id: String,
         head: String,
+        search: Option<String>,
     },
     /// `written` is the label as it was typed, and as it is added to a note: `#house`, `@joe`,
     /// `2026-10-16`.
     Label {
         label: Label,
         written: String,
+        search: Option<String>,
     },
 }
 
-impl Place {
+impl Step {
     /// What the path calls it.
     pub(super) fn name(&self) -> &str {
         match self {
-            Place::Note { head, .. } => head,
-            Place::Label { written, .. } => written,
+            Step::Note { head, .. } => head,
+            Step::Label { written, .. } => written,
         }
     }
 
     /// The note it is, if it is one.
     pub(super) fn note(&self) -> Option<&String> {
         match self {
-            Place::Note { id, .. } => Some(id),
-            Place::Label { .. } => None,
+            Step::Note { id, .. } => Some(id),
+            Step::Label { .. } => None,
         }
     }
 
     /// Whether it is the same place as another: the same note, or the same label in whatever
     /// case it was typed.
-    fn is(&self, other: &Place) -> bool {
+    fn is(&self, other: &Step) -> bool {
         match (self, other) {
-            (Place::Note { id: a, .. }, Place::Note { id: b, .. }) => a == b,
-            (Place::Label { label: a, .. }, Place::Label { label: b, .. }) => a == b,
+            (Step::Note { id: a, .. }, Step::Note { id: b, .. }) => a == b,
+            (Step::Label { label: a, .. }, Step::Label { label: b, .. }) => a == b,
             _ => false,
+        }
+    }
+
+    /// The same step, found with this search.
+    fn found_with(mut self, search: Option<String>) -> Step {
+        match &mut self {
+            Step::Note { search: s, .. } | Step::Label { search: s, .. } => *s = search,
+        }
+        self
+    }
+
+    /// The search it was found with, to put back on the way out.
+    fn into_search(self) -> Option<String> {
+        match self {
+            Step::Note { search, .. } | Step::Label { search, .. } => search,
         }
     }
 }
@@ -103,16 +116,17 @@ impl Session {
             || self
                 .engine
                 .searched(&NoteId::new(id.clone()), &Query::read(&self.line, today));
-        let place = Place::Note {
+        let step = Step::Note {
             id,
             head: row.head.clone(),
+            search: None,
         };
-        if let Some(at) = self.pivots.iter().position(|p| p.place.is(&place)) {
+        if let Some(at) = self.path.iter().position(|s| s.is(&step)) {
             self.back_to(at + 1);
             return;
         }
-        let restore = searched.then(|| std::mem::take(&mut self.line));
-        self.pivots.push(Pivot { place, restore });
+        let search = searched.then(|| std::mem::take(&mut self.line));
+        self.path.push(step.found_with(search));
         self.refresh(true);
     }
 
@@ -126,12 +140,12 @@ impl Session {
             return;
         }
         let mut went = false;
-        for place in places {
-            match self.pivots.iter().position(|p| p.place.is(&place)) {
-                Some(at) => self.pivots.truncate(at + 1),
+        for step in places {
+            match self.path.iter().position(|s| s.is(&step)) {
+                Some(at) => self.path.truncate(at + 1),
                 None => {
-                    let restore = (!went).then(|| std::mem::take(&mut self.line));
-                    self.pivots.push(Pivot { place, restore });
+                    let search = (!went).then(|| std::mem::take(&mut self.line));
+                    self.path.push(step.found_with(search));
                     went = true;
                 }
             }
@@ -145,14 +159,15 @@ impl Session {
     /// so this is where Down and then Right would go too. One place is named unless it is where
     /// you are, so that one on the path is gone back to; of several labels, those the place has
     /// already are passed over, so that the rest are added to it.
-    pub(super) fn places_named(&self) -> Vec<Place> {
+    pub(super) fn places_named(&self) -> Vec<Step> {
         let query = Query::read(&self.line, self.today());
-        let mut places: Vec<Place> = Vec::new();
+        let mut places: Vec<Step> = Vec::new();
         if query.only_labels() {
             for typed in query.labels {
-                let place = Place::Label {
+                let place = Step::Label {
                     label: typed.label,
                     written: typed.written,
+                    search: None,
                 };
                 if !places.iter().any(|p| p.is(&place)) {
                     places.push(place);
@@ -161,24 +176,25 @@ impl Session {
             if places.len() > 1 {
                 let had: Vec<&Label> = self.labels_here().map(|(label, _)| label).collect();
                 places.retain(
-                    |place| !matches!(place, Place::Label { label, .. } if had.contains(&label)),
+                    |place| !matches!(place, Step::Label { label, .. } if had.contains(&label)),
                 );
                 return places;
             }
         } else if let Some(note) = self.engine.the_note_named(&query, self.show_archived) {
-            places.push(Place::Note {
+            places.push(Step::Note {
                 id: note.id.as_str().to_owned(),
                 head: note.head().to_owned(),
+                search: None,
             });
         }
-        places.retain(|place| !self.pivots.last().is_some_and(|p| p.place.is(place)));
+        places.retain(|place| !self.path.last().is_some_and(|s| s.is(place)));
         places
     }
 
     /// The note being looked around: the last note on the path, if there is one. It is the
     /// place together with the labels gone into after it.
-    pub(super) fn around_note(&self) -> Option<&String> {
-        self.pivots.iter().rev().find_map(|p| p.place.note())
+    pub(super) fn place_note(&self) -> Option<&String> {
+        self.path.iter().rev().find_map(Step::note)
     }
 
     /// The labels being looked around, as they were typed, outermost first: those gone into one
@@ -186,13 +202,13 @@ impl Session {
     /// with that note. Labels before it are only how it was reached.
     pub(super) fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> {
         let from = self
-            .pivots
+            .path
             .iter()
-            .rposition(|p| p.place.note().is_some())
+            .rposition(|s| s.note().is_some())
             .map_or(0, |at| at + 1);
-        self.pivots[from..].iter().filter_map(|p| match &p.place {
-            Place::Label { label, written } => Some((label, written.as_str())),
-            Place::Note { .. } => None,
+        self.path[from..].iter().filter_map(|s| match s {
+            Step::Label { label, written, .. } => Some((label, written.as_str())),
+            Step::Note { .. } => None,
         })
     }
 
@@ -201,11 +217,11 @@ impl Session {
     /// line gets back the search that the first place left behind was found with, which is what
     /// the line held at that depth.
     pub(super) fn back_to(&mut self, depth: usize) {
-        if depth >= self.pivots.len() {
+        if depth >= self.path.len() {
             return;
         }
-        let left = self.pivots.split_off(depth);
-        if let Some(line) = left.into_iter().next().and_then(|p| p.restore)
+        let left = self.path.split_off(depth);
+        if let Some(line) = left.into_iter().next().and_then(Step::into_search)
             && self.line.trim().is_empty()
         {
             self.line = line;
@@ -230,7 +246,7 @@ impl Session {
     /// It is a correction: what is written in a zoom is linked already, and outside one, or in
     /// labels with no note before them, there is nothing to link to.
     pub(super) fn link(&mut self) {
-        let Some(around) = self.around_note().cloned() else {
+        let Some(around) = self.place_note().cloned() else {
             let written: Vec<&str> = self.labels_here().map(|(_, written)| written).collect();
             self.status = if written.is_empty() {
                 "go into a note first; what you write there links to it".into()
@@ -254,7 +270,7 @@ impl Session {
             return;
         }
         let head = text::fit(&row.head, 40);
-        let (Some(note), Some(pivot)) = (
+        let (Some(note), Some(place)) = (
             self.notes.get(&id).cloned(),
             self.notes.get(&around).cloned(),
         ) else {
@@ -278,11 +294,11 @@ impl Session {
                 links: without(&note.links, &around),
                 ..note
             });
-        } else if pivot.links.contains(&id) {
-            self.status = format!("unlinked {head}{}", named(&pivot.text, &id));
+        } else if place.links.contains(&id) {
+            self.status = format!("unlinked {head}{}", named(&place.text, &id));
             self.commit(Record {
-                links: without(&pivot.links, &id),
-                ..pivot
+                links: without(&place.links, &id),
+                ..place
             });
         } else {
             let mut links = note.links.clone();

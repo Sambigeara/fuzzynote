@@ -181,7 +181,7 @@ impl Session {
             return;
         }
         let text = self.inherit(text, today);
-        let around = self.around_note().map_or(&[][..], std::slice::from_ref);
+        let around = self.place_note().map_or(&[][..], std::slice::from_ref);
         let id = self.host.new_id();
         let links = links_on_save(&self.engine, &id, "", &text, around);
         let now = self.host.now();

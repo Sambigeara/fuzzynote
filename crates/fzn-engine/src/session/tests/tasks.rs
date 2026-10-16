@@ -50,7 +50,7 @@ fn the_box_on_the_line_holds_the_open_tasks_and_the_rest_of_the_line_still_appli
     clear(&mut s);
     type_in(&mut s, "[ ] oil");
     assert_eq!(heads(&s), ["[ ] Order oil #house"]);
-    let exported: Vec<&str> = s.export("[ ]").iter().map(|r| r.id.as_str()).collect();
+    let exported: Vec<&str> = s.query("[ ]").iter().map(|r| r.id.as_str()).collect();
     assert_eq!(exported, ["stamps", "radiators", "oil"]);
 }
 

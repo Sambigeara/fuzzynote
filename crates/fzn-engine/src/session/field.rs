@@ -308,7 +308,7 @@ impl Session {
     /// row was opened, since whatever moves out of a place leaves the row first, and the list
     /// holds still while the cursor is on it.
     fn created(&self, field: &Writing, text: String) -> Record {
-        let around = self.around_note();
+        let around = self.place_note();
         let links = links_on_save(
             &self.engine,
             &field.id,
@@ -445,7 +445,7 @@ impl Session {
                 has_body: false,
                 // Written here, it will be linked to the note being looked around, or carry the
                 // labels.
-                linked: !self.pivots.is_empty(),
+                linked: !self.path.is_empty(),
                 links: Vec::new(),
                 reasons: Vec::new(),
                 score: None,

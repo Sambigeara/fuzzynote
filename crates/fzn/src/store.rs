@@ -421,7 +421,7 @@ impl Store {
     /// would list them, ranked by the same weights, and every one of them, archived ones too.
     pub fn export_found(self, line: &str, weights: Weights, out: &mut impl Write) -> Result<usize> {
         let session = Session::new(Box::new(System), String::new(), weights, self.notes);
-        write_lines(&session.export(line), out)
+        write_lines(&session.query(line), out)
     }
 }
 

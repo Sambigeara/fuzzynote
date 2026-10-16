@@ -97,10 +97,10 @@ fn stepping_back_out_of_a_note_lands_on_the_line() {
     s.act(Action::Type("kettlebell".into()));
     s.act(Action::Move(1));
     s.act(Action::GoIn);
-    assert_eq!(s.pivots.len(), 1);
+    assert_eq!(s.path.len(), 1);
     assert_eq!(s.line, "");
     s.act(Action::Back);
-    assert!(s.pivots.is_empty());
+    assert!(s.path.is_empty());
     assert_eq!(s.line, "kettlebell");
     assert_eq!(
         s.cursor, None,
@@ -354,7 +354,7 @@ fn coming_back_never_throws_away_what_you_typed() {
     go_into(&mut s, "trainingapp");
     type_in(&mut s, "deload next week");
     s.act(Action::Back);
-    assert!(s.pivots.is_empty());
+    assert!(s.path.is_empty());
     assert_eq!(s.line, "deload next week");
 
     // Gone into by a search.
@@ -383,12 +383,12 @@ fn a_search_clears_on_the_way_in_and_comes_back_on_the_way_out() {
     put(&mut s, "near", "trainingapp plan ideas", &["hub"], 1_000);
     type_in(&mut s, "trai");
     go_into(&mut s, "trainingapp");
-    assert_eq!(s.pivots.len(), 1);
+    assert_eq!(s.path.len(), 1);
     assert_eq!(s.line, "");
     assert_eq!(heads(&s), ["trainingapp plan ideas"]);
 
     s.act(Action::Back);
-    assert!(s.pivots.is_empty());
+    assert!(s.path.is_empty());
     assert_eq!(s.line, "trai");
     assert_eq!(s.cursor, None, "on the line");
 }
@@ -422,7 +422,7 @@ fn the_name_of_a_note_finds_what_was_written_in_it() {
 
     // Going into a note found that way was a search for it, though it does not say the word.
     go_into(&mut s, "pressure dropped again");
-    assert_eq!(s.pivots.len(), 1);
+    assert_eq!(s.path.len(), 1);
     assert_eq!(s.line, "");
     s.act(Action::Back);
     assert_eq!(s.line, "boiler");
@@ -453,7 +453,7 @@ fn a_draft_comes_with_you_and_is_written_where_you_land() {
 
     type_in(&mut s, DRAFT);
     go_into(&mut s, "trainingapp");
-    assert_eq!(s.pivots.len(), 1);
+    assert_eq!(s.path.len(), 1);
     assert_eq!(s.line, DRAFT, "the draft came along");
     assert_eq!(s.cursor, None);
     assert_eq!(
@@ -469,7 +469,7 @@ fn a_draft_comes_with_you_and_is_written_where_you_land() {
     assert_eq!(heads(&s)[0], DRAFT, "at the top of the place");
 
     s.act(Action::Back);
-    assert!(s.pivots.is_empty());
+    assert!(s.path.is_empty());
     assert_eq!(s.line, "", "the draft was written, so it is not put back");
 }
 
@@ -481,7 +481,7 @@ fn a_draft_taken_into_a_note_and_back_out_is_still_on_the_line() {
     go_into(&mut s, "trainingapp");
     type_in(&mut s, "!");
     s.act(Action::Back);
-    assert!(s.pivots.is_empty());
+    assert!(s.path.is_empty());
     assert_eq!(s.line, format!("{DRAFT}!"), "as it is now, not as it was");
     assert_eq!(s.cursor, None);
     assert!(

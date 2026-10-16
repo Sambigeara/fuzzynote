@@ -64,11 +64,11 @@ fn typing_inside_a_tag_narrows_its_neighbourhood() {
 fn every_note_carrying_a_tag_is_listed_whatever_the_limit_and_typing_keeps_those_that_match() {
     let mut s = session();
     put(&mut s, "tyres", "pump the tyres #house", &[], 1_000);
-    s.absorb((0..=AROUND_LIMIT).map(|i| theirs(&format!("leaves-{i:04}"), "rake #house", 1)));
+    s.absorb((0..=PLACE_LIMIT).map(|i| theirs(&format!("leaves-{i:04}"), "rake #house", 1)));
     s.absorb((0..=TOP_LIMIT).map(|i| theirs(&format!("pump-{i:04}"), "pump it", 1)));
     type_in(&mut s, "#house");
     s.act(Action::GoIn);
-    assert_eq!(linked(&s), [true; AROUND_LIMIT + 2]);
+    assert_eq!(linked(&s), [true; PLACE_LIMIT + 2]);
 
     // However many notes elsewhere say it better, a note carrying the tag that says it stays.
     type_in(&mut s, "pump");

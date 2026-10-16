@@ -412,7 +412,7 @@ impl Engine {
     /// what their words find, and the last day among them is the day nearness in time is
     /// measured from, as a note's own day is, so that a note written on it says the same date
     /// and not how far it is from today.
-    pub(crate) fn around(&self, place: &Place, opts: &SearchOptions) -> Vec<Hit<'_>> {
+    pub(crate) fn neighbourhood(&self, place: &Place, opts: &SearchOptions) -> Vec<Hit<'_>> {
         let Some(ties) = self.ties(place) else {
             return Vec::new();
         };
@@ -795,7 +795,7 @@ mod tests {
             labels: &[],
             written: "",
         };
-        e.around(&place, opts)
+        e.neighbourhood(&place, opts)
     }
 
     fn has_reason(hit: &Hit, scorer: &str, contains: &str) -> bool {

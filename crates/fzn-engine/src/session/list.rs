@@ -11,16 +11,17 @@ use crate::note::NoteId;
 use crate::query::Query;
 use crate::record::Record;
 
-use super::{AROUND_LIMIT, RELATED_LIMIT, Row, Session, TOP_LIMIT, has_body};
+use super::path::Step;
+use super::{FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT, has_body};
 
 impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
     /// line.
     pub(super) fn refresh(&mut self, reset: bool) {
         let query = Query::read(&self.line, self.today());
-        self.rows = match (self.pivots.is_empty(), query.ranks()) {
-            (false, _) => self.around(&query),
-            (true, true) => self.found(&query, self.show_archived, RELATED_LIMIT),
+        self.rows = match (self.path.is_empty(), query.ranks()) {
+            (false, _) => self.in_place(&query),
+            (true, true) => self.found(&query, self.show_archived, FOUND_LIMIT),
             (true, false) => self.found(&query, self.show_archived, TOP_LIMIT),
         };
         self.stale = false;
@@ -113,7 +114,7 @@ impl Session {
 
     /// Every note the line holds at the top of the space, archived ones too, in the order the
     /// line lists them and however many there are: what `fzn export` writes for a query.
-    pub fn export(&self, line: &str) -> Vec<&Record> {
+    pub fn query(&self, line: &str) -> Vec<&Record> {
         let query = Query::read(line, self.today());
         self.found(&query, true, usize::MAX)
             .iter()
@@ -127,8 +128,8 @@ impl Session {
     /// carries all of its labels. With something to rank by it is what the line finds in its
     /// neighbourhood: the note the line names, then the facts that match, then what else the
     /// engine finds there that matches, all of them holding what the line holds.
-    fn around(&self, query: &Query) -> Vec<Row> {
-        let note = self.around_note().map(|id| NoteId::new(id.clone()));
+    fn in_place(&self, query: &Query) -> Vec<Row> {
+        let note = self.place_note().map(|id| NoteId::new(id.clone()));
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
             .map(|(label, written)| (label.indexed(), written))
@@ -160,11 +161,11 @@ impl Session {
                 .collect();
         }
         let opts = SearchOptions {
-            limit: AROUND_LIMIT,
+            limit: PLACE_LIMIT,
             include_archived: self.show_archived,
             today: Some(self.today()),
         };
-        let near = self.engine.around(&place, &opts);
+        let near = self.engine.neighbourhood(&place, &opts);
         let ids: HashSet<&str> = near.iter().map(|hit| hit.note.id.as_str()).collect();
         let linked: HashSet<&str> = near
             .iter()
@@ -182,7 +183,7 @@ impl Session {
             found = self.by_letters(found);
         }
         let fact = |hit: &Hit| linked.contains(hit.note.id.as_str());
-        let here = self.pivots.last().and_then(|p| p.place.note());
+        let here = self.path.last().and_then(Step::note);
         let mut found: Vec<&Hit> = found
             .iter()
             .filter(|hit| ids.contains(hit.note.id.as_str()) || hit.named)
@@ -206,7 +207,7 @@ impl Session {
     /// The heads, as they are now, of the notes a record is linked to by id. The note being
     /// looked around is left out, since everything on the list is about it.
     pub(super) fn link_heads(&self, record: &Record) -> Vec<String> {
-        let around = self.around_note();
+        let around = self.place_note();
         record
             .links
             .iter()
