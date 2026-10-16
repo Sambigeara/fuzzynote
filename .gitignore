@@ -17,5 +17,7 @@ tags
 # The packages of the page's markdown and the body's editor, fetched by web/editor/build.sh
 /web/editor/node_modules/
 
-# Claude Code worktrees and local settings.
-/.claude/
+# Claude Code's worktrees and local settings. Its skills are kept with the code.
+/.claude/worktrees/
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
