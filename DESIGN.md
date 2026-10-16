@@ -2101,6 +2101,13 @@ repeats it only where the reason needs it.
   Whether a home-screen app opens standalone over plain http is for the phone to say; if it needs
   TLS, that is one more reason on that pile.
 
+  The passphrase is asked for the same way: its field waits for a tap, with the resting caret at its
+  start, the keyboard's key says `go`, and on a touch screen a word `open` under the sentence opens
+  the space, so that a keyboard put away first is not a dead end. The word `passphrase` stays in the
+  foot on a phone, where the first design for the phone took it off as chrome: it shows only in a
+  space with no notes yet, which is where a mistyped passphrase makes a space of its own and typing
+  it again matters.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document.

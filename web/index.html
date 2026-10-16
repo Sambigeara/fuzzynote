@@ -21,9 +21,10 @@
   <form id="unlock" hidden>
     <div class="above"><label id="for" for="secret">The passphrase for <b id="space"></b></label></div>
     <div class="top">
-      <input id="secret" class="field" type="password" autocomplete="current-password" required>
+      <input id="secret" class="field" type="password" autocomplete="current-password" enterkeyhint="go" required>
     </div>
     <p id="unlocking">Asked once on this device. The notes cannot be read without it.</p>
+    <button id="open" class="word" type="submit">open</button>
   </form>
   <div id="above" class="above">
     <nav id="path" aria-label="Where you are" hidden></nav>

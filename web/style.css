@@ -583,6 +583,12 @@ body.resting .row .tail { display: none; }
 #for { color: var(--soft); }
 #unlocking { margin: 1rem 0 0; color: var(--faint); font-size: var(--meta-size); }
 #unlocking.trouble { color: var(--ink); }
+/* On a touch screen the keyboard can be put away before its key that opens the space is pressed,
+   so the form has a word of its own to open it there. */
+#open { display: none; align-self: flex-start; margin-top: 0.5rem; color: var(--soft); }
+@media (hover: none) and (pointer: coarse) {
+  #open { display: inline-flex; align-items: center; min-height: 44px; padding: 0; }
+}
 body.locked #above, body.locked #top, body.locked #here, body.locked #empty,
 body.locked #lower, body.locked #hints, body.locked #way { display: none !important; }
 

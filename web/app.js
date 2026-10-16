@@ -239,6 +239,7 @@ function key(why = '') {
   document.body.classList.add('locked');
   secret.disabled = false;
   if (!coarse.matches) secret.focus();
+  placeCaret();
   return new Promise((resolve) => {
     form.onsubmit = (event) => {
       event.preventDefault();
@@ -1495,7 +1496,28 @@ function wordsOf(field) {
   }));
 }
 
+// On a touch screen the passphrase's field waits for a tap with the caret resting at its start, so
+// that the page asking for it is not a hairline under a grey sentence.
+const secret = $('secret');
+const restsOnSecret = () =>
+  coarse.matches &&
+  !$('unlock').hidden &&
+  !secret.disabled &&
+  secret.value === '' &&
+  document.activeElement !== secret;
+
 function placeCaret() {
+  if (restsOnSecret()) {
+    const style = getComputedStyle(secret);
+    const size = parseFloat(style.fontSize);
+    const tall = parseFloat(style.lineHeight) || 1.3 * size;
+    if (caret.parentElement !== secret.parentElement) secret.parentElement.append(caret);
+    caret.classList.remove('bar');
+    caret.classList.add('still');
+    measured = null;
+    showCaret(secret.offsetLeft, secret.offsetTop + (secret.offsetHeight - tall) / 2, 0.55 * size, tall);
+    return;
+  }
   const field = caretField();
   const shown =
     field &&
@@ -1604,6 +1626,7 @@ for (const field of [line, box]) {
     placeCaret();
   });
 }
+for (const moment of ['focus', 'blur', 'input']) secret.addEventListener(moment, () => placeCaret());
 document.addEventListener('selectionchange', () => {
   if (held && document.activeElement === held) caretMoved();
 });
