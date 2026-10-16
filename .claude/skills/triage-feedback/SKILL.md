@@ -137,7 +137,7 @@ the passphrase. Report each entry by its head as it now stands, and how many are
 from the export run again.
 
 If it answers `unknown argument "tick"`, the build predates the command. Give the author the
-heads to tick in the app instead: `#fzn #feedback` on the line and Right goes into them, and
+heads to tick in the app instead: `#fzn #feedback` on the line and Tab goes into them, and
 Ctrl-V on each ticks it. Run the export again once they say it is done; a tick made on another
 device shows here once fzn on this machine has synced.
 

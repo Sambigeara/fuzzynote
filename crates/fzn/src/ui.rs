@@ -12,9 +12,9 @@
 //! changes it and is written at once, as it was in fzn, with its date words written out when the
 //! arrows up and down, or Escape, leave it. Enter opens a new note under it, so that a run of
 //! notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your editor,
-//! which is where a body is written. Right at the end of the head goes in, and at the end of the
-//! line goes into the tag, person, day, box or note the line names; short of the end it is the
-//! caret's, as Left is. A chord acts on the note where on the line it acts on the line, as it did
+//! which is where a body is written. Tab goes in, wherever the caret is: on a row into its note,
+//! and on the line into the tag, person, day, box or note the line names. Right and Left are the
+//! caret's and nothing else. A chord acts on the note where on the line it acts on the line, as it did
 //! in fzn: Ctrl-D deletes or clears, Ctrl-V archives, which ticks a task, or shows archived notes,
 //! and Ctrl-U puts a changed head back before it undoes anything else. Control with an arrow moves
 //! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
@@ -115,26 +115,20 @@ enum Place {
 }
 
 /// What a key asks for. A chord acts on the line when the cursor is there and on the note under
-/// the cursor otherwise. `at_end` and `empty` are of the text the cursor is in, the line or the
-/// head. The arrow goes in only from its end, since short of it the arrow is the caret's: from a
-/// head into the note, and from the line into what the line names, which the session decides.
+/// the cursor otherwise. `empty` is of the text the cursor is in, the line or the head. Tab goes
+/// in wherever the caret is, since a tab means nothing in a line of text: from a head into the
+/// note, and from the line into what the line names, which the session decides. Shift-Tab is
+/// not bound, Escape being the way back, and Ctrl-I is Tab to a terminal, so no chord sits on it.
 /// Backspace takes a row away only when its head is empty, as a new row with only its labels is
 /// while the caret is where it landed; with text in the head it is the caret's. Escape comes
 /// back a rung: off the row, then off the text on the line, then out of the place.
-fn bound(
-    code: KeyCode,
-    ctrl: bool,
-    place: Place,
-    zoomed: bool,
-    at_end: bool,
-    empty: bool,
-) -> Option<Action> {
+fn bound(code: KeyCode, ctrl: bool, place: Place, zoomed: bool, empty: bool) -> Option<Action> {
     let on_line = place == Place::Line;
     Some(match (code, ctrl) {
         (KeyCode::Enter, _) => Action::Write,
+        (KeyCode::Tab, _) => Action::GoIn,
         (KeyCode::Backspace, _) if !on_line && empty => Action::Erase,
         (KeyCode::Char('o'), true) if !on_line => Action::Editor,
-        (KeyCode::Right, _) if at_end => Action::GoIn,
         (KeyCode::Esc, _) if !on_line => Action::Select(None),
         (KeyCode::Esc, _) if !empty => Action::Type(String::new()),
         (KeyCode::Esc, _) if zoomed => Action::Back,
@@ -163,7 +157,7 @@ fn key_for(action: &Action) -> &'static str {
     match action {
         Action::Write => "Enter",
         Action::Editor => "^O",
-        Action::GoIn => "→",
+        Action::GoIn => "Tab",
         Action::Move(_) => "↓",
         Action::Shift(by) if *by < 0 => "^↑",
         Action::Shift(_) => "^↓",
@@ -190,20 +184,18 @@ fn key_for(action: &Action) -> &'static str {
     }
 }
 
-/// What is on offer that a key asks for where the caret is: not what no key asks for, and not
-/// going in while the caret is short of the end of its text, where the arrow is the caret's.
-fn keyed(hints: &[Hint], at_end: bool) -> Vec<&Hint> {
+/// What is on offer that a key asks for: not what no key asks for.
+fn keyed(hints: &[Hint]) -> Vec<&Hint> {
     hints
         .iter()
         .filter(|hint| !key_for(&hint.action).is_empty())
-        .filter(|hint| at_end || hint.action != Action::GoIn)
         .collect()
 }
 
 /// The keys that do something where the cursor is, for the footer. Escape is always last, and
 /// where the session has no way back for it to take, two of them quit.
-fn footer(hints: &[Hint], at_end: bool, room: usize) -> String {
-    let hints = keyed(hints, at_end);
+fn footer(hints: &[Hint], room: usize) -> String {
+    let hints = keyed(hints);
     let mut keys: Vec<String> = hints
         .iter()
         .map(|hint| format!("{} {}", key_for(&hint.action), hint.label))
@@ -221,6 +213,7 @@ fn footer(hints: &[Hint], at_end: bool, room: usize) -> String {
 
 /// What a key does to a line of text, the line or a row's head, when it is one that edits
 /// it or moves along it: the text as it then reads, and where its cursor then is, in characters.
+/// Right at the end stays there. Tab is never typed: it is the key that goes in.
 fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(String, usize)> {
     let end = line.chars().count();
     let cursor = cursor.min(end);
@@ -251,7 +244,6 @@ fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(Strin
             }
             (without(start, cursor), start)
         }
-        (KeyCode::Tab, _) => with(' '),
         (KeyCode::Char(c), false) => with(c),
         _ => return None,
     })
@@ -654,7 +646,7 @@ impl App {
     fn handle(&mut self, key: KeyEvent) -> Result<Flow> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
-        let (zoomed, line, field, (place, at_end, empty)) = {
+        let (zoomed, line, field, (place, empty)) = {
             let view = self.device.view();
             let field = view.field.as_ref().map(|field| field.text.to_owned());
             let caret = self.caret(&view);
@@ -669,7 +661,7 @@ impl App {
             }
             return Ok(Flow::Quit);
         }
-        if let Some(action) = bound(key.code, ctrl, place, zoomed, at_end, empty) {
+        if let Some(action) = bound(key.code, ctrl, place, zoomed, empty) {
             return self.act(action);
         }
         match key.code {
@@ -714,10 +706,10 @@ impl App {
         Ok(Flow::Continue)
     }
 
-    /// Where the cursor is, and of the text it is in, the head of its row or the line, whether
-    /// the caret is at its end and whether it is empty. A new row with only the labels it opened
+    /// Where the cursor is, and whether the text it is in, the head of its row or the line, is
+    /// empty. A new row with only the labels it opened
     /// with is empty while the caret is where it lands, after a task's box and before the rest.
-    fn caret(&self, view: &View) -> (Place, bool, bool) {
+    fn caret(&self, view: &View) -> (Place, bool) {
         let (place, text, caret, fresh) = match &view.field {
             Some(field) => {
                 let head = head_and_body(field.text).0;
@@ -726,7 +718,7 @@ impl App {
             None => (Place::Line, view.line, self.cursor, None),
         };
         let empty = text.is_empty() || fresh == Some(caret);
-        (place, caret >= text.chars().count(), empty)
+        (place, empty)
     }
 
     /// Asks the device for something, and carries out what it asks for in return.
@@ -875,7 +867,6 @@ impl App {
     fn draw(&mut self, frame: &mut Frame) {
         let status = self.status();
         let view = self.device.view();
-        let (_, at_end, _) = self.caret(&view);
         let width = usize::from(frame.area().width);
         let height = usize::from(frame.area().height);
         let zoomed = !view.path.is_empty();
@@ -1026,7 +1017,7 @@ impl App {
             frame,
             foot,
             1,
-            Line::from(fit(&footer(&view.hints, at_end, keys_room), keys_room)).dim(),
+            Line::from(fit(&footer(&view.hints, keys_room), keys_room)).dim(),
         );
         paint_right(frame, foot, &syncing);
 
@@ -1344,9 +1335,8 @@ mod tests {
         assert_eq!(text, "kettlebell swings");
         assert!(on_note(&app));
 
-        // On a note, the arrow goes in, since the caret landed at the end of its head. On the
-        // line, Enter writes, and what is written there is linked.
-        press(&mut app, KeyCode::Right, false);
+        // On a note, Tab goes in. On the line, Enter writes, and what is written there is linked.
+        press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["kettlebell swings"]);
         write(&mut app, "two sets");
         assert_eq!(heads(&app), ["two sets"]);
@@ -1372,7 +1362,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "kettlebell swings");
         press(&mut app, KeyCode::Down, false);
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         write(&mut app, "two sets");
         press(&mut app, KeyCode::Down, false);
         assert!(on_note(&app));
@@ -1403,30 +1393,35 @@ mod tests {
     }
 
     #[test]
-    fn right_at_the_end_of_the_line_goes_into_what_it_names_and_short_of_it_moves_the_caret() {
+    fn tab_goes_into_what_the_line_names_wherever_the_caret_is_and_right_is_the_carets() {
         let (mut app, space) = app();
         write(&mut app, "Boiler service #house");
         write(&mut app, "Fix the gutter #house");
         write(&mut app, "Cake recipe");
 
         type_in(&mut app, "#house");
-        assert!(keys(&app).contains("→ go in"), "{}", keys(&app));
+        assert!(keys(&app).contains("Tab go in"), "{}", keys(&app));
+        press(&mut app, KeyCode::Right, false);
+        assert!(path(&app).is_empty(), "Right at the end does nothing");
+        assert_eq!(app.cursor, 6);
         press(&mut app, KeyCode::Left, false);
-        assert!(!keys(&app).contains("→ go in"), "{}", keys(&app));
+        assert!(keys(&app).contains("Tab go in"), "{}", keys(&app));
         press(&mut app, KeyCode::Right, false);
         assert!(path(&app).is_empty(), "the caret moved");
         assert_eq!(app.cursor, 6);
-        press(&mut app, KeyCode::Right, false);
-        assert_eq!(path(&app), ["#house"]);
+        press(&mut app, KeyCode::Left, false);
+        press(&mut app, KeyCode::Left, false);
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(path(&app), ["#house"], "from short of the end too");
         assert_eq!(line(&app), "");
         let mut house = heads(&app)[..2].to_vec();
         house.sort();
         assert_eq!(house, ["Boiler service #house", "Fix the gutter #house"]);
 
-        // What names nothing leaves the arrow doing nothing.
+        // What names nothing leaves Tab doing nothing, and types nothing.
         type_in(&mut app, "gutter and");
         assert!(!keys(&app).contains("go in"), "{}", keys(&app));
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["#house"]);
         assert_eq!(line(&app), "gutter and");
         done(&space);
@@ -1437,7 +1432,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "Boiler service #house");
         type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
 
         type_in(&mut app, "boil");
         assert!(keys(&app).ends_with("Esc clear"), "{}", keys(&app));
@@ -1480,7 +1475,7 @@ mod tests {
         write(&mut app, "Boiler pressure gauge");
         write(&mut app, "Boiler");
         type_in(&mut app, "Boiler");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         write(&mut app, "pressure low");
         assert_eq!(path(&app), ["Boiler"]);
         let shot = screen(&mut app, 60, 10);
@@ -1507,7 +1502,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "Boiler service #house");
         type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         press(&mut app, KeyCode::Enter, false);
         assert_eq!(field(&app).as_deref(), Some(" #house"));
         assert_eq!(app.row_cursor, 0, "before the label");
@@ -1535,7 +1530,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "Boiler service #house");
         type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Enter, false);
         assert_eq!(heads(&app).len(), 2);
@@ -1557,7 +1552,7 @@ mod tests {
         let (mut app, space) = app();
         write(&mut app, "[ ] Order oil #house");
         type_in(&mut app, "[ ] #house");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["[ ]", "#house"]);
         press(&mut app, KeyCode::Enter, false);
         assert_eq!(field(&app).as_deref(), Some("[ ]  #house"));
@@ -1614,8 +1609,11 @@ mod tests {
         chord(&mut app, 'w');
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
         press(&mut app, KeyCode::Tab, false);
-        assert_eq!(line(&app), " ", "a tab is a space");
-        chord(&mut app, 'd');
+        assert_eq!(
+            (line(&app).as_str(), app.cursor),
+            ("", 0),
+            "a tab is never typed"
+        );
 
         // Off the list and back, the line's cursor is where it was left. A line the session puts
         // back has its cursor at the end, wherever it was left.
@@ -1632,7 +1630,7 @@ mod tests {
         type_in(&mut app, "trai");
         press(&mut app, KeyCode::Left, false);
         press(&mut app, KeyCode::Down, false);
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
         press(&mut app, KeyCode::Esc, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
@@ -1677,7 +1675,7 @@ mod tests {
             "↓" => (KeyCode::Down, false),
             "^↑" => (KeyCode::Up, true),
             "^↓" => (KeyCode::Down, true),
-            "→" => (KeyCode::Right, false),
+            "Tab" => (KeyCode::Tab, false),
             chord => {
                 let mut chars = chord.chars();
                 assert_eq!(chars.next(), Some('^'), "{chord}");
@@ -1691,18 +1689,18 @@ mod tests {
     fn keys(app: &App) -> String {
         let view = app.device.view();
         let zoomed = !view.path.is_empty();
-        let (place, at_end, empty) = app.caret(&view);
-        for hint in keyed(&view.hints, at_end) {
+        let (place, empty) = app.caret(&view);
+        for hint in keyed(&view.hints) {
             let (code, ctrl) = named(key_for(&hint.action));
             assert_eq!(
-                bound(code, ctrl, place, zoomed, at_end, empty).as_ref(),
+                bound(code, ctrl, place, zoomed, empty).as_ref(),
                 Some(&hint.action),
                 "{} {}",
                 key_for(&hint.action),
                 hint.label
             );
         }
-        footer(&view.hints, at_end, usize::MAX)
+        footer(&view.hints, usize::MAX)
     }
 
     #[test]
@@ -1721,31 +1719,30 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  → go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
+            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
         );
 
-        // Short of the end of the head the arrow is the caret's, so going in is not named there.
+        // Where the caret is in the head does not change what is on offer.
         press(&mut app, KeyCode::Left, false);
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
+            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
         );
         press(&mut app, KeyCode::Right, false);
         assert!(path(&app).is_empty(), "the caret moved");
-        assert!(keys(&app).contains("→ go in"), "{}", keys(&app));
 
         // A changed head offers putting it back in place of undo.
         type_in(&mut app, "s");
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  → go in  ^V archive  ^D delete  ^C copy  ^U put back  \
+            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U put back  \
              Esc up"
         );
         chord(&mut app, 'u');
         assert_eq!(field(&app).as_deref(), Some("trainingapp"));
         assert_eq!(app.row_cursor, 11, "the caret is kept in the head put back");
 
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         write(&mut app, "squat form video https://example.com/squat");
         assert_eq!(
             keys(&app),
@@ -1754,7 +1751,7 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  → go in  ^L unlink  ^V archive  ^D delete  \
+            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V archive  ^D delete  \
              ^C copy  ^_ open URL  ^U undo  Esc up"
         );
 
@@ -1768,10 +1765,10 @@ mod tests {
         let widest = keys(&app);
         assert_eq!(
             widest,
-            "Enter new note here  ^O editor  → go in  ^L unlink  ^V unarchive  ^D delete  \
+            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V unarchive  ^D delete  \
              ^C copy  ^_ open URL  ^U undo  ^R redo  Esc up"
         );
-        assert!(widest.chars().count() <= 124, "{}", widest.chars().count());
+        assert!(widest.chars().count() <= 126, "{}", widest.chars().count());
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(
             keys(&app),
@@ -1785,7 +1782,7 @@ mod tests {
         type_in(&mut app, "x");
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  → go in  ^L unlink  ^V archive  ^D delete  \
+            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V archive  ^D delete  \
              ^C copy  ^↓ move down  ^U put back  Esc up"
         );
         done(&space);
@@ -2113,7 +2110,7 @@ mod tests {
     }
 
     #[test]
-    fn right_at_the_end_of_the_head_goes_in_and_before_it_moves_the_caret() {
+    fn tab_goes_into_the_note_under_the_cursor_wherever_the_caret_is() {
         let (mut app, space) = app();
         write(&mut app, "Boiler");
         press(&mut app, KeyCode::Down, false);
@@ -2121,9 +2118,11 @@ mod tests {
         assert_eq!(app.row_cursor, 5);
         press(&mut app, KeyCode::Right, false);
         assert_eq!(app.row_cursor, 6);
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(app.row_cursor, 6);
         assert!(
             path(&app).is_empty(),
-            "short of the end the arrow is the caret's"
+            "Right is the caret's, and at the end does nothing"
         );
 
         // Left at the start of the head stays there.
@@ -2132,9 +2131,35 @@ mod tests {
         assert_eq!(app.row_cursor, 0);
         assert!(on_note(&app) && path(&app).is_empty());
 
-        chord(&mut app, 'e');
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["Boiler"]);
+        done(&space);
+    }
+
+    #[test]
+    fn shift_tab_does_nothing() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler #house");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::BackTab, false);
+        assert_eq!((line(&app).as_str(), app.cursor), ("#house", 6));
+        assert!(path(&app).is_empty());
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::BackTab, false);
+        assert_eq!(field(&app).as_deref(), Some("Boiler #house"));
+        assert!(path(&app).is_empty());
+        done(&space);
+    }
+
+    #[test]
+    fn a_tab_is_never_typed_into_a_head() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(field(&app).as_deref(), Some(""));
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!((field(&app).as_deref(), app.row_cursor), (Some(""), 0));
+        assert!(path(&app).is_empty());
         done(&space);
     }
 
@@ -2373,7 +2398,7 @@ mod tests {
         assert!(shot.dim[6]);
         assert_eq!(shot.rows[8], " saved", "what the last thing asked for did");
         assert!(
-            shot.rows[9].starts_with(" Enter new note  ^O editor  → go in  ^V archive"),
+            shot.rows[9].starts_with(" Enter new note  ^O editor  Tab go in  ^V archive"),
             "{:?}",
             shot.rows[9]
         );
@@ -2497,7 +2522,7 @@ mod tests {
         with_body(&mut app, "Boiler\nThe combi under the stairs.");
         press(&mut app, KeyCode::Esc, false);
         type_in(&mut app, "Boiler");
-        press(&mut app, KeyCode::Right, false);
+        press(&mut app, KeyCode::Tab, false);
         for n in 0..6 {
             write(&mut app, &format!("valve {n}"));
         }

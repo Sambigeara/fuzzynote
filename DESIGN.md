@@ -24,12 +24,12 @@ choose.
   are all a face owns, so no rule of the app can differ between a terminal and a browser.
 - Keyboard first, almost no chrome.
 - Ergonomics is a primary goal, and it has two halves: nothing visible ever waits, and there is
-  almost nothing to remember. The whole app fits in one sentence: type to find, or into the row
-  you are on to change it; Enter writes the line, or opens a new row under the one you are on;
-  Ctrl-O opens the body; the arrow at the end of the head goes in, and at the end of the line
-  goes into what the line names; Esc clears the line, or comes back; and where you are is what
-  you are talking about. Every other key is maintenance, and the footer shows only the ones
-  that apply right now. A key is justified by the flow it sits in, never inherited.
+  almost nothing to remember. The whole app fits in one sentence: type to find, or into the row you
+  are on to change it; Enter writes the line, or opens a new row under the one you are on; Ctrl-O
+  opens the body; Tab goes in, from a head into its note and from the line into what the line names;
+  Esc clears the line, or comes back; and where you are is what you are talking about. Every other
+  key is maintenance, and the footer shows only the ones that apply right now. A key is justified by
+  the flow it sits in, never inherited.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the
   caret in the head of the row the cursor is on. Nothing else is highlighted and almost nothing
   else is drawn: no borders, no counts, no colour. The body read is that of what the cursor is
@@ -48,15 +48,15 @@ choose.
   and so does this: the head of the row the cursor is on is the field, typing changes it, and
   each change is kept as it is typed. Browsing is editing, and a stray key is one undo.
 - Zoom on what is shared. The original selected notes and pressed Enter, and whatever they had in
-  common became the context; the old common-prefix zoom was the special case. What is reinstated
-  is the label: a tag, a person, a day or the open tasks' box typed on the line is gone into with
-  the arrow and is the context, labels gone into one after another are one context, and so are a
-  note and the labels gone into after it. Selecting notes, and a context of plain words, are not
-  (see "A tag is a place you can go into" for why).
-- One line to search with: words find and everything else holds, so `"…"` is the exact text and
-  a tag, a person, a day, the open tasks' `[ ]` or a span narrows what is listed, and `~` at the
-  start of the line is the original's fuzzy, letters in order in heads. The original's
-  Tab-separated groups and `!` inverse are not built yet.
+  common became the context; the old common-prefix zoom was the special case. What is reinstated is
+  the label: a tag, a person, a day or the open tasks' box typed on the line is gone into with Tab
+  and is the context, labels gone into one after another are one context, and so are a note and the
+  labels gone into after it. Selecting notes, and a context of plain words, are not (see "A tag is a
+  place you can go into" for why).
+- One line to search with: words find and everything else holds, so `"…"` is the exact text and a
+  tag, a person, a day, the open tasks' `[ ]` or a span narrows what is listed, and `~` at the start
+  of the line is the original's fuzzy, letters in order in heads. The original's Tab-separated
+  groups are given up, Tab being the key that goes in, and its `!` inverse is not built yet.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key, which ticks a task; show/hide archived globally.
 - Undo/redo, move up/down, copy of whole notes (paste is not built yet).
@@ -380,19 +380,19 @@ tab and the relay all run the same code.
 ### The cursor, in both faces
 It is in one of two places, the line or the head of a row, and typing goes to the one it is in.
 
-On the line, typing finds. Enter with text writes the line as a note and takes the cursor to it,
-the caret at the end of its head; Enter with nothing on the line opens a new row at the top of
-the list, its head the field. Down moves onto the list. Right at the end of the line goes into
-what it names, and Esc clears it, or on an empty line comes back (see "Zoom and places").
+On the line, typing finds. Enter with text writes the line as a note and takes the cursor to it, the
+caret at the end of its head; Enter with nothing on the line opens a new row at the top of the list,
+its head the field. Down moves onto the list. Tab goes into what the line names, wherever the caret
+is, and Esc clears it, or on an empty line comes back (see "Zoom and places").
 
-On a row, the head is the field and typing changes it, with the caret landing at its end, and
-each change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typed, as an
-editor's hands expect. Enter opens a new row directly under it, its head the field, as the
-original's Enter added a line under the current one. Ctrl-O opens the body, which in the
-terminal is your editor and in the browser a sheet over the page that holds the whole note.
-Right at the end of the head goes in. Undo puts the head back as it was when the cursor landed,
-and otherwise takes back the last change, which for a row is the whole visit, one key for both.
-A chord acts on the note as it reads.
+On a row, the head is the field and typing changes it, with the caret landing at its end, and each
+change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typed, as an editor's
+hands expect. Enter opens a new row directly under it, its head the field, as the original's Enter
+added a line under the current one. Ctrl-O opens the body, which in the terminal is your editor and
+in the browser a sheet over the page that holds the whole note. Tab goes in. Right and Left are the
+caret's, on the line and in a head, and nothing else. Undo puts the head back as it was when the
+cursor landed, and otherwise takes back the last change, which for a row is the whole visit, one key
+for both. A chord acts on the note as it reads.
 
 A head is a version at every change, a new row's from its first letter, which creates the note
 with the moment Enter was pressed as its `created`, linked to the note being looked around and
@@ -442,12 +442,12 @@ to be listed at all, and none of it changes how the words rank.
   2026-10-12 18:00 – now`; the engine words both, so that the faces keep no calendar of their
   own, and an open start is `…`.
 - `~` as the first thing on the line makes its words letters, found in order in heads, as the
-  original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there.
-  They rank as fzf ranks: a letter at the start of a word earns more, twice as much for the first
-  letter typed, a letter running on from the one before earns at least what the first of its run
-  did, and a gap costs more the longer it is; then the shorter head, then the space's order.
-  Every row says `letters: bsv`. Letters name no note, so Right does nothing after them, and a
-  phrase holds in this mode without ranking.
+  original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there. They
+  rank as fzf ranks: a letter at the start of a word earns more, twice as much for the first letter
+  typed, a letter running on from the one before earns at least what the first of its run did, and a
+  gap costs more the longer it is; then the shorter head, then the space's order. Every row says
+  `letters: bsv`. Letters name no note, so Tab does nothing after them, and a phrase holds in this
+  mode without ranking.
 
 A line with nothing to rank by lists exactly what holds what it holds, in the space's order and
 with no reasons, as a place lists its facts on an empty line: at the top it is cut at the 500
@@ -471,19 +471,19 @@ to hold, a letter or a mark. A place gone into from the line was searched for by
 the line clears.
 
 ### Zoom and places
-Right at the end of a note's head makes it the place, and the path grows by one; short of the
-end, Right is the caret. A tag, a person, a day or the open tasks can be the place too: Right at
-the end of the line goes into what the line names. That is the label if the line is one label and
-nothing else, `#house`, `@joe`, `/fri` or `[ ]`, or back to it if it is on the path; each label
-in turn if the line is several, `#house /today`, as if Right had been pressed after each but
-passing over a label the place has already; and otherwise the one note in the space the line is
-the name of and that holds what the line holds, by the rule in "A name is a fact too". A line
-holding a span, a phrase or `~` is never gone into as labels are, whatever else is on it (see "A
-span is not a place"). In a place that rule holds as it does at the top: the note the line names
-is listed first, saying `its name`, wherever it is and whatever the limit, so Right goes where
-the list shows, and typing a name is the way from any place to any note. A line that names
-neither, or names where you already are, leaves Right doing nothing. The path shows a label as
-it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`.
+Tab on a note's head makes it the place, and the path grows by one, wherever the caret is in the
+head. A tag, a person, a day or the open tasks can be the place too: Tab on the line goes into what
+the line names. That is the label if the line is one label and nothing else, `#house`, `@joe`,
+`/fri` or `[ ]`, or back to it if it is on the path; each label in turn if the line is several,
+`#house /today`, as if Tab had been pressed after each but passing over a label the place has
+already; and otherwise the one note in the space the line is the name of and that holds what the
+line holds, by the rule in "A name is a fact too". A line holding a span, a phrase or `~` is never
+gone into as labels are, whatever else is on it (see "A span is not a place"). In a place that rule
+holds as it does at the top: the note the line names is listed first, saying `its name`, wherever it
+is and whatever the limit, so Tab goes where the list shows, and typing a name is the way from any
+place to any note. A line that names neither, or names where you already are, leaves Tab doing
+nothing, and types nothing: a tab is never written into the line or a head. The path shows a label
+as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`.
 
 The place is the last note on the path, if there is one, together with every label gone into
 after it; labels before the note are only how you got there, so `#house › Boiler › today` is the
@@ -525,13 +525,13 @@ opens ` #house` and links to Boiler, and in `#house › Boiler` a new note links
 carries no tag.
 
 The link chord, Ctrl-L in the terminal and `link` or `unlink` in the page's foot, links the note
-under the cursor to the place's note or unlinks it, which takes it into the place or out of it
-when it carries the place's labels: on an empty line an unlinked note leaves the list, and a note
-to link is one that typing found. It is a correction, not the mechanism, and with no note on the
-path, at the top or inside labels alone, it has nothing to do and says so. Right at the end of a
-head again walks a hop further, and on a place already on the path goes back to it, so the path
-never repeats; stepping back goes one hop, onto the line. This is the ego graph as a flat list;
-following a link is picking its target here.
+under the cursor to the place's note or unlinks it, which takes it into the place or out of it when
+it carries the place's labels: on an empty line an unlinked note leaves the list, and a note to link
+is one that typing found. It is a correction, not the mechanism, and with no note on the path, at
+the top or inside labels alone, it has nothing to do and says so. Tab on a head again walks a hop
+further, and on a place already on the path goes back to it, so the path never repeats; stepping
+back goes one hop, onto the line. This is the ego graph as a flat list; following a link is picking
+its target here.
 
 ### Terminal
 Rust and ratatui, with the original fzn chords where they still earn their place, because that
@@ -544,9 +544,10 @@ The keys. A chord acts on the line when the cursor is there and on the note unde
 otherwise. Ctrl-D clears or deletes; Ctrl-V shows archived or archives, which ticks a task and is
 named `tick` there; the line's right-hand end says `archived shown` while they are. Enter writes
 the line or opens a new row under the row; Backspace on an empty head takes the row away; Ctrl-O
-opens the note in your editor, which is how a body is written here. Right at the end of a head
-goes into the note, and at the end of the line into what the line names; short of either end it
-is the caret's, as Left is. Up and Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and
+opens the note in your editor, which is how a body is written here. Tab goes into the note under
+the cursor, and on the line into what the line names, wherever the caret is; Right and Left are
+the caret's, and Right at the end of the text does nothing. Shift-Tab is not bound, and Ctrl-I,
+which a terminal sends as Tab, carries no chord. Up and Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and
 Ctrl-Down move the note under the cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and
 redo, Ctrl-L links or unlinks the note under the cursor, Ctrl-C copies its first URL (or its
 head), Ctrl-_ opens the URL, Ctrl-B shows scores. The line and the head take the usual editing
@@ -570,7 +571,7 @@ when it goes on. The rows are kept whatever the note holds, on a row and on the 
 alike, so walking the list never changes how much of it is shown; on the line outside a place
 the list has the whole height. On a short screen they shrink, keeping the list at least half its
 room, and go when fewer than two would be left. One dim footer row names the chords that apply
-where the cursor is, `^V tick`, `→ go in`, ending with Escape's next rung, `Esc clear`,
+where the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`,
 `Esc back` or `Esc up`, or `Esc Esc quits` where there is none; a narrow terminal loses chords
 from the middle, never the first or the way back. A status row above it exists only while there
 is something to say, each key clearing what the one before said, and where the body has its rows
@@ -579,8 +580,8 @@ are or that sync is working; `not syncing` is said in the corner of the foot whe
 in its place, while syncing, how far this machine's clock is from the relay's when that is more
 than two minutes, `this device's clock is 5 min ahead`.
 
-Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, Tab
-search groups and `!` inverse, Ctrl-^ export.
+Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
+inverse, Ctrl-^ export.
 
 ### Browser
 The engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain JavaScript and
@@ -1475,6 +1476,34 @@ repeats it only where the reason needs it.
   installer with a receipt and an updater; not signatures yet, since attestations need an
   enterprise plan on a private repository and minisign a key to keep: a signed tag and the sums
   are what there is. Intel Macs and Windows are left out until someone has one.
+- **Tab goes in.** Decided 2026-10-16, at Sam's direction, reversing the part of "Enter edits, the
+  arrow goes in" (2026-10-14) that made Right the key that goes in and rejected Tab, and with it the
+  rule of "Enter opens the body; Right goes in from the end of the head" that it went in only from
+  the end. Tab goes in, in both faces and from both places: from a row into its note, and from the
+  line into what it names, wherever the caret is, since a tab means nothing in a line of text and so
+  needs no rule about the end. Right and Left are the caret's and nothing else, and at the end of
+  the text Right does nothing. Where an earlier decision says Right or the arrow goes in ("A tag is
+  a place you can go into", "A name is a fact too", "A span is not a place", "The arrow at the end
+  of a line of labels goes into each" and the rest), the key is now Tab; what each decided about
+  where it goes stands. Three reasons. Tab is quick, one key in the same place on every keyboard,
+  found by the little finger without looking. It matches what the line already is, a completion: Tab
+  takes the completion in a shell and in every editor, and "type the name, Tab" is that gesture. And
+  the arrow's two meanings, the caret's short of the end and the zoom's at it, were a rule to
+  remember, the one the Open question "Right at the end of the head as the zoom key, or Alt-Z" kept
+  open: a hand that thought the cursor was on the line went in instead of moving the caret. What the
+  2026-10-14 reasoning held against Tab is answered. A page moves focus with it, but when you are in
+  fzn the keys bound to it are for fzn, so the page takes Tab as the terminal does and its words at
+  the foot are pressed or tapped; the `›` in the foot stays, for touch. In the body's sheet, which
+  is a text editor and goes nowhere, Tab indents. The original's Tab-separated search groups,
+  unbuilt since the rewrite, are given up for good; its `!` inverse is still possible. Shift-Tab is
+  not bound: Escape is the way back, a second key for it would be inherited rather than earned, and
+  terminals do not agree on what they send for it; the page takes Shift-Tab and does nothing with
+  it. In a terminal Ctrl-I is Tab, so no chord sits on Ctrl-I, and were the kitty keyboard protocol
+  ever turned on both would have to be bound. A pasted tab must not go in, which is one reason the
+  terminal now takes a paste whole (see "A paste is one change"). The footer says `Tab go in`,
+  keeping the engine's label, which the page's `›` in the foot shares. Alt-Z is no longer a
+  fallback, since Tab is everywhere. The Tab-to-link that "Position is the link" dropped stays
+  dropped: this Tab links nothing. The Open question is closed.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -1498,9 +1527,9 @@ repeats it only where the reason needs it.
   compaction machinery and nothing more, but nobody has asked for it.
 - What the relay still sees: log names, counts, sizes and timing, and the compaction headers.
   Padding lines to a few sizes would hide the sizes; nothing hides the timing.
-- The browser's keys past the four, and Ctrl-D and Ctrl-O. Words at the foot reached with Tab
-  are a start: nothing to remember, but slower than a chord for archiving ten notes in a row.
-  Undo has no key at all yet.
+- The browser's keys past the four, and Ctrl-D and Ctrl-O. Words at the foot, pressed or tapped, are
+  a start: nothing to remember, but slower than a chord for archiving ten notes in a row. Undo has
+  no key at all yet.
 - Touch. A tap puts the cursor on a note, a second opens its body, the `›` goes in, and the
   path at the top is the way back. Whether any of that is right is for use on a phone to say.
   Seen 2026-10-15 in Chromium's and WebKit's touch emulation: once the cursor is on a row its
@@ -1510,12 +1539,9 @@ repeats it only where the reason needs it.
   Chromium some of the time. Until 2026-10-15 the body read under the row was where a second
   tap opened it in both, and it went with the body; on a phone the word in the foot is now the
   one sure way to open a body, and whether the row wants a target of its own for it is open.
-- Right at the end of the head as the zoom key, or Alt-Z. A hand that thinks the cursor is on
-  the line when it is on a row goes in instead of moving the caret; the one cursor is the tell.
-  On a row Esc keeps rather than cancels, which spreadsheet hands will find out once. Both are
-  for daily use to confirm. (For the line this was settled on 2026-10-14 by "A tag is a place
-  you can go into": Right at the end of the line goes into what the line names, and Esc on a
-  line with text clears it.)
+- On a row Esc keeps rather than cancels, which spreadsheet hands will find out once; daily use
+  confirms it. (Which key goes in, open here beside it until 2026-10-16, is settled by "Tab goes
+  in".)
 - A head held changed while another device edits the same note loses one side to
   last-writer-wins when it is written, which the editor already risked. The text CRDT is the
   answer.

@@ -2,7 +2,7 @@
 
 fzn is a blank page with one input. Typing finds: as you type, the notes you have already
 written that belong with it come up, each with the reason it was found. Enter writes: the line
-becomes a new note. The arrow at the end of a note goes into it, and what you write there is
+becomes a new note. Tab on a note goes into it, and what you write there is
 about that note and links to it; a tag such as `#house` is gone into the same way, and what you
 write there carries it. Where you are is what you are talking about. There are no folders, no
 documents and no tree, only notes and the links between them.
@@ -49,8 +49,8 @@ space named in the config file (`main` to begin with); `fzn --space garden` open
 creates it if it is new.
 
 The whole app in one sentence: type to find or to write; Enter writes the line, or opens a new
-note under the one you are on; the arrow at the end of a note goes into it, and at the end of
-the line into the tag, person, day or note the line names; Esc clears the line, or comes back.
+note under the one you are on; Tab goes into the note you are on, or from the line into the
+tag, person, day or note the line names; Esc clears the line, or comes back.
 Every other key is shown in the footer, and only when it applies where the cursor is. To edit a
 note at length, Ctrl-O opens it in `$EDITOR`.
 
@@ -70,8 +70,7 @@ On the line, words find and everything else holds. `"oil tank"` must be in a not
 `@joe` and `/fri` must be on it, `[ ]` holds the open tasks, and a span holds what was written in
 it: `/-mon 18:00..` since six on Monday evening, `2026-10-01..2026-10-05` those five days. `~` at
 the start of the line finds heads by their letters in order, so `~bsv` finds Boiler service. A
-line of nothing but labels, such as `[ ] #house /today`, is gone into with one press of the
-arrow.
+line of nothing but labels, such as `[ ] #house /today`, is gone into with one Tab.
 
 ## Sync
 
