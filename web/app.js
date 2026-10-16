@@ -25,9 +25,9 @@
 // with an arrow moves the note on the row up or down the list. Everything else is a word in the
 // foot, moving a note included, and only what applies right now gets one.
 //
-// The painting is kept cheap because it runs on every keystroke: rows are keyed by id and their
-// nodes reused, nothing measures the page but the caret, once at the end, and the note you are in
-// when it changes, and only a row that is new fades in.
+// The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
+// are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
+// once at the end, and the note you are in when it changes, and only a row that is new fades in.
 
 import init, { Fzn, deriveKey } from './pkg/fzn_web.js';
 
@@ -760,6 +760,39 @@ function fill(li, row, selected) {
   li.replaceChildren(main);
 }
 
+// The rows made are those that can be seen and a screenful more, and more as the list is scrolled
+// or walked towards its end: the engine lists up to 500, and a list cleared made all of them anew,
+// with their style and layout, in 40 ms or more, four frames for one key. How many fit is read once
+// and again only when the window's size changes, from the list's height and a row's, the `--row`
+// of the stylesheet, 2.5rem. A new list, for another line or another place, starts again from what
+// fits. The row under the cursor is always made, so the list can follow it. A narrow page scrolls
+// the document rather than the list, and makes every row.
+const MARGIN = 20;
+let fits = 0;
+let further = 0;
+let made = 0;
+let listFor = '';
+let listed = new Set();
+const rowHeight = () => 2.5 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+function reach() {
+  if (narrow.matches) return Infinity;
+  if (!fits) fits = Math.ceil((list.clientHeight || innerHeight) / rowHeight());
+  return Math.max(fits + MARGIN, (view.cursor ?? 0) + MARGIN, further);
+}
+list.addEventListener(
+  'scroll',
+  () => {
+    if (!view || made >= view.rows.length) return;
+    if (list.scrollTop + list.clientHeight < list.scrollHeight - 2 * rowHeight()) return;
+    further = made + 50;
+    paintSoon();
+  },
+  { passive: true },
+);
+window.addEventListener('resize', () => {
+  fits = 0;
+});
+
 // The focus follows the cursor at the end of every painting: no key moves it off a field, so
 // wherever else it is, a press put it there and the field takes it back. Only a field being left
 // for somewhere else keeps its hands off, and vim's prompt for a command, at the sheet's foot, which
@@ -795,7 +828,14 @@ function paintRows() {
   }
   boxIn = fieldId;
 
-  const seen = new Set(view.rows.map((row) => row.id));
+  const asking = JSON.stringify([view.line, view.path]);
+  if (asking !== listFor) {
+    listFor = asking;
+    further = 0;
+  }
+  const shown = view.rows.slice(0, reach());
+  made = shown.length;
+  const seen = new Set(shown.map((row) => row.id));
   for (const [id, li] of rows) {
     if (!seen.has(id)) {
       li.remove();
@@ -804,14 +844,16 @@ function paintRows() {
   }
 
   let newcomers = 0;
-  const wanted = view.rows.map((row, i) => {
+  const wanted = shown.map((row, i) => {
     let li = rows.get(row.id);
     if (!li) {
       li = el('li', 'row');
       li.dataset.id = row.id;
       li.dataset.k = '';
       rows.set(row.id, li);
-      if (!still.matches && !field?.whole) {
+      // Only a row that is new to the list fades in, not one that was listed and is made now
+      // because the list was scrolled or walked down to it.
+      if (!still.matches && !field?.whole && !listed.has(row.id)) {
         li.classList.add('in');
         li.style.setProperty('--i', Math.min(newcomers++, 8));
       }
@@ -835,6 +877,8 @@ function paintRows() {
     if (selected) dateRow(li);
     return li;
   });
+
+  listed = new Set(view.rows.map((row) => row.id));
 
   // Rows are put in order by moving only those that are out of it. A node that is moved is taken
   // out and put back, which would restart its fade and drop the focus of the box.

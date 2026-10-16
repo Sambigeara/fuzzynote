@@ -627,23 +627,23 @@ text left-aligned, and the line a little above a third of the way down, where it
 not move when you type or when results arrive. A faint hairline under the line sets it apart
 from the rows. The blank page is the caret and, under it in faint grey, the heads at the top of
 the list fading out by the eighth. As you type, what is found takes their place; only a row that
-is new fades in, and nothing else moves. The path, in a place, is in the margin above the line,
-`main › Boiler`: the space's name and then each step, each a way back to it, the first to the
-top, a note's step read as its row is, and on a phone a long path gives up its middle. The tab's
-title stays `fzn`, or `fzn · garden` in another space. The path is the browser's history too: each
-step in, and a body opened, is an entry, so the browser's Back, a mouse's back button or a phone's
-back gesture steps out as Escape does and closes an open body, and a step out made on the page
-goes back through the history, which so never holds more entries than the path has steps. Forward
-has nothing to go into and is gone back from. No colour: paper, ink and two greys, light and dark by
-the system's preference. On a page at least 75rem wide the body of what the cursor is on is read
-beside the list: the note under the cursor,
-or with the cursor on the line in a place the note you are in. It is rendered as markdown, in
-the soft grey, from the top of the first row's text, with no border, scrolled on its own and
-faded at its foot as the list is. A narrower page has no room for it: a note's body is read
-there by opening it, and the note you are in is read above the line, rendered, under the path
-and in the path's smaller size, clamped to six lines and opened with a tap, so that where you
-are is all above the line and what is found follows it directly. The margin grows downwards only
-for a body longer than it has room for.
+is new fades in, and nothing else moves. Only the rows that can be seen are made, and a screenful
+more, and more as the list is scrolled or walked towards its end. The path, in a place, is in the
+margin above the line, `main › Boiler`: the space's name and then each step, each a way back to it,
+the first to the top, a note's step read as its row is, and on a phone a long path gives up its
+middle. The tab's title stays `fzn`, or `fzn · garden` in another space. The path is the browser's
+history too: each step in, and a body opened, is an entry, so the browser's Back, a mouse's back
+button or a phone's back gesture steps out as Escape does and closes an open body, and a step out
+made on the page goes back through the history, which so never holds more entries than the path has
+steps. Forward has nothing to go into and is gone back from. No colour: paper, ink and two greys,
+light and dark by the system's preference. On a page at least 75rem wide the body of what the cursor
+is on is read beside the list: the note under the cursor, or with the cursor on the line in a place
+the note you are in. It is rendered as markdown, in the soft grey, from the top of the first row's
+text, with no border, scrolled on its own and faded at its foot as the list is. A narrower page has
+no room for it: a note's body is read there by opening it, and the note you are in is read above the
+line, rendered, under the path and in the path's smaller size, clamped to six lines and opened with
+a tap, so that where you are is all above the line and what is found follows it directly. The margin
+grows downwards only for a body longer than it has room for.
 
 *Markdown.* A body is rendered where it is only read and styled where it is written; the note
 stays plain text, and neither the engine nor the terminal reads markdown. Read, a body shows
@@ -698,20 +698,19 @@ own, and in it Enter is a line break, Tab indents and Shift-Tab takes the indent
 arrows move within it, and Esc closes it back onto the head. Leaving it for anywhere else on the
 page closes it, and a press on another row goes there; a press in its own margin, or on its row
 behind it, does not, and nor does leaving the window, though the tab going out of sight writes what
-it holds. The words in the foot stay above
-the dimming, since they are about the note. There is no second editor: the sheet is the body's
-editor, for a long document too, and with it shut the head is written in its row. While the body
-is open the sheet holds a CodeMirror editor, fetched after the first pause in keys once the page
-has painted, or when a body opens if that is sooner: the markdown styled where it stands with every
-mark in sight, the marks in the faint grey and the text in ink, headings and strong text heavier,
-emphasis slanted, code in the monospace, soft wrap, step undo, a grey selection, and vim mode for
-the browser that asked for it with the word `vim` in the foot. In vim mode Esc is vim's alone;
-`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
-first, and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the
-editor's coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt
-for a command is at the foot of the sheet, under the text and a hairline. The head stays an
-ordinary field. Until the editor has loaded, and if it never does, the sheet holds a plain text
-area. The `editor` the engine offers is not shown here.
+it holds. The words in the foot stay above the dimming, since they are about the note. There is no
+second editor: the sheet is the body's editor, for a long document too, and with it shut the head is
+written in its row. While the body is open the sheet holds a CodeMirror editor, fetched after the
+first pause in keys once the page has painted, or when a body opens if that is sooner: the markdown
+styled where it stands with every mark in sight, the marks in the faint grey and the text in ink,
+headings and strong text heavier, emphasis slanted, code in the monospace, soft wrap, step undo, a
+grey selection, and vim mode for the browser that asked for it with the word `vim` in the foot. In
+vim mode Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!`
+and `ZQ` put the text back first, and `:w` writes and stays, scrolled where it was. The page's caret
+is drawn from the editor's coordinates, a block in normal and visual mode and a bar in insert mode.
+Vim's prompt for a command is at the foot of the sheet, under the text and a hairline. The head
+stays an ordinary field. Until the editor has loaded, and if it never does, the sheet holds a plain
+text area. The `editor` the engine offers is not shown here.
 
 *Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body (the
 head is a text box by then, and a tap in it places the caret), a tap on the `›` at the end of
@@ -1692,6 +1691,19 @@ repeats it only where the reason needs it.
   put back on load, which is the reload's work, and an address that named a note would put it in the
   browser's history, which a browser may sync off the device. Once a place can be saved and given
   back to the engine, an entry could hold its steps and Forward go back in.
+- **Only the rows that can be seen are made.** Decided 2026-10-16, revising the costs given in "A
+  body's markdown is rendered where it is read and styled where it is written". The engine lists up
+  to 500 rows at the top, and the page made every one whatever fitted: clearing the line made 500
+  rows anew with their style and layout, 28 to 47 ms over 10,000 notes, and the first Down restyled
+  500 tails, so the two commonest keys after typing each took several frames against the principle
+  that every keystroke resolves within one. On a wide page the painter now makes what fits in the
+  list and twenty more, at least twenty past the cursor so the row under it is always there to
+  follow, and fifty more whenever the list is scrolled to within two rows of its end; a new list
+  starts again from what fits, and a row made because the list was scrolled or walked to it does not
+  fade in, since it is not new. Clearing the line now paints in 7 ms, typing a label in 2, and no
+  key measured took more than two frames from its press to its paint, Playwright's hop included. A
+  narrow page scrolls the document rather than the list, and still makes every row until its layout
+  is redone.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
