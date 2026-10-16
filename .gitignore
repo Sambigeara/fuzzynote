@@ -11,6 +11,9 @@ tags
 # Rust
 /target/
 
+# Releases laid out by release.sh
+/dist/
+
 # The engine built for the browser, by web/build.sh
 /web/pkg/
 

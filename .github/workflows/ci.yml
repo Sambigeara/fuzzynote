@@ -4,30 +4,81 @@ on:
   push:
   pull_request:
 
+# A push on top of a push still being checked cancels the first.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Every action is pinned to a commit, with its version beside it, since a tag can be moved.
+
 env:
   CARGO_TERM_COLOR: always
+  WASM_BINDGEN: 0.2.129
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: wasm-bindgen@${{ env.WASM_BINDGEN }}
 
       - name: Format
         run: cargo fmt --all --check
 
+      # The page first, so that the relay built by the checks below carries it and its tests
+      # of the built-in page run. This is also the wasm build that proves the engine does no
+      # I/O: it fails if anything in the engine reaches for the machine. Like every cargo here
+      # it is --locked, so a stale Cargo.lock fails rather than being rewritten.
+      - name: Engine has no I/O (the page builds for wasm32)
+        run: web/build.sh
+
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
-      - name: Engine has no I/O (wasm build of fzn-web)
-        run: cargo build -p fzn-web --release --target wasm32-unknown-unknown
+      - name: Sizes
+        run: |
+          {
+            echo '```'
+            ls -l web/pkg
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The committed bundles under web/vendor are what web/editor/build.sh makes from the pinned
+  # lockfile, byte for byte; a change to either without the other fails here.
+  bundles:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/editor/package-lock.json
+
+      - name: Rebuild the bundles
+        run: web/editor/build.sh
+
+      - name: They are the committed ones
+        run: git diff --exit-code --stat -- web/vendor
