@@ -236,12 +236,6 @@ function carryOut(json) {
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
   look();
-  // The page has no editor but the sheet, so a note handed to an editor has its body opened
-  // there, if it is on the list.
-  if (todo.editor) {
-    const at = view.rows.findIndex((row) => row.id === todo.editor.id);
-    if (at >= 0 && !view.field?.whole) queueMicrotask(() => (act({ select: at }), act('open')));
-  }
 }
 
 // Where the cursor is, as far as the focus is concerned: the line, a row's head, or a row's
@@ -426,10 +420,12 @@ const readHead = (text) => {
 };
 const readBody = (text, upTo) => (render ? render.body(text, upTo) : text);
 
+const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
+
 // The key that asks for something, where one does. Nothing shows a key on the page; a word in
 // the foot says it when the pointer rests on it.
 function keyFor(action) {
-  const name = typeof action === 'string' ? action : Object.keys(action)[0];
+  const name = named(action);
   // Inside the body box Ctrl-D is the browser's, so the word does not claim it there.
   if (name === 'delete' && view?.field?.whole) return '';
   // With vim's keys Escape is vim's, and the body closes as vim's quits do.
@@ -441,7 +437,6 @@ function keyFor(action) {
   );
 }
 
-const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
 
 const narrow = window.matchMedia('(max-width: 640px)');
 narrow.addEventListener('change', () => view && paintSoon());
