@@ -171,6 +171,10 @@ pub struct Device {
     answered: bool,
     /// Whether the last refusal was heard after this device answered a challenge.
     refused_answer: bool,
+    /// Whether this device's key did not open the line of the space a relay offered. That is a
+    /// verdict on the key, which holds through whatever the relay says next of having heard no
+    /// answer, until a relay takes the device in.
+    shut: bool,
 }
 
 impl Device {
@@ -200,6 +204,7 @@ impl Device {
             refused: None,
             answered: false,
             refused_answer: false,
+            shut: false,
         }
     }
 
@@ -397,6 +402,11 @@ impl Device {
                     }
                 }
             }
+            // Once the space's line has not opened, what the relay says of the answer it then did
+            // not hear is not the reason.
+            Some(Message::Refused(_)) if peer == RELAY && self.shut => {
+                self.session.say(NOT_THE_SPACES);
+            }
             Some(Message::Refused(why)) if peer == RELAY => {
                 self.session.say(why.clone());
                 self.refused = Some(why);
@@ -411,6 +421,7 @@ impl Device {
                 {
                     self.refused = None;
                     self.refused_answer = false;
+                    self.shut = false;
                 }
                 let out = self.replica.receive(peer, message);
                 self.carry_out(out, &mut todo);
@@ -443,6 +454,7 @@ impl Device {
             self.session.say(NOT_THE_SPACES);
             self.refused = Some(NOT_THE_SPACES.to_owned());
             self.refused_answer = true;
+            self.shut = true;
             return Vec::new();
         } else {
             Message::Claim(self.auth.encode())
@@ -503,10 +515,12 @@ impl Device {
     }
 
     /// Whether the passphrase is in doubt: the key opened no sealed line here though there are
-    /// some, or the relay refused this device after it answered the challenge, which is a refusal
-    /// of its key, and nothing here says the key is right.
+    /// some, or did not open the line of the space a relay offered, whatever it opens here, or
+    /// the relay refused this device after it answered the challenge, which is a refusal of its
+    /// key, and nothing here says the key is right.
     pub fn key_in_doubt(&self) -> bool {
         !self.key_verified()
+            || self.shut
             || self.refused.is_some() && self.refused_answer && self.sealed_opened == 0
     }
 
@@ -1299,6 +1313,48 @@ mod tests {
             line: None,
         };
         assert!(a.received(RELAY, &odd.encode().unwrap()).send.is_empty());
+    }
+
+    #[test]
+    fn a_key_the_spaces_line_does_not_open_stays_refused_and_in_doubt() {
+        let mut c = device("dev-c");
+        let line = write(&mut c, "Boiler").keep.remove(0).lines.remove(0);
+        let timeout = Message::Refused("no proof of the key came, so the relay let go".into())
+            .encode()
+            .unwrap();
+
+        // A fresh device with the passphrase mistyped hears the relay give up on it.
+        let mistyped = || {
+            Device::new(
+                host("dev-b", 0),
+                "dev-b",
+                Weights::default(),
+                Key::from_bytes([9; 32]),
+            )
+        };
+        let mut b = mistyped();
+        b.connected(RELAY);
+        b.received(RELAY, &offering(false, Some(line.clone())));
+        b.received(RELAY, &timeout);
+        b.disconnected(RELAY);
+        b.connected(RELAY);
+        assert_eq!(b.refused(), Some(NOT_THE_SPACES));
+        assert_eq!(status(&b), NOT_THE_SPACES);
+        assert!(b.key_in_doubt());
+
+        // One that has its own lines, which its key opens, is in doubt all the same.
+        let mut d = mistyped();
+        let own = write(&mut d, "Garden").keep.remove(0).lines;
+        let mut d = mistyped();
+        d.load("dev-b", own);
+        assert!(d.key_verified() && !d.key_in_doubt());
+        d.connected(RELAY);
+        d.received(RELAY, &offering(false, Some(line)));
+        assert!(d.key_in_doubt());
+
+        // A relay that takes it in after all clears it.
+        d.received(RELAY, r#"{"have":{}}"#);
+        assert!(!d.key_in_doubt() && d.refused().is_none());
     }
 
     #[test]

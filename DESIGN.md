@@ -345,12 +345,13 @@ tab and the relay all run the same code.
   relay offers, `"line":"…"`, with its challenge for a space it keeps no auth key for but holds
   lines of: one sealed line of the space, which shows nothing a copy of the lines would not. That
   is a passphrase mistyped on a new device, which would otherwise make its key the space's and shut
-  out every device with the right one; the device says so, keeps it as it keeps a refusal, and
-  sends nothing more. `{"refused":"…"}` is why a relay will not go on; the device says it, keeps it
-  until a relay takes it in, and tells whether the passphrase is in doubt: when its key opens
-  nothing it holds, or when a relay refused it after it answered the challenge and nothing it holds
-  says the key is right. A refusal before the answer is of a token or a name, not of the key. A
-  device that hears no challenge syncs as it always did.
+  out every device with the right one; the device says so, keeps it as it keeps a refusal, through
+  whatever the relay says next of the answer it did not hear, and sends nothing more.
+  `{"refused":"…"}` is why a relay will not go on; the device says it, keeps it until a relay takes
+  it in, and tells whether the passphrase is in doubt: when its key opens nothing it holds, when it
+  did not open the space's line, whatever it opens here, or when a relay refused it after it
+  answered the challenge and nothing it holds says the key is right. A refusal before the answer is
+  of a token or a name, not of the key. A device that hears no challenge syncs as it always did.
 - **Four rules.**
   1. Told what a peer has, send it the rest of every log it holds less of, having checked its
      mark against the same point in your own.
