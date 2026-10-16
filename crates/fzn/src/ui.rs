@@ -42,12 +42,12 @@
 //! there, and that goes to the device as the relay's lines do.
 
 use std::fs;
-use std::io::Write as _;
-use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::io::{IsTerminal as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Result, anyhow};
 use fzn_engine::text::fit;
 use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{
@@ -289,10 +289,20 @@ fn spliced(line: &str, cursor: usize, text: &str) -> (String, usize) {
 }
 
 /// Takes the terminal for the app: raw, the alternate screen, and a paste sent whole rather than
-/// as keys.
+/// as keys. Without a terminal to draw on it says so, in place of a backtrace.
 fn take_terminal() -> Result<DefaultTerminal> {
-    let terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    let none = || anyhow!("fzn needs a terminal to draw on; fzn export writes notes to a pipe");
+    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
+        return Err(none());
+    }
+    let terminal = ratatui::try_init().map_err(|_| {
+        ratatui::restore();
+        none()
+    })?;
+    if let Err(why) = execute!(std::io::stdout(), EnableBracketedPaste) {
+        ratatui::restore();
+        return Err(why.into());
+    }
     Ok(terminal)
 }
 
@@ -380,30 +390,104 @@ fn open(url: &str) -> Result<(), String> {
         .map_err(|e| format!("{opener}: {e}"))
 }
 
-fn run_editor(editor: &str, path: &Path) -> Result<ExitStatus> {
-    let mut parts = editor.split_whitespace();
-    let program = parts.next().context("empty editor command")?;
-    Command::new(program)
-        .args(parts)
-        .arg(path)
-        .status()
-        .with_context(|| format!("run editor {editor:?}"))
+/// An error as the status row says it, without the number the system gives it.
+fn plainly(error: &std::io::Error) -> String {
+    let said = error.to_string();
+    match said.find(" (os error") {
+        Some(at) => said[..at].to_owned(),
+        None => said,
+    }
+}
+
+/// The file a note is handed to the editor in, which is the owner's alone and goes when this
+/// does, however the editor finished, and the directory of its own it is put in where the
+/// directory it would share is not the owner's.
+struct Handed {
+    path: PathBuf,
+    own: Option<PathBuf>,
+}
+
+impl Handed {
+    /// Writes `text` to a new file for the note `id`, readable by its owner only, in
+    /// `$XDG_RUNTIME_DIR` when there is one that takes it.
+    fn new(id: &str, text: &str) -> std::io::Result<Self> {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        Self::within(runtime, &std::env::temp_dir(), id, text)
+    }
+
+    /// Writes the note in `runtime`, the user's own directory and kept in memory, and failing
+    /// that, as when it is left over from another user under `su`, in a directory of its own
+    /// under `temp`, which is the owner's alone too, so that the editor's swap and backup files
+    /// beside it are as private as the note.
+    fn within(
+        runtime: Option<PathBuf>,
+        temp: &Path,
+        id: &str,
+        text: &str,
+    ) -> std::io::Result<Self> {
+        let name = format!("fzn-{}-{}.md", sanitise(id), std::process::id());
+        if let Some(dir) = runtime.filter(|dir| dir.is_absolute() && dir.is_dir())
+            && let Ok(handed) = Self::write(dir.join(&name), None, text)
+        {
+            return Ok(handed);
+        }
+        let own = temp.join(format!("fzn-{}", std::process::id()));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        // A directory of that name is taken as nobody's: it is never written into.
+        builder.create(&own)?;
+        Self::write(own.join(&name), Some(own), text)
+    }
+
+    fn write(path: PathBuf, own: Option<PathBuf>, text: &str) -> std::io::Result<Self> {
+        let handed = Self { path, own };
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        // A name that is somehow taken is never written through.
+        options.open(&handed.path)?.write_all(text.as_bytes())?;
+        Ok(handed)
+    }
+}
+
+impl Drop for Handed {
+    fn drop(&mut self) {
+        match &self.own {
+            Some(dir) => {
+                let _ = fs::remove_dir_all(dir);
+            }
+            None => {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+    }
 }
 
 /// Hands a note's text to the editor and waits for it. Gives back the text as it was left, or
-/// what to say when the editor did not finish well.
-fn edit_in(editor: &str, id: &str, text: &str) -> Result<Result<String, String>> {
-    let path = std::env::temp_dir().join(format!("fzn-{}.md", sanitise(id)));
-    fs::write(&path, text)?;
-    let status = run_editor(editor, &path)?;
+/// what to say when the editor could not be run or did not finish well. The editor is a program
+/// and its arguments, split on spaces.
+fn edit_in(editor: &str, id: &str, text: &str) -> Result<String, String> {
+    let mut parts = editor.split_whitespace();
+    let Some(program) = parts.next() else {
+        return Err("no editor is set; note unchanged".to_owned());
+    };
+    let handed = Handed::new(id, text)
+        .map_err(|e| format!("could not hand the note over: {}", plainly(&e)))?;
+    let status = Command::new(program)
+        .args(parts)
+        .arg(&handed.path)
+        .status()
+        .map_err(|e| format!("could not run {program}: {}", plainly(&e)))?;
     if !status.success() {
-        return Ok(Err(format!(
-            "{editor} exited with {status}; note unchanged"
-        )));
+        let how = status
+            .code()
+            .map_or_else(|| status.to_string(), |code| code.to_string());
+        return Err(format!("{program} exited with {how}; note unchanged"));
     }
-    let edited = fs::read_to_string(&path)?;
-    let _ = fs::remove_file(&path);
-    Ok(Ok(edited))
+    fs::read_to_string(&handed.path)
+        .map_err(|e| format!("could not read what {program} left: {}", plainly(&e)))
 }
 
 /// What the date words and spans on the line stand for, to show at the end of its row.
@@ -931,7 +1015,8 @@ impl App {
         }
     }
 
-    /// Gives the terminal over to the editor, and saves what it leaves.
+    /// Gives the terminal over to the editor, and saves what it leaves. An editor that cannot be
+    /// run, or gives up, is said on the status row and the app stays.
     fn hand_to_editor(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -940,9 +1025,17 @@ impl App {
     ) -> Result<()> {
         give_terminal_back();
         let edited = edit_in(&self.editor, &id, text);
+        // What the editor left is saved before the terminal is taken back, so that failing to
+        // take it back loses nothing.
+        self.edited(id, edited)?;
         *terminal = take_terminal()?;
         terminal.clear()?;
-        match edited? {
+        Ok(())
+    }
+
+    /// Saves what the editor left, or says why there is nothing to save.
+    fn edited(&mut self, id: String, edited: Result<String, String>) -> Result<()> {
+        match edited {
             Ok(text) => {
                 self.act(Action::Save { id, text })?;
             }
@@ -2125,16 +2218,15 @@ mod tests {
         assert_eq!(text, "the plans", "the head as it now reads");
 
         // An editor that changes nothing, and one that gives up.
-        assert_eq!(edit_in("true", &id, &text).unwrap(), Ok("the plans".into()));
-        let gave_up = edit_in("false", &id, &text).unwrap().unwrap_err();
-        assert!(gave_up.starts_with("false exited with"), "{gave_up}");
-        assert!(gave_up.ends_with("note unchanged"), "{gave_up}");
+        assert_eq!(edit_in("true", &id, &text), Ok("the plans".into()));
+        let gave_up = edit_in("false", &id, &text).unwrap_err();
+        assert_eq!(gave_up, "false exited with 1; note unchanged");
 
         // One that leaves something else behind.
         let left = space.join("left-by-the-editor.md");
         fs::write(&left, "The plan\nwith a body\n").unwrap();
         let editor = format!("cp {}", left.display());
-        let edited = edit_in(&editor, &id, &text).unwrap().unwrap();
+        let edited = edit_in(&editor, &id, &text).unwrap();
         app.act(Action::Save { id, text: edited }).unwrap();
         let view = app.device.view();
         assert_eq!(view.status, "saved");
@@ -2145,6 +2237,109 @@ mod tests {
             written.lines().count(),
             3,
             "the note, the letter typed, and what the editor left"
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn the_editors_file_is_the_owners_alone_and_goes_whatever_the_editor_did() {
+        let dir = temp_dir();
+        let seen = dir.join("seen");
+        // The editor notes where the file is, then does as it is told.
+        let editor = |then: &str| {
+            let script = dir.join(format!("editor-{}", then.replace(' ', "-")));
+            let note = format!("#!/bin/sh\necho \"$1\" > {}\n{then}\n", seen.display());
+            fs::write(&script, note).unwrap();
+            format!("sh {}", script.display())
+        };
+        for (then, ok) in [("exit 0", true), ("exit 1", false)] {
+            assert_eq!(edit_in(&editor(then), "n1", "Boiler").is_ok(), ok);
+            let path = fs::read_to_string(&seen).unwrap();
+            assert!(!Path::new(path.trim()).exists(), "{path} was left behind");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_editors_file_is_in_the_runtime_directory_or_one_of_its_own_and_only_the_owners() {
+        #[cfg(unix)]
+        let mode = |path: &Path| {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::metadata(path).unwrap().permissions().mode() & 0o777
+        };
+        let (runtime, temp) = (temp_dir(), temp_dir());
+
+        let handed = Handed::within(Some(runtime.clone()), &temp, "n1", "Boiler").unwrap();
+        assert_eq!(handed.path.parent(), Some(runtime.as_path()));
+        assert_eq!(fs::read_to_string(&handed.path).unwrap(), "Boiler");
+        #[cfg(unix)]
+        assert_eq!(mode(&handed.path), 0o600);
+        let path = handed.path.clone();
+        drop(handed);
+        assert!(!path.exists());
+
+        // With no runtime directory, or one that does not take it, the note goes into a
+        // directory of its own, which goes with it, whatever was left in it.
+        let shut = runtime.join("shut");
+        fs::create_dir(&shut).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&shut, fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        // As root a shut directory takes the file all the same, and that case says nothing.
+        let shut = fs::write(shut.join("probe"), "").is_err().then_some(shut);
+        for runtime in [None, Some(runtime.join("gone")), shut] {
+            let handed = Handed::within(runtime, &temp, "n1", "Boiler").unwrap();
+            let own = handed.path.parent().unwrap().to_owned();
+            assert_eq!(own.parent(), Some(temp.as_path()));
+            #[cfg(unix)]
+            assert_eq!((mode(&own), mode(&handed.path)), (0o700, 0o600));
+            fs::write(own.join(".swp"), "Boiler").unwrap();
+            drop(handed);
+            assert!(!own.exists());
+        }
+        fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn an_editor_that_cannot_run_is_said_and_the_app_stays() {
+        let why = edit_in("no-such-editor-3f9a01c2", "n1", "Boiler").unwrap_err();
+        assert_eq!(
+            why,
+            "could not run no-such-editor-3f9a01c2: No such file or directory"
+        );
+        assert_eq!(
+            edit_in("  ", "n1", "Boiler").unwrap_err(),
+            "no editor is set; note unchanged"
+        );
+        let gave_up = edit_in("false", "n1", "Boiler").unwrap_err();
+        assert_eq!(gave_up, "false exited with 1; note unchanged");
+
+        let (mut app, space) = app();
+        app.editor = "no-such-editor-3f9a01c2".into();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
+            panic!("the note under the cursor was not handed over");
+        };
+        let edited = edit_in(&app.editor, &id, &text);
+        app.edited(id, edited).unwrap();
+        assert_eq!(
+            app.status().as_deref(),
+            Some("could not run no-such-editor-3f9a01c2: No such file or directory")
+        );
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("Boiler"),
+            "the note is as it was"
+        );
+        type_in(&mut app, "s");
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("Boilers"),
+            "and the app goes on"
         );
         done(&space);
     }

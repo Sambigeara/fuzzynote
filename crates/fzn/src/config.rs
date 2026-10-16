@@ -45,7 +45,8 @@ pub const TEMPLATE: &str = r#"# fzn configuration.
 # The space that plain `fzn` opens. `fzn --space NAME` opens another.
 # space = "main"
 
-# Editor opened by Ctrl-O. Falls back to $VISUAL, then $EDITOR, then vi.
+# Editor opened by Ctrl-O. Falls back to $VISUAL, then $EDITOR, then vi. It is split on spaces,
+# so "code --wait" runs code with --wait, and a path with a space in it cannot be given here.
 # editor = "vim"
 
 # A relay to sync with: a machine running `fzn relay` that your devices can reach. With this

@@ -542,20 +542,21 @@ terminal's own OSC 52 sequence) and the system's way of opening a URL.
 
 The keys. A chord acts on the line when the cursor is there and on the note under the cursor
 otherwise. Ctrl-D clears or deletes; Ctrl-V shows archived or archives, which ticks a task and is
-named `tick` there; the line's right-hand end says `archived shown` while they are. Enter writes
-the line or opens a new row under the row; Backspace on an empty head takes the row away; Ctrl-O
-opens the note in your editor, which is how a body is written here. Tab goes into the note under
-the cursor, and on the line into what the line names, wherever the caret is; Right and Left are
-the caret's, and Right at the end of the text does nothing. Shift-Tab is not bound, and Ctrl-I,
-which a terminal sends as Tab, carries no chord. Up and Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and
-Ctrl-Down move the note under the cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and
-redo, Ctrl-L links or unlinks the note under the cursor, Ctrl-C copies its first URL (or its
-head), Ctrl-_ opens the URL, Ctrl-B shows scores. The line and the head take the usual editing
-keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W. A paste goes into the line or the head
-at the caret as one change, its tabs and line breaks made spaces. Escape comes back a rung at a time: off
-the row, writing out its date words, off the text on the line, out of the place, and twice on an
-empty line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from
-anywhere, writing out the head first.
+named `tick` there; the line's right-hand end says `archived shown` while they are. Enter writes the
+line or opens a new row under the row; Backspace on an empty head takes the row away; Ctrl-O opens
+the note in your editor, which is how a body is written here, and an editor that cannot be run is
+said on the status row and the app stays (see "The editor's file is yours alone"). Tab goes into the
+note under the cursor, and on the line into what the line names, wherever the caret is; Right and
+Left are the caret's, and Right at the end of the text does nothing. Shift-Tab is not bound, and
+Ctrl-I, which a terminal sends as Tab, carries no chord. Up and Down move the cursor, PageUp and
+PageDown by ten; Ctrl-Up and Ctrl-Down move the note under the cursor a row, the cursor with it.
+Ctrl-U and Ctrl-R undo and redo, Ctrl-L links or unlinks the note under the cursor, Ctrl-C copies
+its first URL (or its head), Ctrl-_ opens the URL, Ctrl-B shows scores. The line and the head take
+the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W. A paste goes into the
+line or the head at the caret as one change, its tabs and line breaks made spaces and the breaks at
+its ends dropped. Escape comes back a rung at a time: off the row, writing out its date words, off
+the text on the line, out of the place, and twice on an empty line outside one quits, the first
+saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing out the head first.
 
 The screen is flat: no borders, no boxes, the terminal's own colours. The path is a dim row
 above the line and only in a place, headed by the space's name, ` main › Boiler › #house `, the
@@ -1530,6 +1531,21 @@ repeats it only where the reason needs it.
   for: each line a note, the original's Enter-and-type rhythm, good for pasting a list and
   surprising for a wrapped paragraph; and the first line the head and the rest the body, which the
   body would keep only on closing.
+- **The editor's file is yours alone.** Decided 2026-10-16. A note handed to the editor was written
+  to the temporary directory with the process's umask, readable by every user on the machine, and
+  left there when the editor exited with an error; an editor that could not be run, a mistyped
+  `editor =` say, threw you out of the app. Notes are sealed on the device and this was the one
+  place their text sat open on disk for others, so it is a fault of privacy and not of polish. Now
+  the file is made new and readable by its owner only, in `$XDG_RUNTIME_DIR`, which on Linux is the
+  user's own and kept in memory. Where there is none, or the one named does not take the file, as
+  when it is left over from another user under `su`, the file goes into a directory of its own in
+  the temporary directory, which only its owner can open, so that the swap and backup files an
+  editor makes beside the file are as private as the note. The file, or that directory and all in
+  it, is removed whatever the editor did, and only a killed process leaves it. What the editor left
+  is saved before the terminal is taken back, so that failing to take it back loses nothing. An
+  editor that cannot be run is said on the status row and the app stays, and `fzn` with no terminal
+  to draw on says so in one sentence. The editor is still a command split on spaces, so `code
+  --wait` works and a path with a space in it does not; the config's template says so.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
