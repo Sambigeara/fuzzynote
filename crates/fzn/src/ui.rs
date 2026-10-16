@@ -14,7 +14,9 @@
 //! notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your editor,
 //! which is where a body is written. Tab goes in, wherever the caret is: on a row into its note,
 //! and on the line into the tag, person, day, box or note the line names. Right and Left are the
-//! caret's and nothing else. A chord acts on the note where on the line it acts on the line, as it did
+//! caret's and nothing else. A paste is one change, made as if it were typed in one key, its
+//! tabs and line breaks made spaces, since the line and a head are one line each and a tab
+//! typed would go in. A chord acts on the note where on the line it acts on the line, as it did
 //! in fzn: Ctrl-D deletes or clears, Ctrl-V archives, which ticks a task, or shows archived notes,
 //! and Ctrl-U puts a changed head back before it undoes anything else. Control with an arrow moves
 //! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
@@ -48,7 +50,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use fzn_engine::text::fit;
 use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
+use ratatui::crossterm::execute;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
@@ -247,6 +253,53 @@ fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(Strin
         (KeyCode::Char(c), false) => with(c),
         _ => return None,
     })
+}
+
+/// Text pasted, as it goes into a line of text. The line breaks at its ends go, with the blanks
+/// they leave, since a line copied from a terminal comes with its break; one inside it, `\r\n`
+/// as much as `\n` or a Unicode line or paragraph separator, and a tab are each a space; and any
+/// other control character is left out.
+fn pasted(text: &str) -> String {
+    let breaks = |c: char| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}');
+    let end = text.trim_end();
+    let text = if text[end.len()..].contains(breaks) {
+        end
+    } else {
+        text
+    };
+    let start = text.trim_start();
+    let text = if text[..text.len() - start.len()].contains(breaks) {
+        start
+    } else {
+        text
+    };
+    text.replace("\r\n", "\n")
+        .chars()
+        .map(|c| if breaks(c) || c == '\t' { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
+/// `text` put into `line` at `cursor`, in characters, and where the cursor is then, after it.
+fn spliced(line: &str, cursor: usize, text: &str) -> (String, usize) {
+    let cursor = cursor.min(line.chars().count());
+    let at = byte_index(line, cursor);
+    let line = format!("{}{text}{}", &line[..at], &line[at..]);
+    (line, cursor + text.chars().count())
+}
+
+/// Takes the terminal for the app: raw, the alternate screen, and a paste sent whole rather than
+/// as keys.
+fn take_terminal() -> Result<DefaultTerminal> {
+    let terminal = ratatui::init();
+    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    Ok(terminal)
+}
+
+/// Gives the terminal back as it was found.
+fn give_terminal_back() {
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    ratatui::restore();
 }
 
 /// Where you are: the space, then each place gone into, outermost first, in at most `max`
@@ -611,9 +664,15 @@ impl App {
     }
 
     pub fn run(mut self) -> Result<()> {
-        let mut terminal = ratatui::init();
+        let mut terminal = take_terminal()?;
+        // A panic gives the terminal back too: ratatui's own hook restores the rest.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+            hook(info);
+        }));
         let outcome = self.event_loop(&mut terminal);
-        ratatui::restore();
+        give_terminal_back();
         outcome
     }
 
@@ -630,14 +689,15 @@ impl App {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
-            if let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                match self.handle(key)? {
-                    Flow::Continue => {}
-                    Flow::Editor { id, text } => self.hand_to_editor(terminal, id, &text)?,
-                    Flow::Quit => return Ok(()),
-                }
+            let flow = match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => self.handle(key)?,
+                Event::Paste(text) => self.paste(&text)?,
+                _ => Flow::Continue,
+            };
+            match flow {
+                Flow::Continue => {}
+                Flow::Editor { id, text } => self.hand_to_editor(terminal, id, &text)?,
+                Flow::Quit => return Ok(()),
             }
         }
     }
@@ -703,6 +763,36 @@ impl App {
             },
         }
         Ok(Flow::Continue)
+    }
+
+    /// Puts what was pasted into the text the cursor is in, the head of its row or the line, at
+    /// the caret, as one change.
+    fn paste(&mut self, text: &str) -> Result<Flow> {
+        self.escaped = false;
+        self.device.say("");
+        let text = pasted(text);
+        if text.is_empty() {
+            return Ok(Flow::Continue);
+        }
+        let view = self.device.view();
+        if let Some(field) = &view.field {
+            let (head, body) = match field.text.split_once('\n') {
+                Some((head, body)) => (head, Some(body)),
+                None => (field.text, None),
+            };
+            let (to, cursor) = spliced(head, self.row_cursor, &text);
+            let text = match body {
+                Some(body) => format!("{to}\n{body}"),
+                None => to,
+            };
+            self.row_cursor = cursor;
+            self.act(Action::Edited(text))
+        } else {
+            let (to, cursor) = spliced(view.line, self.cursor, &text);
+            let flow = self.act(Action::Type(to))?;
+            self.cursor = cursor;
+            Ok(flow)
+        }
     }
 
     /// Where the cursor is, and whether the text it is in, the head of its row or the line, is
@@ -848,9 +938,9 @@ impl App {
         id: String,
         text: &str,
     ) -> Result<()> {
-        ratatui::restore();
+        give_terminal_back();
         let edited = edit_in(&self.editor, &id, text);
-        *terminal = ratatui::init();
+        *terminal = take_terminal()?;
         terminal.clear()?;
         match edited? {
             Ok(text) => {
@@ -1632,6 +1722,47 @@ mod tests {
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
         press(&mut app, KeyCode::Esc, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
+        done(&space);
+    }
+
+    #[test]
+    fn a_paste_is_one_change_with_its_tabs_and_line_breaks_made_spaces() {
+        assert_eq!(pasted("one\ttwo\r\nthree\nfour\u{7}"), "one two three four");
+        assert_eq!(
+            pasted("https://example.com/boiler\n"),
+            "https://example.com/boiler"
+        );
+        assert_eq!(pasted("\r\n Boiler \u{2028}House\t\n"), "Boiler  House");
+        assert_eq!(
+            pasted(" Boiler "),
+            " Boiler ",
+            "blanks with no break at an end stay"
+        );
+        let (mut app, space) = app();
+        type_in(&mut app, "ab");
+        press(&mut app, KeyCode::Left, false);
+        app.paste("one\ttwo\nthree").unwrap();
+        assert_eq!((line(&app).as_str(), app.cursor), ("aone two threeb", 14));
+        assert!(path(&app).is_empty(), "a pasted tab does not go in");
+        chord(&mut app, 'd');
+
+        write(&mut app, "Boiler");
+        let log = space.join(format!("{WRITER}.jsonl"));
+        let count = || fs::read_to_string(&log).unwrap().lines().count();
+        let before = count();
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, "Boiler\nThe combi.");
+        let before_paste = count();
+        assert_eq!(before_paste, before + 1);
+        press(&mut app, KeyCode::Home, false);
+        app.paste("Gas\tcombi ").unwrap();
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("Gas combi Boiler\nThe combi."),
+            "into the head at the caret, the body kept"
+        );
+        assert_eq!(app.row_cursor, 10);
+        assert_eq!(count(), before_paste + 1, "one version for the whole paste");
         done(&space);
     }
 

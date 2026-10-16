@@ -551,7 +551,8 @@ which a terminal sends as Tab, carries no chord. Up and Down move the cursor, Pa
 Ctrl-Down move the note under the cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and
 redo, Ctrl-L links or unlinks the note under the cursor, Ctrl-C copies its first URL (or its
 head), Ctrl-_ opens the URL, Ctrl-B shows scores. The line and the head take the usual editing
-keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W. Escape comes back a rung at a time: off
+keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W. A paste goes into the line or the head
+at the caret as one change, its tabs and line breaks made spaces. Escape comes back a rung at a time: off
 the row, writing out its date words, off the text on the line, out of the place, and twice on an
 empty line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from
 anywhere, writing out the head first.
@@ -1517,6 +1518,18 @@ repeats it only where the reason needs it.
   for. The terminal sets no window title: a window rule matches the terminal's class, which the
   launch sets (`--class fzn`), and a title that followed the path would change on every zoom. Were a
   summon key ever to want one, it would be the app's name and not the path.
+- **A paste is one change.** Decided 2026-10-16, with "Tab goes in". The terminal had not asked for
+  bracketed paste, so a paste arrived as keystrokes: a sealed version a letter, Enter at every line
+  break writing the line and moving the cursor onto the note it wrote, and the rest typed into that
+  note's head. Once Tab goes in, a pasted tab would have gone in mid-paste. Now the terminal asks
+  for the paste whole, and turns it off around the editor and on the way out: it goes into the line
+  or the head at the caret as one change, one version, with each tab and line break inside it made a
+  space, since the line and a head are one line each and the body is where a paragraph goes, and the
+  breaks at its ends dropped with the blanks beside them, since a line copied from a terminal or a
+  page comes with its break. Two other readings of a line break were weighed and left to use to ask
+  for: each line a note, the original's Enter-and-type rhythm, good for pasting a list and
+  surprising for a wrapped paragraph; and the first line the head and the rest the body, which the
+  body would keep only on closing.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
