@@ -19,8 +19,8 @@
 // body is never shown under its row. On a wide page the body of what the cursor is on is read
 // beside the list: the note under it, or from the line the note you are in. On a narrower one a
 // note's body is read by opening it, and the note you are in is read above the line. A body read
-// is rendered as markdown, and a row's links are links (see render). The arrow to the right at
-// the end of a head goes into the note, and at the end of the line into what it names; Escape
+// is rendered as markdown, and a row's links are links (see render). Tab goes into the note from
+// anywhere in its head, and from the line into what it names, and the arrows are the caret's; Escape
 // comes back a rung at a time, off the row, off the text on the line, out of the place. Control
 // with an arrow moves the note on the row up or down the list. Everything else is a word in the
 // foot, moving a note included, and only what applies right now gets one.
@@ -349,7 +349,7 @@ function keyFor(action) {
   if (name === 'close' && view?.field?.whole && editor?.vimOn) return ':q';
   if (name === 'shift') return action.shift < 0 ? 'Ctrl ↑' : 'Ctrl ↓';
   return (
-    { write: 'Enter', open: 'Ctrl O', close: 'Esc', go_in: '→', back: 'Esc', select: 'Esc', delete: 'Ctrl D' }[name] ??
+    { write: 'Enter', open: 'Ctrl O', close: 'Esc', go_in: 'Tab', back: 'Esc', select: 'Esc', delete: 'Ctrl D' }[name] ??
     ''
   );
 }
@@ -459,8 +459,14 @@ box.addEventListener('keydown', (event) => {
   const plain = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
   // The body is the box's own, but for Escape, which closes it, and Ctrl-O, which is swallowed so
   // that the browser's file dialog does not open in the middle of writing.
+  // Tab is a tab character in it, as it is in the editor that takes its place.
   if (view.field.whole) {
     if (ctrlOnly(event) && (event.key === 'o' || event.key === 'O')) return event.preventDefault();
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      // Inserted as typing is, so that the browser's undo takes it back as it would a letter.
+      if (!event.shiftKey) document.execCommand('insertText', false, '\t');
+      return event.preventDefault();
+    }
     if (event.key !== 'Escape') return;
     act('close');
     event.preventDefault();
@@ -476,11 +482,11 @@ box.addEventListener('keydown', (event) => {
       else if (plain) act({ move: { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[event.key] });
       else return;
       break;
-    // The arrow goes in only from the end of the head, where the caret is put on landing; short
-    // of it, it is the caret's.
-    case 'ArrowRight':
-      if (!plain || box.selectionStart !== box.selectionEnd || box.selectionEnd !== box.value.length) return;
-      act('go_in');
+    // Tab goes into the note from anywhere in its head, and the arrows are the caret's. Shift-Tab
+    // is nothing: the focus never leaves the field by a key.
+    case 'Tab':
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!event.shiftKey) act('go_in');
       break;
     case 'Enter':
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1125,8 +1131,16 @@ document.addEventListener('keydown', (event) => {
   if (event.target === box || event.composedPath().includes(buffer)) return;
   const onButton = event.target instanceof HTMLButtonElement;
   if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
-  if (event.key === 'Tab') return;
   const onLine = view.cursor == null;
+  // Tab goes into what the line names, from anywhere in its text, and the session says whether it
+  // names anywhere. It never moves the focus, since the page's keys are fzn's while it has them,
+  // and Shift-Tab is nothing for the same reason.
+  if (event.key === 'Tab') {
+    if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !view.field?.whole) act('go_in');
+    event.preventDefault();
+    follow();
+    return;
+  }
   // Ctrl-D clears the line, and on a row deletes the note; the browser's bookmark is not asked
   // for either way.
   if (ctrlOnly(event) && (event.key === 'd' || event.key === 'D')) {
@@ -1171,14 +1185,6 @@ document.addEventListener('keydown', (event) => {
       break;
     case 'Enter':
       act('write');
-      break;
-    // The arrow goes in from the end of the line, as from the end of a head, and the session says
-    // whether the line names anywhere to go; short of the end, or with Shift held, it is the
-    // caret's.
-    case 'ArrowRight':
-      if (!onLine || event.shiftKey || event.target !== line || line.selectionStart !== line.selectionEnd) return;
-      if (line.selectionEnd !== line.value.length) return;
-      act('go_in');
       break;
     // Off the row, then off the text on the line, then out of the place.
     case 'Escape':

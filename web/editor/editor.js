@@ -20,7 +20,7 @@
 
 import { Annotation, Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, drawSelection, keymap, panels } from '@codemirror/view';
-import { history, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
+import { history, indentWithTab, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
 import {
   Language, ParseContext, StreamLanguage, defineLanguageFacet, syntaxHighlighting, syntaxTree,
 } from '@codemirror/language';
@@ -97,10 +97,13 @@ export function mount(hooks, foot) {
   const extensions = () => [
     vimSlot.of(vimKeys()),
     // Enter is a newline and no more, with or without Shift. Ctrl-O does nothing here, so that
-    // it never reaches the browser's file dialog.
+    // it never reaches the browser's file dialog. Tab indents and Shift-Tab takes the indent back,
+    // as in any editor, rather than moving the focus off the page's text: Escape, `:q` or the word
+    // in the foot is the way out.
     keymap.of([
       { key: 'Enter', run: insertNewline, shift: insertNewline },
       { key: 'Ctrl-o', run: () => true },
+      indentWithTab,
       { key: 'Mod-z', run: undo },
       { key: 'Mod-y', mac: 'Mod-Shift-z', run: redo },
       { key: 'Mod-Shift-z', run: redo },

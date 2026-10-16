@@ -662,14 +662,16 @@ inside the sheet it is the browser's, and vim's in vim mode; Ctrl-O opens the bo
 under the cursor, as in the terminal, and does nothing on the line. Ctrl with an arrow moves the
 note under the cursor a row, as in the terminal, and on a phone `move up` and `move down` in the
 foot do it. PageUp and PageDown move the cursor by ten. Backspace on an empty head takes the row
-away, as in the terminal. Right at the end of the line, with nothing selected and Shift not
-held, goes into what the line names, as Right at the end of a head goes into the note; Escape on
-the line clears it while it has text, and on an empty line in a place steps back. Every other
-thing that can be asked for is a word at the foot of the page, the footer of the terminal made
-pressable, and Tab reaches them from a row without leaving it. Only what applies where the
-cursor is gets one, and no key is written beside a word; a word says its key when the pointer
-rests on it. Undo has no key: it is the word `undo`, or `put back` on a row whose head has
-changed.
+away, as in the terminal. Tab goes into what the line names from anywhere in the line, and into
+the note from anywhere in its head, as in the terminal; the arrows to the side are the caret's.
+Shift-Tab does nothing, so no key takes the focus off the page's text. The page is not marked as
+an application for assistive technology, which would stop a screen reader reading the body beside
+the list as a document; the line and the head are text fields, and that says enough. Escape on the
+line clears it while it has text, and on an empty line in a place steps back. Every other thing
+that can be asked for is a word at the foot of the page, pressed or tapped, the footer of the
+terminal made pressable. Only what applies where the cursor is gets one, and no key is written
+beside a word; a word says its key when the pointer rests on it. Undo has no key: it is the word
+`undo`, or `put back` on a row whose head has changed.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing
 work in it. A cross after it clears it when it has text, and a `›` after the cross, in the
@@ -680,10 +682,11 @@ and since they are on the line, clearing and going in are not also words in the 
 *Writing in a row.* The head of the row the cursor is on is a text box, and typing changes it;
 Enter opens a new row under it; Ctrl-O, or `body` in the foot, opens the whole note in the sheet,
 a bounded overlay over the column with the page dimmed slightly behind it, which scrolls on its
-own, and in it Enter is a line break and the arrows move within it, and Esc closes it back onto
-the head. Leaving it for anywhere else on the page closes it, and a press on another row goes
-there; a press in its own margin, or on its row behind it, does not, and nor does leaving the
-window, though the tab going out of sight writes what it holds. The words in the foot stay above
+own, and in it Enter is a line break, Tab indents and Shift-Tab takes the indent back, the
+arrows move within it, and Esc closes it back onto the head. Leaving it for anywhere else on the
+page closes it, and a press on another row goes there; a press in its own margin, or on its row
+behind it, does not, and nor does leaving the window, though the tab going out of sight writes what
+it holds. The words in the foot stay above
 the dimming, since they are about the note. There is no second editor: the sheet is the body's
 editor, for a long document too, and with it shut the head is written in its row. While the body
 is open the sheet holds a CodeMirror editor, loaded the first time one opens and fetched under
@@ -1514,17 +1517,19 @@ repeats it only where the reason needs it.
   open: a hand that thought the cursor was on the line went in instead of moving the caret. What the
   2026-10-14 reasoning held against Tab is answered. A page moves focus with it, but when you are in
   fzn the keys bound to it are for fzn, so the page takes Tab as the terminal does and its words at
-  the foot are pressed or tapped; the `›` in the foot stays, for touch. In the body's sheet, which
-  is a text editor and goes nowhere, Tab indents. The original's Tab-separated search groups,
-  unbuilt since the rewrite, are given up for good; its `!` inverse is still possible. Shift-Tab is
-  not bound: Escape is the way back, a second key for it would be inherited rather than earned, and
-  terminals do not agree on what they send for it; the page takes Shift-Tab and does nothing with
-  it. In a terminal Ctrl-I is Tab, so no chord sits on Ctrl-I, and were the kitty keyboard protocol
-  ever turned on both would have to be bound. A pasted tab must not go in, which is one reason the
-  terminal now takes a paste whole (see "A paste is one change"). The footer says `Tab go in`,
-  keeping the engine's label, which the page's `›` in the foot shares. Alt-Z is no longer a
-  fallback, since Tab is everywhere. The Tab-to-link that "Position is the link" dropped stays
-  dropped: this Tab links nothing. The Open question is closed.
+  the foot are pressed or tapped; the `›` after the line and on the row under the cursor stay, for
+  touch. In the body's sheet, which is a text editor and goes nowhere, Tab indents and Shift-Tab
+  takes the indent back, and Escape, `:q` or the word in the foot close it, which is the way out a
+  keyboard trap needs. The original's Tab-separated search groups, unbuilt since the rewrite, are
+  given up for good; its `!` inverse is still possible. Shift-Tab is not bound: Escape is the way
+  back, a second key for it would be inherited rather than earned, and terminals do not agree on
+  what they send for it; the page takes Shift-Tab and does nothing with it. In a terminal Ctrl-I is
+  Tab, so no chord sits on Ctrl-I, and were the kitty keyboard protocol ever turned on both would
+  have to be bound. A pasted tab must not go in, which is one reason the terminal now takes a paste
+  whole (see "A paste is one change"). The footer says `Tab go in`, keeping the engine's label,
+  which the page's word in the foot shares. Alt-Z is no longer a fallback, since Tab is everywhere.
+  The Tab-to-link that "Position is the link" dropped stays dropped: this Tab links nothing. The
+  Open question is closed.
 - **The path starts with the space.** Decided 2026-10-16, at Sam's direction. The path read `fzn ›
   #house`, or `fzn · garden › #house` in a space that was not the usual one. The app's name says
   nothing the person does not know; the space's name says where they are, which is what the path is
@@ -1649,9 +1654,9 @@ repeats it only where the reason needs it.
   compaction machinery and nothing more, but nobody has asked for it.
 - What the relay still sees: log names, counts, sizes and timing, and the compaction headers.
   Padding lines to a few sizes would hide the sizes; nothing hides the timing.
-- The browser's keys past the four, and Ctrl-D and Ctrl-O. Words at the foot, pressed or tapped, are
-  a start: nothing to remember, but slower than a chord for archiving ten notes in a row. Undo has
-  no key at all yet.
+- The browser's keys past the four, and Ctrl-D, Ctrl-O and Tab. Words at the foot, pressed or
+  tapped, are a start: nothing to remember, but slower than a chord for archiving ten notes in a
+  row. Undo has no key at all yet.
 - Touch. A tap puts the cursor on a note, a second opens its body, the `›` goes in, and the
   path at the top is the way back. Whether any of that is right is for use on a phone to say.
   Seen 2026-10-15 in Chromium's and WebKit's touch emulation: once the cursor is on a row its
