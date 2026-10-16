@@ -1,5 +1,5 @@
-// The page's reading of markdown: a body rendered where it is only read, a row's head with its
-// links made links, and the highlighting that the body's editor shares.
+// The page's reading of markdown: a body rendered where it is only read, a row's head read as a
+// line of the same markdown, and the highlighting that the body's editor shares.
 //
 // The note stays plain text; this is how the page reads it. It is fetched as the page starts and
 // never waited for, so it is kept small: Lezer's markdown parser with GitHub's tables, tasks,
@@ -106,29 +106,24 @@ export function language(info) {
   return languages.get(load);
 }
 
-// A row's head reads as one line of markdown, and only as far as a row bears: a link shows its
-// text as typed and goes where it says, a bare address is a link, and a heading's mark is
-// dropped. Every other mark stays as it was typed. A head with no colon has no address the page
-// would follow, so it is not parsed: a list paints hundreds of heads when the line is cleared.
+// A row's head reads as one line of markdown, as a body's paragraph does, so that the same line
+// reads one way beside the list and in it: emphasis, strong text, code, strikethrough, links and
+// bare addresses rendered, a leading heading mark dropped, and whatever a body shows as typed shown
+// as typed here too. A line that would be a block of another kind, a list item, a quote, a fence,
+// stays as typed, since a head is not a block. A head with no character that can begin a mark is
+// not parsed: most heads are plain, and a list paints hundreds of them when the line is cleared.
+const MARKED = /[*_`~\\[<]|:\/\/|mailto:/i;
+const HEADING = /^#{1,6}[ \t]+(?=\S)/;
 export function head(text) {
-  const line = text.replace(/^#{1,6}[ \t]+(?=\S)/, '');
-  if (!line.includes(':')) return line;
-  const out = document.createDocumentFragment();
-  let at = 0;
-  markdown.parse(line).iterate({
-    enter(node) {
-      if (node.name === 'Image') return false;
-      if (node.name !== 'Link' && node.name !== 'URL') return true;
-      const a = anchor(node.node, line);
-      if (!a) return false;
-      const [from, to] = node.name === 'Link' ? between(node.node) : [0, 0];
-      if (to > from) a.textContent = line.slice(from, to);
-      out.append(line.slice(at, node.from), a);
-      at = node.to;
-      return false;
-    },
-  });
-  out.append(line.slice(at));
+  if (!MARKED.test(text)) return text.replace(HEADING, '');
+  const block = markdown.parse(text).topNode.firstChild;
+  if (!block) return text;
+  const heading = /^ATXHeading\d$/.test(block.name);
+  if (block.name !== 'Paragraph' && !heading) return text;
+  const from = heading ? (block.getChild('HeaderMark')?.to ?? block.from) : block.from;
+  const out = inline(block, from, block.to, text, document.createDocumentFragment());
+  // The space after a heading's mark is text to the parser, and the row does not want it.
+  if (heading && out.firstChild?.nodeType === Node.TEXT_NODE) out.firstChild.data = out.firstChild.data.replace(/^[ \t]+/, '');
   return out;
 }
 
@@ -266,7 +261,9 @@ function read(node, text) {
 }
 
 // A link to the address a node gives, reading as the address, if it is one the page will follow:
-// on the web or to mail. A link's address is the one after its text, which may hold one too.
+// on the web or to mail. A link's address is the one after its text, which may hold one too. An
+// address read as itself is shown without its scheme, as an address bar shows one, since the
+// scheme is the part nobody reads; the whole of it is there when the pointer rests on it.
 function anchor(node, text) {
   let url = node;
   if (node.name !== 'URL') {
@@ -280,7 +277,8 @@ function anchor(node, text) {
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
   a.tabIndex = -1;
-  a.textContent = address;
+  a.title = address;
+  a.textContent = address.replace(/^(https?:\/\/|mailto:)/i, '');
   return a;
 }
 

@@ -645,15 +645,19 @@ highlighted by its language, and in a line emphasis, strong text, code, striketh
 links, built as nodes and never as markup. A link goes only to `http:`, `https:` or `mailto:`,
 in a tab of its own and with no referrer; any other address, a link by reference, raw HTML, an
 entity such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an
-image is never loaded but is a link reading its alt text. A row's head reads as one line of
-markdown, only as far as a list bears: a link shows its text, a bare `http(s)` address is a
-link, a leading heading mark is dropped, and every other mark stays as typed; the row under the
-cursor is its text box and shows the source. Highlighting is in paper, ink and the two greys:
+image is never loaded but is a link reading its alt text. A row's head reads as one line of the
+same markdown, so that a line reads one way in the list and beside it: emphasis, strong text,
+code, strikethrough, links and bare addresses, an image as a link reading its alt text, escapes
+read and a leading heading mark dropped, and a line that would be another kind of block, a list
+item or a quote, shown as typed; the row under the cursor is its text box and shows the source.
+Tags, people and dates are not marked. Highlighting is in paper, ink and the two greys:
 keywords and definitions heavier, strings, numbers and constants soft, comments faint and
-slanted, punctuation and a diff's removed lines faint; code read is set in ink, and a link is in
-the colour of what it is in, with a faint underline. A long body is rendered at first only as
-far as it shows, its first 5,000 letters, and whole once the page is idle; a head with no colon
-is not parsed; nested past what the stack holds, a body is read as typed.
+slanted, punctuation and a diff's removed lines faint; code read is set in ink. A link is in the
+colour of what it is in, underlined a pixel thin in a tint of that colour and clear of the
+descenders, in full under the pointer; an address read as itself is shown without its scheme,
+`example.org/garden`, and whole under the pointer. A long body is rendered at first only as far
+as it shows, its first 5,000 letters, and whole once the page is idle; a head with no character
+that can begin a mark is not parsed; nested past what the stack holds, a body is read as typed.
 
 *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
 terminal's chords are not here, because a browser keeps most of them for itself, but two it
@@ -1631,6 +1635,36 @@ repeats it only where the reason needs it.
   session filled from nothing, as a new device is by its first sync, says nothing of it, however
   many logs the space arrives in, until something is first asked of it: the space arriving is not
   news, and `N changed elsewhere` is kept for what changes after.
+- **A head reads every inline mark a body does.** Decided 2026-10-16, at Sam's direction, revising
+  "A body's markdown is rendered where it is read and styled where it is written" where it kept a
+  row's head to its links and a leading heading mark, "only as far as a list bears". Sam asked for
+  every inline mark wherever the cursor is not, and for links that look better. A head is not a
+  title field: it is the first line of the note's text, and the same text is read in the body beside
+  the list, so what a body renders a head renders, or one line reads two ways on one screen, as
+  `<https://…>`, an image, an escape and `mailto:` did. The row under the cursor is already the
+  editor, so the reveal Bear and Obsidian make span by span is fzn's cursor rule made row by row:
+  nothing new to learn, and no text moving under a moving caret. Products whose rows are titles keep
+  them plain (Things, Todoist, GitHub's issues), and GitLab took titles off its markdown citing the
+  flaws inconsistent rendering let in; neither applies, since the page builds nodes and never markup
+  and a head is not a title. So a head reads as one line of the body's markdown through the same
+  code: emphasis, strong text, code, strikethrough, links, bare and bracketed addresses, an image as
+  a link reading its alt text, escapes read, a leading heading mark dropped; a line that would be a
+  block of another kind, a list item or a quote, stays as typed, since a head is not a block, and so
+  do `[[Boiler]]`, entities, raw HTML and links by reference, as in a body. A link has no colour, so
+  its underline is its mark, as on paper, and the work is in making it quiet: one pixel, clear of
+  the descenders, in a tint of the text it is under rather than a fixed grey, so it reads alike
+  under ink, soft and faint text, and in full under the pointer. An address read as itself is shown
+  without its scheme, as an address bar shows one, since the scheme is the part nobody reads, and
+  whole under the pointer. Rejected: a glyph after a link, which is chrome when `›` already means
+  going in; cutting a long address in its middle, which the ellipsis at the row's end already does
+  better. Tags, people and dates are not marked: the ones that only file a note are to be taken off
+  the rows where they are noise, the ones left are words of the sentence, `Ask @joe about the
+  fence`, which a grey would break, and the terminal marks none, so the page would be the only face
+  to. `[[Boiler]]` stays as typed for the same reasons, and because a press on it would want to go
+  into Boiler, which is the `›`'s job and a decision of its own. A head is parsed only if it holds a
+  character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`; measured over 10,000
+  invented notes, seven in ten of them marked, a marked head takes 7 µs to read, a plain one nothing
+  to speak of.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

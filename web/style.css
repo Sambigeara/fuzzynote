@@ -367,7 +367,6 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) :is(h1, h2, h3, h4, h5, h6) { margin-top: 1em; }
 :is(#here, #pane) :is(:first-child, li > *) { margin-top: 0; }
 :is(#here, #pane) > * { white-space: pre-line; }
-:is(#here, #pane) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
 :is(#here, #pane) :is(ul, ol) { padding-left: 1.25em; }
 :is(#here, #pane) li::marker { color: var(--faint); }
 :is(#here, #pane) li:has(> .task) { list-style: none; }
@@ -396,20 +395,27 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) blockquote { margin-inline: 0; padding-left: 0.75em; border-left: 1px solid var(--rule); }
 :is(#here, #pane) hr { height: 0; border: 0; border-top: 1px solid var(--rule); }
 :is(#here, #pane) pre { white-space: pre-wrap; color: var(--ink); }
-:is(#here, #pane) code { font-family: var(--mono); font-size: 0.9em; line-height: 1; }
-:is(#here, #pane) pre code { line-height: inherit; }
 :is(#here, #pane) table { display: block; overflow-x: auto; border-collapse: collapse; }
 :is(#here, #pane) :is(th, td) { padding: 0.125em 1.25em 0.125em 0; text-align: left; vertical-align: top; }
 :is(#here, #pane) th { border-bottom: 1px solid var(--rule); }
 
-/* A link has no colour: it is in the colour of what it is in, underlined in a faint grey. It is
-   followed in a tab of its own, and the cursor stays where it was. */
+/* A head reads its marks as a body does, in the row's one size: strong text and headings by
+   weight, emphasis slanted, code in the monospace a tenth smaller, struck text struck thin. */
+:is(#here, #pane, .head) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
+:is(#here, #pane, .head) code { font-family: var(--mono); font-size: 0.9em; }
+:is(#here, #pane, .head) del { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* A link has no colour: it is in the colour of what it is in, underlined a pixel thin in a tint of
+   that colour and clear of the descenders, so that it reads as a link under ink, soft or faint
+   text alike, and in full when the pointer is on it. It is followed in a tab of its own, and the
+   cursor stays where it was. */
 a {
   color: inherit;
   text-decoration-line: underline;
-  text-decoration-color: var(--faint);
+  text-decoration-color: color-mix(in oklab, currentColor 38%, transparent);
   text-decoration-thickness: 1px;
-  text-underline-offset: 0.2em;
+  text-underline-offset: 0.18em;
+  text-decoration-skip-ink: auto;
 }
 a:hover { text-decoration-color: currentColor; }
 
