@@ -618,7 +618,7 @@ function follow() {
 let editor = null;
 let editorSoon = null;
 let vimOn = kept('fzn.vim') === 'on';
-// Set while `:w` closes the body and opens it again, so that the editor is left as it is.
+// Set while keepOpen closes the body and opens it again, so that the editor is left as it is.
 let keeping = false;
 
 const soon = (task, timeout) =>
@@ -673,23 +673,11 @@ const editorHooks = {
     if (!event.target.isConnected) return;
     leftFor(event);
   },
-  // A body is written when it closes, so vim's write closes it and opens it again under the
-  // hands, if the note is still there, scrolled as it was, which closing lost; its quits close
-  // it, and the one with a bang first puts the note back as it was when the cursor landed on it.
+  // Vim's write keeps the body as it stands and stays; its quits close it, and the one with a
+  // bang first puts the note back as it was when the cursor landed on it.
   onEx: (what) => {
-    if (what === 'write') {
-      const was = boxIn;
-      const scrolled = sheet.scrollTop;
-      keeping = true;
-      try {
-        act('close');
-        if (view.cursor != null && view.rows[view.cursor]?.id === was) act('open');
-      } finally {
-        keeping = false;
-      }
-      keepHistory();
-      sheet.scrollTop = scrolled;
-    } else {
+    if (what === 'write') keepOpen();
+    else {
       // Put back is asked for only when the engine offers it, since on a body that has not
       // changed undo would take back the last version written instead, which may be another
       // note's.
@@ -699,6 +687,27 @@ const editorHooks = {
     follow();
   },
 };
+
+// Writes an open body as it stands and leaves it open, for vim's `:w` and for a page put away.
+// A body is written when it closes, so it is closed and opened again under the hands, if the note
+// is still there, scrolled as it was and with the caret where it was, which closing lost. The
+// editor is left as it is, its caret and step undo with it, and the history is not walked for it.
+function keepOpen() {
+  if (!view?.field?.whole) return;
+  const was = boxIn;
+  const scrolled = sheet.scrollTop;
+  const [from, to] = [box.selectionStart, box.selectionEnd];
+  keeping = true;
+  try {
+    act('close');
+    if (view.cursor != null && view.rows[view.cursor]?.id === was) act('open');
+  } finally {
+    keeping = false;
+  }
+  if (view.field?.whole && !editor) box.setSelectionRange(from, to);
+  keepHistory();
+  sheet.scrollTop = scrolled;
+}
 
 function rowKey(row, selected, apart) {
   const field = selected ? view.field : null;
@@ -1370,20 +1379,23 @@ $('hints').addEventListener('mousedown', (event) => {
   if (view?.field && event.target.closest('button')) event.preventDefault();
 });
 
-// A page put away with the cursor on a row writes what the row holds, if it changed, and closes
-// a body that is open. Being hidden comes before being unloaded and leaves more time for the line
-// to be kept and sent, so it is heard too; a second `done` with nothing changed does nothing.
-// Writing may change the head under the caret, as a new note written inside a tag gets the tag, so
-// the box takes it at once: a hidden page has no next frame to paint it in, and a key pressed on
-// coming back would otherwise be typed into the head as it was and take the tag away again.
-function putAway() {
+// A page put away with the cursor on a row writes what the row holds, if it changed. Being hidden
+// comes before being unloaded and leaves more time for the line to be kept and sent, so it is
+// heard too; a second `close` with nothing changed does nothing. An open body is written and stays
+// open while the page is only hidden, since switching tabs to look something up and coming back
+// is not leaving it; only a page that is going closes it. Writing may change the head under the
+// caret, as a new note written inside a tag gets the tag, so the box takes it at once: a hidden
+// page has no next frame to paint it in, and a key pressed on coming back would otherwise be
+// typed into the head as it was and take the tag away again.
+function putAway(going) {
   if (!view?.field) return;
-  act('close');
+  if (view.field.whole && !going) keepOpen();
+  else act('close');
   safely();
 }
-window.addEventListener('pagehide', putAway);
+window.addEventListener('pagehide', () => putAway(true));
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') putAway();
+  if (document.visibilityState === 'hidden') putAway(false);
 });
 
 // Only one tab at a time is this device. A tab that opens says so, and the one that was open
