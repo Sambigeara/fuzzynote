@@ -457,8 +457,10 @@ function keepHistory() {
   if (!view || opening || travelling || document.visibilityState !== 'visible') return;
   const want = deep();
   if (want > depth) {
-    // A build given up on is carried into each new entry, so that stepping in does not ask again.
-    while (depth < want) history.pushState(gaveUp ? { depth: ++depth, kept: { gaveUp } } : { depth: ++depth }, '');
+    // A build given up on, and when the page was last reloaded for one, are carried into each new
+    // entry, so that stepping in neither asks for that build again nor reloads within the minute.
+    const kept = { ...(gaveUp && { gaveUp }), ...(reloadedAt && { at: reloadedAt }) };
+    while (depth < want) history.pushState({ depth: ++depth, kept }, '');
   } else if (want < depth) {
     travelling = true;
     const trip = ++trips;
@@ -1970,6 +1972,7 @@ const BUILD = document.querySelector('meta[name="fzn-build"]')?.content ?? '';
 const remembered = () => entry().kept ?? {};
 const remember = (kept) => history.replaceState({ ...entry(), kept }, '');
 let gaveUp = remembered().gaveUp ?? null;
+const reloadedAt = remembered().at ?? 0;
 let stale = null;
 let lastAsked = 0;
 let lastKey = 0;
@@ -1994,7 +1997,7 @@ async function served() {
 async function check() {
   if (!BUILD || !fzn || reloading) return;
   if (stale) return tryReload();
-  if (Date.now() - lastAsked < 30000 || Date.now() - (remembered().at ?? 0) < 60000) return;
+  if (Date.now() - lastAsked < 30000 || Date.now() - reloadedAt < 60000) return;
   lastAsked = Date.now();
   const fresh = await served();
   if (!fresh || fresh === BUILD || fresh === gaveUp) return;
