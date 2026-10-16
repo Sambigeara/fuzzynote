@@ -124,14 +124,15 @@ pub enum Message {
     Now(Moment),
     /// A relay's challenge, said after its clock and before anything else: a nonce for the
     /// device to seal under its auth key, whether the relay holds an auth key for the space yet,
-    /// and, when it holds none and the space holds lines, one sealed line of the space, which a
-    /// device opens before it claims the space as its key's. This and the three after it are
-    /// between a device and its relay, and a replica makes nothing of them.
+    /// and, when it holds none and the space holds lines, a sealed line of each of its logs, up
+    /// to a few, of which a device opens one before it claims the space as its key's. This and
+    /// the three after it are between a device and its relay, and a replica makes nothing of
+    /// them.
     Challenge {
         nonce: String,
         claimed: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        line: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lines: Vec<String>,
     },
     /// The nonce sealed under the auth key, as a line is sealed.
     Proof(String),
@@ -772,16 +773,16 @@ mod tests {
         let unclaimed = Message::Challenge {
             nonce: "bm9uY2U=".into(),
             claimed: false,
-            line: Some(r#"{"s":1,"c":"AAAA"}"#.into()),
+            lines: vec![r#"{"s":1,"c":"AAAA"}"#.into()],
         };
         assert_eq!(
             unclaimed.encode().unwrap(),
-            r#"{"challenge":{"nonce":"bm9uY2U=","claimed":false,"line":"{\"s\":1,\"c\":\"AAAA\"}"}}"#
+            r#"{"challenge":{"nonce":"bm9uY2U=","claimed":false,"lines":["{\"s\":1,\"c\":\"AAAA\"}"]}}"#
         );
         let challenge = Message::Challenge {
             nonce: "bm9uY2U=".into(),
             claimed: true,
-            line: None,
+            lines: Vec::new(),
         };
         assert_eq!(
             challenge.encode().unwrap(),

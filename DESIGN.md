@@ -341,15 +341,17 @@ tab and the relay all run the same code.
   nonce sealed under the auth key as a line is sealed, or the first time, when the relay keeps
   none, `{"claim":"…"}`, the auth key itself; and then `have` again, since what it said before it
   was let in was not heard, so a relay passes over what comes before the proof. A device whose key
-  has opened nothing of what it holds never claims. Nor does one whose key does not open the line a
-  relay offers, `"line":"…"`, with its challenge for a space it keeps no auth key for but holds
-  lines of: one sealed line of the space, which shows nothing a copy of the lines would not. That
-  is a passphrase mistyped on a new device, which would otherwise make its key the space's and shut
-  out every device with the right one; the device says so, keeps it as it keeps a refusal, through
-  whatever the relay says next of the answer it did not hear, and sends nothing more.
+  has opened nothing of what it holds never claims. Nor does one whose key opens none of the lines
+  a relay offers, `"lines":["…"]`, with its challenge for a space it keeps no auth key for but
+  holds lines of: the first sealed line of each of its logs, up to sixteen, which show nothing a
+  copy of the lines would not, so that one log under another key cannot shut the space. Opening
+  none is a passphrase mistyped on a new device, which would otherwise make its key the space's
+  and shut out every device with the right one; the device says so, keeps it as it keeps a
+  refusal, through whatever the relay says next of the answer it did not hear, and sends nothing
+  more.
   `{"refused":"…"}` is why a relay will not go on; the device says it, keeps it until a relay takes
   it in, and tells whether the passphrase is in doubt: when its key opens nothing it holds, when it
-  did not open the space's line, whatever it opens here, or when a relay refused it after it
+  opened none of the space's lines, whatever it opens here, or when a relay refused it after it
   answered the challenge and nothing it holds says the key is right. A refusal before the answer is
   of a token or a name, not of the key. A device that hears no challenge syncs as it always did.
 - **Four rules.**

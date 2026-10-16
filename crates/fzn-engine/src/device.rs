@@ -58,7 +58,7 @@ pub const RELAY: Peer = 0;
 const COMPACT_LINES: usize = 1_000;
 const GROWTH: usize = 4;
 
-/// What a device says when its key does not open a line of the space the relay holds, and so
+/// What a device says when its key opens none of the lines of the space the relay offers, and so
 /// claims nothing there.
 const NOT_THE_SPACES: &str = "the passphrase does not open this space on the relay";
 
@@ -171,7 +171,7 @@ pub struct Device {
     answered: bool,
     /// Whether the last refusal was heard after this device answered a challenge.
     refused_answer: bool,
-    /// Whether this device's key did not open the line of the space a relay offered. That is a
+    /// Whether this device's key opened none of the lines of the space a relay offered. That is a
     /// verdict on the key, which holds through whatever the relay says next of having heard no
     /// answer, until a relay takes the device in.
     shut: bool,
@@ -394,15 +394,15 @@ impl Device {
             Some(Message::Challenge {
                 nonce,
                 claimed,
-                line,
+                lines,
             }) if peer == RELAY => {
-                for message in self.answer(&nonce, claimed, line.as_deref()) {
+                for message in self.answer(&nonce, claimed, &lines) {
                     if let Ok(text) = message.encode() {
                         todo.send.push(Said { to: RELAY, text });
                     }
                 }
             }
-            // Once the space's line has not opened, what the relay says of the answer it then did
+            // Once the space's lines have not opened, what the relay says of the answer it then did
             // not hear is not the reason.
             Some(Message::Refused(_)) if peer == RELAY && self.shut => {
                 self.session.say(NOT_THE_SPACES);
@@ -436,9 +436,9 @@ impl Device {
     /// holds that key, and the key itself when it holds none yet, and then what this device
     /// holds, since what it said before it was let in was not heard. A nonce that is not one is
     /// not sealed. The auth key is not handed over as the space's by a device whose key has
-    /// opened nothing of what it holds, nor one whose key does not open the line of the space the
-    /// relay offers, which is a passphrase mistyped; that is kept as a refusal is.
-    fn answer(&mut self, nonce: &str, claimed: bool, line: Option<&str>) -> Vec<Message> {
+    /// opened nothing of what it holds, nor one whose key opens none of the lines of the space
+    /// the relay offers, which is a passphrase mistyped; that is kept as a refusal is.
+    fn answer(&mut self, nonce: &str, claimed: bool, lines: &[String]) -> Vec<Message> {
         let answer = if claimed {
             if STANDARD
                 .decode(nonce)
@@ -450,7 +450,11 @@ impl Device {
         } else if !self.key_verified() {
             self.session.say(WRONG_KEY);
             return Vec::new();
-        } else if line.is_some_and(|line| matches!(self.seal.open(line), Opened::Shut)) {
+        } else if !lines.is_empty()
+            && lines
+                .iter()
+                .all(|line| matches!(self.seal.open(line), Opened::Shut))
+        {
             self.session.say(NOT_THE_SPACES);
             self.refused = Some(NOT_THE_SPACES.to_owned());
             self.refused_answer = true;
@@ -515,7 +519,7 @@ impl Device {
     }
 
     /// Whether the passphrase is in doubt: the key opened no sealed line here though there are
-    /// some, or did not open the line of the space a relay offered, whatever it opens here, or
+    /// some, or opened none of the lines of the space a relay offered, whatever it opens here, or
     /// the relay refused this device after it answered the challenge, which is a refusal of its
     /// key, and nothing here says the key is right.
     pub fn key_in_doubt(&self) -> bool {
@@ -1264,15 +1268,15 @@ mod tests {
     }
 
     fn challenge(claimed: bool) -> String {
-        offering(claimed, None)
+        offering(claimed, Vec::new())
     }
 
-    /// A challenge that offers a line of the space.
-    fn offering(claimed: bool, line: Option<String>) -> String {
+    /// A challenge that offers lines of the space.
+    fn offering(claimed: bool, lines: Vec<String>) -> String {
         Message::Challenge {
             nonce: nonce(),
             claimed,
-            line,
+            lines,
         }
         .encode()
         .unwrap()
@@ -1310,7 +1314,7 @@ mod tests {
         let odd = Message::Challenge {
             nonce: "anything at all".into(),
             claimed: true,
-            line: None,
+            lines: Vec::new(),
         };
         assert!(a.received(RELAY, &odd.encode().unwrap()).send.is_empty());
     }
@@ -1334,7 +1338,7 @@ mod tests {
         };
         let mut b = mistyped();
         b.connected(RELAY);
-        b.received(RELAY, &offering(false, Some(line.clone())));
+        b.received(RELAY, &offering(false, vec![line.clone()]));
         b.received(RELAY, &timeout);
         b.disconnected(RELAY);
         b.connected(RELAY);
@@ -1349,7 +1353,7 @@ mod tests {
         d.load("dev-b", own);
         assert!(d.key_verified() && !d.key_in_doubt());
         d.connected(RELAY);
-        d.received(RELAY, &offering(false, Some(line)));
+        d.received(RELAY, &offering(false, vec![line]));
         assert!(d.key_in_doubt());
 
         // A relay that takes it in after all clears it.
@@ -1405,7 +1409,7 @@ mod tests {
 
         let mut opens = device("dev-a");
         opens.connected(RELAY);
-        let todo = opens.received(RELAY, &offering(false, Some(line.clone())));
+        let todo = opens.received(RELAY, &offering(false, vec![line.clone()]));
         assert!(matches!(
             sent(&todo)[..],
             [Message::Claim(_), Message::Have(_)]
@@ -1418,7 +1422,7 @@ mod tests {
             Key::from_bytes([9; 32]),
         );
         mistyped.connected(RELAY);
-        let todo = mistyped.received(RELAY, &offering(false, Some(line)));
+        let todo = mistyped.received(RELAY, &offering(false, vec![line]));
         assert!(todo.send.is_empty(), "nothing claimed, nothing more said");
         assert_eq!(
             mistyped.refused(),
@@ -1426,6 +1430,28 @@ mod tests {
         );
         assert_eq!(status(&mistyped), mistyped.refused().unwrap());
         assert!(mistyped.key_in_doubt());
+
+        // A log under another key among the space's does not keep out a key that opens one of
+        // the others.
+        let mut stray = Device::new(
+            host("dev-d", 0),
+            "dev-d",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        let foreign = write(&mut stray, "Pump").keep.remove(0).lines.remove(0);
+        let mut fresh = device("dev-e");
+        fresh.connected(RELAY);
+        let todo = fresh.received(RELAY, &offering(false, vec![foreign, line_of(&mut c)]));
+        assert!(matches!(
+            sent(&todo)[..],
+            [Message::Claim(_), Message::Have(_)]
+        ));
+    }
+
+    /// A sealed line a device writes, as the relay would hold it.
+    fn line_of(device: &mut Device) -> String {
+        write(device, "Garden").keep.remove(0).lines.remove(0)
     }
 
     #[test]
