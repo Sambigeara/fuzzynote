@@ -15,9 +15,13 @@ the way between your own machines.
 ## Status
 
 A rewrite in Rust, in progress as of October 2026. Expect the formats and keys to move. The
-original Go app is kept at the tag `go-final`.
+original Go app is kept at the tag `go-final`. Releases are tagged `v<version>` and built by the
+Release workflow into a draft, which is published by hand.
 
-## Build and run
+## Install
+
+No release is published yet, so for now fzn is built from source, which needs a Rust
+toolchain:
 
 ```sh
 cargo install --path crates/fzn --locked
@@ -25,8 +29,19 @@ fzn
 fzn --help
 ```
 
-The install builds into `target/release` and copies the binary to `~/.cargo/bin`, which rustup
-puts on the path. Run it again to take up a change.
+From the first published release,
+
+```sh
+curl -fsSL https://github.com/Sambigeara/fuzzynote/releases/latest/download/install.sh | sh
+```
+
+puts one static binary in `~/.local/bin` (`sh -s -- --system` for `/usr/local/bin`,
+`--version 0.26.0` to pin one, `--uninstall` to remove it), after checking its SHA-256. Run it
+again to take up a release. There are builds for Linux on x86_64 and arm64, and for Apple
+silicon; anything else builds from source as above.
+
+`FZN_RELEASES` points the installer somewhere other than GitHub: anything laid out as GitHub
+lays out releases, such as `dist/` after `release.sh`, served over http or read as `file://`.
 
 The config file is `~/.config/fzn/config.toml`. Notes live in spaces, separate sets of notes
 kept apart from each other, one directory each under `~/.fzn/<space>/`. Plain `fzn` opens the
@@ -80,10 +95,20 @@ The relay holds sealed lines it cannot read. The first time a space is opened on
 fzn asks for its passphrase (twice if the space is new) and keeps the key it derives; the same
 passphrase on another device opens the same notes. A forgotten passphrase cannot be recovered.
 
+`fzn --version` says the version and the commit and day it was built from, so
+`ssh nas.local fzn --version` says what the relay runs.
+
 The relay has no authentication and no TLS yet. Anyone who can reach it can copy the sealed
 lines or add lines of their own, so keep it on a private network.
 
 ## Browser
+
+The relay carries the page. Open its address, `http://nas.local:3960`. A tab is one more device:
+it keeps the space in the browser between visits, asks for the passphrase once, and syncs with
+the relay it was loaded from.
+
+To work on the page, build its engine and point a relay at the directory, which it reads again
+for every request:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -92,9 +117,8 @@ web/build.sh
 fzn relay --listen 0.0.0.0:3960 --web web
 ```
 
-Then open the relay's address, `http://nas.local:3960`. A tab is one more device: it keeps the
-space in the browser between visits, asks for the passphrase once, and syncs with the relay it
-was loaded from.
+A build of fzn after `web/build.sh` carries the page as it then stands; one without `web/pkg`
+carries none, and says so.
 
 ## Import and export
 

@@ -10,7 +10,10 @@ deleted, because why something was dropped is part of the design.
 - `crates/fzn-engine`: the whole app with no screen and no keyboard. A pure library.
 - `crates/fzn`: the terminal face, and `fzn relay`, which syncs devices and hands out the page.
 - `crates/fzn-web`: the engine built for wasm32, with the text boundary the page talks to.
-- `web/`: the browser page; `web/build.sh` rebuilds its bundle into `web/pkg`.
+- `web/`: the browser page; `web/build.sh` rebuilds its bundle into `web/pkg`, and a build of
+  `crates/fzn` after it carries the page.
+- `install.sh` and `release.sh`: a release is one static binary a script fetches; `release.sh`
+  builds and lays one out under `dist/`, and the Release workflow runs it per platform.
 
 `fzn-engine` does no I/O, reads no clock and opens no socket. The wasm build fails if it does,
 and that build is how the rule is kept. Time, new ids and randomness come from `Host`, so a
@@ -36,6 +39,8 @@ into a test and never commit anything taken from them.
 
 ## Working rules
 - Commit only when asked. Never push unless asked.
+- A release is a tag `v<version>` equal to the workspace version; the workflow drafts it and Sam
+  publishes it. Tagging and publishing are never done unasked.
 - Verification is all four of:
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
