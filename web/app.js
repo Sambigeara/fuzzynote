@@ -72,6 +72,7 @@ function keep(name, value, where = local) {
 const hex = (bytes) =>
   [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const plain = (id) => /^[0-9a-f]{8}$/.test(id || '');
+const lapse = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // A tab's writer id for the space: its name in the versions it writes, and so the name of its log.
 // Every tab open on the space writes a log of its own, since two writing one would fork it.
@@ -202,7 +203,9 @@ if (tabs) {
 
 // The space's key, from what was kept or from the passphrase. The field is where the line will
 // be, so that the page does not change shape when it opens. Argon2 holds the page for a moment,
-// so the page says what it is doing first.
+// so the page says what it is doing first, and goes on saying it until the space is open and the
+// page is shown (see start): a line shown earlier would take keys that the opening then clears.
+const ASK = $('for').innerHTML;
 function key(why = '') {
   const found = kept(KEY);
   if (found) return Promise.resolve(found);
@@ -210,8 +213,8 @@ function key(why = '') {
   const secret = $('secret');
   const told = $('unlocking');
   const asking = $('for');
+  asking.innerHTML = ASK;
   $('space').textContent = space;
-  const ask = asking.innerHTML;
   if (why) {
     told.textContent = why;
     told.classList.add('trouble');
@@ -232,9 +235,6 @@ function key(why = '') {
           const derived = deriveKey(secret.value, space);
           secret.value = '';
           keep(KEY, derived);
-          asking.innerHTML = ask;
-          form.hidden = true;
-          document.body.classList.remove('locked');
           resolve(derived);
         }),
       );
@@ -318,7 +318,7 @@ const sheet = $('sheet');
 // engine as it was when it failed for good.
 let failures = 0;
 function act(action) {
-  if (!fzn) return;
+  if (!fzn || reloading) return;
   let todo;
   try {
     todo = fzn.act(JSON.stringify(action));
@@ -415,6 +415,7 @@ function look() {
   if (place(view) !== was) safely();
   else paintSoon();
   keepHistory();
+  rememberSoon();
 }
 
 // The path is the browser's history: each step in, a note, a label or a body opened, is an entry,
@@ -425,19 +426,22 @@ function look() {
 // step out from the page goes back through the history, and the browser says when it has, so
 // nothing else is done to the history until then. Forward has nothing to go back into, since
 // the page does not keep where a step out came from, so it is gone back from at once. While the
-// page is hidden nothing is done, as it is being put away rather than walked, and while `:w`
-// writes a body by closing and opening it the history waits for it to be open again.
+// page is hidden nothing is done, as it is being put away rather than walked, nor while it opens:
+// a page reloaded where it was opens in an entry of that depth with the entries before it behind,
+// and once the place is put back the history is made to match it (see start).
 let depth = 0;
+let opening = true;
 let travelling = false;
 let trips = 0;
 const entry = () => history.state ?? {};
 const deep = () => (view ? view.path.length + (view.field?.whole ? 1 : 0) : 0);
 
 function keepHistory() {
-  if (!view || travelling || keeping || document.visibilityState !== 'visible') return;
+  if (!view || opening || travelling || document.visibilityState !== 'visible') return;
   const want = deep();
   if (want > depth) {
-    while (depth < want) history.pushState({ depth: ++depth }, '');
+    // A build given up on is carried into each new entry, so that stepping in does not ask again.
+    while (depth < want) history.pushState(gaveUp ? { depth: ++depth, kept: { gaveUp } } : { depth: ++depth }, '');
   } else if (want < depth) {
     travelling = true;
     const trip = ++trips;
@@ -454,7 +458,7 @@ function keepHistory() {
 }
 
 window.addEventListener('popstate', () => {
-  if (!view) return;
+  if (!view || opening) return;
   const at = entry().depth ?? 0;
   if (travelling) {
     travelling = false;
@@ -488,6 +492,7 @@ function send({ to, text }) {
   }
 }
 
+let connections = 0;
 function connect() {
   if (socket) return;
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -497,6 +502,8 @@ function connect() {
     wait = 1000;
     synced = 'syncing';
     carryOut(fzn.connected(0));
+    // Coming back to a relay that went away is a reason to think it has a new page.
+    if (connections++) check();
   };
   opened.onmessage = (event) => carryOut(fzn.received(0, event.data));
   opened.onclose = () => {
@@ -781,8 +788,6 @@ function follow() {
 let editor = null;
 let editorSoon = null;
 let vimOn = kept('fzn.vim') === 'on';
-// Set while keepOpen closes the body and opens it again, so that the editor is left as it is.
-let keeping = false;
 
 const soon = (task, timeout) =>
   window.requestIdleCallback ? requestIdleCallback(() => task(), timeout && { timeout }) : setTimeout(task, 1500);
@@ -851,25 +856,10 @@ const editorHooks = {
   },
 };
 
-// Writes an open body as it stands and leaves it open, for vim's `:w` and for a page put away.
-// A body is written when it closes, so it is closed and opened again under the hands, if the note
-// is still there, scrolled as it was and with the caret where it was, which closing lost. The
-// editor is left as it is, its caret and step undo with it, and the history is not walked for it.
+// Writes an open body as it stands and leaves it open, for vim's `:w`: the engine keeps the field
+// and stays, so the editor is left as it is, its caret, scroll and step undo with it.
 function keepOpen() {
-  if (!view?.field?.whole) return;
-  const was = boxIn;
-  const scrolled = sheet.scrollTop;
-  const [from, to] = [box.selectionStart, box.selectionEnd];
-  keeping = true;
-  try {
-    act('close');
-    if (view.cursor != null && view.rows[view.cursor]?.id === was) act('open');
-  } finally {
-    keeping = false;
-  }
-  if (view.field?.whole && !editor) box.setSelectionRange(from, to);
-  keepHistory();
-  sheet.scrollTop = scrolled;
+  if (view?.field?.whole) act('keep');
 }
 
 function rowKey(row, selected, apart) {
@@ -1068,16 +1058,15 @@ function paintRows() {
   if (field && boxIn && field.whole && editor) {
     box.classList.add('whole');
     // The editor is given a fresh state when the body opens, its caret where the box's would be,
-    // and when it takes over from the box, with the box's caret. While `:w` closes and opens again
-    // it is left as it is, so the caret and the step undo survive the write. Otherwise it is told
-    // the text only when the engine's differs from it: put back, a date word expanded, a version
-    // from elsewhere. A newline just made at the end is not a difference, as it is not one to the
-    // engine, which keeps the note without it: told the kept text, the editor would take the new
-    // line away under the hands.
+    // and when it takes over from the box, with the box's caret. Otherwise it is told the text only
+    // when the engine's differs from it: put back, a date word expanded, a version from elsewhere.
+    // A newline just made at the end is not a difference, as it is not one to the engine, which
+    // keeps the note without it: told the kept text, the editor would take the new line away under
+    // the hands.
     const toggled = !wasWhole;
     const kept = (text) => text.replace(/[\r\n]+$/, '');
-    if (!keeping && toggled) editor.open(field.text, field.fresh ?? headOf(field.text).length);
-    else if (!keeping && !hadEditor) editor.open(field.text, Math.min(from, field.text.length));
+    if (toggled) editor.open(field.text, field.fresh ?? headOf(field.text).length);
+    else if (!hadEditor) editor.open(field.text, Math.min(from, field.text.length));
     else if (kept(editor.text()) !== kept(field.text)) editor.setText(field.text);
     if (takesFocus(editor.contentDOM)) editor.focus();
   } else if (field && boxIn) {
@@ -1595,16 +1584,15 @@ $('hints').addEventListener('mousedown', (event) => {
 
 // A page put away with the cursor on a row writes what the row holds, if it changed. Being hidden
 // comes before being unloaded and leaves more time for the line to be kept and sent, so it is
-// heard too; a second `close` with nothing changed does nothing. An open body is written and stays
-// open while the page is only hidden, since switching tabs to look something up and coming back
-// is not leaving it; only a page that is going closes it. Writing may change the head under the
+// heard too. A hidden page keeps the field and stays, an open body open, since switching tabs to
+// look something up and coming back is not leaving it; only a page that is going leaves the row,
+// and a second time with nothing changed does nothing. Writing may change the head under the
 // caret, as a new note written inside a tag gets the tag, so the box takes it at once: a hidden
 // page has no next frame to paint it in, and a key pressed on coming back would otherwise be
 // typed into the head as it was and take the tag away again.
 function putAway(going) {
-  if (!view?.field) return;
-  if (view.field.whole && !going) keepOpen();
-  else act('close');
+  if (!view?.field || reloading) return;
+  act(going ? 'close' : 'keep');
   safely();
 }
 window.addEventListener('pagehide', () => putAway(true));
@@ -1623,6 +1611,170 @@ window.addEventListener('pagehide', (event) => {
   keep(leftBy(id), token);
   keep(LEFT, token, session);
 });
+
+// The page follows the relay's build. It knows its own from the page it was loaded as, which the
+// relay names in a meta of `index.html`, and asks the relay which it serves now with a `HEAD` of
+// the page, whose answer names it in `Fzn-Build`, when there is reason to think it has changed: the
+// tab coming back into sight, and the socket coming back to a relay that went away, which is what
+// a deploy looks like from a tab; at most once in 30 seconds, and never for a page whose meta is
+// empty, as one from a relay from before builds were named. A newer build is
+// reloaded onto unless the person is in the middle of something: a body open and changed, a
+// composition, a key in the last two seconds, or the tab out of sight, in which case it is tried
+// again once they are not. Text on the line, the cursor on a row and a head being written are not
+// in the middle of anything: a head is written as it is typed, and the rest is carried. Before the
+// reload the field is kept and the page waits for the store to have it; where the page is goes
+// into the history's entry as `kept`: the path's steps as the engine gives them, the line, the
+// note under the cursor, how far the list was scrolled, the build wanted and when. A reload that
+// did not bring the build it was made for gives that build up, and the page does not ask for it
+// again, nor reloads within a minute of the last, so that a relay answering one build and serving
+// another is not reloaded onto for ever.
+const BUILD = document.querySelector('meta[name="fzn-build"]')?.content ?? '';
+const remembered = () => entry().kept ?? {};
+const remember = (kept) => history.replaceState({ ...entry(), kept }, '');
+let gaveUp = remembered().gaveUp ?? null;
+let stale = null;
+let lastAsked = 0;
+let lastKey = 0;
+let reloading = false;
+document.addEventListener('keydown', () => (lastKey = Date.now()), true);
+document.addEventListener('input', () => (lastKey = Date.now()), true);
+
+// What the relay serves now, or nothing if it cannot be asked.
+async function served() {
+  const stop = new AbortController();
+  const late = setTimeout(() => stop.abort(), 3000);
+  try {
+    const answer = await fetch('./', { method: 'HEAD', cache: 'no-store', signal: stop.signal });
+    return answer.headers.get('Fzn-Build') || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(late);
+  }
+}
+
+async function check() {
+  if (!BUILD || !fzn || reloading) return;
+  if (stale) return tryReload();
+  if (Date.now() - lastAsked < 30000 || Date.now() - (remembered().at ?? 0) < 60000) return;
+  lastAsked = Date.now();
+  const fresh = await served();
+  if (!fresh || fresh === BUILD || fresh === gaveUp) return;
+  stale = fresh;
+  tryReload();
+}
+
+const busy = () =>
+  document.visibilityState !== 'visible' ||
+  composing ||
+  !!editor?.composing ||
+  Date.now() - lastKey < 2000 ||
+  (!!view?.field?.whole && view.hints.some((hint) => named(hint.action) === 'undo'));
+
+let later = 0;
+function tryReload() {
+  clearTimeout(later);
+  if (!stale || reloading) return;
+  // Out of sight it waits to be seen again, which asks again.
+  if (document.visibilityState !== 'visible') return;
+  if (busy()) later = setTimeout(tryReload, 2000);
+  else reload({ wanted: stale });
+}
+
+// Where the page is, as the history's entry keeps it.
+function whereNow() {
+  let where = [];
+  try {
+    where = JSON.parse(fzn.steps());
+  } catch {
+    // No path is still a place to come back to.
+  }
+  const scroller = narrow.matches ? document.scrollingElement : list;
+  return {
+    where,
+    line: view.line,
+    cursor: view.cursor != null ? (view.rows[view.cursor]?.id ?? null) : null,
+    scroll: scroller.scrollTop,
+  };
+}
+
+// Reloads the page where it is. What the field holds is kept first, and the page waits, a second
+// at most, for the store to have it, unless the page already wrote what it held when it was put
+// away. From here the page takes no more actions: one would be neither carried nor waited for.
+async function reload({ wanted = null, writing = true } = {}) {
+  if (reloading) return;
+  if (writing && view?.field) act('keep');
+  reloading = true;
+  if (view && fzn) {
+    const kept = { ...remembered(), ...whereNow(), at: Date.now() };
+    if (wanted) kept.wanted = wanted;
+    remember(kept);
+    if (writing) await Promise.race([stored, lapse(1000)]);
+  }
+  location.reload();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') check();
+  else rememberNow();
+});
+
+// Where the page is goes into the history's entry as it changes, a second after the last change
+// and at once when the tab is hidden, so that any reload comes back there: one asked for by hand,
+// and a page gone back to that the browser did not keep. Not when the page is unloaded, which is
+// too late: Chrome keeps nothing written to an entry once the page is going.
+let rememberedAs = '';
+let rememberLater = 0;
+function rememberSoon() {
+  clearTimeout(rememberLater);
+  rememberLater = setTimeout(rememberNow, 1000);
+}
+function rememberNow() {
+  clearTimeout(rememberLater);
+  if (!view || !fzn || opening || reloading) return;
+  if (travelling) return rememberSoon();
+  const place = { ...remembered(), ...whereNow() };
+  const said = JSON.stringify([history.length, entry().depth, place]);
+  if (said === rememberedAs) return;
+  rememberedAs = said;
+  remember(place);
+}
+// A page given back from the cache of pages gone back from is reloaded where it was, whatever the
+// relay serves: the other tabs have let it go.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) reload({ writing: false });
+});
+
+// Puts the page back where it was before a reload, before anything is painted: the path, then
+// the line, then the cursor on the note it was on, if that is still listed. The history is then
+// made to match: the entry the page opened in says how deep the page was, and the entries behind
+// it lead back out of that, so a path put back whole leaves them as they are, and one put back
+// shorter, for a step that has gone, goes back through them to the depth it has.
+function restore() {
+  const { where, line: typed, cursor, scroll, wanted, ...rest } = remembered();
+  if (wanted && wanted !== BUILD) gaveUp = rest.gaveUp = wanted;
+  if (where || typed || cursor || wanted) remember(rest);
+  if (where?.length) act({ restore: where });
+  if (typed) act({ type: typed });
+  if (cursor != null) {
+    const at = view.rows.findIndex((row) => row.id === cursor);
+    if (at >= 0) act({ select: at });
+  }
+  opening = false;
+  depth = entry().depth ?? 0;
+  if (entry().depth == null) history.replaceState({ ...entry(), depth }, '');
+  keepHistory();
+  if (scroll) {
+    // The list is made as far as it was scrolled, so that there is somewhere to scroll back to:
+    // painted once for the place put back, which starts a new list, and then further.
+    safely();
+    further = Math.ceil(scroll / rowHeight()) + MARGIN;
+    paintSoon();
+    requestAnimationFrame(() => {
+      (narrow.matches ? document.scrollingElement : list).scrollTop = scroll;
+    });
+  }
+}
 
 // For a passphrase mistyped: the key is forgotten and the page asks again.
 const retype = () => {
@@ -1652,16 +1804,17 @@ async function start() {
       why = `${cause}. Type the passphrase again.`;
     }
   }
-  document.body.classList.remove('locked');
   store = await openStore().catch(() => null);
   if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
   carryOut(fzn.opened());
   joined = true;
   tabs?.postMessage({ from: tab, hello: true });
-  // The page opens at the top, so the entry it opens in is the top, whatever it was before.
-  history.replaceState({ ...entry(), depth }, '');
   look();
-  line.focus();
+  restore();
+  $('unlock').hidden = true;
+  $('for').innerHTML = ASK;
+  document.body.classList.remove('locked');
+  follow();
   requestAnimationFrame(prefetchOnPause);
   document.addEventListener('keydown', prefetchOnPause, true);
   connect();

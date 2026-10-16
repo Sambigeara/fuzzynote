@@ -706,7 +706,9 @@ key that opens nothing says so, with its own way to type it again. The relay car
 into fzn from the `web` directory; `--web web` points it at the directory instead while the page is
 worked on. Every answer the relay gives for the page names its build, in `Fzn-Build`, and
 `index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it runs and can ask
-with one `HEAD` which the relay now serves.
+with one `HEAD` which the relay now serves. It asks when it comes back into sight and when its
+socket comes back, and reloads onto a new build where it was, unless the person is in the middle of
+something (see "The page follows the relay's build").
 
 *The page.* One column, a little left of centre, with a third of the room beside it on its left,
 text left-aligned, and the line a little above a third of the way down, where it stays: it does
@@ -1962,6 +1964,43 @@ repeats it only where the reason needs it.
   lacked one until lately, and for every keystroke's view crossing to the worker. Nothing is said on
   the screen about any of it: a second window or tab opens at the top of the list, and what another
   writes is `1 changed elsewhere`, as from any device.
+- **The page follows the relay's build.** Decided 2026-10-16, at Sam's direction. A tab left open
+  across a deploy, or one that Back returns to, went on running the page it was loaded with, and the
+  only way onto the new one was a reload by hand, which threw the person out of their place. The
+  relay's half is in "The relay carries the page; a directory stands in for it while the page is
+  worked on": it names the build in `Fzn-Build` and in the page's `<meta name="fzn-build">`. The
+  page reads its own from the meta and asks which the relay serves with a `HEAD` of the page,
+  uncached, when there is reason to think it has changed: the tab coming back into sight, and the
+  socket coming back to a relay that went away, which is what a deploy looks like from a tab; at
+  most once in thirty seconds. A page given back from the browser's cache of pages gone back from is
+  reloaded whatever the relay serves, since the other tabs let it go when it was put away. A page
+  whose meta is empty never asks. A newer build is reloaded onto unless the person is in the middle
+  of something: a body open and changed, a composition, a key in the last two seconds, or the tab
+  out of sight, which asks again when it is seen. Text on the line, the cursor on a row and a head
+  half written are not the middle of anything, since a head is written as it is typed and the rest
+  is carried. Before the reload the field is kept, as `Keep` keeps it, and the page waits, a second
+  at most, for the browser's store to hold it, and takes no more actions, since one would be neither
+  carried nor waited for. Where the page is goes into the history's entry as `kept`: the path's
+  steps as the engine gives them (see "A face keeps the path as steps"), the line, the note under
+  the cursor, how far the list was scrolled, the build wanted and when. On load, before anything is
+  painted, the page gives the steps back, types the line and puts the cursor on the note it was on
+  if that is still listed, and nothing is said, since a reload is not news. The history is then made
+  to match: the entry the page reloaded in says how deep it was, and the entries behind lead back
+  out, so a path put back whole leaves them as they are, and one put back shorter, for a note that
+  has gone, goes back through them to the depth it has, so that Back steps out from where the person
+  is. The place is written into the entry as it changes too, a second after the last change and at
+  once when the tab is hidden, so a reload by hand, or a page Back returns to that the browser did
+  not keep, comes back where it was as well; not as the page is unloaded, since Chrome keeps nothing
+  written to an entry then. The guard: a reload that did not bring the build it was made for gives
+  that build up, the entries stepped into from there carry it, and it is not asked for again; nor is
+  a reload made within a minute of the last. So a relay, or something between it and the browser,
+  that names one build and serves another costs one reload and no more. Rejected: asking on a timer,
+  which would ask all night of a tab left open for nothing that the moments above do not already
+  catch; naming the build over the websocket, which belongs to the engine and is the thing most
+  likely to be down when the page is stale; a file or a route of its own for the build, since the
+  page it is the build of already answers `HEAD` and a deploy between fetching the script and asking
+  would leave the tab believing it was new; and `sessionStorage` for the guard and the place, which
+  works, but the history's entry goes with Back and Forward and so carries the right place with it.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
