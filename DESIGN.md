@@ -558,30 +558,30 @@ its ends dropped. Escape comes back a rung at a time: off the row, writing out i
 the text on the line, out of the place, and twice on an empty line outside one quits, the first
 saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing out the head first.
 
-The screen is flat: no borders, no boxes, the terminal's own colours. The path is a dim row
-above the line and only in a place, headed by the space's name, ` main › Boiler › #house `, the
-middle of a long path given up to `…`; at the top there is no path row, and the app sets no
-window title. The line is the
-first row, after a dim `>` in the column the rows leave empty, so that its text lines up with
-theirs; what its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or
-`→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then, dimmed,
-a `¶` if it has a body, the names of what it links to after an arrow, and its reasons joined by
-`·`; the row the cursor is on has the terminal's cursor at the end of its head, the head in bold,
-and its date at the right. The foot of the list is kept for the body of what the cursor is on:
-the note on its row, and on the line in a place the note you are in. It is a row of nothing, then
-up to five rows of the body, dimmed, set in two columns from the rows' text and cut with a `…`
-when it goes on. The rows are kept whatever the note holds, on a row and on the line in a place
-alike, so walking the list never changes how much of it is shown; on the line outside a place
-the list has the whole height. On a short screen they shrink, keeping the list at least half its
-room, and go when fewer than two would be left. One dim footer row names the chords that apply
-where the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`,
-`Esc back` or `Esc up`, or `Esc Esc quits` where there is none; a narrow terminal loses chords
-from the middle, never the first or the way back. A status row above it exists only while there
-is something to say, each key clearing what the one before said, and where the body has its rows
-it takes the last of them, so that the list keeps its height. Nothing says how many notes there
-are or that sync is working; `not syncing` is said in the corner of the foot when it is not, and
-in its place, while syncing, how far this machine's clock is from the relay's when that is more
-than two minutes, `this device's clock is 5 min ahead`.
+The screen is flat: no borders, no boxes, the terminal's own colours. Everything is measured in the
+columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
+a letter as it is drawn, an accent with its letter. The path is a dim row above the line and only in
+a place, headed by the space's name, ` main › Boiler › #house `, the middle of a long path given up
+to `…`; at the top there is no path row, and the app sets no window title. The line is the first
+row, after a dim `>` in the column the rows leave empty, so that its text lines up with theirs; what
+its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or `→ Mon
+2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then, dimmed, a `¶` if
+it has a body, the names of what it links to after an arrow, and its reasons joined by `·`; the row
+the cursor is on has the terminal's cursor at the end of its head, the head in bold, and its date at
+the right. The foot of the list is kept for the body of what the cursor is on: the note on its row,
+and on the line in a place the note you are in. It is a row of nothing, then up to five rows of the
+body, dimmed, set in two columns from the rows' text and cut with a `…` when it goes on. The rows
+are kept whatever the note holds, on a row and on the line in a place alike, so walking the list
+never changes how much of it is shown; on the line outside a place the list has the whole height. On
+a short screen they shrink, keeping the list at least half its room, and go when fewer than two
+would be left. One dim footer row names the chords that apply where the cursor is, `^V tick`, `Tab
+go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or `Esc Esc quits`
+where there is none; a narrow terminal loses chords from the middle, never the first or the way
+back. A status row above it exists only while there is something to say, each key clearing what the
+one before said, and where the body has its rows it takes the last of them, so that the list keeps
+its height. Nothing says how many notes there are or that sync is working; `not syncing` is said in
+the corner of the foot when it is not, and in its place, while syncing, how far this machine's clock
+is from the relay's when that is more than two minutes, `this device's clock is 5 min ahead`.
 
 Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
 inverse, Ctrl-^ export.

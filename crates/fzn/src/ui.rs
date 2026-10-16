@@ -23,6 +23,11 @@
 //! a time: off the row, off the text on the line, out of the place, and on an empty line outside
 //! any place two of them quit. The footer shows only the keys that apply where the cursor is.
 //!
+//! The caret moves and Backspace takes a letter as it is drawn, a grapheme cluster, so that an
+//! accent goes with its letter; and everything is measured in the columns the terminal draws it
+//! in, so that a Chinese head, two columns a letter, is cut and its date placed where they are
+//! seen.
+//!
 //! The screen is painted by hand and flat, in the terminal's own colours, because there is
 //! nothing to frame: the terminal's cursor in a bold head is the row being written in, and dim is
 //! what can be ignored. The line starts with a dim `>` in the column the rows leave empty, so that
@@ -48,7 +53,6 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use fzn_engine::text::fit;
 use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -59,6 +63,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::{DefaultTerminal, Frame};
+use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::store::{self, Logs, Writer};
@@ -84,9 +89,9 @@ pub struct App {
     editor: String,
     /// The space's name, which heads the path.
     space: String,
-    /// Cursor position in the line, in characters.
+    /// Cursor position in the line, in letters as drawn.
     cursor: usize,
-    /// Cursor position in the head of the row the cursor is on, in characters.
+    /// Cursor position in the head of the row the cursor is on, in letters as drawn.
     row_cursor: usize,
     /// The first row painted, kept so that the list moves only when the cursor would leave it.
     top: usize,
@@ -210,28 +215,25 @@ fn footer(hints: &[Hint], room: usize) -> String {
         keys.push("Esc Esc quits".to_owned());
     }
     // A narrow terminal loses chords from the middle, never the first or the way back.
-    let width = |keys: &[String]| keys.iter().map(|k| k.chars().count() + 2).sum::<usize>() - 2;
+    let width = |keys: &[String]| keys.iter().map(|k| k.width() + 2).sum::<usize>() - 2;
     while keys.len() > 2 && width(&keys) > room {
         keys.remove(keys.len() - 2);
     }
     keys.join("  ")
 }
 
-/// What a key does to a line of text, the line or a row's head, when it is one that edits
-/// it or moves along it: the text as it then reads, and where its cursor then is, in characters.
-/// Right at the end stays there. Tab is never typed: it is the key that goes in.
+/// What a key does to a line of text, the line or a row's head, when it is one that edits it or
+/// moves along it: the text as it then reads, and where its cursor then is, in letters as drawn,
+/// each a grapheme cluster. Right at the end stays there, and Tab is never typed, since it is the
+/// key that goes in.
 fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(String, usize)> {
-    let end = line.chars().count();
+    let end = letters(line);
     let cursor = cursor.min(end);
     let without = |from: usize, to: usize| {
         let (from, to) = (byte_index(line, from), byte_index(line, to));
         format!("{}{}", &line[..from], &line[to..])
     };
-    let with = |c: char| {
-        let mut line = line.to_owned();
-        line.insert(byte_index(&line, cursor), c);
-        (line, cursor + 1)
-    };
+    let with = |c: char| spliced(line, cursor, c.encode_utf8(&mut [0; 4]));
     Some(match (code, ctrl) {
         (KeyCode::Char('a'), true) | (KeyCode::Home, _) => (line.to_owned(), 0),
         (KeyCode::Char('e'), true) | (KeyCode::End, _) => (line.to_owned(), end),
@@ -240,12 +242,15 @@ fn edited(line: &str, cursor: usize, code: KeyCode, ctrl: bool) -> Option<(Strin
         (KeyCode::Backspace, _) if cursor > 0 => (without(cursor - 1, cursor), cursor - 1),
         (KeyCode::Delete, _) if cursor < end => (without(cursor, cursor + 1), cursor),
         (KeyCode::Char('w'), true) => {
-            let chars: Vec<char> = line.chars().collect();
+            let blank: Vec<bool> = line
+                .graphemes(true)
+                .map(|g| g.chars().all(char::is_whitespace))
+                .collect();
             let mut start = cursor;
-            while start > 0 && chars[start - 1].is_whitespace() {
+            while start > 0 && blank[start - 1] {
                 start -= 1;
             }
-            while start > 0 && !chars[start - 1].is_whitespace() {
+            while start > 0 && !blank[start - 1] {
                 start -= 1;
             }
             (without(start, cursor), start)
@@ -280,12 +285,71 @@ fn pasted(text: &str) -> String {
         .collect()
 }
 
-/// `text` put into `line` at `cursor`, in characters, and where the cursor is then, after it.
+/// `text` put into `line` at `cursor`, in letters, and where the cursor is then, after it. An
+/// accent typed after a letter joins it, and the cursor stays after the two.
 fn spliced(line: &str, cursor: usize, text: &str) -> (String, usize) {
-    let cursor = cursor.min(line.chars().count());
     let at = byte_index(line, cursor);
     let line = format!("{}{text}{}", &line[..at], &line[at..]);
-    (line, cursor + text.chars().count())
+    let cursor = letters(&line[..at + text.len()]);
+    (line, cursor)
+}
+
+/// How many letters as drawn, grapheme clusters, the text holds.
+fn letters(s: &str) -> usize {
+    s.graphemes(true).count()
+}
+
+/// How many letters as drawn the first `chars` characters of the text make, for a place the
+/// session gives in characters.
+fn letters_in(s: &str, chars: usize) -> usize {
+    let at = s.char_indices().nth(chars).map_or(s.len(), |(b, _)| b);
+    letters(&s[..at])
+}
+
+/// Cut to at most `max` columns as the terminal draws them, marking the cut with `…`.
+fn fit(s: &str, max: usize) -> String {
+    if s.width() <= max {
+        return s.to_owned();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for g in s.graphemes(true) {
+        let n = g.width();
+        if used + n + 1 > max {
+            break;
+        }
+        out.push_str(g);
+        used += n;
+    }
+    if max > 0 {
+        out.push('…');
+    }
+    out
+}
+
+/// A line of text in `room` columns with its caret, `caret` letters in, kept in sight: what is
+/// shown of it, and the column the caret is then at. The text moves only once the caret would
+/// reach the last column, and then by as little as keeps it there.
+fn scrolled(text: &str, caret: usize, room: usize) -> (String, usize) {
+    let room = room.max(1);
+    let letters: Vec<&str> = text.graphemes(true).collect();
+    let caret = caret.min(letters.len());
+    let mut from = 0;
+    let mut before: usize = letters[..caret].iter().map(|g| g.width()).sum();
+    while from < caret && before > room - 1 {
+        before -= letters[from].width();
+        from += 1;
+    }
+    let mut shown = String::new();
+    let mut used = 0;
+    for g in &letters[from..] {
+        if used + g.width() > room {
+            break;
+        }
+        shown.push_str(g);
+        used += g.width();
+    }
+    (shown, before)
 }
 
 /// Takes the terminal for the app: raw, the alternate screen, and a paste sent whole rather than
@@ -313,32 +377,32 @@ fn give_terminal_back() {
 }
 
 /// Where you are: the space, then each place gone into, outermost first, in at most `max`
-/// characters. Past three steps the middle ones give way to `…`. Every step gets an equal share
-/// of the room, and what a short step does not use goes to the longer ones.
+/// columns. Past three steps the middle ones give way to `…`. The space is a step like the
+/// others, so that a long name cannot crowd out the place: every step gets an equal share of the
+/// room, and what a short step does not use goes to the longer ones.
 fn breadcrumb(space: &str, heads: &[&str], max: usize) -> String {
-    let steps: Vec<&str> = match heads {
+    let mut steps: Vec<&str> = match heads {
         [first, .., before, last] if heads.len() > 3 => vec![first, "…", before, last],
         _ => heads.to_vec(),
     };
-    let mut room = max.saturating_sub(space.chars().count() + 2 + 3 * steps.len());
+    steps.insert(0, space);
+    let mut room = max.saturating_sub(2 + 3 * (steps.len() - 1));
     let mut widths = vec![0; steps.len()];
     let mut order: Vec<usize> = (0..steps.len()).collect();
-    order.sort_by_key(|&i| steps[i].chars().count());
+    order.sort_by_key(|&i| steps[i].width());
     for (k, &i) in order.iter().enumerate() {
-        widths[i] = steps[i].chars().count().min(room / (steps.len() - k));
+        widths[i] = steps[i].width().min(room / (steps.len() - k));
         room -= widths[i];
     }
-    let mut crumb = format!(" {space}");
-    for (step, width) in steps.iter().zip(widths) {
-        crumb.push_str(" › ");
-        crumb.push_str(&fit(step, width));
-    }
-    crumb.push(' ');
-    crumb
+    let steps: Vec<String> = steps.iter().zip(widths).map(|(s, w)| fit(s, w)).collect();
+    format!(" {} ", steps.join(" › "))
 }
 
-fn byte_index(s: &str, char_index: usize) -> usize {
-    s.char_indices().nth(char_index).map_or(s.len(), |(b, _)| b)
+/// Where in the text, in bytes, its letter `letter` as drawn begins, or its end.
+fn byte_index(s: &str, letter: usize) -> usize {
+    s.grapheme_indices(true)
+        .nth(letter)
+        .map_or(s.len(), |(b, _)| b)
 }
 
 fn sanitise(id: &str) -> String {
@@ -605,9 +669,9 @@ fn score_of(row: &Row, shown: bool) -> String {
 /// as there is room for. The head is cut only when it alone does not fit.
 fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     let score = score_of(row, scores);
-    let room = width.saturating_sub(2 + score.chars().count());
+    let room = width.saturating_sub(2 + score.width());
     let head = fit(&row.head, room);
-    let rest = room - head.chars().count();
+    let rest = room - head.width();
     let tail = tail(row);
     let mut spans = vec![Span::raw(" "), Span::raw(score).dim(), Span::raw(head)];
     if !tail.is_empty() && rest > 3 {
@@ -620,7 +684,7 @@ fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
 /// The row the cursor is on, `head` being its head as it is now typed: the head bold and its date
 /// at the right, and its tail after the head or, when it does not fit there, on a row of its own
 /// under it, since this is the row being asked about. A head too long for the room scrolls so
-/// that the caret, `caret` characters in, stays in sight; the column it is then drawn at comes
+/// that the caret, `caret` letters in, stays in sight; the column it is then drawn at comes
 /// back with the rows.
 fn selected_rows(
     row: &Row,
@@ -633,28 +697,24 @@ fn selected_rows(
     let date = row
         .updated
         .map_or_else(String::new, |m| time::format_day(m.day()));
-    let dated = if date.is_empty() { 0 } else { date.len() + 2 };
-    let room = width
-        .saturating_sub(2 + score.chars().count() + dated)
-        .max(1);
-    let caret = caret.min(head.chars().count());
-    let scroll = caret.saturating_sub(room - 1);
-    let head: String = head.chars().skip(scroll).take(room).collect();
-    let x = 1 + score.chars().count() + caret - scroll;
+    let dated = if date.is_empty() { 0 } else { date.width() + 2 };
+    let room = width.saturating_sub(2 + score.width() + dated).max(1);
+    let (head, at) = scrolled(head, caret, room);
+    let x = 1 + score.width() + at;
     let tail = tail(row);
-    let fits = tail.chars().count() <= room - head.chars().count();
-    let mut used = 1 + score.chars().count() + head.chars().count();
+    let fits = tail.width() <= room.saturating_sub(head.width());
+    let mut used = 1 + score.width() + head.width();
     let mut spans = vec![
         Span::raw(" "),
         Span::raw(score).dim(),
         Span::raw(head).bold(),
     ];
     if fits {
-        used += tail.chars().count();
+        used += tail.width();
         spans.push(Span::raw(tail.clone()).dim());
     }
     if !date.is_empty() {
-        let pad = width.saturating_sub(used + date.len() + 1);
+        let pad = width.saturating_sub(used + date.width() + 1);
         spans.push(Span::raw(" ".repeat(pad)));
         spans.push(Span::raw(date).dim());
     }
@@ -692,7 +752,7 @@ fn paint(frame: &mut Frame, y: usize, x: usize, line: Line) {
 /// of things are.
 fn paint_right(frame: &mut Frame, y: usize, text: &str) {
     let width = usize::from(frame.area().width);
-    let len = text.chars().count();
+    let len = text.width();
     if !text.is_empty() && len + 2 < width {
         paint(frame, y, width - len - 1, Line::from(text.to_owned()).dim());
     }
@@ -890,7 +950,7 @@ impl App {
             }
             None => (Place::Line, view.line, self.cursor, None),
         };
-        let empty = text.is_empty() || fresh == Some(caret);
+        let empty = text.is_empty() || fresh.map(|at| letters_in(text, at)) == Some(caret);
         (place, empty)
     }
 
@@ -910,13 +970,14 @@ impl App {
         // row with only the labels it opened with, landed on or put back to them, has its caret
         // where the device says, after a task's box and before the rest.
         if view.line != line {
-            self.cursor = view.line.chars().count();
+            self.cursor = letters(view.line);
         }
         if let Some(field) = &view.field {
-            let end = head_and_body(field.text).0.chars().count();
+            let head = head_and_body(field.text).0;
+            let end = letters(head);
             let stayed = under_cursor(&view) == was_on;
             self.row_cursor = match field.fresh {
-                Some(start) if !(stayed && was_fresh) => start,
+                Some(start) if !(stayed && was_fresh) => letters_in(head, start),
                 _ if stayed => self.row_cursor.min(end),
                 _ => end,
             };
@@ -1072,17 +1133,14 @@ impl App {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("  ");
-        let said = right.chars().count();
-        let room = width
-            .saturating_sub(2 + if said > 0 { said + 2 } else { 0 })
-            .max(1);
-        let scroll = self.cursor.saturating_sub(room - 1);
-        let shown: String = view.line.chars().skip(scroll).take(room).collect();
+        let said = right.width();
+        let room = width.saturating_sub(2 + if said > 0 { said + 2 } else { 0 });
+        let (shown, at) = scrolled(view.line, self.cursor, room);
         paint(frame, y, 0, Line::from(PROMPT).dim());
         paint(frame, y, 1, Line::from(shown));
         paint_right(frame, y, &right);
         if view.cursor.is_none() {
-            cursor = Some((1 + self.cursor - scroll, y));
+            cursor = Some((1 + at, y));
         }
         y += 1;
 
@@ -3019,6 +3077,11 @@ mod tests {
             breadcrumb("main", &["one", "two", "three", "four", "five"], 70),
             " main › one › … › four › five "
         );
+        let crumb = breadcrumb("a-garden-space-with-a-long-name", &["Boiler"], 24);
+        assert_eq!(
+            crumb, " a-garden-spa… › Boiler ",
+            "the place keeps its room"
+        );
     }
 
     #[test]
@@ -3044,8 +3107,79 @@ mod tests {
     }
 
     #[test]
-    fn byte_index_handles_multibyte() {
+    fn byte_index_counts_letters_as_drawn() {
         assert_eq!(byte_index("héllo", 2), 3);
         assert_eq!(byte_index("héllo", 99), 6);
+        assert_eq!(
+            byte_index("e\u{301}tude", 1),
+            3,
+            "the accent is part of its letter"
+        );
+    }
+
+    /// A row of the list as the app lists a note written with this head.
+    fn a_row(head: &str) -> Row {
+        let (mut app, space) = app();
+        write(&mut app, head);
+        let row = app.device.view().rows[0].clone();
+        done(&space);
+        row
+    }
+
+    #[test]
+    fn a_head_is_cut_by_the_columns_it_takes() {
+        assert_eq!(fit("浴室的瓷砖", 10), "浴室的瓷砖");
+        assert_eq!(fit("浴室的瓷砖", 9), "浴室的瓷…");
+        assert_eq!(fit("浴室的瓷砖", 8), "浴室的…");
+        assert_eq!(fit("e\u{301}tude", 3), "e\u{301}t…");
+        assert_eq!(fit("Boiler", 0), "");
+        let row = a_row("浴室的瓷砖要换 #house");
+        let line = row_line(&row, false, 12).to_string();
+        assert_eq!(line, " 浴室的瓷…");
+        assert!(line.width() <= 12);
+    }
+
+    #[test]
+    fn a_head_scrolls_by_the_columns_its_letters_take() {
+        assert_eq!(scrolled("浴室的瓷砖", 5, 20), ("浴室的瓷砖".into(), 10));
+        assert_eq!(scrolled("浴室的瓷砖", 5, 7), ("的瓷砖".into(), 6));
+        assert_eq!(scrolled("浴室的瓷砖", 0, 7), ("浴室的".into(), 0));
+        assert_eq!(scrolled("e\u{301}tude", 1, 20), ("e\u{301}tude".into(), 1));
+    }
+
+    #[test]
+    fn a_wide_head_under_the_cursor_has_its_date_at_the_edge_and_the_caret_at_its_end() {
+        let row = a_row("浴室的瓷砖要换 #house");
+        let date = time::format_day(row.updated.unwrap().day());
+        let (rows, x) = selected_rows(&row, &row.head, letters(&row.head), false, 40);
+        let painted = rows[0].to_string();
+        assert!(painted.ends_with(&date), "{painted:?}");
+        assert_eq!(
+            painted.width(),
+            39,
+            "the date ends a column short of the edge"
+        );
+        assert_eq!(x, 1 + 21, "after fourteen columns of letters and the tag");
+    }
+
+    #[test]
+    fn a_combining_mark_is_part_of_its_letter() {
+        let row = a_row("e\u{301} combi");
+        let (_, x) = selected_rows(&row, &row.head, letters(&row.head), false, 40);
+        assert_eq!(x, 1 + 7);
+        assert_eq!(
+            edited("e\u{301}", 1, KeyCode::Backspace, false),
+            Some((String::new(), 0)),
+            "Backspace takes the accent with its letter"
+        );
+        assert_eq!(
+            edited("e", 1, KeyCode::Char('\u{301}'), false),
+            Some(("e\u{301}".into(), 1)),
+            "an accent typed joins the letter before it"
+        );
+        assert_eq!(
+            edited("ab e\u{301}", 4, KeyCode::Char('w'), true),
+            Some(("ab ".into(), 3))
+        );
     }
 }
