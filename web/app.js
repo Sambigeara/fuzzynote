@@ -69,6 +69,21 @@ function keep(name, value, where = local) {
   }
 }
 
+// A token in the link, `#joe:3f9a…` or `#3f9a…`, is kept for this browser and taken off the
+// address bar and out of the tab's history, though the browser's list of the pages visited still
+// has the link as it was opened. It is what lets a browser make a space on the relay, under the
+// name before it or at the relay's root; a space that is there already is entered with its key
+// alone. With a name the spaces are asked for under it.
+const TOKEN = 'fzn.token';
+const given = location.hash.match(/^#(?:([A-Za-z0-9_-][A-Za-z0-9._-]{0,63}):)?([0-9a-f]{32})$/);
+if (given) {
+  keep(TOKEN, given[1] ? `${given[1]}:${given[2]}` : given[2]);
+  history.replaceState(history.state, '', location.pathname + location.search);
+}
+const credential = kept(TOKEN) || '';
+const whose = credential.includes(':') ? credential.slice(0, credential.indexOf(':')) : '';
+const token = credential.slice(credential.indexOf(':') + 1);
+
 const hex = (bytes) =>
   [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const plain = (id) => /^[0-9a-f]{8}$/.test(id || '');
@@ -492,14 +507,21 @@ function send({ to, text }) {
   }
 }
 
+// The socket to the relay, for the space under the name the token was given with, or at the
+// relay's root. The token is offered as a subprotocol, the one place a page can put a credential
+// on a socket, beside `fzn`, which the relay says back. A relay lost is dialled again, waiting
+// longer each time; a connection that ends within five seconds of opening, as one the relay
+// refuses does, is not a reason to wait less.
 let connections = 0;
 function connect() {
   if (socket) return;
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  const opened = new WebSocket(`${scheme}://${location.host}/1/${space}`);
+  const path = whose ? `/1/${whose}/${space}` : `/1/${space}`;
+  const opened = new WebSocket(`${scheme}://${location.host}${path}`, token ? ['fzn', `fzn.token.${token}`] : []);
+  let openedAt = 0;
   socket = opened;
   opened.onopen = () => {
-    wait = 1000;
+    openedAt = Date.now();
     synced = 'syncing';
     carryOut(fzn.connected(0));
     // Coming back to a relay that went away is a reason to think it has a new page.
@@ -512,6 +534,7 @@ function connect() {
     fzn.disconnected(0);
     synced = 'not syncing';
     look();
+    if (openedAt && Date.now() - openedAt >= 5000) wait = 1000;
     setTimeout(connect, wait);
     wait = Math.min(wait * 2, 30000);
   };
@@ -1140,21 +1163,26 @@ let fading = 0;
 function paintFoot() {
   // What just happened is said, and goes after five seconds. What is still true stays: that the
   // relay cannot be reached, or that this device's clock is far from the relay's, and that the
-  // key opens nothing here.
-  if (view.status !== status) {
-    status = view.status;
+  // key opens nothing here. A refusal from the relay is still true until a relay takes the tab
+  // in, so it is said in ink while nothing else is, and does not go.
+  const refused = fzn.refused();
+  const says = view.status || refused || '';
+  if (says !== status) {
+    status = says;
     const node = $('status');
     node.textContent = status;
-    node.classList.remove('faded', 'trouble');
+    node.classList.remove('faded');
+    node.classList.toggle('trouble', !!refused && status === refused);
     clearTimeout(fading);
-    if (status) fading = setTimeout(() => node.classList.add('faded'), 5000);
+    if (status && status !== refused) fading = setTimeout(() => node.classList.add('faded'), 5000);
   }
-  // A key that opens nothing says so with a way to type it again. A key nothing has yet proved,
-  // in a space with no notes, has the word to type it again; once a note has been opened with it
-  // there is nothing to retype, and the word goes.
-  const shut = !fzn.key_verified();
-  $('trouble').hidden = !shut;
-  $('passphrase').hidden = shut || view.notes > 0;
+  // A passphrase in doubt, as the engine judges it, says so with a way to type it again: a key
+  // that opens nothing here, or one the relay refused that nothing here has proved. A key nothing
+  // has yet proved, in a space with no notes, has the word to type it again; once a note has been
+  // opened with it there is nothing to retype, and the word goes.
+  const doubt = fzn.key_in_doubt();
+  $('trouble').hidden = !doubt;
+  $('passphrase').hidden = doubt || view.notes > 0;
   const sync = $('sync');
   const said = synced === 'not syncing' ? synced : (fzn.clock() ?? '');
   if (sync.textContent !== said) sync.textContent = said;

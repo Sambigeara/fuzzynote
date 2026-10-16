@@ -689,26 +689,32 @@ Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection
 inverse, Ctrl-^ export.
 
 ### Browser
-The engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain JavaScript and
-CSS to drive it: no framework, and one family of dependencies, CodeMirror and its parser Lezer,
-for the body's editor and the page's reading of markdown, built by hand into committed files
-(see "The body is a CodeMirror editor, loaded when a body first opens" and "A body's markdown is
-rendered where it is read and styled where it is written"). Everything crosses to the engine as
-text: an action goes in as JSON and what to do and what to show come back as JSON, a hint's
-action being exactly what to send back to ask for it. A tab is one more device. It has a writer
-id and a log of its own for each space, keeps every log of the space in IndexedDB between
-visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
-from, so there is one address to open and nothing to set up. A line is sent only once IndexedDB
-has kept it, so that the relay never holds a line of a tab's log that the tab lost by closing,
-which the next tab to write that log would write over: a fork. The word `passphrase` in the foot
-types it again, and is there only while nothing has proved the key: in a space with no notes yet. A
-key that opens nothing says so, with its own way to type it again. The relay carries the page, built
-into fzn from the `web` directory; `--web web` points it at the directory instead while the page is
-worked on. Every answer the relay gives for the page names its build, in `Fzn-Build`, and
-`index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it runs and can ask
-with one `HEAD` which the relay now serves. It asks when it comes back into sight and when its
-socket comes back, and reloads onto a new build where it was, unless the person is in the middle of
-something (see "The page follows the relay's build").
+The engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain JavaScript and CSS
+to drive it: no framework, and one family of dependencies, CodeMirror and its parser Lezer, for the
+body's editor and the page's reading of markdown, built by hand into committed files (see "The body
+is a CodeMirror editor, loaded when a body first opens" and "A body's markdown is rendered where it
+is read and styled where it is written"). Everything crosses to the engine as text: an action goes
+in as JSON and what to do and what to show come back as JSON, a hint's action being exactly what to
+send back to ask for it. A tab is one more device. It has a writer id and a log of its own for each
+space, keeps every log of the space in IndexedDB between visits, asks for the passphrase once and
+keeps the key, and syncs with the relay it was loaded from, so there is one address to open and
+nothing to set up. A line is sent only once IndexedDB has kept it, so that the relay never holds a
+line of a tab's log that the tab lost by closing, which the next tab to write that log would write
+over: a fork. A relay that says who may make spaces on it gives a link with a token, `#joe:3f9a…`,
+or `#3f9a…` for its root, opened once: the page keeps the token for the browser and takes it off the
+address, asks for its spaces under the name, `/1/joe/main`, and offers the token as a subprotocol
+beside `fzn`, the one place a page can put a credential on a socket. A space that is there already
+is entered with its key alone. A refusal from the relay stays in the foot until a relay takes the
+tab in, and a connection the relay ends at once does not shorten the wait before the next. The word
+`passphrase` in the foot types it again, and is there only while nothing has proved the key: in a
+space with no notes yet. A passphrase in doubt, a key that opens nothing here or one the relay
+refused that nothing here has proved, says so, with its own way to type it again. The relay carries
+the page, built into fzn from the `web` directory; `--web web` points it at the directory instead
+while the page is worked on. Every answer the relay gives for the page names its build, in
+`Fzn-Build`, and `index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it
+runs and can ask with one `HEAD` which the relay now serves. It asks when it comes back into sight
+and when its socket comes back, and reloads onto a new build where it was, unless the person is in
+the middle of something (see "The page follows the relay's build").
 
 *The page.* One column, a little left of centre, with a third of the room beside it on its left,
 text left-aligned, and the line a little above a third of the way down, where it stays: it does
