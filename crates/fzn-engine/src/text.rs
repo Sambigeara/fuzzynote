@@ -7,6 +7,21 @@ use crate::time::{self, Day};
 /// Terms longer than this are dropped; nothing that long is a word.
 pub const MAX_TERM_CHARS: usize = 64;
 
+/// A text lowercased a character at a time, so that it has as many characters as the text and
+/// its lines and words fall where the text's do. A phrase and letters are matched against this.
+pub(crate) fn lowercase(text: &str) -> String {
+    text.chars().map(lower).collect()
+}
+
+/// A character lowercased, as one character.
+pub(crate) fn lower(c: char) -> char {
+    if c.is_ascii() {
+        c.to_ascii_lowercase()
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
+}
+
 /// Lowercased words in order, per Unicode word segmentation. A URL contributes only its host
 /// (without `www.`), so that "same site" counts and scheme fragments do not. Single characters
 /// are dropped.
@@ -566,6 +581,15 @@ fn date_named(word: &str, today: Day) -> Option<Day> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_text_lowercased_keeps_every_character_where_it_was() {
+        let text = "Boiler SERVICE İ Straße\nÉté";
+        let lower = lowercase(text);
+        assert_eq!(lower, "boiler service i straße\nété");
+        assert_eq!(lower.chars().count(), text.chars().count());
+        assert_eq!(head(&lower), "boiler service i straße");
+    }
 
     #[test]
     fn heads_and_bodies() {

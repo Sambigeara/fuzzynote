@@ -20,6 +20,7 @@
 //! log and an export differ by the envelope and nothing else. Logs from before sealing hold plain
 //! lines, and those are read as they are.
 
+use std::cell::{Cell, OnceCell};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashSet};
 
@@ -229,6 +230,27 @@ fn past(latest: Option<i64>, now: Moment) -> Moment {
 #[derive(Default)]
 pub struct Notes {
     newest: BTreeMap<String, Record>,
+    /// The order, once it has been walked. Walking it is most of what an empty line, a label
+    /// alone or the way back costs, and it changes only when a note arrives or a version moves
+    /// one, so it is kept until then.
+    order: OnceCell<Order>,
+}
+
+/// The notes put into the kept order as they arrive, between two reads of it, before it is
+/// dropped to be walked once when next read. Putting one in costs a pass over the notes, which is
+/// nothing beside a walk for the one Enter writes, and a whole space arriving at once is better
+/// walked once than slotted in a note at a time.
+const ARRIVALS_KEPT: usize = 16;
+
+/// The order as it is kept: each note named by where it is in id order; the notes that notes are
+/// placed after and that are not held, which the walk would have to be made again for; whether
+/// a cycle was walked, whose head a newer note under it may change; and how many notes have been
+/// put in as they arrived since it was last read.
+struct Order {
+    walk: Vec<u32>,
+    waiting: HashSet<String>,
+    cyclic: bool,
+    arrivals: Cell<usize>,
 }
 
 impl Notes {
@@ -240,9 +262,14 @@ impl Notes {
     /// either.
     pub fn apply(&mut self, record: Record) -> bool {
         let Some(held) = self.newest.get_mut(&record.id) else {
-            self.newest.insert(record.id.clone(), record);
+            let id = record.id.clone();
+            self.newest.insert(id.clone(), record);
+            if !self.arrived(&id) {
+                self.order.take();
+            }
             return true;
         };
+        let was = (held.after.clone(), held.rank());
         match (record.supersedes(held), record.moves(held)) {
             (false, false) => return false,
             (true, true) => *held = record,
@@ -255,6 +282,57 @@ impl Notes {
             }
             (false, true) => (held.after, held.placed) = (record.after, record.placed),
         }
+        // A version that leaves the note where it was, as typing into it does, leaves the order
+        // as it was too, and the walk is kept.
+        if (held.after.as_ref(), held.rank()) != (was.0.as_ref(), was.1) {
+            self.order.take();
+        }
+        true
+    }
+
+    /// Puts a note that has just arrived into the order kept, where the walk would put it, when
+    /// that is plain: no note was placed after it, the order holds no cycle, and it is the newest
+    /// placed where it lands, so that it goes first there, as a note written here always is. Says
+    /// whether it did, or whether there was nothing kept to put it in. Past a few arrivals since
+    /// the order was read it does not, and the order is walked again when next read.
+    fn arrived(&mut self, id: &str) -> bool {
+        let Some(order) = self.order.get_mut() else {
+            return true;
+        };
+        if order.cyclic || order.waiting.contains(id) || order.arrivals.get() >= ARRIVALS_KEPT {
+            return false;
+        }
+        order.arrivals.set(order.arrivals.get() + 1);
+        let all: Vec<&Record> = self.newest.values().collect();
+        let Ok(at) = all.binary_search_by(|r| r.id.as_str().cmp(id)) else {
+            return false;
+        };
+        let newer = |a: usize, b: usize| (all[a].rank(), a) > (all[b].rank(), b);
+        for i in &mut order.walk {
+            if *i as usize >= at {
+                *i += 1;
+            }
+        }
+        let after = all[at].after.as_deref();
+        let under = after.and_then(|after| all.binary_search_by(|r| r.id.as_str().cmp(after)).ok());
+        // What it goes before: the first of the notes placed where it is, if there are any.
+        let (slot, first) = match under {
+            None => (0, order.walk.first().map(|&i| i as usize)),
+            Some(under) => {
+                let Some(p) = order.walk.iter().position(|&i| i as usize == under) else {
+                    return false;
+                };
+                let next = order.walk.get(p + 1).map(|&i| i as usize);
+                (p + 1, next.filter(|&i| all[i].after.as_deref() == after))
+            }
+        };
+        if first.is_some_and(|first| !newer(at, first)) {
+            return false;
+        }
+        if let (None, Some(after)) = (under, after) {
+            order.waiting.insert(after.to_owned());
+        }
+        order.walk.insert(slot, at as u32);
         true
     }
 
@@ -321,74 +399,98 @@ impl Notes {
     /// Two devices moving at once can make a cycle, which nothing at the top reaches. It is
     /// listed as if it were at the top, with what hangs from it, so that no note is lost.
     pub fn order(&self) -> Vec<&Record> {
-        // A note is named by where it is in id order, the order the notes are held in, so that
-        // nothing is hashed: this runs each time the list is made.
         let all: Vec<&Record> = self.newest.values().collect();
-        let under: Vec<Option<usize>> = all
-            .iter()
-            .map(|r| {
-                let after = r.after.as_deref()?;
-                all.binary_search_by(|held| held.id.as_str().cmp(after))
-                    .ok()
-            })
-            .collect();
-        let mut tops = Vec::new();
-        let mut hanging = vec![Vec::new(); all.len()];
-        for (i, after) in under.iter().enumerate() {
-            match after {
-                Some(after) => hanging[*after].push(i),
-                None => tops.push(i),
+        let order = self.order.get_or_init(|| walk_order(&all));
+        order.arrivals.set(0);
+        order.walk.iter().map(|&i| all[i as usize]).collect()
+    }
+}
+
+/// The order of `all`, which is in id order, each note named by where it is there, so that
+/// nothing is hashed.
+fn walk_order(all: &[&Record]) -> Order {
+    // The ids side by side, since finding each note's place by them is most of the walk.
+    let ids: Vec<&str> = all.iter().map(|r| r.id.as_str()).collect();
+    let under: Vec<Option<usize>> = all
+        .iter()
+        .map(|r| ids.binary_search(&r.after.as_deref()?).ok())
+        .collect();
+    let waiting = all
+        .iter()
+        .zip(&under)
+        .filter(|(_, under)| under.is_none())
+        .filter_map(|(r, _)| r.after.clone())
+        .collect();
+    let mut tops = Vec::new();
+    let mut hanging = vec![Vec::new(); all.len()];
+    for (i, after) in under.iter().enumerate() {
+        match after {
+            Some(after) => hanging[*after].push(i),
+            None => tops.push(i),
+        }
+    }
+    // The newest placed first, and of two placed in the same millisecond the later id, which is
+    // the later in `all`.
+    let rank: Vec<_> = all
+        .iter()
+        .enumerate()
+        .map(|(i, r)| Reverse((r.rank(), i)))
+        .collect();
+    let newest = |a: &usize, b: &usize| rank[*a].cmp(&rank[*b]);
+    tops.sort_unstable_by(newest);
+    for notes in &mut hanging {
+        notes.sort_unstable_by(newest);
+    }
+    let mut seen = vec![false; all.len()];
+    let mut walked = Vec::with_capacity(all.len());
+    let mut stack = Vec::new();
+    let mut walk = |head: usize, seen: &mut [bool], walked: &mut Vec<usize>| {
+        stack.push(head);
+        while let Some(i) = stack.pop() {
+            if !std::mem::replace(&mut seen[i], true) {
+                walked.push(i);
+                stack.extend(hanging[i].iter().rev());
             }
         }
-        // The newest placed first, and of two placed in the same millisecond the later id.
-        let rank: Vec<_> = all.iter().map(|r| Reverse((r.rank(), &r.id))).collect();
-        let newest = |a: &usize, b: &usize| rank[*a].cmp(&rank[*b]);
-        tops.sort_unstable_by(newest);
-        for notes in &mut hanging {
-            notes.sort_unstable_by(newest);
-        }
-        let mut seen = vec![false; all.len()];
-        let mut walked = Vec::with_capacity(all.len());
-        let walk = |head: usize, seen: &mut [bool], walked: &mut Vec<usize>| {
-            let mut stack = vec![head];
-            while let Some(i) = stack.pop() {
-                if !std::mem::replace(&mut seen[i], true) {
-                    walked.push(i);
-                    stack.extend(hanging[i].iter().rev());
-                }
+    };
+    let mut runs = Vec::with_capacity(tops.len());
+    for &top in &tops {
+        let start = walked.len();
+        walk(top, &mut seen, &mut walked);
+        runs.push((top, start..walked.len()));
+    }
+    let cyclic = walked.len() < all.len();
+    if cyclic {
+        let mut strays: Vec<usize> = (0..all.len()).filter(|&i| !seen[i]).collect();
+        strays.sort_unstable_by(newest);
+        for stray in strays {
+            if seen[stray] {
+                continue;
             }
-        };
-        let mut runs = Vec::with_capacity(tops.len());
-        for &top in &tops {
+            // A note nothing at the top reaches hangs from a cycle. The cycle is walked
+            // from the note that climbing from this one comes back to.
+            let mut climbed = HashSet::new();
+            let mut head = stray;
+            while climbed.insert(head) {
+                // It cannot fire: what hangs from a walked note is walked, so every note
+                // above an unwalked one is unwalked too, and no unwalked note is a top.
+                head = under[head].expect("only a note at the top hangs from nothing");
+            }
             let start = walked.len();
-            walk(top, &mut seen, &mut walked);
-            runs.push((top, start..walked.len()));
+            walk(head, &mut seen, &mut walked);
+            runs.push((head, start..walked.len()));
         }
-        if walked.len() < all.len() {
-            let mut strays: Vec<usize> = (0..all.len()).filter(|&i| !seen[i]).collect();
-            strays.sort_unstable_by(newest);
-            for stray in strays {
-                if seen[stray] {
-                    continue;
-                }
-                // A note nothing at the top reaches hangs from a cycle. The cycle is walked
-                // from the note that climbing from this one comes back to.
-                let mut climbed = HashSet::new();
-                let mut head = stray;
-                while climbed.insert(head) {
-                    // It cannot fire: what hangs from a walked note is walked, so every note
-                    // above an unwalked one is unwalked too, and no unwalked note is a top.
-                    head = under[head].expect("only a note at the top hangs from nothing");
-                }
-                let start = walked.len();
-                walk(head, &mut seen, &mut walked);
-                runs.push((head, start..walked.len()));
-            }
-            runs.sort_by(|(a, _), (b, _)| newest(a, b));
-        }
-        runs.into_iter()
-            .flat_map(|(_, run)| walked[run].iter().map(|&i| all[i]))
-            .collect()
+        runs.sort_by(|(a, _), (b, _)| newest(a, b));
+    }
+    let walk = runs
+        .into_iter()
+        .flat_map(|(_, run)| walked[run].iter().map(|&i| i as u32))
+        .collect();
+    Order {
+        walk,
+        waiting,
+        cyclic,
+        arrivals: Cell::new(0),
     }
 }
 
@@ -657,6 +759,135 @@ mod tests {
         assert_eq!(order(&notes), ["house", "boiler", "garden"]);
         notes.apply(placed("oil", Some("garden"), 40));
         assert_eq!(order(&notes), ["house", "boiler", "garden", "oil"]);
+    }
+
+    #[test]
+    fn the_order_kept_between_lists_follows_every_version_that_moves_a_note() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 20));
+        notes.apply(placed("house", None, 30));
+        assert_eq!(order(&notes), ["house", "boiler"]);
+        notes.apply(Record {
+            stamp: Some(Moment::utc(40)),
+            ..placed("boiler", None, 20)
+        });
+        assert_eq!(
+            order(&notes),
+            ["house", "boiler"],
+            "a new text moves nothing"
+        );
+        notes.apply(placed("garden", Some("boiler"), 50));
+        assert_eq!(order(&notes), ["house", "boiler", "garden"], "a new note");
+        notes.apply(placed("boiler", None, 60));
+        assert_eq!(
+            order(&notes),
+            ["boiler", "garden", "house"],
+            "moved to the top"
+        );
+        notes.apply(placed("boiler", Some("house"), 55));
+        assert_eq!(
+            order(&notes),
+            ["boiler", "garden", "house"],
+            "an older place is not taken"
+        );
+        notes.apply(Record {
+            deleted: true,
+            stamp: Some(Moment::utc(70)),
+            ..placed("garden", Some("boiler"), 50)
+        });
+        assert_eq!(order(&notes), ["boiler", "garden", "house"], "a tombstone");
+        let mut unplaced = rec("oil", "oil", 10);
+        notes.apply(unplaced.clone());
+        unplaced.updated = Some(Moment::utc(90));
+        unplaced.created = None;
+        notes.apply(unplaced);
+        assert_eq!(
+            order(&notes)[0],
+            "oil",
+            "a note with nothing but its last change to place it moves with it"
+        );
+        notes.apply(placed("seeds", Some("shed"), 100));
+        assert_eq!(order(&notes)[0], "seeds", "after a note not here yet");
+        notes.apply(placed("shed", Some("house"), 110));
+        assert_eq!(
+            order(&notes)[3..],
+            ["house", "shed", "seeds"],
+            "and under it once it is"
+        );
+    }
+
+    #[test]
+    fn the_order_kept_is_the_order_walked_afresh_whatever_arrives_in_whatever_order() {
+        for seed in 0..250u64 {
+            let mut seed = seed;
+            let mut next = |n: u64| {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (seed >> 33) % n
+            };
+            let mut notes = Notes::new();
+            let mut versions = Vec::new();
+            for step in 0..120 {
+                let id = format!("n{}", next(40));
+                let after = match next(4) {
+                    0 => None,
+                    _ => Some(format!("n{}", next(45))),
+                };
+                let at = match next(3) {
+                    0 => 1000 + step,
+                    _ => next(1000) as i64,
+                };
+                let version = Record {
+                    stamp: Some(Moment::utc(at)),
+                    deleted: next(10) == 0,
+                    ..placed(&id, after.as_deref(), at)
+                };
+                notes.apply(version.clone());
+                versions.push(version);
+                // Read only now and then, so that several notes arrive between two reads.
+                if next(3) == 0 || step == 119 {
+                    let mut afresh = Notes::new();
+                    for version in &versions {
+                        afresh.apply(version.clone());
+                    }
+                    assert_eq!(order(&notes), order(&afresh), "seed {seed}, step {step}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_note_written_under_a_cycle_is_listed_as_a_walk_afresh_lists_it() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 10));
+        notes.apply(placed("house", Some("garden"), 20));
+        notes.apply(placed("garden", Some("house"), 30));
+        notes.apply(placed("oil", Some("garden"), 40));
+        assert_eq!(order(&notes), ["garden", "oil", "house", "boiler"]);
+        notes.apply(placed("pump", Some("house"), 50));
+        assert_eq!(order(&notes), ["house", "pump", "garden", "oil", "boiler"]);
+    }
+
+    #[test]
+    fn a_space_arriving_at_once_is_walked_once_and_not_slotted_in_a_note_at_a_time() {
+        let mut notes = Notes::new();
+        notes.apply(placed("boiler", None, 10));
+        order(&notes);
+        for n in 0..ARRIVALS_KEPT {
+            notes.apply(placed(&format!("n{n:02}"), None, 100 + n as i64));
+            assert!(notes.order.get().is_some(), "slotted in");
+        }
+        notes.apply(placed("pump", None, 200));
+        assert!(
+            notes.order.get().is_none(),
+            "dropped, to be walked when read"
+        );
+        notes.apply(placed("oil", None, 210));
+        assert_eq!(order(&notes)[..2], ["oil", "pump"]);
+        notes.apply(placed("shed", None, 220));
+        assert!(notes.order.get().is_some(), "a read starts the count again");
+        assert_eq!(order(&notes)[0], "shed");
     }
 
     #[test]

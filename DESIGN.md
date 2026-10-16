@@ -139,6 +139,8 @@ the session is the part that finds things, in three parts.
 **Index.** A Unicode-aware tokeniser, lowercased, with a URL counted as its host; no stemming.
 An inverted index with term frequencies and document lengths, a trigram index over the
 vocabulary for fuzzy matching, and a label index for tags, people, days and the open tasks' box.
+Beside each note's text is the text lowercased once, a character at a time, which a phrase and
+letters are matched against, so that a keystroke does not lowercase every note it asks.
 All update incrementally on every note change. The old corpus is 8.7k notes, 284k tokens and 12k
 distinct terms; the index for a space ten times that size fits comfortably in memory.
 
@@ -225,7 +227,11 @@ Nothing is added to the engine until daily use asks for it.
   it writes a version of every note it places; moving the top up, or the last down, writes
   nothing. Undo takes back only the side a change made, so undoing a move leaves what has been
   written since and undoing an edit leaves where the note has been moved since. The order is
-  walked afresh each time the list is made and nothing is cached.
+  kept between lists and walked again only when a version moves a note or a note arrives that
+  does not plainly go first where it lands, as one written here always does; typing into a note
+  keeps it. While the space holds a cycle, or once more than a few notes have arrived since it
+  was last read, as when a space comes from the relay at once, it is walked again when next
+  read.
 - **Lines are sealed before they are kept.** What goes into a log, and so to the relay, is not
   the snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is a random 24-byte nonce
   and then the snapshot encrypted with XChaCha20-Poly1305 under the space's key, base64. The key
@@ -1704,6 +1710,24 @@ repeats it only where the reason needs it.
   key measured took more than two frames from its press to its paint, Playwright's hop included. A
   narrow page scrolls the document rather than the list, and still makes every row until its layout
   is redone.
+
+- **The order is kept.** Decided 2026-10-16, in the checkpoint review, revising "Where a note sits
+  is kept" where it says nothing is cached. The walk of the order was most of what the most pressed
+  keys cost: an empty line, a label alone, the way back and the return to the line each walked it,
+  4 to 9 ms over 30,000 notes, which on a phone, two to four times slower, is a dropped frame. The
+  decision not to cache was made for the desktop, before the page was meant for a phone. The order
+  changes only when a version moves a note or a note arrives, so the walk is kept until then, and a
+  note that arrives as the newest where it lands, as one written here always does, is put into the
+  kept walk where the walk would put it, unless a note was waiting for it. Not when the space holds
+  a cycle, whose head a newer note under it can change, and not past sixteen arrivals between two
+  reads: putting a note in costs a pass over the notes, so a space arriving whole is walked once
+  when it is next read, 30,000 notes in 19 ms, where slotting each in took over a second. With it a
+  phrase and letters read a lowercased copy of each text made once, where each keystroke lowercased
+  every note it asked. On the synthetic space of 30,000 notes an empty line went from 8 ms to under
+  1, a label alone from 7 to 3, Enter from 9 to 3, letters from 18 to 8 and a phrase from 17 to 8.
+  What is still over 5 ms there is a word of two letters being typed, whose prefix expands to
+  hundreds of words; bounding that changes the ranking, and waits for a measurement on a real
+  space.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

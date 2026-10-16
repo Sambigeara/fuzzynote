@@ -97,20 +97,28 @@ impl Session {
     /// Notes found by their letters, best first: by what the letters scored, then the shorter
     /// head, then the order the space keeps them in.
     fn by_letters<'a>(&self, mut hits: Vec<Hit<'a>>) -> Vec<Hit<'a>> {
-        let mut rank: HashMap<&str, usize> = hits
+        // There are few hits and many notes, so each note in the order is looked for among the
+        // hits, and by where it is held rather than by its id, which would be a read of every id.
+        let mut rank: Vec<(*const Record, usize)> = hits
             .iter()
-            .map(|hit| (hit.note.id.as_str(), usize::MAX))
+            .filter_map(|hit| Some((self.notes.get(&hit.note.id)? as *const Record, usize::MAX)))
             .collect();
+        rank.sort_unstable();
         for (at, record) in self.notes.order().into_iter().enumerate() {
-            if let Some(held) = rank.get_mut(record.id.as_str()) {
-                *held = at;
+            let held = record as *const Record;
+            if let Ok(i) = rank.binary_search_by_key(&held, |&(r, _)| r) {
+                rank[i].1 = at;
             }
         }
         hits.sort_by_cached_key(|hit| {
+            let at = self.notes.get(&hit.note.id).and_then(|r| {
+                let i = rank.binary_search_by_key(&(r as *const Record), |&(r, _)| r);
+                i.ok().map(|i| rank[i].1)
+            });
             (
                 Reverse(hit.score as i32),
                 hit.note.head().chars().count(),
-                rank[hit.note.id.as_str()],
+                at.unwrap_or(usize::MAX),
             )
         });
         hits

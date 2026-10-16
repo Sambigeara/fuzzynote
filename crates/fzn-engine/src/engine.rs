@@ -13,6 +13,16 @@ use crate::time::Day;
 struct Doc {
     note: Note,
     facts: Facts,
+    /// The text lowercased, made once here rather than for each note a phrase or letters ask of
+    /// on each keystroke.
+    lower: String,
+}
+
+impl Doc {
+    /// The head, lowercased.
+    fn lower_head(&self) -> &str {
+        text::head(&self.lower)
+    }
 }
 
 /// Notes plus the index over them. Create one per space.
@@ -73,11 +83,14 @@ struct Held<'q> {
 }
 
 impl Held<'_> {
-    fn holds(&self, d: DocId, note: &Note) -> bool {
+    fn holds(&self, d: DocId, doc: &Doc) -> bool {
         self.carrying
             .as_ref()
             .is_none_or(|docs| docs.binary_search(&d).is_ok())
-            && self.asked.iter().all(|hold| hold.held_by(note))
+            && self
+                .asked
+                .iter()
+                .all(|hold| hold.held_by(&doc.note, &doc.lower))
     }
 
     /// The notes that may hold it, of `docs`: those carrying its labels, or all of them.
@@ -155,7 +168,8 @@ impl Engine {
             }
         };
         self.index.add(doc, &tokens, &labels);
-        self.docs[doc as usize] = Some(Doc { note, facts });
+        let lower = text::lowercase(&note.text);
+        self.docs[doc as usize] = Some(Doc { note, facts, lower });
     }
 
     /// Removes a note and returns it.
@@ -185,7 +199,7 @@ impl Engine {
         held.within(self.docs.len())
             .filter_map(|d| {
                 let doc = self.docs[d as usize].as_ref()?;
-                held.holds(d, &doc.note).then_some(&doc.note)
+                held.holds(d, doc).then_some(&doc.note)
             })
             .collect()
     }
@@ -232,10 +246,9 @@ impl Engine {
                 if !opts.include_archived && doc.note.archived {
                     return None;
                 }
-                let head = doc.note.head();
+                let head = doc.lower_head();
                 let score = letters.score(head)?;
-                held.holds(d, &doc.note)
-                    .then(|| (score, head.chars().count(), d))
+                held.holds(d, doc).then(|| (score, head.chars().count(), d))
             })
             .collect();
         found.sort_unstable_by_key(|&(score, length, d)| (Reverse(score), length, d));
@@ -356,12 +369,12 @@ impl Engine {
         else {
             return false;
         };
-        if query.is_empty() || !self.held(query).holds(d, &doc.note) {
+        if query.is_empty() || !self.held(query).holds(d, doc) {
             return false;
         }
         if query.letters {
             return score::Letters::new(&query.free)
-                .score(doc.note.head())
+                .score(doc.lower_head())
                 .is_some();
         }
         let (terms, prefix) = typed_words(&query.free);
@@ -371,6 +384,14 @@ impl Engine {
         }
         terms.iter().all(|t| names.contains(t))
             && prefix.is_none_or(|p| names.iter().any(|n| n.starts_with(&p)))
+    }
+
+    /// Whether a note's text has this in it, in any case.
+    pub(crate) fn contains(&self, id: &str, typed: &str) -> bool {
+        self.by_id
+            .get(id)
+            .and_then(|&d| self.docs[d as usize].as_ref())
+            .is_some_and(|doc| doc.lower.contains(&text::lowercase(typed)))
     }
 
     /// A note's head and the notes that link to it.
@@ -393,7 +414,7 @@ impl Engine {
             .iter()
             .filter_map(|&d| {
                 let doc = self.docs[d as usize].as_ref()?;
-                held.holds(d, &doc.note)
+                held.holds(d, doc)
                     .then(|| (&doc.note, link_reason(&ties.links_in, &ties.links_out, d)))
             })
             .collect()
@@ -538,7 +559,7 @@ impl Engine {
                 .into_iter()
                 .filter(|&d| {
                     self.docs[d as usize].as_ref().is_some_and(|doc| {
-                        (include_archived || !doc.note.archived) && held.holds(d, &doc.note)
+                        (include_archived || !doc.note.archived) && held.holds(d, doc)
                     })
                 })
                 .collect()
@@ -627,7 +648,7 @@ impl Engine {
                 // suggestion past the limit is not asked whether it holds, since a phrase reads
                 // the whole text.
                 let suggested = !named(d) && !fact(d);
-                if suggested && suggestions == opts.limit || !held.holds(d, &doc.note) {
+                if suggested && suggestions == opts.limit || !held.holds(d, doc) {
                     return None;
                 }
                 suggestions += usize::from(suggested);

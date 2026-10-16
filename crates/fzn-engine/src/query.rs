@@ -90,17 +90,17 @@ impl Label {
 
 /// What a note has to hold that the index does not list.
 pub(crate) enum Hold {
-    /// Its text has this in it, lowercased.
+    /// Its text has this in it, both lowercased as `text::lowercase` does.
     Phrase(String),
     /// It was written in this span.
     Span(Span),
 }
 
 impl Hold {
-    /// Whether a note holds it.
-    pub(crate) fn held_by(&self, note: &Note) -> bool {
+    /// Whether a note holds it, given the note and its text lowercased.
+    pub(crate) fn held_by(&self, note: &Note, lower: &str) -> bool {
         match self {
-            Hold::Phrase(phrase) => note.text.to_lowercase().contains(phrase.as_str()),
+            Hold::Phrase(phrase) => lower.contains(phrase.as_str()),
             Hold::Span(span) => note.created.is_some_and(|written| span.holds(written)),
         }
     }
@@ -197,7 +197,7 @@ impl Query {
                     None => phrase.push_str(trailing),
                 }
                 if !phrase.trim().is_empty() {
-                    query.holds.push(Hold::Phrase(phrase.to_lowercase()));
+                    query.holds.push(Hold::Phrase(text::lowercase(&phrase)));
                 }
                 i = end + 1;
                 continue;

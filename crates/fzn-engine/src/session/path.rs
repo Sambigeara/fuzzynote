@@ -177,10 +177,7 @@ impl Session {
         let today = self.today();
         let typed = text::expand_date_words(self.line.trim(), today);
         let searched = typed.is_empty()
-            || self
-                .notes
-                .get(&id)
-                .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
+            || self.engine.contains(&id, &typed)
             || self.engine.searched(&id, &self.parsed);
         let head = self.step_name(&id).unwrap_or_else(|| row.head.clone());
         let step = Step::Note {

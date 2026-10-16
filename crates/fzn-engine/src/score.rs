@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::index::{DocId, Index, TermId};
+use crate::text;
 use crate::time::{self, Day};
 
 /// Explicit structure a note carries, indexed for exact lookup, and in order for a tag or a
@@ -556,13 +557,14 @@ impl Letters {
         Self {
             words: typed
                 .split_whitespace()
-                .map(|word| word.chars().map(lower).collect())
+                .map(|word| word.chars().map(text::lower).collect())
                 .collect(),
             best: Vec::new(),
         }
     }
 
-    /// What the letters score in a head, every word of them, or None when one is not there.
+    /// What the letters score in a head, lowercased as `text::lowercase` does, every word of
+    /// them, or None when one is not there.
     pub(crate) fn score(&mut self, head: &str) -> Option<i32> {
         let mut score = 0;
         for word in &self.words {
@@ -582,7 +584,7 @@ fn letters(head: &str, word: &[char], best: &mut Vec<Option<(i32, i32)>>) -> Opt
     // Most heads have not got the letters at all, and saying so takes one pass.
     let mut wanted = word.iter().peekable();
     for c in head.chars() {
-        wanted.next_if(|&&w| w == lower(c));
+        wanted.next_if(|&&w| w == c);
     }
     if wanted.peek().is_some() {
         return None;
@@ -637,22 +639,14 @@ fn next_letter(
     }
 }
 
-/// Each letter of a head, lowercased, with what it earns for starting a word.
+/// Each letter of a lowercased head, with what it earns for starting a word.
 fn places(head: &str) -> impl Iterator<Item = (char, i32)> + '_ {
     let mut in_word = false;
     head.chars().map(move |c| {
         let start = if in_word { 0 } else { WORD_START };
         in_word = c.is_alphanumeric();
-        (lower(c), start)
+        (c, start)
     })
-}
-
-fn lower(c: char) -> char {
-    if c.is_ascii() {
-        c.to_ascii_lowercase()
-    } else {
-        c.to_lowercase().next().unwrap_or(c)
-    }
 }
 
 /// Weighted sum, best first, ties broken by doc id for determinism. A note that scores nothing
