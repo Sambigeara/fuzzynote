@@ -261,7 +261,8 @@ function read(node, text) {
 }
 
 // A link to the address a node gives, reading as the address, if it is one the page will follow:
-// on the web or to mail. A link's address is the one after its text, which may hold one too. An
+// a whole address on the web, a host after `//`, or one to mail. `http:boiler` is not one, and
+// a browser would take it as a path on the relay. A link's address is the one after its text, which may hold one too. An
 // address read as itself is shown without its scheme, as an address bar shows one, since the
 // scheme is the part nobody reads; the whole of it is there when the pointer rests on it.
 function anchor(node, text) {
@@ -271,7 +272,7 @@ function anchor(node, text) {
     url = node.getChildren('URL').find((after) => after.from > end);
   }
   const address = url ? text.slice(url.from, url.to) : '';
-  if (!/^(https?|mailto):/i.test(address)) return null;
+  if (!/^(?:https?:\/\/[^/?#\s]|mailto:\S)/i.test(address)) return null;
   const a = el('a');
   a.href = address;
   a.target = '_blank';

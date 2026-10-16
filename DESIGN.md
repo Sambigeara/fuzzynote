@@ -739,27 +739,28 @@ line, rendered, under the path and in the path's smaller size, clamped to six li
 a tap, so that where you are is all above the line and what is found follows it directly. The margin
 grows downwards only for a body longer than it has room for.
 
-*Markdown.* A body is rendered where it is only read and styled where it is written; the note
-stays plain text, and neither the engine nor the terminal reads markdown. Read, a body shows
-headings, paragraphs keeping the lines they were written on, lists, tasks as a drawn box, ticked
-and faint when done and never pressed, quotes, rules, tables with their columns aligned, code
-highlighted by its language, and in a line emphasis, strong text, code, strikethrough and
-links, built as nodes and never as markup. A link goes only to `http:`, `https:` or `mailto:`,
-in a tab of its own and with no referrer; any other address, a link by reference, raw HTML, an
-entity such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an
-image is never loaded but is a link reading its alt text. A row's head reads as one line of the
-same markdown, so that a line reads one way in the list and beside it: emphasis, strong text,
-code, strikethrough, links and bare addresses, an image as a link reading its alt text, escapes
-read and a leading heading mark dropped, and a line that would be another kind of block, a list
-item or a quote, shown as typed; the row under the cursor is its text box and shows the source.
-Tags, people and dates are not marked. Highlighting is in paper, ink and the two greys:
-keywords and definitions heavier, strings, numbers and constants soft, comments faint and
-slanted, punctuation and a diff's removed lines faint; code read is set in ink. A link is in the
-colour of what it is in, underlined a pixel thin in a tint of that colour and clear of the
-descenders, in full under the pointer; an address read as itself is shown without its scheme,
-`example.org/garden`, and whole under the pointer. A long body is rendered at first only as far
-as it shows, its first 5,000 letters, and whole once the page is idle; a head with no character
-that can begin a mark is not parsed; nested past what the stack holds, a body is read as typed.
+*Markdown.* A body is rendered where it is only read and styled where it is written; the note stays
+plain text, and neither the engine nor the terminal reads markdown. Read, a body shows headings,
+paragraphs keeping the lines they were written on, lists, tasks as a drawn box, ticked and faint
+when done and never pressed, quotes, rules, tables with their columns aligned, code highlighted by
+its language, and in a line emphasis, strong text, code, strikethrough and links, built as nodes and
+never as markup. A link goes only to a whole address, `http://` or `https://` and a host, or
+`mailto:` and someone, in a tab of its own and with no referrer, since a browser takes `http:boiler`
+as a path on the relay; any other address, a link by reference, raw HTML, an entity such as `&amp;`,
+and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an image is never loaded but is
+a link reading its alt text. A row's head reads as one line of the same markdown, so that a line
+reads one way in the list and beside it: emphasis, strong text, code, strikethrough, links and bare
+addresses, an image as a link reading its alt text, escapes read and a leading heading mark dropped,
+and a line that would be another kind of block, a list item or a quote, shown as typed; the row
+under the cursor is its text box and shows the source. Tags, people and dates are not marked.
+Highlighting is in paper, ink and the two greys: keywords and definitions heavier, strings, numbers
+and constants soft, comments faint and slanted, punctuation and a diff's removed lines faint; code
+read is set in ink. A link is in the colour of what it is in, underlined a pixel thin in a tint of
+that colour and clear of the descenders, in full under the pointer; an address read as itself is
+shown without its scheme, `example.org/garden`, and whole under the pointer. A long body is rendered
+at first only as far as it shows, its first 5,000 letters, and whole once the page is idle; a head
+with no character that can begin a mark is not parsed; nested past what the stack holds, a body is
+read as typed.
 
 *Keys.* The four that are the app are the same: type, Enter, Escape and the arrows. The
 terminal's chords are not here, because a browser keeps most of them for itself, but two it

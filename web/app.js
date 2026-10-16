@@ -984,8 +984,6 @@ const takesFocus = (field) =>
   !$('sheet-foot').contains(document.activeElement);
 
 function paintRows() {
-  const zoomed = view.path.length > 0;
-  const searching = view.line.trim() !== '';
   const field = view.field;
   const fieldId = view.cursor != null && field ? view.rows[view.cursor]?.id ?? null : null;
   const [from, to] = [box.selectionStart, box.selectionEnd];
@@ -1040,8 +1038,9 @@ function paintRows() {
     // its head is a text box, which an option of a listbox could not hold.
     if (selected && !li.hasAttribute('aria-current')) li.setAttribute('aria-current', 'true');
     else if (!selected && li.hasAttribute('aria-current')) li.removeAttribute('aria-current');
-    // In a place, what the line finds in it is set apart from what it only finds there.
-    const apart = zoomed && searching && !row.linked && i > 0 && view.rows[i - 1].linked;
+    // In a place, what the line finds in it is set apart from what it only finds there, where the
+    // engine says the finds begin.
+    const apart = i === view.finds_from;
     li.classList.toggle('apart', apart);
     li.classList.toggle('archived', row.archived);
     // A new note with nothing in it has nowhere to go in to, so its row has no arrow.
