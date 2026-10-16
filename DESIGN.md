@@ -699,9 +699,9 @@ behind it, does not, and nor does leaving the window, though the tab going out o
 it holds. The words in the foot stay above
 the dimming, since they are about the note. There is no second editor: the sheet is the body's
 editor, for a long document too, and with it shut the head is written in its row. While the body
-is open the sheet holds a CodeMirror editor, loaded the first time one opens and fetched under
-idle time once the cursor is on a row: the markdown styled where it stands with every mark in
-sight, the marks in the faint grey and the text in ink, headings and strong text heavier,
+is open the sheet holds a CodeMirror editor, fetched after the first pause in keys once the page
+has painted, or when a body opens if that is sooner: the markdown styled where it stands with every
+mark in sight, the marks in the faint grey and the text in ink, headings and strong text heavier,
 emphasis slanted, code in the monospace, soft wrap, step undo, a grey selection, and vim mode for
 the browser that asked for it with the word `vim` in the foot. In vim mode Esc is vim's alone;
 `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back

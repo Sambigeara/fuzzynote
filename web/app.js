@@ -256,13 +256,7 @@ function look() {
   // The line is the person's while they type. It is only set when the engine has changed it, as
   // it does on the way into a note and out of one, and when the line is written.
   if (line.value !== view.line) line.value = view.line;
-  if (!editor) {
-    if (view.field?.whole) loadEditor();
-    else if (view.cursor != null && !prefetched) {
-      prefetched = true;
-      soon(loadEditor);
-    }
-  }
+  if (!editor && view.field?.whole) loadEditor();
   if (place(view) !== was) safely();
   else paintSoon();
   keepHistory();
@@ -615,18 +609,27 @@ function follow() {
 }
 
 // The body's editor, which takes the box's place while a body is open. It is a module of its own,
-// CodeMirror with vim's keys, fetched the first time a body opens, or sooner when the page is
-// idle once the cursor is on a row, and never at first paint. Until it is here, and for good if
-// it cannot be fetched, the box is the body as it always was.
+// CodeMirror with vim's keys, fetched once the person has paused, no key for a little under two
+// seconds after the first paint, and then when the page is idle; or at once if a body opens first.
+// Never at first paint. Asking for it when the cursor first reached a row ran its 60 to 100 ms of
+// evaluation just as the person began to walk the list, and asking at the first idle moment ran it
+// on the first letters of a search typed as the page opened: an idle main thread is not a pause.
+// Until it is here, and for good if it cannot be fetched, the box is the body as it always was.
 let editor = null;
 let editorSoon = null;
-let prefetched = false;
 let vimOn = kept('fzn.vim') === 'on';
 // Set while `:w` closes the body and opens it again, so that the editor is left as it is.
 let keeping = false;
 
-const soon = (task) =>
-  window.requestIdleCallback ? requestIdleCallback(() => task()) : setTimeout(task, 1500);
+const soon = (task, timeout) =>
+  window.requestIdleCallback ? requestIdleCallback(() => task(), timeout && { timeout }) : setTimeout(task, 1500);
+
+let pause = 0;
+function prefetchOnPause() {
+  if (editorSoon) return document.removeEventListener('keydown', prefetchOnPause, true);
+  clearTimeout(pause);
+  pause = setTimeout(() => soon(loadEditor, 8000), 1750);
+}
 
 function loadEditor() {
   editorSoon ??= import('./vendor/editor.js').then(
@@ -1411,6 +1414,8 @@ async function start() {
   history.replaceState({ ...entry(), depth }, '');
   look();
   line.focus();
+  requestAnimationFrame(prefetchOnPause);
+  document.addEventListener('keydown', prefetchOnPause, true);
   connect();
   // A lost relay is tried again as soon as there is reason to think it is back.
   const retry = () => {
