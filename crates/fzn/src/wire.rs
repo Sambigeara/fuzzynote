@@ -21,6 +21,10 @@ pub const TICK: Duration = Duration::from_millis(50);
 /// How long a connection has to be made and greeted.
 pub const GREETING: Duration = Duration::from_secs(5);
 pub const PING: Duration = Duration::from_secs(15);
+/// The most one message may hold, at either end, so that a peer cannot make the other set aside
+/// more than this for it. Lines go in batches far smaller, and a line too long for a batch goes
+/// alone, so only a single note larger than this could not sync.
+pub const MESSAGE_MAX: usize = 8 << 20;
 /// A peer not heard from for this long is taken to be gone.
 pub const SILENCE: Duration = Duration::from_secs(45);
 

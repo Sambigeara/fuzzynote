@@ -33,19 +33,20 @@ use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Message, Out, Peer, Replica, names_a_log};
 use tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tungstenite::http::StatusCode;
+use tungstenite::protocol::WebSocketConfig;
 
 use crate::system;
 use crate::web_files;
-use crate::wire::{GREETING, VERSION, Wire};
+use crate::wire::{GREETING, MESSAGE_MAX, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
 const LOCK_FILE: &str = ".lock";
-/// What a page of the web app may do: load its own files and its own WebAssembly, talk to a
-/// relay, and use inline styles, because the body's editor injects its stylesheet. No script
-/// from anywhere else; and the page writes nothing into itself as markup, which is its own
-/// practice, since allowing inline styles means the policy no longer holds it to that.
+/// What a page of the web app may do: load its own files and its own WebAssembly, talk to the
+/// relay it came from, and use inline styles, because the body's editor injects its stylesheet.
+/// No script from anywhere else; and the page writes nothing into itself as markup, which is its
+/// own practice, since allowing inline styles means the policy no longer holds it to that.
 const PAGE_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
-    style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; \
+    style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; \
     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// A space as a relay holds it: its replica, its directory, which nothing else writes while
@@ -659,24 +660,27 @@ fn serve(hub: &Hub, stream: TcpStream) -> Result<()> {
     // The space is opened before the greeting is answered, so that a device asking for one that
     // is held elsewhere is refused, and not greeted and then dropped.
     let mut name = String::new();
-    let socket =
-        tungstenite::accept_hdr(
-            stream,
-            |request: &Request, response: Response| match asked_for(request.uri().path())
-                .and_then(|space| hub.open(space).map(|()| space))
-            {
-                Ok(space) => {
-                    name = space.to_owned();
-                    Ok(response)
-                }
-                Err(status) => {
-                    let mut refusal = ErrorResponse::new(None);
-                    *refusal.status_mut() = status;
-                    Err(refusal)
-                }
-            },
-        )
-        .map_err(|e| anyhow!("{e}"))?;
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MESSAGE_MAX))
+        .max_frame_size(Some(MESSAGE_MAX));
+    let socket = tungstenite::accept_hdr_with_config(
+        stream,
+        |request: &Request, response: Response| match asked_for(request.uri().path())
+            .and_then(|space| hub.open(space).map(|()| space))
+        {
+            Ok(space) => {
+                name = space.to_owned();
+                Ok(response)
+            }
+            Err(status) => {
+                let mut refusal = ErrorResponse::new(None);
+                *refusal.status_mut() = status;
+                Err(refusal)
+            }
+        },
+        Some(config),
+    )
+    .map_err(|e| anyhow!("{e}"))?;
     let mut wire = Wire::new(socket)?;
     // The relay's clock is said first, so that a device can say when its own is far off.
     wire.say(Message::Now(system::now()).encode()?)?;
