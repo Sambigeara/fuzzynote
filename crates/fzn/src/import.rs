@@ -97,11 +97,12 @@ const MIDDAY: i64 = 12 * 3600;
 /// - A page that is nothing but a list becomes a note, and each item a note about it.
 /// - Any other page is a document. It stays whole, headed by its name.
 ///
-/// On the first two kinds, a task is a note at any depth: archived if it was ticked, and about
-/// the note it sat under. Other lines under an item are its body. A bullet holding only tags
-/// hands them to what is under it. A note carries the tags in force where it was written: its
-/// page's, such a bullet's, its parent's. They go on the line under its head, and so do the
-/// tags its own line started with, so that a head is what was said and not how it was filed.
+/// On the first two kinds, a task is a note at any depth, headed by its box, `[ ]` or `[x]`:
+/// archived if it was ticked, and about the note it sat under. Other lines under an item are its
+/// body. A bullet holding only tags hands them to what is under it. A note carries the tags in
+/// force where it was written: its page's, such a bullet's, its parent's. They go on the line
+/// under its head, and so do the tags its own line started with, so that a head is what was said
+/// and not how it was filed.
 ///
 /// A folder is a tag, unless all it holds is named for dates, which makes it a calendar and not
 /// a subject. Tags in front matter are tags, and a `date` there is the day. A `[[page]]` is
@@ -109,8 +110,8 @@ const MIDDAY: i64 = 12 * 3600;
 /// programs for Silverbullet are skipped.
 ///
 /// Importing again brings a note up to date with its page, unless its text was changed here
-/// since the page was. What was done to a note here is kept: its links, whether it is archived,
-/// and that it was deleted.
+/// since the page was. What was done to a note here is kept: its links, where it sits, whether it
+/// is archived, and that it was deleted.
 pub fn markdown(dir: &Path, store: &mut Store) -> Result<Imported> {
     let mut files = Vec::new();
     collect_md(dir, &mut files)?;
@@ -619,7 +620,7 @@ impl Lifted<'_> {
                 .iter()
                 .position(ends)
                 .map_or(nodes.len(), |n| i + n);
-            self.note(title.unwrap_or(line), tags, false, about, &nodes[i..end]);
+            self.note(title.unwrap_or(line), tags, None, about, &nodes[i..end]);
             i = end;
         }
     }
@@ -635,26 +636,26 @@ impl Lifted<'_> {
             }
             self.all(&item.under, &tags, about);
         } else {
-            let done = item.task == Some(true);
-            self.note(&item.text, tags, done, about, &item.under);
+            self.note(&item.text, tags, item.task, about, &item.under);
         }
     }
 
     /// A note, with what is under it as its body. The tasks under it are notes about it instead.
     /// Its tags go on the line under the head: the ones in force that it does not carry itself,
-    /// then the ones its line started with. A line of nothing but tags is left as it is.
+    /// then the ones its line started with. A line of nothing but tags is left as it is. A task
+    /// is headed by its box, and archived if it is ticked.
     fn note(
         &mut self,
         head: &str,
         tags: &[String],
-        archived: bool,
+        task: Option<bool>,
         about: Option<&str>,
         under: &[Node],
     ) {
         let index = self.notes.len();
         self.notes.push(Draft {
             text: String::new(),
-            archived,
+            archived: task == Some(true),
             about: about.map(str::to_owned),
         });
         let (line, started_with) = match leading_tags(head) {
@@ -669,7 +670,11 @@ impl Lifted<'_> {
         }
         let mut body = String::new();
         self.body(under, 0, &mut body, &in_force, &self.id(index));
-        let mut text = line.to_owned();
+        // A box with nothing after it heads nothing, as it did before boxes were kept.
+        let mut text = match task {
+            Some(done) if !line.is_empty() => text::tick(line, done),
+            _ => line.to_owned(),
+        };
         let own = text::facts(&format!("{head}\n{body}")).tags;
         let mut labels = tag_line(tags.iter().filter(|tag| !own.contains(tag)));
         for tag in started_with {
@@ -775,7 +780,9 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 
 /// Writes an imported note, unless that would undo something done here. A note deleted here
 /// stays deleted, and a text changed here after its source last changed is kept. Otherwise the
-/// text becomes the import's, and the note keeps its links and whether it is archived.
+/// text becomes the import's, and the note keeps its links and whether it is archived. It keeps
+/// where it sits too, unless what is imported was placed later, which a page never is: its
+/// versions have no `placed`.
 fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
     if let Some(held) = store.notes().version(&record.id) {
         if held.deleted || held.text == record.text || held.updated > record.updated {
@@ -880,13 +887,13 @@ mod tests {
                 "---\ntags: journal\ndate: 2026-09-05\n---\n\
                  * #garden\n  * Planted the beans\n    * two rows\n    * [ ] water them [priority: high]\n  * [x] Order compost\n\
                  - #house Called the plumber about [[Projects/Boiler]]\n  > he can come Friday\n\
-                 - [ ] Renew passport\n\
+                 - [ ] #errands Renew passport\n\
                  ## Reading\n- finished the book\n- see [[Journal/2026-09-04]]\n",
             ),
-            ("Journal/2026-09-04.md", "- walked\n- #someday\n"),
+            ("Journal/2026-09-04.md", "- walked\n- #someday\n- [ ]\n"),
             (
                 "Projects/Boiler.md",
-                "---\ntags: house\n---\n\n* [ ] get three quotes\n* [x] find the manual\n\n- Old notes\n  - [[Projects/Heating Plan|the plan]]\n- \n-\n",
+                "---\ntags: house\n---\n\n* [ ] get three quotes\n* [X] find the manual\n\n- Old notes\n  - [[Projects/Heating Plan|the plan]]\n- \n-\n",
             ),
             (
                 "Projects/Heating Plan.md",
@@ -917,7 +924,7 @@ mod tests {
         let dir = temp_dir();
         let mut store = open(&dir.join("space"));
         let done = markdown(&pages(&dir), &mut store).unwrap();
-        assert_eq!((done.pages, done.notes), (6, 15));
+        assert_eq!((done.pages, done.notes), (6, 16));
         assert_eq!(done.skipped, ["CONFIG", "index"]);
         link_named(&mut store).unwrap();
 
@@ -931,12 +938,13 @@ mod tests {
         let day = time::day_from_civil(2026, 9, 5);
 
         // A bullet holding only a tag hands it down. The task under the beans is a note about
-        // them, with their tag, and the rest of what is under them is their body.
+        // them, headed by its box and with their tag, and the rest of what is under them is
+        // their body.
         assert_eq!(note(1).text, "Planted the beans\n#garden\n- two rows");
-        assert_eq!(note(2).text, "water them [priority: high]\n#garden");
+        assert_eq!(note(2).text, "[ ] water them [priority: high]\n#garden");
         assert_eq!(note(2).links, ["md:Journal/2026-09-05#1"]);
         assert!(!note(2).archived);
-        assert_eq!(note(3).text, "Order compost\n#garden");
+        assert_eq!(note(3).text, "[x] Order compost\n#garden");
         assert!(note(3).archived, "ticked, so archived");
         assert!(note(3).links.is_empty());
 
@@ -947,7 +955,7 @@ mod tests {
             "Called the plumber about [[Boiler]]\n#house\n> he can come Friday"
         );
         assert_eq!(note(4).links, ["md:Projects/Boiler"]);
-        assert_eq!(note(5).text, "Renew passport");
+        assert_eq!(note(5).text, "[ ] Renew passport\n#errands");
 
         // A heading takes what follows it, and a link to a day is the date.
         assert_eq!(
@@ -970,6 +978,12 @@ mod tests {
             store.notes().get("md:Journal/2026-09-04#2").unwrap().text,
             "#someday",
             "a line of nothing but tags is left as it is"
+        );
+        let empty = store.notes().get("md:Journal/2026-09-04#3").unwrap();
+        assert_eq!(
+            text::task(&empty.text),
+            None,
+            "a box with nothing after it heads nothing"
         );
 
         // A page named for a time is the note written then.
@@ -996,7 +1010,7 @@ mod tests {
         link_named(&mut store).unwrap();
         let held = |store: &Store, id: &str| store.notes().get(id).unwrap().clone();
 
-        // Here: one note is rewritten, one is linked and archived, one is deleted.
+        // Here: one note is rewritten, one is linked, archived and moved, one is deleted.
         let passport = held(&store, "md:Journal/2026-09-05#5");
         store
             .put(Record {
@@ -1012,6 +1026,8 @@ mod tests {
                 links: vec!["md:Projects/Boiler".into()],
                 archived: true,
                 stamp: Some(store.next_stamp(&walked.id)),
+                after: Some("md:Journal/2026-09-04#2".into()),
+                placed: Some(system::now()),
                 ..walked
             })
             .unwrap();
@@ -1021,6 +1037,17 @@ mod tests {
                 deleted: true,
                 stamp: Some(store.next_stamp(&seeds.id)),
                 ..seeds
+            })
+            .unwrap();
+        // An import from before boxes took a task's off, and it was archived here since, which
+        // leaves its text as the page last gave it.
+        let quotes = held(&store, "md:Projects/Boiler#1");
+        store
+            .put(Record {
+                text: quotes.text.replacen("[ ] ", "", 1),
+                archived: true,
+                stamp: Some(store.next_stamp(&quotes.id)),
+                ..quotes
             })
             .unwrap();
 
@@ -1035,11 +1062,15 @@ mod tests {
         let page = fs::read_to_string(&journal).unwrap();
         fs::write(&journal, page.replace("Renew passport", "Renew it")).unwrap();
 
-        assert_eq!(markdown(&pages, &mut store).unwrap().notes, 1);
+        assert_eq!(markdown(&pages, &mut store).unwrap().notes, 2);
         let walked = held(&store, "md:Journal/2026-09-04#1");
         assert_eq!(walked.text, "walked far");
         assert!(walked.archived);
         assert_eq!(walked.links, ["md:Projects/Boiler"]);
+        assert_eq!(walked.after.as_deref(), Some("md:Journal/2026-09-04#2"));
+        let quotes = held(&store, "md:Projects/Boiler#1");
+        assert_eq!(quotes.text, "[ ] get three quotes\n#house #projects");
+        assert!(quotes.archived, "its box is back, and it is still archived");
         assert_eq!(
             held(&store, "md:Journal/2026-09-05#5").text,
             "Renew passport, and the driving licence",
@@ -1072,8 +1103,9 @@ mod tests {
                 .get(&format!("md:Projects/Boiler#{n}"))
                 .unwrap()
         };
-        assert_eq!(item(1).text, "get three quotes\n#house #projects");
+        assert_eq!(item(1).text, "[ ] get three quotes\n#house #projects");
         assert_eq!(item(1).links, ["md:Projects/Boiler"]);
+        assert_eq!(item(2).text, "[x] find the manual\n#house #projects");
         assert!(!item(1).archived && item(2).archived);
         assert_eq!(
             item(3).text,

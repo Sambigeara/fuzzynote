@@ -65,10 +65,13 @@ A date in a note is plain text, written 2026-10-16. /today, /tomorrow, /yesterda
 week such as /fri, and /+3 or /-2 for days from today are quicker ways of typing one: saving the
 note writes the date in their place. /-mon is the last Monday before today.
 
+A note whose head starts [ ] is a task. Archiving it ticks it, [x], and bringing it back unticks
+it.
+
 On the line, words find and everything else holds: \"a phrase\" must be in a note, #tag, @person
-and a day must be on it, and a span such as /-mon 18:00.., 2026-10-01..2026-10-05 or ..2026-10-05
-holds the notes written in it. ~ at the start of the line finds heads by their letters in order:
-~bsv finds Boiler service.";
+and a day must be on it, [ ] holds the open tasks, and a span such as /-mon 18:00..,
+2026-10-01..2026-10-05 or ..2026-10-05 holds the notes written in it. ~ at the start of the line
+finds heads by their letters in order: ~bsv finds Boiler service.";
 
 enum Cmd {
     Open,

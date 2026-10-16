@@ -7,19 +7,19 @@
 //!
 //! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and
 //! goes to the note it wrote or, with nothing on it, opens a new row at the top to write in, and
-//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or at
-//! the start of a new row that opens with the labels of the place, and typing changes it and is
-//! written at once, as it was in fzn, with its date words written out when the arrows up and
-//! down, or Escape, leave it. Enter opens a new note under it, so that a run of notes is Enter
-//! and typing; a new note left empty goes. Ctrl-O hands the note to your editor, which is where
-//! a body is written. Right at the end of the head goes in, and at the end of the line goes into
-//! the tag, person, day or note the line names; short of the end it is the caret's, as Left is. A
-//! chord acts on the note where on the line it acts on the line, as it did in fzn: Ctrl-D deletes
-//! or clears, Ctrl-V archives or shows archived notes, and Ctrl-U puts a changed head back before
-//! it undoes anything else. Control with an arrow moves the note under the cursor up or down a
-//! row, and the cursor with it. Escape comes back a rung at a time: off the row, off the text on
-//! the line, out of the place, and on an empty line outside any place two of them quit. The
-//! footer shows only the keys that apply where the cursor is.
+//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or, in a
+//! new row that opens with the labels of the place, before them and after a task's box, and typing
+//! changes it and is written at once, as it was in fzn, with its date words written out when the
+//! arrows up and down, or Escape, leave it. Enter opens a new note under it, so that a run of
+//! notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your editor,
+//! which is where a body is written. Right at the end of the head goes in, and at the end of the
+//! line goes into the tag, person, day, box or note the line names; short of the end it is the
+//! caret's, as Left is. A chord acts on the note where on the line it acts on the line, as it did
+//! in fzn: Ctrl-D deletes or clears, Ctrl-V archives, which ticks a task, or shows archived notes,
+//! and Ctrl-U puts a changed head back before it undoes anything else. Control with an arrow moves
+//! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
+//! a time: off the row, off the text on the line, out of the place, and on an empty line outside
+//! any place two of them quit. The footer shows only the keys that apply where the cursor is.
 //!
 //! The screen is painted by hand and flat, in the terminal's own colours, because there is
 //! nothing to frame: the terminal's cursor in a bold head is the row being written in, and dim is
@@ -115,8 +115,8 @@ enum Place {
 /// the cursor otherwise. `at_end` and `empty` are of the text the cursor is in, the line or the
 /// head. The arrow goes in only from its end, since short of it the arrow is the caret's: from a
 /// head into the note, and from the line into what the line names, which the session decides.
-/// Backspace takes a row away only when its head is empty, as a new row with only its label is
-/// while the caret is before the label; with text in the head it is the caret's. Escape comes
+/// Backspace takes a row away only when its head is empty, as a new row with only its labels is
+/// while the caret is where it landed; with text in the head it is the caret's. Escape comes
 /// back a rung: off the row, then off the text on the line, then out of the place.
 fn bound(
     code: KeyCode,
@@ -716,17 +716,17 @@ impl App {
     }
 
     /// Where the cursor is, and of the text it is in, the head of its row or the line, whether
-    /// the caret is at its end and whether it is empty. A new row with only the label it opened
-    /// with is empty while the caret is before the label, where it lands.
+    /// the caret is at its end and whether it is empty. A new row with only the labels it opened
+    /// with is empty while the caret is where it lands, after a task's box and before the rest.
     fn caret(&self, view: &View) -> (Place, bool, bool) {
         let (place, text, caret, fresh) = match &view.field {
             Some(field) => {
                 let head = head_and_body(field.text).0;
                 (Place::Row, head, self.row_cursor, field.fresh)
             }
-            None => (Place::Line, view.line, self.cursor, false),
+            None => (Place::Line, view.line, self.cursor, None),
         };
-        let empty = text.is_empty() || (fresh && caret == 0);
+        let empty = text.is_empty() || fresh == Some(caret);
         (place, caret >= text.chars().count(), empty)
     }
 
@@ -734,7 +734,7 @@ impl App {
     fn act(&mut self, action: Action) -> Result<Flow> {
         let (line, was_on, was_fresh) = {
             let view = self.device.view();
-            let fresh = view.field.as_ref().is_some_and(|field| field.fresh);
+            let fresh = view.field.as_ref().and_then(|field| field.fresh).is_some();
             (view.line.to_owned(), under_cursor(&view), fresh)
         };
         let todo = self.device.act(action);
@@ -743,20 +743,18 @@ impl App {
         // A line the device changed, as it does on the way into a note and out of one, has its
         // cursor at the end, and so does the head of a row just landed on. A head put back or
         // written in place keeps its caret where it was, if the head is still that long. A new
-        // row with only the label it opened with, landed on or put back to it, has its caret
-        // before the label.
+        // row with only the labels it opened with, landed on or put back to them, has its caret
+        // where the device says, after a task's box and before the rest.
         if view.line != line {
             self.cursor = view.line.chars().count();
         }
         if let Some(field) = &view.field {
             let end = head_and_body(field.text).0.chars().count();
             let stayed = under_cursor(&view) == was_on;
-            self.row_cursor = if field.fresh && !(stayed && was_fresh) {
-                0
-            } else if stayed {
-                self.row_cursor.min(end)
-            } else {
-                end
+            self.row_cursor = match field.fresh {
+                Some(start) if !(stayed && was_fresh) => start,
+                _ if stayed => self.row_cursor.min(end),
+                _ => end,
             };
         }
         Ok(flow)
@@ -1547,6 +1545,42 @@ mod tests {
         press(&mut app, KeyCode::Backspace, false);
         assert_eq!(field(&app).as_deref(), Some(" #hous"));
         assert_eq!(app.row_cursor, 6, "and the caret stays where it was");
+        done(&space);
+    }
+
+    #[test]
+    fn a_new_row_among_open_tasks_has_the_caret_after_its_box_and_ctrl_v_ticks_it() {
+        let (mut app, space) = app();
+        write(&mut app, "[ ] Order oil #house");
+        type_in(&mut app, "[ ] #house");
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(path(&app), ["[ ]", "#house"]);
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(field(&app).as_deref(), Some("[ ]  #house"));
+        assert_eq!(app.row_cursor, 4, "after the box, before the label");
+        press(&mut app, KeyCode::Backspace, false);
+        assert_eq!(
+            heads(&app),
+            ["[ ] Order oil #house"],
+            "and Backspace there takes it away"
+        );
+
+        press(&mut app, KeyCode::Enter, false);
+        type_in(&mut app, "Bleed the radiators");
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("[ ] Bleed the radiators #house")
+        );
+        assert!(keys(&app).contains("^V tick"), "{}", keys(&app));
+        chord(&mut app, 'v');
+        assert_eq!(heads(&app), ["[ ] Order oil #house"]);
+        let ticked = on_disk(&space);
+        assert!(
+            ticked
+                .notes()
+                .records()
+                .any(|r| r.text == "[x] Bleed the radiators #house" && r.archived)
+        );
         done(&space);
     }
 

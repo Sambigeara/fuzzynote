@@ -2,11 +2,12 @@
 //!
 //! The words on the line rank, as they always have, each note with its reasons. Every other form
 //! on the line is something a note has to hold to be listed at all: a phrase in quotes, a tag, a
-//! person, a day, and a span of when notes were written. A form never changes how the words rank,
-//! so a new kind of filter is one more form here and one more way for a note to hold it, and the
-//! words are left alone. A line of nothing but forms has nothing to rank by, and lists exactly
-//! what holds them in the space's order, as a place lists what is in it. `~` at the start of the
-//! line makes its words letters, found in order in heads, as the original fzn's fuzzy found them.
+//! person, a day, the box of an open task, and a span of when notes were written. A form never
+//! changes how the words rank, so a new kind of filter is one more form here and one more way for
+//! a note to hold it, and the words are left alone. A line of nothing but forms has nothing to
+//! rank by, and lists exactly what holds them in the space's order, as a place lists what is in
+//! it. `~` at the start of the line makes its words letters, found in order in heads, as the
+//! original fzn's fuzzy found them.
 //!
 //! Labels are what the index lists, so the engine looks them up; a span and a phrase are asked
 //! of each note, and only of the notes that are left once the rest has narrowed them.
@@ -33,7 +34,7 @@ pub(crate) struct Query {
     pub free: String,
     /// `~` began the line, so the words are letters to find in order in heads.
     pub letters: bool,
-    /// The tags, people and days a note has to carry.
+    /// The tags, people, days and box a note has to carry.
     pub labels: Vec<Typed>,
     /// What else a note has to hold.
     pub holds: Vec<Hold>,
@@ -41,7 +42,7 @@ pub(crate) struct Query {
     shown: Vec<Shown>,
 }
 
-/// A tag, a person or a day typed on the line.
+/// A tag, a person, a day or the box of an open task typed on the line.
 pub(crate) struct Typed {
     pub label: Label,
     /// As it was typed, `#House`, or for a day as it is written, `2026-10-16`.
@@ -52,12 +53,15 @@ pub(crate) struct Typed {
     pub whole: bool,
 }
 
-/// A label that is a place: a tag or a person, lowercased as the index holds them, or a day.
+/// A label that is a place: a tag or a person, lowercased as the index holds them, a day, or the
+/// open tasks.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Label {
     Tag(String),
     Mention(String),
     Day(Day),
+    /// The box `[ ]`: the notes whose heads start with it and that are not archived.
+    Open,
 }
 
 impl Label {
@@ -67,18 +71,19 @@ impl Label {
             Label::Tag(tag) => score::Label::Tag(tag.clone()),
             Label::Mention(person) => score::Label::Mention(person.clone()),
             Label::Day(day) => score::Label::Date(*day),
+            Label::Open => score::Label::Open,
         }
     }
 
-    /// Whether a note already carries it: anywhere in its text, or for a day by having been
-    /// written on it.
+    /// Whether a note already carries it: anywhere in its text, for a day by having been written
+    /// on it, and for the box at the start of its head.
     pub(crate) fn carried_by(&self, text: &str, created: Day) -> bool {
-        let facts = text::facts(text);
         match self {
-            Label::Tag(tag) => facts.tags.contains(tag),
-            Label::Mention(person) => facts.mentions.contains(person),
+            Label::Tag(tag) => text::facts(text).tags.contains(tag),
+            Label::Mention(person) => text::facts(text).mentions.contains(person),
             // The day a note was written is not typed: it is the note's `created`.
-            Label::Day(day) => *day == created || facts.dates.contains(day),
+            Label::Day(day) => *day == created || text::facts(text).dates.contains(day),
+            Label::Open => text::task(text) == Some(false),
         }
     }
 }
@@ -195,6 +200,18 @@ impl Query {
                     query.holds.push(Hold::Phrase(phrase.to_lowercase()));
                 }
                 i = end + 1;
+                continue;
+            }
+            // The box of an open task starts a word, as a date word does, and is read only whole:
+            // `[` and `[ ` hold nothing, so that a `[[` on its way to a link lists no tasks.
+            if text::at_word_start(&chars, i) && chars[i..].starts_with(&['[', ' ', ']']) {
+                query.labels.push(Typed {
+                    label: Label::Open,
+                    written: text::OPEN.to_owned(),
+                    whole: true,
+                });
+                query.blank();
+                i += 3;
                 continue;
             }
             // A URL is words, and a `#` in it is not a tag.
@@ -518,8 +535,36 @@ mod tests {
     }
 
     #[test]
+    fn the_box_of_an_open_task_is_one_label_with_a_space_in_it_and_its_start_is_nothing() {
+        for (line, labels) in [
+            ("[ ]", &["[ ]"][..]),
+            ("[ ] #house ", &["[ ]", "#house"]),
+            ("#house [ ]", &["#house", "[ ]"]),
+            ("(oil [ ])", &["[ ]"]),
+            ("[ ]oil", &["[ ]"]),
+            ("#house [", &["#house"]),
+        ] {
+            let query = read(line);
+            assert_eq!(held(&query), labels, "{line:?}");
+            assert!(
+                text::tokens(&query.words).iter().all(|w| w == "oil"),
+                "{line:?}"
+            );
+        }
+        assert!(read("[ ] #house").only_labels());
+        assert!(read("[").is_empty() && read("[ ").is_empty());
+        for line in ["[x] oil", "oil[ ]", "[ oil", "[[ ]]", "\"[ ] oil\""] {
+            let query = read(line);
+            assert!(
+                query.labels.iter().all(|typed| typed.label != Label::Open),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_line_is_labels_alone_only_when_nothing_else_is_on_it() {
-        assert!(read("#house /today @joe 2026-10-16").only_labels());
+        assert!(read("#house /today @joe 2026-10-16 [ ]").only_labels());
         for line in [
             "#house boiler",
             "#house /today..",

@@ -713,6 +713,9 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     {
         labels.push(Label::Date(d));
     }
+    if !note.archived && text::task(&note.text) == Some(false) {
+        labels.push(Label::Open);
+    }
     labels
 }
 

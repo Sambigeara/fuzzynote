@@ -25,6 +25,8 @@ pub enum Label {
     Name(String),
     /// A day the note was created on or mentions.
     Date(Day),
+    /// The note is an open task: its head starts with `[ ]`, and it is not archived.
+    Open,
 }
 
 impl Label {

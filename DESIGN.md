@@ -53,11 +53,11 @@ other people when you choose.
   context, and so are a note and the labels gone into after it. Selecting notes, and a context
   of plain words, are not.
 - One line to search with: words find and everything else holds, so `"…"` is the exact text and
-  a tag, a person, a day or a span narrows what is listed, and `~` at the start of the line is
-  the original's fuzzy, letters in order in heads (see "Words find; everything else holds"). The
-  original's Tab-separated groups and `!` inverse are not built yet.
+  a tag, a person, a day, the open tasks' `[ ]` or a span narrows what is listed, and `~` at the
+  start of the line is the original's fuzzy, letters in order in heads (see "Words find;
+  everything else holds"). The original's Tab-separated groups and `!` inverse are not built yet.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
-- Archive with one key; show/hide archived globally.
+- Archive with one key, which ticks a task; show/hide archived globally.
 - Undo/redo, move up/down, copy/paste of whole notes.
 - Local-first, remote-second. Offline is the normal case.
 
@@ -68,7 +68,7 @@ other people when you choose.
 - **Note**: stable id; text (a text CRDT); links; created and updated times; archived flag;
   where it sits in the list, as the note it sits after, with a clock of its own (see "Where a
   note sits is kept"). Derived, never stored: head (first line), body, tags, mentions, dates,
-  URLs.
+  URLs, and whether it is a task.
 - **Link**: from one note to another, held on the note as the target's id. There is one kind.
   It survives a rename and adds no words to the text. Links are made by position: a note
   written while looking around another is about it, and links to it. Nobody has to say "link".
@@ -80,11 +80,13 @@ other people when you choose.
   note is found by the name of what it is about: when you type, the head of a note that a note
   links to counts as its own head does, one hop and no further. Only explicit links are stored;
   everything else is recomputed on demand.
-- **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, and `[[note head]]`
-  as a way of typing a link. Nothing else is special in a note. In particular the old ` >> `
-  prefix paths are plain text; the words in them still count, the hierarchy does not. On the
-  line, and only there, three more forms are read: a phrase in quotes, a span of when notes were
-  written, and `~` at its start (see "Words find; everything else holds").
+- **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, `[[note head]]` as a
+  way of typing a link, and since 2026-10-16 a box, `[ ]` or `[x]`, at the start of a note,
+  which makes it a task (see "A task is a note headed by its box"). Nothing else is special in a
+  note. In particular the old ` >> ` prefix paths are plain text; the words in them still count,
+  the hierarchy does not. On the line, and only there, three more forms are read: a phrase in
+  quotes, a span of when notes were written, and `~` at its start (see "Words find; everything
+  else holds").
 - **Date**: plain text in the note, written `2026-10-16`, and never stored apart from it. The
   engine reads it on load, as it reads tags. A link is held as an id because a note's head can
   change; a date's name cannot, so it lives in the text. The day a note was written is not
@@ -108,7 +110,8 @@ other people when you choose.
   so a note written in `#house › today` carries both, and a note on the path is one context with
   the labels gone into after it, so a note written in `Boiler › today` links to Boiler and is
   of today. Labels before the last note on the path are only how it was reached: in
-  `#house › Boiler` a note links to Boiler and carries no tag.
+  `#house › Boiler` a note links to Boiler and carries no tag. Since 2026-10-16 the open tasks
+  are a context too, and a note created among them starts with the box.
 
 ## Engine
 The engine is a library, and it is the app. It owns no UI, opens no file, reads no clock and
@@ -176,11 +179,11 @@ Nothing is added to the engine until daily use asks for it.
 ## Storage and sync
 - **The note is plain text; what holds it need not be.** All of a note's meaning is in its
   characters, in forms people already know: `#tag`, `@person`, `2026-10-16`, a URL, a first
-  line. That is the agreed structure, and the test for adding to it is whether the note still
-  reads right on paper. Beside the text go the facts it cannot carry: id, links, times,
-  archived, deleted. What you said goes in the text; what happened to the note goes beside it.
-  A file per note is not the store: files cannot merge two devices' edits, and most notes are
-  one line.
+  line, a box `[ ]`. That is the agreed structure, and the test for adding to it is whether the
+  note still reads right on paper. Beside the text go the facts it cannot carry: id, links,
+  times, archived, deleted. What you said goes in the text; what happened to the note goes beside
+  it. A file per note is not the store: files cannot merge two devices' edits, and most notes
+  are one line.
 - **v1: one append-only log per writer, per space.** Each line is a full snapshot of one note
   as JSON: `v`, the version of the line format, then id, text, links, created, updated, stamp,
   after, placed, archived, deleted, device. The format is version 3 since times went to the
@@ -378,7 +381,8 @@ tab and the relay all run the same code.
   the painting, and carrying out the effects, which here means a log file, your editor, the
   clipboard and the system's way of opening a URL. A chord acts on the line when the cursor is
   there and on the note under the cursor otherwise: Ctrl-D clears or deletes, Ctrl-V shows
-  archived or archives. Archived notes are out of every list, typed results included, until
+  archived or archives, which ticks a task and is named `tick` there (see "A task is a note
+  headed by its box"). Archived notes are out of every list, typed results included, until
   Ctrl-V on the line asks for them. Enter on a row opens a new row under it, Backspace on an
   empty head takes the row away, and Ctrl-O opens the note in your editor, which is how a body
   is written here; the field in the row is its head, and the body is read at the foot of the
@@ -415,19 +419,20 @@ tab and the relay all run the same code.
   the space is new, and keeps the key it derives; `fzn key` asks again, for when it was
   mistyped. `$FZN_PASSPHRASE` answers for scripts.
 - **Zoom.** Right at the end of a note's head makes it the context, and the path grows by one;
-  short of the end, Right is the caret. A tag, a person or a day can be the context too (see "A
-  tag is a place you can go into"): Right at the end of the line goes into what the line names:
-  the label if the line is one label and nothing else, `#house`, `@joe` or `/fri`, or back to it
-  if it is on the path; each label in turn if the line is several, `#house /today`, as if Right
-  had been pressed after each but passing over a label the place has already (see "The arrow at
-  the end of a line of labels goes into each"); and otherwise the one note in the space the line
-  is the name of and that holds what the line holds, by the rule in "A name is a fact too". A
-  span is not a place (see "A span is not a place"). In a zoom that rule holds as it does at the
-  top: the note the line names is listed first, saying `its name`, wherever it is and whatever
-  the limit, so Right goes where the list shows, and typing a name is the way from any place to
-  any note. A line that names neither, or names where you already are, leaves Right doing
-  nothing. The path shows a label as it is written: `#house`, `@joe`, `2026-10-16`. The place is
-  the last note on the path, if there is one,
+  short of the end, Right is the caret. A tag, a person, a day or the open tasks can be the
+  context too (see "A tag is a place you can go into" and "A task is a note headed by its box"):
+  Right at the end of the line goes into what the line names: the label if the line is one label
+  and nothing else, `#house`, `@joe`, `/fri` or `[ ]`, or back to it if it is on the path; each
+  label in turn if the line is several, `#house /today`, as if Right had been pressed after each
+  but passing over a label the place has already (see "The arrow at the end of a line of labels
+  goes into each"); and otherwise the one note in the space the line is the name of and that
+  holds what the line holds, by the rule in "A name is a fact too". A span is not a place (see
+  "A span is not a place"). In a zoom that rule holds as it does at the top: the note the line
+  names is listed first, saying `its name`, wherever it is and whatever the limit, so Right goes
+  where the list shows, and typing a name is the way from any place to any note. A line that
+  names neither, or names where you already are, leaves Right doing nothing. The path shows a
+  label as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`. The place is the last note on
+  the path, if there is one,
   together with every label gone into after it (see "Labels gone into one after another are one
   place" and "A place is the last note on the path and the labels after it"); labels before the
   note are only how you got there. Its facts are the notes linked to or from the note that carry
@@ -457,10 +462,12 @@ tab and the relay all run the same code.
   `back` once it is empty. Either way, what you write inside is about the place: inside a note
   it links to it and lands at the top of the place, and inside a label its head ends with
   the label, as it would have been typed, unless the note carries it already: in its text, or
-  for a day by being written on it, since the day a note was written is its `created`. A note
+  for a day by being written on it, since the day a note was written is its `created`. Among the
+  open tasks the head starts with the box instead, since that is where a box is written. A note
   written from the line has it added as it is written; a new row opens with it already in its
   head. Inside labels gone into one after another the head ends with each of them it does not
-  carry, in the order of the path: in `#house › @joe` a new row opens ` #house @joe`, and in
+  carry, in the order of the path: in `#house › @joe` a new row opens ` #house @joe`, in
+  `#house › [ ]` it opens `[ ]  #house` with the caret after the box, and in
   `#house › today` a note reads `Order oil #house`. Only a note created there inherits, and only
   from the place: in `Boiler › today` a new note links to Boiler and is of today by being
   written on it, in `Boiler › #house` a new row opens ` #house` and links to Boiler, and in
@@ -647,7 +654,9 @@ tab and the relay all run the same code.
   rewritten to the head its page has now, or to the date if the page was a day. Pages that are
   programs for Silverbullet are left out. Importing again brings a note up to date with its
   page unless its text was changed here since, and keeps what was done to it here: its links,
-  whether it is archived, that it was deleted.
+  whether it is archived, that it was deleted, and since places were kept, where it sits.
+  Revised 2026-10-16: a task keeps its box, headed `[ ]`, or `[x]` and archived if it was
+  ticked (see "A task is a note headed by its box").
 - **A space is its logs, and sync is the rest of each.** Decided 2026-10-13. The other way
   is for the relay to keep one journal in the order things arrive and each device a cursor
   into it. That is less to build, but the cursor is state beside the data: lose the relay's
@@ -929,7 +938,10 @@ tab and the relay all run the same code.
   as Backspace does and as a phone's keyboard only can, what is left of the label is no more the
   writer's than the label was, so nothing is written until a letter that is. What it costs: a
   new row holding only the start of its label, `#ho` in `#house`, is empty too and goes when it
-  is left, and the label taken out from its start writes each step, as typing does.
+  is left, and the label taken out from its start writes each step, as typing does. Revised
+  2026-10-16: among the open tasks the row opens `[ ]  #house` with the caret after the box, where
+  everything said here of the start holds instead, and how the labels are spaced does not count
+  (see "A task is a note headed by its box").
 - **Labels gone into one after another are one place.** Decided 2026-10-15, agreed with Sam,
   replacing "One label at a time" and "only from the innermost place" in "A tag is a place you
   can go into", for labels. Going into today from inside `#house` reads as today's notes in that
@@ -1337,7 +1349,9 @@ tab and the relay all run the same code.
   to, where the tag alone used to list every note carrying it; going into the tag first is the
   way to write there. `a` alone at the top lists the top of the space, where it used to list
   nothing. A date word now ends at two dots, so `../fri` in a note is written out as a date.
-  Tab-separated groups, which the original had, and its `!` inverse stay unbuilt.
+  Tab-separated groups, which the original had, and its `!` inverse stay unbuilt. Revised
+  2026-10-16: the box of an open task, `[ ]`, is one more label, the first form added in the way
+  this decision left open (see "A task is a note headed by its box").
 - **A span is not a place.** Decided 2026-10-15, agreed with Sam. A span holds the notes written
   in it, Sam's choice over the notes written or edited in it, and a note written now was not
   written in a span gone by: one written inside a span would fall out of it as it was written.
@@ -1361,6 +1375,69 @@ tab and the relay all run the same code.
   config's weights. Archived notes are in because archiving is how a task is ticked, and a log
   of what was done wants them; each line carries the flag. Without a query the export is as it
   was. It takes no lock, so it runs while the app is open.
+- **A task is a note headed by its box.** Decided 2026-10-16, agreed with Sam. A task is a note
+  whose head starts with a box, `[ ]` while it is open and `[x]` once it is done, and nothing
+  else is one: a `- [ ]` in a body is markdown, read as a drawn box where a body is read, and
+  makes no note a task. Until now a task was a note like any other, archived when it was done:
+  the importer took the box off each one and archived the ticked ones, and since 2026-10-15 Sam
+  had been typing `[ ] ` at the start of a head by hand and archiving the note when it was done.
+  Nothing listed what was still to do, and nothing in a note said that it was a task. Four calls
+  shaped it.
+  - *The box is text.* What you said goes in the text, and the test for adding to the agreed
+    structure is whether a note still reads right on paper (see "The note is plain text"); a
+    ticked box does, where the archived flag beside the text does not. So the box is written at
+    the start of the head and read from there, the engine's syntax gains one form, and the line
+    format does not change: a build from before reads `[ ] Order oil` as a note that says so,
+    and old and new binaries and pages sync side by side. The head has to start with it: `Order
+    oil [ ]` is not a task, nor is a head with a space before its box, and `[X]` typed by hand
+    is not one either, though the importer reads it as `[x]`.
+  - *Ticking is archiving.* What is done is archived already, so the box and the flag say one
+    thing, and one key does both. Ctrl-V on a task, or the word in the foot, ticks it, writing
+    `[x]` and archiving it, and on an archived one, with archived notes shown, unticks it,
+    writing `[ ]` and bringing it back. Each is one version, so that no device sees the tick
+    without the archiving or the other way round, and undo puts back both. The box can still be
+    typed, and a build from before archives without ticking, so the two can disagree: an open
+    task is one whose box and flag both say so, and the key puts a disagreement right. The foot
+    says `tick` or `untick` where it said `archive` or `unarchive`, so the page has the word on a
+    phone with no box of its own to tap, which is not built (see Open questions). A tick changes
+    the text, so it is an edit and dates the note's `updated`, as any edit does; archiving
+    anything else still does not. Ctrl-V on anything but a task is as it was.
+  - *`[ ]` is a label.* Typed on the line it holds the open tasks, the notes headed `[ ]` and
+    not archived, as `#house` holds what carries the tag, and the rest of the line still
+    applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among the open
+    tasks. It is the one form with a space in it, and it is read only whole: `[` and `[ ` are not
+    words either, so they hold nothing and the list goes from the top of the space to the open
+    tasks once, at the `]`, and a `[[` on its way to a link lists no tasks on the way. It starts a
+    word, as a date word does. The index lists the open tasks, so the box costs what a tag costs.
+    A done task is not a label: `"[x]"`, a phrase, holds the done tasks with archived notes shown,
+    and any note with a ticked box in its body, and `fzn export '"[x]" #house'` writes what was
+    done in the house.
+  - *It is a place, as a tag is.* Right goes into `[ ]`, and into both from `#house [ ]`, and the
+    path says `[ ]`. A note written there starts with the box, since that is where a box is
+    written, and the other labels go at the end as before: a new row in `#house › [ ]` opens
+    `[ ] ▍ #house`, the box, the caret and the tag, whichever was gone into first, and `Order
+    oil` written from the line there is `[ ] Order oil #house`. The session says where the caret
+    goes, so that neither face has to find the box, and both put it there and take the row away
+    with Backspace there, as at the start of any new row. A head of nothing but what it opened
+    with is empty as before, now however it is spaced, so a space typed or taken out beside the
+    box writes nothing.
+
+  The importer keeps the box: `- [ ] Renew passport` imports as `[ ] Renew passport`, and `- [x]`
+  or `- [X]` as `[x]` and archived, as before. Its ids, which are where a note sat on its page,
+  and everything else it does are as they were, a box with nothing after it included. Importing
+  the same pages again is how a space imported before gets its boxes back: a note whose text was
+  not changed here since is brought up to date with its page, which now has the box, and keeps
+  its links, whether it is archived, that it was deleted, and where it sits, since a page places
+  nothing and the place held is newer than none. Its links are added to and never taken from, so
+  a link to the note it sat under that was taken off here comes back. Archiving has not dated a
+  note's `updated` since 2026-10-13, so a task imported since and archived here is still as its
+  page gave it and gets its box back too, still archived; one edited here is left as it is,
+  without one. A box that disagrees with its note's flag, archived by hand or by a build from
+  before, or ticked on its page and brought back here, is put right by a rewrite done once
+  through `fzn export` and `fzn import-jsonl`, and no code was added for it. The rewrite keeps
+  each note's `updated`, since when it was done is not known, and so that importing the export
+  taken before it puts it back. Until every device runs this build, one from before archives a
+  task without ticking it; unticking and ticking it here puts it right.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -1444,6 +1521,8 @@ tab and the relay all run the same code.
   when the editor closes, and the wait reads as this clock running ahead, two minutes after a
   long edit. A `now` said again from time to time is the fix for the first, and the time a
   message was heard going with it to the device for the second, if either is felt.
+- A box in the page's row to tap, so that a task is ticked on a phone the way it reads. The word
+  in the foot ticks it until then.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

@@ -141,6 +141,32 @@ pub fn only_tags(line: &str) -> bool {
     words.peek().is_some() && words.all(|w| w.starts_with('#') && facts(w).tags.len() == 1)
 }
 
+/// The box an open task starts with.
+pub const OPEN: &str = "[ ]";
+/// The box a done task starts with.
+const DONE: &str = "[x]";
+
+/// Whether a text is a task, and if it is, whether it is done: whether it starts with a box,
+/// `[ ]` or `[x]`. A box anywhere else, as a markdown task in a body is, makes nothing a task.
+pub fn task(text: &str) -> Option<bool> {
+    if text.starts_with(OPEN) {
+        Some(false)
+    } else if text.starts_with(DONE) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// A text as a task, open or done: its box ticked or not, or put at its start with a space.
+pub fn tick(text: &str, done: bool) -> String {
+    let mark = if done { DONE } else { OPEN };
+    match task(text) {
+        Some(_) => format!("{mark}{}", &text[mark.len()..]),
+        None => format!("{mark} {text}"),
+    }
+}
+
 /// Truncates to `max` characters, marking the cut.
 pub fn fit(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -592,6 +618,27 @@ mod tests {
         for line in ["", "  ", "# Heading", "#house today", "today #house", "#"] {
             assert!(!only_tags(line), "{line:?}");
         }
+    }
+
+    #[test]
+    fn a_task_is_a_text_that_starts_with_a_box() {
+        assert_eq!(task("[ ] order oil"), Some(false));
+        assert_eq!(task("[x] order oil\n#house"), Some(true));
+        for text in [
+            "order oil",
+            " [ ] order oil",
+            "[X] order oil",
+            "Boiler\n- [ ] order oil",
+        ] {
+            assert_eq!(task(text), None, "{text:?}");
+        }
+        assert_eq!(tick("[ ] order oil", true), "[x] order oil");
+        assert_eq!(
+            tick("[x] order oil\n#house", false),
+            "[ ] order oil\n#house"
+        );
+        assert_eq!(tick("order oil", false), "[ ] order oil");
+        assert_eq!(tick("", false), "[ ] ", "the box and the space after it");
     }
 
     #[test]

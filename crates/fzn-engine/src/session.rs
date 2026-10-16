@@ -45,6 +45,12 @@
 //! links to Boiler and is of today. Labels before the last note are only how it was reached, and
 //! a note gone into starts a new place.
 //!
+//! A task is a note whose head starts with a box, `[ ]` while it is open and `[x]` once it is
+//! done. The box is a label too, of the open tasks, gone into as a tag is, and a note written
+//! there starts with it, since that is where a box is written. Archiving a task ticks it and
+//! bringing it back unticks it, in one version, so that no device sees the tick without the
+//! archiving.
+//!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, on the line it holds the notes of
 //! that day as the date written out does, and saving a note writes the date in its place.
@@ -146,7 +152,8 @@ pub enum Action {
         id: String,
         text: String,
     },
-    /// Archive the note under the cursor, or bring it back.
+    /// Archive the note under the cursor, or bring it back. A task is ticked as it is archived
+    /// and unticked as it is brought back.
     Archive,
     /// Delete the note under the cursor.
     Delete,
@@ -249,9 +256,10 @@ pub struct Row {
 #[derive(Debug, Serialize)]
 pub struct Field<'a> {
     pub text: &'a str,
-    /// A new note with nothing in it but the label it opened with, whose row goes if the cursor
-    /// leaves it so. Its caret belongs at the start, before the label.
-    pub fresh: bool,
+    /// Where the caret belongs, in characters, in a new note with nothing in it but the labels it
+    /// opened with, whose row goes if the cursor leaves it so: after a task's box and before the
+    /// labels at the end. Backspace there takes the row away. None for any other note.
+    pub fresh: Option<usize>,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
 }
@@ -302,8 +310,9 @@ struct Writing {
     whole: bool,
     /// When the cursor landed, which is `created` for a new note.
     opened: Moment,
-    /// What a new note's head opened with: the labels of the place it was opened in, each after
-    /// a space, or nothing. It is not the writer's, so a row with only this in it is empty.
+    /// What a new note's head opened with: the labels of the place it was opened in, the box
+    /// first and the rest each after a space, or nothing. It is not the writer's, so a row with
+    /// only this in it is empty.
     label: String,
     /// The entry on the undo stack that this visit's versions are gathered into, once one has
     /// been written.
@@ -334,11 +343,21 @@ impl Writing {
         self.bare(self.text.lines().next().unwrap_or(""))
     }
 
-    /// Whether a text holds nothing but the label the note opened with, or the start of it, as
-    /// is left when the label is taken out a letter at a time from its end: none of it is the
-    /// writer's, so that taking the label out writes nothing.
+    /// Whether a text holds nothing but the labels the note opened with, or the start of them,
+    /// however it is spaced, as is left when they are taken out a letter at a time from the end,
+    /// or a space is typed or taken out beside the box: none of it is the writer's, so that
+    /// taking the labels out writes nothing.
     fn bare(&self, text: &str) -> bool {
-        self.label.trim().starts_with(text.trim())
+        text::normalise_head(&self.label).starts_with(&text::normalise_head(text))
+    }
+
+    /// Where the writer's text goes in what a new note opened with: after the box and its space,
+    /// before the labels at the end.
+    fn start(&self) -> usize {
+        match text::task(&self.label) {
+            Some(_) => text::OPEN.len() + 1,
+            None => 0,
+        }
     }
 }
 
@@ -395,12 +414,16 @@ impl Place {
     }
 }
 
-/// A text with a label written at the end of its head, as it would have been typed there.
-fn with_label(text: &str, written: &str) -> String {
+/// A text with a label written into its head, as it would have been typed there: the box at its
+/// start, and anything else at its end.
+fn with_label(text: &str, label: &Label, written: &str) -> String {
+    if *label == Label::Open {
+        return text::tick(text, false);
+    }
     let (head, body) = text
         .split_once('\n')
         .map_or((text, None), |(h, b)| (h, Some(b)));
-    let mut out = format!("{} {written}", head.trim_end());
+    let mut out = format!("{head} {written}");
     if let Some(body) = body {
         out.push('\n');
         out.push_str(body);
@@ -948,7 +971,7 @@ impl Session {
             here: self.around_note().and_then(|id| self.notes.get(id)),
             field: self.field.as_ref().map(|field| Field {
                 text: &field.text,
-                fresh: field.blank(),
+                fresh: field.blank().then(|| field.start()),
                 whole: field.whole,
             }),
         }
@@ -1001,9 +1024,15 @@ impl Session {
                         let linked = holds(&row.id, around) || holds(around, &row.id);
                         offer(Action::Link, if linked { "unlink" } else { "link" });
                     }
+                    // A task is ticked by archiving it, and says so.
                     offer(
                         Action::Archive,
-                        if row.archived { "unarchive" } else { "archive" },
+                        match (text::task(&field.text).is_some(), row.archived) {
+                            (true, false) => "tick",
+                            (true, true) => "untick",
+                            (false, false) => "archive",
+                            (false, true) => "unarchive",
+                        },
                     );
                     offer(Action::Delete, "delete");
                     offer(Action::Copy, "copy");
@@ -1622,12 +1651,11 @@ impl Session {
     }
 
     /// Turns the line into a note, linked to the note being looked around and to whatever it
-    /// names in brackets, or ending with each label being looked around that it does not carry
-    /// already, in the order of the path, with its date words written out as dates, and puts the
-    /// cursor on it: it is the note most likely to be gone on with, and Enter there opens a row
-    /// under it. With nothing on the line, opens a new note at the top of the list to be written
-    /// in place. A note's link is not in its text, and a new row has the labels in its head from
-    /// the start.
+    /// names in brackets, with each label being looked around that it does not carry already
+    /// written in, with its date words written out as dates, and puts the cursor on it: it is the
+    /// note most likely to be gone on with, and Enter there opens a row under it. With nothing on
+    /// the line, opens a new note at the top of the list to be written in place. A note's link is
+    /// not in its text, and a new row has the labels in its head from the start.
     fn write_line(&mut self) {
         let today = self.today();
         let text = text::expand_date_words(self.line.trim(), today);
@@ -1635,13 +1663,7 @@ impl Session {
             self.draft_at(0);
             return;
         }
-        let text = self.labels_here().fold(text, |text, (label, written)| {
-            if label.carried_by(&text, today) {
-                text
-            } else {
-                with_label(&text, written)
-            }
-        });
+        let text = self.inherit(text, today);
         let around = self.around_note().map_or(&[][..], std::slice::from_ref);
         let id = self.host.new_id();
         let links = links_on_save(&self.engine, &id, "", &text, around);
@@ -1665,18 +1687,26 @@ impl Session {
         self.status = "created".into();
     }
 
+    /// A text with each label being looked around that it does not carry already written into
+    /// its head, as it would have been typed: the box at the start and the rest at the end, in the
+    /// order of the path. A day is carried by a note written on it, since that is its `created`.
+    fn inherit(&self, text: String, written_on: Day) -> String {
+        self.labels_here().fold(text, |text, (label, written)| {
+            if label.carried_by(&text, written_on) {
+                text
+            } else {
+                with_label(&text, label, written)
+            }
+        })
+    }
+
     /// Opens a new note at this row of the list, with the cursor in it. It has its id from now,
     /// and its time, and it is written at its first letter. Inside labels its head opens with
-    /// each of them, in the order of the path, but for one the note carries already, as one
-    /// written on the day it is does.
+    /// each of them, but for one the note carries already, as one written on the day it is does.
     fn draft_at(&mut self, at: usize) {
         let id = self.host.new_id();
         let opened = self.host.now();
-        let label: String = self
-            .labels_here()
-            .filter(|(label, _)| !label.carried_by("", opened.day()))
-            .map(|(_, written)| format!(" {written}"))
-            .collect();
+        let label = self.inherit(String::new(), opened.day());
         let at = at.min(self.rows.len());
         self.rows.insert(
             at,
@@ -1922,13 +1952,27 @@ impl Session {
         })
     }
 
+    /// Archives the note under the cursor, or brings it back. A task's box says the same in its
+    /// text, ticked or not, and is written in the same version, so that no device sees one
+    /// without the other and undo puts back both.
     fn archive(&mut self) {
         let Some(record) = self.selected_record().cloned() else {
             return;
         };
         let (id, archived) = (record.id.clone(), !record.archived);
+        let task = text::task(&record.text).is_some();
+        let record = match task.then(|| text::tick(&record.text, archived)) {
+            Some(ticked) if ticked != record.text => self.revise(&id, ticked).unwrap_or(record),
+            _ => record,
+        };
         self.commit(Record { archived, ..record });
-        self.status = if archived { "archived" } else { "unarchived" }.into();
+        self.status = match (task, archived) {
+            (true, true) => "ticked",
+            (true, false) => "unticked",
+            (false, true) => "archived",
+            (false, false) => "unarchived",
+        }
+        .into();
         self.refresh(false);
         self.reselect(&id);
     }
@@ -3164,7 +3208,7 @@ mod tests {
         assert_eq!(view["here"], serde_json::Value::Null);
         assert_eq!(
             view["field"],
-            serde_json::json!({"text": "Boiler\nthe plan", "fresh": false, "whole": false})
+            serde_json::json!({"text": "Boiler\nthe plan", "fresh": null, "whole": false})
         );
         assert!(view.get("open").is_none());
         // A hint's action is what to send back to ask for it.
@@ -3274,7 +3318,7 @@ mod tests {
     fn field(s: &Session) -> Option<(String, bool, bool)> {
         s.view()
             .field
-            .map(|field| (field.text.to_owned(), field.fresh, field.whole))
+            .map(|field| (field.text.to_owned(), field.fresh.is_some(), field.whole))
     }
 
     /// A version written on another device, a minute or two after midday.
@@ -5950,6 +5994,190 @@ mod tests {
             heads(&s)[2..],
             ["Boiler sheds", "Bottle shop!"],
             "a tie goes by the space's order"
+        );
+    }
+
+    /// Two open tasks in `#house` and one outside it, one done and one archived without its tick,
+    /// and a note with a task in its body, which is not one.
+    fn tasks(s: &mut Session) {
+        put(s, "oil", "[ ] Order oil #house", &[], 1_000);
+        put(s, "radiators", "[ ] Bleed the radiators #house", &[], 2_000);
+        put(s, "chimney", "[x] Sweep the chimney #house", &[], 3_000);
+        put(s, "shed", "[ ] Paint the shed #house", &[], 4_000);
+        put(s, "stamps", "[ ] Buy stamps", &[], 5_000);
+        put(
+            s,
+            "boiler",
+            "Boiler #house\n- [ ] get three quotes",
+            &[],
+            6_000,
+        );
+        for id in ["chimney", "shed"] {
+            let held = s.notes.get(id).unwrap().clone();
+            s.commit(Record {
+                archived: true,
+                ..held
+            });
+        }
+        s.refresh(true);
+    }
+
+    #[test]
+    fn the_box_on_the_line_holds_the_open_tasks_and_the_rest_of_the_line_still_applies() {
+        let mut s = session();
+        tasks(&mut s);
+        let open = [
+            "[ ] Buy stamps",
+            "[ ] Bleed the radiators #house",
+            "[ ] Order oil #house",
+        ];
+        for typed in ["[ ]", "[ ] a"] {
+            clear(&mut s);
+            type_in(&mut s, typed);
+            assert_eq!(heads(&s), open, "{typed:?}");
+        }
+        s.act(Action::ShowArchived);
+        assert_eq!(heads(&s), open, "a task archived is not open");
+        s.act(Action::ShowArchived);
+        clear(&mut s);
+        type_in(&mut s, "[ ] #house");
+        assert_eq!(heads(&s), open[1..]);
+        clear(&mut s);
+        type_in(&mut s, "[ ] oil");
+        assert_eq!(heads(&s), ["[ ] Order oil #house"]);
+        let exported: Vec<&str> = s.export("[ ]").iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(exported, ["stamps", "radiators", "oil"]);
+    }
+
+    #[test]
+    fn the_box_is_a_place_and_a_new_row_there_opens_with_it_before_the_caret() {
+        let mut s = session();
+        tasks(&mut s);
+        type_in(&mut s, "#house [ ]");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["#house", "[ ]"]);
+        assert_eq!(
+            heads(&s),
+            ["[ ] Bleed the radiators #house", "[ ] Order oil #house"]
+        );
+
+        // The box first, then the caret, then the other labels.
+        assert!(s.act(Action::Write).is_empty());
+        let fresh = |s: &Session| s.view().field.map(|f| (f.text.to_owned(), f.fresh));
+        assert_eq!(fresh(&s), Some(("[ ]  #house".to_owned(), Some(4))));
+        for left in ["[ ] ", "[ ] #house", "[ ]   #house", "[ ]  #ho", "[", ""] {
+            assert!(
+                edited(&mut s, left).is_empty(),
+                "nothing of the writer's: {left:?}"
+            );
+        }
+        let typed = edited(&mut s, "[ ] B #house");
+        let [Effect::Keep(kept)] = &typed[..] else {
+            panic!("one version: {typed:?}");
+        };
+        assert_eq!(kept.text, "[ ] B #house");
+        s.act(Action::Undo);
+        assert_eq!(fresh(&s), Some(("[ ]  #house".to_owned(), Some(4))));
+        s.act(Action::Erase);
+        assert_eq!(s.cursor, None, "Backspace where it opened takes it away");
+
+        type_in(&mut s, "Fix the gate");
+        s.act(Action::Write);
+        let new = s.selected().unwrap().id.clone();
+        assert_eq!(s.notes.get(&new).unwrap().text, "[ ] Fix the gate #house");
+        s.act(Action::Select(None));
+        type_in(&mut s, "[ ] Prune the roses");
+        s.act(Action::Write);
+        let new = s.selected().unwrap().id.clone();
+        assert_eq!(
+            s.notes.get(&new).unwrap().text,
+            "[ ] Prune the roses #house",
+            "never two boxes"
+        );
+
+        // Gone into the other way round, it is one place all the same.
+        s.act(Action::Select(None));
+        s.act(Action::Back);
+        s.act(Action::Back);
+        clear(&mut s);
+        type_in(&mut s, "[ ]");
+        s.act(Action::GoIn);
+        type_in(&mut s, "#house");
+        s.act(Action::GoIn);
+        assert_eq!(path(&s), ["[ ]", "#house"]);
+        s.act(Action::Write);
+        assert_eq!(fresh(&s), Some(("[ ]  #house".to_owned(), Some(4))));
+    }
+
+    #[test]
+    fn ticking_a_task_writes_its_box_and_archives_it_in_one_version_and_undo_puts_back_both() {
+        let mut s = session();
+        tasks(&mut s);
+        let mut log = Vec::new();
+        select(&mut s, "[ ] Order oil #house");
+        assert!(labels(&s).contains(&"tick"));
+        let ticked = s.act(Action::Archive);
+        let [Effect::Keep(kept)] = &ticked[..] else {
+            panic!("one version: {ticked:?}");
+        };
+        assert_eq!(
+            (kept.text.as_str(), kept.archived),
+            ("[x] Order oil #house", true)
+        );
+        assert_eq!(
+            kept.updated,
+            Some(NOON),
+            "the box is in the text, so it is an edit"
+        );
+        assert_eq!(s.status, "ticked");
+        assert!(!heads(&s).contains(&"[x] Order oil #house"));
+        log.extend(ticked);
+
+        let undone = s.act(Action::Undo);
+        let [Effect::Keep(kept)] = &undone[..] else {
+            panic!("one version: {undone:?}");
+        };
+        assert_eq!(
+            (kept.text.as_str(), kept.archived),
+            ("[ ] Order oil #house", false)
+        );
+        assert_eq!(kept.updated, Some(Moment::utc(1_000)));
+        log.extend(undone);
+        log.extend(s.act(Action::Redo));
+        for notes in [reopened(&log), reopened(log.iter().rev())] {
+            let oil = notes.get("oil").unwrap();
+            assert_eq!(
+                (oil.text.as_str(), oil.archived),
+                ("[x] Order oil #house", true)
+            );
+        }
+
+        // Shown, a done task is unticked as it is brought back, and so is one archived without
+        // its tick.
+        s.act(Action::Select(None));
+        s.act(Action::ShowArchived);
+        for (head, unticked) in [
+            ("[x] Order oil #house", "[ ] Order oil #house"),
+            ("[ ] Paint the shed #house", "[ ] Paint the shed #house"),
+        ] {
+            select(&mut s, head);
+            assert!(labels(&s).contains(&"untick"));
+            s.act(Action::Archive);
+            assert_eq!(s.status, "unticked");
+            let id = s.selected().unwrap().id.clone();
+            let held = s.notes.get(&id).unwrap();
+            assert_eq!((held.text.as_str(), held.archived), (unticked, false));
+            s.act(Action::Select(None));
+        }
+
+        // Anything else is archived as it always was, a box in its body or not.
+        select(&mut s, "Boiler #house");
+        assert!(labels(&s).contains(&"archive"));
+        s.act(Action::Archive);
+        assert_eq!(s.status, "archived");
+        assert_eq!(
+            s.notes.get("boiler").unwrap().text,
+            "Boiler #house\n- [ ] get three quotes"
         );
     }
 

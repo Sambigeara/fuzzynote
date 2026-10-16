@@ -896,7 +896,7 @@ mod tests {
         // first letter.
         a.act(Action::Type(String::new()));
         a.act(Action::Write);
-        assert!(a.view().field.is_some_and(|field| field.fresh));
+        assert!(a.view().field.is_some_and(|field| field.fresh.is_some()));
         let typed = a.act(Action::Edited("House".into()));
         assert_eq!(typed.keep.len(), 1);
         assert_eq!(opened(&typed.keep[0].lines[0]).text, "House");
