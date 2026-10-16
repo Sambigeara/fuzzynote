@@ -197,6 +197,19 @@ impl Session {
         if query.letters {
             found = self.by_letters(found);
         }
+        // The engine names by the whole space. Here a note is named only as going in names it,
+        // so one named without the labels that end it and not carrying the place's is only found.
+        let named: HashSet<&str> = self
+            .named_here(query)
+            .into_iter()
+            .map(|note| note.id.as_str())
+            .collect();
+        for hit in &mut found {
+            if hit.named && !named.contains(hit.note.id.as_str()) {
+                hit.named = false;
+                hit.reasons.retain(|reason| reason.scorer != Scorer::Name);
+            }
+        }
         let fact = |hit: &Hit| linked.contains(hit.note.id.as_str());
         let here = self.path.last().and_then(Step::note);
         let mut found: Vec<&Hit> = found

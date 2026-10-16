@@ -590,8 +590,8 @@ nothing, or only its box, shows whole; a note with a body keeps its head whole, 
 its name; and the row under the cursor shows its text as it is. A label only typed on the line hides
 nothing. The engine says the head each row shows, so neither face carries the rule. A head is named
 without the labels that end it too, in a second tier: only when no note's whole head is what was
-typed, and inside a place only for a note that carries the place's labels, so that typing what a row
-reads is typing its name.
+typed, and inside a place only for a note that carries the place's labels, both for the list and for
+Tab, so that typing what a row reads is typing its name.
 
 The place is the last note on the path, if there is one, together with every label gone into after
 it; labels before the note are only how you got there, so `#house › Boiler › today` is the place
@@ -1864,10 +1864,10 @@ the app now does is described above; an entry repeats it only where the reason n
   still names it. A second tier, and not a second name of the same rank, because a name must never
   stop naming the note it named: beside a hub `Standup`, the dated `Standup 2026-10-12` and
   `Standup 2026-10-13` would otherwise make `standup` name three notes and go into none. Inside a
-  place, a note named only in the second tier is gone into only if it carries the place's labels,
-  since those are the rows that read so: inside `#house`, `order oil` goes into `Order oil #house`
-  though `Order oil #garden` is called the same. Without the second tier a row would read one thing
-  and answer to another.
+  place, a note named only in the second tier is listed as named and gone into only if it carries
+  the place's labels, since those are the rows that read so: inside `#house`, `order oil` goes into
+  `Order oil #house` though `Order oil #garden` is called the same, and only the first says `its
+  name`. Without the second tier a row would read one thing and answer to another.
 
 - **A face keeps the path as steps.** Decided 2026-10-16, at Sam's direction, revising "A tag is a
   place you can go into" where it left out remembering the path across restarts. A page is reloaded

@@ -3,6 +3,7 @@
 //! what it is, the last note on the path with the labels gone into after it, is best read in one
 //! place.
 
+use crate::note::Note;
 use crate::query::{Label, Query};
 use crate::record::Record;
 use crate::text;
@@ -244,27 +245,30 @@ impl Session {
                 );
                 return places;
             }
-        } else {
-            let (mut named, called) = self.engine.notes_named(query, self.show_archived);
-            // A note named only without the labels that end it is named here if its row reads
-            // so here: if it carries the place's labels.
-            if called {
-                named.retain(|note| {
-                    let day = note.written().unwrap_or(Day::MIN);
-                    self.labels_here()
-                        .all(|(label, _)| label.carried_by(&note.text, day))
-                });
-            }
-            if let [note] = named[..] {
-                places.push(Step::Note {
-                    id: note.id.clone(),
-                    head: self.step_name(&note.id).unwrap_or_default(),
-                    search: None,
-                });
-            }
+        } else if let [note] = self.named_here(query)[..] {
+            places.push(Step::Note {
+                id: note.id.clone(),
+                head: self.step_name(&note.id).unwrap_or_default(),
+                search: None,
+            });
         }
         places.retain(|place| !self.path.last().is_some_and(|s| s.is(place)));
         places
+    }
+
+    /// The notes the line names here, by the one rule the list and going in share, so that a
+    /// row saying `its name` is always where Tab goes. A note named only without the labels
+    /// that end it is named here if its row reads so here: if it carries the place's labels.
+    pub(super) fn named_here(&self, query: &Query) -> Vec<&Note> {
+        let (mut named, called) = self.engine.notes_named(query, self.show_archived);
+        if called {
+            named.retain(|note| {
+                let day = note.written().unwrap_or(Day::MIN);
+                self.labels_here()
+                    .all(|(label, _)| label.carried_by(&note.text, day))
+            });
+        }
+        named
     }
 
     /// A head as a row that is not under the cursor shows it here, if that differs from the

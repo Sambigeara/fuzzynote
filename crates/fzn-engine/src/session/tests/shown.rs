@@ -216,6 +216,31 @@ fn in_a_place_a_name_without_labels_goes_into_the_note_whose_row_reads_so() {
 }
 
 #[test]
+fn in_a_place_the_list_says_its_name_only_where_tab_goes() {
+    let mut s = session();
+    put(&mut s, "garden", "Order oil #garden", &[], 1_000);
+    go_to(&mut s, "#house");
+    type_in(&mut s, "order oil");
+    assert!(
+        !s.rows
+            .iter()
+            .any(|r| r.reasons.iter().any(|r| r == "its name"))
+    );
+    assert!(!s.view().hints.iter().any(|h| h.action == Action::GoIn));
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house"]);
+
+    // Once a note carries the place's labels, it is listed first as named, and gone into.
+    put(&mut s, "house", "Order oil #house", &[], 2_000);
+    clear(&mut s);
+    type_in(&mut s, "order oil");
+    assert_eq!(heads(&s)[0], "Order oil #house");
+    assert!(named(&s, "Order oil #house"));
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "Order oil"]);
+}
+
+#[test]
 fn a_head_of_only_labels_and_a_heading_mark_shows_as_it_is() {
     let mut s = session();
     put(&mut s, "mark", "# #house", &[], 1_000);
