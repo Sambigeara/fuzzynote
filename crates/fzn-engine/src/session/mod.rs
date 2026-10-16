@@ -82,7 +82,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
-use crate::note::NoteId;
 use crate::query::Query;
 use crate::record::{Notes, Record};
 use crate::score::Weights;
@@ -439,7 +438,7 @@ impl Session {
             match self.notes.get(id) {
                 Some(record) => self.engine.upsert(record.note()),
                 None => {
-                    self.engine.remove(&NoteId::new(id.clone()));
+                    self.engine.remove(id);
                 }
             }
         }

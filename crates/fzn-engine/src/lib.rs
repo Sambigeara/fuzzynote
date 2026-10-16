@@ -29,8 +29,8 @@ pub mod time;
 
 pub use device::{Device, Editing, Kept, Todo};
 pub use engine::Engine;
-pub use note::{Note, NoteId};
-pub use record::{Notes, Read, Record, links_on_save};
+pub use note::Note;
+pub use record::{Notes, Read, Record};
 pub use score::{Reason, Scorer, Weights};
 pub use seal::{Key, Opened, Seal};
 pub use session::{Action, Effect, Field, Hint, Host, Row, Session, View};

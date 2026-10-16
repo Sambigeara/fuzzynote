@@ -3,34 +3,15 @@
 use crate::text;
 use crate::time::{Day, Moment};
 
-/// Stable identity of a note. Opaque to the engine and assigned by whoever stores the note.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NoteId(pub String);
-
-impl NoteId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for NoteId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// A note is one text. Its first line is its head.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
-    pub id: NoteId,
+    /// Stable identity of the note. Opaque to the engine and assigned by whoever stores the note.
+    pub id: String,
     pub text: String,
     /// Notes this one is linked to, by id. A link held here survives its target being renamed
     /// and adds no words to the text, unlike a `[[head]]` written into it.
-    pub links: Vec<NoteId>,
+    pub links: Vec<String>,
     /// When the note was written, to the moment, since a span typed on the line holds the notes
     /// written in it to the minute. Relevance reads only its day.
     pub created: Option<Moment>,
@@ -41,7 +22,7 @@ pub struct Note {
 impl Note {
     pub fn new(id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
-            id: NoteId::new(id),
+            id: id.into(),
             text: text.into(),
             links: Vec::new(),
             created: None,

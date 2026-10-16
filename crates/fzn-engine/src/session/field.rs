@@ -4,7 +4,7 @@
 //! it is left empty, and all a visit writes is one entry to undo. Kept together, those rules are
 //! not bent by the rest.
 
-use crate::record::{Record, links_on_save};
+use crate::record::Record;
 use crate::text;
 use crate::time::Moment;
 
@@ -309,8 +309,7 @@ impl Session {
     /// holds still while the cursor is on it.
     fn created(&self, field: &Writing, text: String) -> Record {
         let around = self.place_note();
-        let links = links_on_save(
-            &self.engine,
+        let links = self.engine.links_on_save(
             &field.id,
             "",
             &text,

@@ -3,7 +3,6 @@
 //! what it is, the last note on the path with the labels gone into after it, is best read in one
 //! place.
 
-use crate::note::NoteId;
 use crate::query::{Label, Query};
 use crate::record::Record;
 use crate::text;
@@ -113,9 +112,7 @@ impl Session {
                 .notes
                 .get(&id)
                 .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
-            || self
-                .engine
-                .searched(&NoteId::new(id.clone()), &Query::read(&self.line, today));
+            || self.engine.searched(&id, &Query::read(&self.line, today));
         let step = Step::Note {
             id,
             head: row.head.clone(),
@@ -182,7 +179,7 @@ impl Session {
             }
         } else if let Some(note) = self.engine.the_note_named(&query, self.show_archived) {
             places.push(Step::Note {
-                id: note.id.as_str().to_owned(),
+                id: note.id.clone(),
                 head: note.head().to_owned(),
                 search: None,
             });

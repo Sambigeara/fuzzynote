@@ -3,8 +3,7 @@
 //! changed, and undo sees every change. The actions that change a note from the line or the list
 //! live here too: writing the line, saving, archiving and ticking, deleting and moving.
 
-use crate::note::NoteId;
-use crate::record::{Record, links_on_save};
+use crate::record::Record;
 use crate::text;
 
 use super::{Effect, Session};
@@ -93,7 +92,7 @@ impl Session {
             ),
         };
         if record.deleted {
-            self.engine.remove(&NoteId::new(record.id.clone()));
+            self.engine.remove(&record.id);
         } else {
             self.engine.upsert(record.note());
         }
@@ -183,7 +182,7 @@ impl Session {
         let text = self.inherit(text, today);
         let around = self.place_note().map_or(&[][..], std::slice::from_ref);
         let id = self.host.new_id();
-        let links = links_on_save(&self.engine, &id, "", &text, around);
+        let links = self.engine.links_on_save(&id, "", &text, around);
         let now = self.host.now();
         self.commit(Record {
             links,
@@ -238,7 +237,9 @@ impl Session {
                 ..record
             });
         }
-        let links = links_on_save(&self.engine, id, &record.text, &text, &record.links);
+        let links = self
+            .engine
+            .links_on_save(id, &record.text, &text, &record.links);
         Some(Record {
             text,
             links,

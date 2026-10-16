@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
-use fzn_engine::{Day, Engine, Moment, Record, links_on_save, text, time};
+use fzn_engine::{Day, Engine, Moment, Record, text, time};
 use serde::Deserialize;
 
 use crate::store::Store;
@@ -723,7 +723,7 @@ pub fn link_named(store: &mut Store) -> Result<usize> {
         .notes()
         .records()
         .filter_map(|r| {
-            let links = links_on_save(&engine, &r.id, "", &r.text, &r.links);
+            let links = engine.links_on_save(&r.id, "", &r.text, &r.links);
             (links != r.links).then(|| Record {
                 links,
                 stamp: Some(store.next_stamp(&r.id)),

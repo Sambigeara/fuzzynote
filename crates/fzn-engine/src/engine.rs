@@ -4,7 +4,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 
 use crate::index::{DocId, Index, TermId};
-use crate::note::{Note, NoteId};
+use crate::note::Note;
 use crate::query::{Hold, Query};
 use crate::score::{self, Candidates, Context, Label, QueryLabel, Reason, Scorer, Weights};
 use crate::text::{self, Facts};
@@ -19,7 +19,7 @@ struct Doc {
 #[derive(Default)]
 pub struct Engine {
     docs: Vec<Option<Doc>>,
-    by_id: HashMap<NoteId, DocId>,
+    by_id: HashMap<String, DocId>,
     free: Vec<DocId>,
     index: Index,
     weights: Weights,
@@ -48,7 +48,7 @@ impl Default for SearchOptions {
 /// gone into after it, which `written` is as they were typed. The labels before the note are
 /// only how it was reached, and are not here.
 pub(crate) struct Place<'a> {
-    pub note: Option<&'a NoteId>,
+    pub note: Option<&'a str>,
     pub labels: &'a [Label],
     pub written: &'a str,
 }
@@ -130,7 +130,7 @@ impl Engine {
         self.by_id.is_empty()
     }
 
-    pub fn get(&self, id: &NoteId) -> Option<&Note> {
+    pub fn get(&self, id: &str) -> Option<&Note> {
         let &d = self.by_id.get(id)?;
         self.docs[d as usize].as_ref().map(|doc| &doc.note)
     }
@@ -159,7 +159,7 @@ impl Engine {
     }
 
     /// Removes a note and returns it.
-    pub fn remove(&mut self, id: &NoteId) -> Option<Note> {
+    pub fn remove(&mut self, id: &str) -> Option<Note> {
         let d = self.by_id.remove(id)?;
         self.index.remove(d);
         self.free.push(d);
@@ -336,7 +336,7 @@ impl Engine {
     /// outside its phrases, every one of them in its head or in the head of a note it links to,
     /// the word still being typed as the start of one; or with `~` it has their letters in its
     /// head. A line with nothing on it to rank by or to hold searched for nothing.
-    pub(crate) fn searched(&self, id: &NoteId, query: &Query) -> bool {
+    pub(crate) fn searched(&self, id: &str, query: &Query) -> bool {
         let Some((d, doc)) = self
             .by_id
             .get(id)
@@ -364,9 +364,7 @@ impl Engine {
     /// A note's head and the notes that link to it.
     fn named(&self, d: DocId) -> Option<(&str, &[DocId])> {
         let doc = self.docs.get(d as usize)?.as_ref()?;
-        let linked = self
-            .index
-            .docs_with(&Label::Link(doc.note.id.as_str().to_owned()));
+        let linked = self.index.docs_with(&Label::Link(doc.note.id.clone()));
         Some((doc.note.head(), linked))
     }
 
@@ -435,7 +433,7 @@ impl Engine {
                 .iter()
                 .filter_map(|&t| self.docs[t as usize].as_ref())
                 .map(|target| QueryLabel::LinksTo {
-                    id: target.note.id.as_str().to_owned(),
+                    id: target.note.id.clone(),
                     head: target.note.head().to_owned(),
                 }),
         );
@@ -475,10 +473,7 @@ impl Engine {
         };
         let &d = self.by_id.get(id)?;
         let doc = self.docs[d as usize].as_ref()?;
-        let mut links_in = self
-            .index
-            .docs_with(&Label::Link(id.as_str().to_owned()))
-            .to_vec();
+        let mut links_in = self.index.docs_with(&Label::Link(id.to_owned())).to_vec();
         let mut links_out: Vec<DocId> = doc
             .note
             .links
@@ -522,7 +517,7 @@ impl Engine {
 
     /// The notes a text names in `[[brackets]]`, by their heads. Brackets are a way of typing a
     /// link and nothing more: the link itself is the id, held on the note that was saved.
-    pub fn named_in(&self, text: &str) -> Vec<NoteId> {
+    pub fn named_in(&self, text: &str) -> Vec<String> {
         let mut named = Vec::new();
         for head in text::facts(text).links {
             for &d in self.index.docs_with(&Label::Head(head.clone())) {
@@ -539,21 +534,15 @@ impl Engine {
     /// The links a note holds once its text is saved. Every note the new text names in brackets
     /// is linked, a link whose brackets were taken out of the text is dropped, and links made
     /// any other way are kept. A note does not link to itself.
-    pub fn links_on_save(
-        &self,
-        id: &NoteId,
-        old: &str,
-        new: &str,
-        links: &[NoteId],
-    ) -> Vec<NoteId> {
+    pub fn links_on_save(&self, id: &str, old: &str, new: &str, links: &[String]) -> Vec<String> {
         let (before, after) = (self.named_in(old), self.named_in(new));
-        let mut links: Vec<NoteId> = links
+        let mut links: Vec<String> = links
             .iter()
             .filter(|l| !before.contains(l) || after.contains(l))
             .cloned()
             .collect();
         for l in after {
-            if l != *id && !links.contains(&l) {
+            if l != id && !links.contains(&l) {
                 links.push(l);
             }
         }
@@ -661,11 +650,7 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     let mut labels: Vec<Label> = Vec::new();
     labels.extend(facts.tags.iter().cloned().map(Label::Tag));
     labels.extend(facts.mentions.iter().cloned().map(Label::Mention));
-    labels.extend(
-        note.links
-            .iter()
-            .map(|l| Label::Link(l.as_str().to_owned())),
-    );
+    labels.extend(note.links.iter().map(|l| Label::Link(l.clone())));
     let head = text::normalise_head(note.head());
     if !head.is_empty() {
         labels.push(Label::Head(head));
@@ -759,9 +744,8 @@ mod tests {
 
     /// The neighbourhood of a note alone.
     fn near<'a>(e: &'a Engine, id: &str, opts: &SearchOptions) -> Vec<Hit<'a>> {
-        let id = NoteId::new(id);
         let place = Place {
-            note: Some(&id),
+            note: Some(id),
             labels: &[],
             written: "",
         };
@@ -822,7 +806,7 @@ mod tests {
             ),
             ("tue", "Tuesday\nrest"),
         ]);
-        let id = NoteId::new;
+        let id = str::to_owned;
         assert_eq!(
             e.named_in("see [[Kettlebell Programme|the plan]]"),
             [id("prog")]
@@ -857,7 +841,7 @@ mod tests {
 
     fn linked_to(id: &str, text: &str, target: &str) -> Note {
         let mut n = Note::new(id, text);
-        n.links.push(NoteId::new(target));
+        n.links.push(target.to_owned());
         n
     }
 
@@ -1002,7 +986,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ids(&search(&e, "boiler service", &none)), ["doc"]);
-        let mut doc = e.get(&NoteId::new("doc")).unwrap().clone();
+        let mut doc = e.get("doc").unwrap().clone();
         doc.archived = true;
         e.upsert(doc);
         let live = SearchOptions {
@@ -1032,8 +1016,7 @@ mod tests {
         quote.created = on(time::day_from_civil(2026, 10, 13));
         e.upsert(quote);
         let today = time::day_from_civil(2026, 10, 15);
-        let searched =
-            |id: &str, typed: &str| e.searched(&NoteId::new(id), &Query::read(typed, today));
+        let searched = |id: &str, typed: &str| e.searched(id, &Query::read(typed, today));
 
         assert!(searched("quote", "boiler"));
         assert!(searched("quote", "boi"), "the word still being typed");
@@ -1285,8 +1268,8 @@ mod tests {
         assert!(search(&e, "kettlebell", &SearchOptions::default()).is_empty());
         assert_eq!(ids(&search(&e, "cake", &SearchOptions::default())), ["a"]);
         assert_eq!(e.len(), 2);
-        assert!(e.remove(&NoteId::new("a")).is_some());
-        assert!(e.remove(&NoteId::new("a")).is_none());
+        assert!(e.remove("a").is_some());
+        assert!(e.remove("a").is_none());
         assert!(search(&e, "cake", &SearchOptions::default()).is_empty());
         assert_eq!(e.len(), 1);
         e.upsert(Note::new("c", "cake again"));

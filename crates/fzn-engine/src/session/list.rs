@@ -7,7 +7,6 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use crate::engine::{self, Hit, SearchOptions};
-use crate::note::NoteId;
 use crate::query::Query;
 use crate::record::Record;
 use crate::score::Scorer;
@@ -131,14 +130,14 @@ impl Session {
     /// neighbourhood: the note the line names, then the facts that match, then what else the
     /// engine finds there that matches, all of them holding what the line holds.
     fn in_place(&self, query: &Query) -> Vec<Row> {
-        let note = self.place_note().map(|id| NoteId::new(id.clone()));
+        let note = self.place_note().map(String::as_str);
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
             .map(|(label, written)| (label.indexed(), written))
             .unzip();
         let written = written.join(" ");
         let place = engine::Place {
-            note: note.as_ref(),
+            note,
             labels: &labels,
             written: &written,
         };
@@ -222,7 +221,7 @@ impl Session {
     fn row(&self, hit: &Hit<'_>) -> Row {
         let record = self.notes.get(hit.note.id.as_str());
         Row {
-            id: hit.note.id.as_str().to_owned(),
+            id: hit.note.id.clone(),
             head: hit.note.head().to_owned(),
             archived: hit.note.archived,
             has_body: text::has_body(&hit.note.text),

@@ -25,8 +25,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::Engine;
-use crate::note::{Note, NoteId};
+use crate::note::Note;
 use crate::seal::{Opened, Seal};
 use crate::session::Host;
 use crate::text;
@@ -131,9 +130,9 @@ impl Record {
     /// was last changed on.
     pub fn note(&self) -> Note {
         Note {
-            id: NoteId::new(self.id.clone()),
+            id: self.id.clone(),
             text: self.text.clone(),
-            links: self.links.iter().cloned().map(NoteId::new).collect(),
+            links: self.links.clone(),
             created: self.created,
             updated: self.updated.map(Moment::day),
             archived: self.archived,
@@ -391,23 +390,6 @@ impl Notes {
             .flat_map(|(_, run)| walked[run].iter().map(|&i| all[i]))
             .collect()
     }
-}
-
-/// The links a note holds once its text is saved: what it held, what the new text names in
-/// brackets, and no longer what only the old text named.
-pub fn links_on_save(
-    engine: &Engine,
-    id: &str,
-    old: &str,
-    new: &str,
-    links: &[String],
-) -> Vec<String> {
-    let held: Vec<NoteId> = links.iter().cloned().map(NoteId::new).collect();
-    engine
-        .links_on_save(&NoteId::new(id.to_owned()), old, new, &held)
-        .into_iter()
-        .map(|l| l.0)
-        .collect()
 }
 
 #[cfg(test)]
@@ -758,7 +740,7 @@ mod tests {
         assert_eq!(record.head(), "a head");
         let note = record.note();
         assert_eq!(note.head(), "a head");
-        assert_eq!(note.links, [NoteId::new("hub")]);
+        assert_eq!(note.links, ["hub"]);
         assert_eq!((note.written(), note.updated), (Some(3), Some(3)));
         assert!(note.archived);
     }
