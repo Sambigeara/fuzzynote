@@ -72,6 +72,16 @@ impl Key {
         Key(bytes)
     }
 
+    /// The key a device proves itself to a relay with: SHA-256 of `fzn/auth/` and then the
+    /// space's key. The relay keeps this one, and nothing of the space's key can be had from it,
+    /// so a relay that can let a device in still cannot read a line.
+    pub fn auth(&self) -> Key {
+        let mut hash = Sha256::new();
+        hash.update(b"fzn/auth/");
+        hash.update(self.0);
+        Key(hash.finalize().into())
+    }
+
     /// The key as text to keep: standard base64 with padding, 44 characters.
     pub fn encode(&self) -> String {
         STANDARD.encode(self.0)
@@ -210,6 +220,15 @@ mod tests {
 
     fn host() -> Counting {
         Counting(Cell::new(0))
+    }
+
+    #[test]
+    fn an_auth_key_is_the_same_from_one_key_and_different_from_it_and_from_anothers() {
+        let key = Key::from_bytes([7; 32]);
+        assert_eq!(key.auth(), Key::from_bytes([7; 32]).auth());
+        assert_ne!(key.auth(), key);
+        assert_ne!(key.auth(), Key::from_bytes([8; 32]).auth());
+        assert_ne!(key.auth().auth(), key.auth());
     }
 
     #[test]

@@ -333,6 +333,24 @@ tab and the relay all run the same code.
   - `{"now":"2026-10-15T09:30:00.250Z"}` is the sender's clock. A relay says it first, before
     `have`, so that a device can say when its own clock is far off (see "A clock far from the
     relay's is said"). A replica makes nothing of it.
+- **Four more are between a device and its relay**, and a replica makes nothing of them. A relay
+  that asks a device to show it holds the space's key says
+  `{"challenge":{"nonce":"…","claimed":true}}` after its clock: a nonce, and whether it keeps an
+  auth key for the space yet. The auth key is SHA-256 of `fzn/auth/` and the space's key, so a
+  relay that keeps it can let a device in and read nothing. The device answers `{"proof":"…"}`, the
+  nonce sealed under the auth key as a line is sealed, or the first time, when the relay keeps
+  none, `{"claim":"…"}`, the auth key itself; and then `have` again, since what it said before it
+  was let in was not heard, so a relay passes over what comes before the proof. A device whose key
+  has opened nothing of what it holds never claims. Nor does one whose key does not open the line a
+  relay offers, `"line":"…"`, with its challenge for a space it keeps no auth key for but holds
+  lines of: one sealed line of the space, which shows nothing a copy of the lines would not. That
+  is a passphrase mistyped on a new device, which would otherwise make its key the space's and shut
+  out every device with the right one; the device says so, keeps it as it keeps a refusal, and
+  sends nothing more. `{"refused":"…"}` is why a relay will not go on; the device says it, keeps it
+  until a relay takes it in, and tells whether the passphrase is in doubt: when its key opens
+  nothing it holds, or when a relay refused it after it answered the challenge and nothing it holds
+  says the key is right. A refusal before the answer is of a token or a name, not of the key. A
+  device that hears no challenge syncs as it always did.
 - **Four rules.**
   1. Told what a peer has, send it the rest of every log it holds less of, having checked its
      mark against the same point in your own.

@@ -145,6 +145,16 @@ impl Fzn {
         self.device.key_verified()
     }
 
+    /// Why the relay refused this tab, if it did and has not taken it in since.
+    pub fn refused(&self) -> Option<String> {
+        self.device.refused().map(str::to_owned)
+    }
+
+    /// Whether the passphrase is in doubt, so that the page offers to ask for it again.
+    pub fn key_in_doubt(&self) -> bool {
+        self.device.key_in_doubt()
+    }
+
     /// How far this tab's clock is from the relay's, when that is far enough to say.
     pub fn clock(&self) -> Option<String> {
         self.device.clock()

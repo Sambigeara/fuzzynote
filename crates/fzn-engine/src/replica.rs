@@ -122,6 +122,23 @@ pub enum Message {
     /// its own is far off; a build from before this passes over it as it would any message it
     /// does not know. A replica makes nothing of it.
     Now(Moment),
+    /// A relay's challenge, said after its clock and before anything else: a nonce for the
+    /// device to seal under its auth key, whether the relay holds an auth key for the space yet,
+    /// and, when it holds none and the space holds lines, one sealed line of the space, which a
+    /// device opens before it claims the space as its key's. This and the three after it are
+    /// between a device and its relay, and a replica makes nothing of them.
+    Challenge {
+        nonce: String,
+        claimed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line: Option<String>,
+    },
+    /// The nonce sealed under the auth key, as a line is sealed.
+    Proof(String),
+    /// The auth key itself, as `Key::encode` writes it, for a space the relay holds none for.
+    Claim(String),
+    /// Why the relay will not go on. It closes the connection after saying it.
+    Refused(String),
 }
 
 impl Message {
@@ -352,7 +369,11 @@ impl Replica {
                     out.push(Out::Forked { log, peer });
                 }
             }
-            Message::Now(_) => {}
+            Message::Now(_)
+            | Message::Challenge { .. }
+            | Message::Proof(_)
+            | Message::Claim(_)
+            | Message::Refused(_) => {}
         }
         out
     }
@@ -748,7 +769,48 @@ mod tests {
             now.encode().unwrap(),
             r#"{"now":"2026-10-13T12:00:00.250Z"}"#
         );
-        for message in [have, some, forked, now] {
+        let unclaimed = Message::Challenge {
+            nonce: "bm9uY2U=".into(),
+            claimed: false,
+            line: Some(r#"{"s":1,"c":"AAAA"}"#.into()),
+        };
+        assert_eq!(
+            unclaimed.encode().unwrap(),
+            r#"{"challenge":{"nonce":"bm9uY2U=","claimed":false,"line":"{\"s\":1,\"c\":\"AAAA\"}"}}"#
+        );
+        let challenge = Message::Challenge {
+            nonce: "bm9uY2U=".into(),
+            claimed: true,
+            line: None,
+        };
+        assert_eq!(
+            challenge.encode().unwrap(),
+            r#"{"challenge":{"nonce":"bm9uY2U=","claimed":true}}"#
+        );
+        let proof = Message::Proof(r#"{"s":1,"c":"AAAA"}"#.into());
+        assert_eq!(
+            proof.encode().unwrap(),
+            r#"{"proof":"{\"s\":1,\"c\":\"AAAA\"}"}"#
+        );
+        let claim = Message::Claim("a2V5".into());
+        assert_eq!(claim.encode().unwrap(), r#"{"claim":"a2V5"}"#);
+        let refused = Message::Refused("the passphrase does not open main on the relay".into());
+        assert_eq!(
+            refused.encode().unwrap(),
+            r#"{"refused":"the passphrase does not open main on the relay"}"#
+        );
+        // A replica passes over what is between a device and its relay.
+        let mut replica = Replica::new();
+        replica.connect(1);
+        for message in [&challenge, &proof, &claim, &refused] {
+            assert!(
+                replica.receive(1, message.clone()).is_empty(),
+                "{message:?}"
+            );
+        }
+        for message in [
+            have, some, forked, now, challenge, unclaimed, proof, claim, refused,
+        ] {
             let text = message.encode().unwrap();
             assert!(!text.contains('\n'));
             assert_eq!(Message::decode(&text), Some(message));

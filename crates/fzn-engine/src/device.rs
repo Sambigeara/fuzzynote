@@ -22,6 +22,13 @@
 //! the new log and the old log's deletion. Done the other way round, a face stopped between the
 //! two would have neither, and the notes the old log held would be on no disk.
 //!
+//! A relay lets a device into a space only once it has shown it holds the space's key. It says a
+//! nonce, and the device seals it under a key derived one way from the space's, which the relay
+//! keeps and can read nothing with; the first device to reach a space the relay holds no such key
+//! for hands it over. Nothing new is remembered for it: the proof is made from the key the device
+//! already has. A relay that will not go on says why, and that is kept and said until a relay
+//! takes the device in again.
+//!
 //! A device writes nothing until it knows its key is the space's. A line sealed under a second
 //! key would split the space in two, readable on some devices and shut on the rest. So the key
 //! is checked against what is there: once a sealed line has been seen, a key that has opened
@@ -31,12 +38,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+
 use serde::Serialize;
 
 use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
-use crate::seal::{Key, Seal, is_sealed};
+use crate::seal::{Key, Opened, Seal, is_sealed};
 use crate::session::{Action, Effect, Given, Host, KeptStep, Session, View};
 use crate::time::Moment;
 
@@ -47,6 +57,10 @@ pub const RELAY: Peer = 0;
 /// is compacted when the device opens.
 const COMPACT_LINES: usize = 1_000;
 const GROWTH: usize = 4;
+
+/// What a device says when its key does not open a line of the space the relay holds, and so
+/// claims nothing there.
+const NOT_THE_SPACES: &str = "the passphrase does not open this space on the relay";
 
 /// What a device says when it will not write.
 const WRONG_KEY: &str = "the passphrase does not open this space, so nothing is written";
@@ -148,6 +162,15 @@ pub struct Device {
     /// last said its own on connecting. None while there is no relay, or one from before relays
     /// said it.
     ahead: Option<i64>,
+    /// The key this device proves itself to a relay with, derived once from the space's key.
+    auth: Key,
+    /// Why the relay last refused this device, until a relay has taken it in again.
+    refused: Option<String>,
+    /// Whether this device has answered the relay's challenge on this connection, so that a
+    /// refusal heard since is one of its key, and not of a token or a name.
+    answered: bool,
+    /// Whether the last refusal was heard after this device answered a challenge.
+    refused_answer: bool,
 }
 
 impl Device {
@@ -166,6 +189,7 @@ impl Device {
             ),
             host,
             replica,
+            auth: key.auth(),
             seal: Seal::new(key),
             device,
             sealed_seen: 0,
@@ -173,6 +197,9 @@ impl Device {
             unopened: 0,
             superseded: false,
             ahead: None,
+            refused: None,
+            answered: false,
+            refused_answer: false,
         }
     }
 
@@ -327,6 +354,9 @@ impl Device {
 
     /// A connection to a peer has opened: the relay's socket, or a sibling's channel.
     pub fn connected(&mut self, peer: Peer) -> Todo {
+        if peer == RELAY {
+            self.answered = false;
+        }
         let mut todo = Todo::default();
         let out = self.replica.connect(peer);
         self.carry_out(out, &mut todo);
@@ -340,11 +370,14 @@ impl Device {
         self.replica.disconnect(peer);
         if peer == RELAY {
             self.ahead = None;
+            self.answered = false;
         }
     }
 
     /// A peer has said something. What this build does not know is passed over, and so is a
-    /// clock from any peer but the relay, since a sibling's is this machine's own.
+    /// clock from any peer but the relay, since a sibling's is this machine's own. The relay's
+    /// challenge is answered, as [`Device::answer`] says. A refusal is kept and said, and
+    /// anything the relay's replica says clears it.
     pub fn received(&mut self, peer: Peer, text: &str) -> Todo {
         let mut todo = Todo::default();
         match Message::decode(text) {
@@ -353,7 +386,32 @@ impl Device {
                     self.ahead = Some(self.host.now().ms.saturating_sub(relay.ms));
                 }
             }
+            Some(Message::Challenge {
+                nonce,
+                claimed,
+                line,
+            }) if peer == RELAY => {
+                for message in self.answer(&nonce, claimed, line.as_deref()) {
+                    if let Ok(text) = message.encode() {
+                        todo.send.push(Said { to: RELAY, text });
+                    }
+                }
+            }
+            Some(Message::Refused(why)) if peer == RELAY => {
+                self.session.say(why.clone());
+                self.refused = Some(why);
+                self.refused_answer = self.answered;
+            }
             Some(message) => {
+                if peer == RELAY
+                    && matches!(
+                        message,
+                        Message::Have(_) | Message::Lines { .. } | Message::Forked(_)
+                    )
+                {
+                    self.refused = None;
+                    self.refused_answer = false;
+                }
                 let out = self.replica.receive(peer, message);
                 self.carry_out(out, &mut todo);
             }
@@ -361,6 +419,36 @@ impl Device {
         }
         self.compact_if_superseded(&mut todo);
         todo
+    }
+
+    /// What answers the relay's challenge: the nonce sealed under the auth key when the relay
+    /// holds that key, and the key itself when it holds none yet, and then what this device
+    /// holds, since what it said before it was let in was not heard. A nonce that is not one is
+    /// not sealed. The auth key is not handed over as the space's by a device whose key has
+    /// opened nothing of what it holds, nor one whose key does not open the line of the space the
+    /// relay offers, which is a passphrase mistyped; that is kept as a refusal is.
+    fn answer(&mut self, nonce: &str, claimed: bool, line: Option<&str>) -> Vec<Message> {
+        let answer = if claimed {
+            if STANDARD
+                .decode(nonce)
+                .map_or(true, |bytes| bytes.len() != 32)
+            {
+                return Vec::new();
+            }
+            Message::Proof(Seal::new(self.auth.clone()).seal(nonce, &*self.host))
+        } else if !self.key_verified() {
+            self.session.say(WRONG_KEY);
+            return Vec::new();
+        } else if line.is_some_and(|line| matches!(self.seal.open(line), Opened::Shut)) {
+            self.session.say(NOT_THE_SPACES);
+            self.refused = Some(NOT_THE_SPACES.to_owned());
+            self.refused_answer = true;
+            return Vec::new();
+        } else {
+            Message::Claim(self.auth.encode())
+        };
+        self.answered = true;
+        vec![answer, Message::Have(self.replica.have())]
     }
 
     /// What to say of this device's clock: how far it is from the relay's, when that is more
@@ -407,6 +495,19 @@ impl Device {
     /// Sealed lines seen that this key did not open.
     pub fn unopened(&self) -> usize {
         self.unopened
+    }
+
+    /// Why the relay refused this device, if it did and has not taken it in since.
+    pub fn refused(&self) -> Option<&str> {
+        self.refused.as_deref()
+    }
+
+    /// Whether the passphrase is in doubt: the key opened no sealed line here though there are
+    /// some, or the relay refused this device after it answered the challenge, which is a refusal
+    /// of its key, and nothing here says the key is right.
+    pub fn key_in_doubt(&self) -> bool {
+        !self.key_verified()
+            || self.refused.is_some() && self.refused_answer && self.sealed_opened == 0
     }
 
     /// Starts a new log for this writer, with a header and a snapshot, and retires the old one.
@@ -1141,6 +1242,183 @@ mod tests {
         assert_eq!(net.relay.lines(&new).len(), 2, "a header and the snapshot");
         assert!(net.relay.retired().contains("dev-a"));
         assert_eq!(heads(&net.devices[1]), ["Boiler #house"]);
+    }
+
+    /// A relay's nonce: 32 bytes, as base64.
+    fn nonce() -> String {
+        STANDARD.encode([5; 32])
+    }
+
+    fn challenge(claimed: bool) -> String {
+        offering(claimed, None)
+    }
+
+    /// A challenge that offers a line of the space.
+    fn offering(claimed: bool, line: Option<String>) -> String {
+        Message::Challenge {
+            nonce: nonce(),
+            claimed,
+            line,
+        }
+        .encode()
+        .unwrap()
+    }
+
+    /// What a device sends the relay, as messages.
+    fn sent(todo: &Todo) -> Vec<Message> {
+        todo.send
+            .iter()
+            .map(|said| {
+                assert_eq!(said.to, RELAY);
+                Message::decode(&said.text).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_device_told_the_relay_holds_its_auth_key_answers_with_the_nonce_sealed_under_it() {
+        let mut a = device("dev-a");
+        write(&mut a, "Boiler");
+        a.connected(RELAY);
+        let todo = a.received(RELAY, &challenge(true));
+        let [Message::Proof(line), Message::Have(have)] = &sent(&todo)[..] else {
+            panic!("{todo:?}");
+        };
+        assert_eq!(Seal::new(key().auth()).open(line), Opened::Text(nonce()));
+        assert_eq!(
+            Seal::new(key()).open(line),
+            Opened::Shut,
+            "not the key itself"
+        );
+        assert_eq!(have, &a.replica.have(), "and then what it holds, again");
+
+        // A nonce that is not one is not sealed.
+        let odd = Message::Challenge {
+            nonce: "anything at all".into(),
+            claimed: true,
+            line: None,
+        };
+        assert!(a.received(RELAY, &odd.encode().unwrap()).send.is_empty());
+    }
+
+    #[test]
+    fn a_second_challenge_after_being_let_in_is_answered_as_the_first() {
+        let mut net = pair(&["Boiler"]);
+        let a = &mut net.devices[0];
+        let first = sent(&a.received(RELAY, &challenge(true)));
+        a.received(RELAY, r#"{"have":{}}"#);
+        let second = sent(&a.received(RELAY, &challenge(true)));
+        assert_eq!(second.len(), 2);
+        assert!(matches!(second[0], Message::Proof(_)));
+        assert_eq!(first[1], second[1], "what it holds, again");
+        assert_eq!(heads(a), ["Boiler"]);
+        assert_eq!(a.refused(), None);
+    }
+
+    #[test]
+    fn a_device_told_the_relay_holds_no_auth_key_sends_its_auth_key() {
+        let mut a = device("dev-a");
+        a.connected(RELAY);
+        let todo = a.received(RELAY, &challenge(false));
+        let [Message::Claim(auth), Message::Have(_)] = &sent(&todo)[..] else {
+            panic!("{todo:?}");
+        };
+        assert_eq!(Key::decode(auth), Some(key().auth()));
+        assert_ne!(Key::decode(auth), Some(key()));
+
+        // A challenge from a sibling is nobody's business, and a key that opens nothing here is
+        // not handed over as the space's.
+        assert_eq!(a.received(1, &challenge(false)), Todo::default());
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        let mut c = device("dev-c");
+        b.load("dev-c", write(&mut c, "Boiler").keep.remove(0).lines);
+        b.connected(RELAY);
+        assert!(b.received(RELAY, &challenge(false)).send.is_empty());
+        assert!(status(&b).contains("passphrase"), "{}", status(&b));
+    }
+
+    #[test]
+    fn a_space_claimed_by_a_fresh_device_is_claimed_only_if_its_key_opens_a_line_of_it() {
+        let mut c = device("dev-c");
+        let line = write(&mut c, "Boiler").keep.remove(0).lines.remove(0);
+
+        let mut opens = device("dev-a");
+        opens.connected(RELAY);
+        let todo = opens.received(RELAY, &offering(false, Some(line.clone())));
+        assert!(matches!(
+            sent(&todo)[..],
+            [Message::Claim(_), Message::Have(_)]
+        ));
+
+        let mut mistyped = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        mistyped.connected(RELAY);
+        let todo = mistyped.received(RELAY, &offering(false, Some(line)));
+        assert!(todo.send.is_empty(), "nothing claimed, nothing more said");
+        assert_eq!(
+            mistyped.refused(),
+            Some("the passphrase does not open this space on the relay")
+        );
+        assert_eq!(status(&mistyped), mistyped.refused().unwrap());
+        assert!(mistyped.key_in_doubt());
+    }
+
+    #[test]
+    fn a_refusal_is_said_and_kept_until_a_relay_takes_the_device_in() {
+        let mut net = pair(&["Boiler"]);
+        let why = "the passphrase does not open main on the relay";
+        let refused = Message::Refused(why.into()).encode().unwrap();
+        let a = &mut net.devices[1];
+        a.received(RELAY, &refused);
+        assert_eq!((a.refused(), status(a).as_str()), (Some(why), why));
+        assert!(!a.key_in_doubt(), "the key opened the other device's line");
+        a.disconnected(RELAY);
+        a.connected(RELAY);
+        assert_eq!(a.refused(), Some(why), "through the wait to try again");
+        a.received(1, r#"{"have":{}}"#);
+        assert_eq!(a.refused(), Some(why), "a sibling is not the relay");
+        a.received(RELAY, r#"{"have":{}}"#);
+        assert_eq!(a.refused(), None);
+    }
+
+    #[test]
+    fn the_passphrase_is_in_doubt_when_the_relay_refuses_a_device_that_opened_nothing_here() {
+        let mut fresh = device("dev-c");
+        assert!(!fresh.key_in_doubt());
+
+        // Refused before it has answered, the token or the name is the trouble, not the key.
+        fresh.connected(RELAY);
+        let token =
+            Message::Refused("main is not on the relay, and making it needs a token".into());
+        fresh.received(RELAY, &token.encode().unwrap());
+        assert!(fresh.refused().is_some());
+        assert!(!fresh.key_in_doubt());
+
+        fresh.disconnected(RELAY);
+        fresh.connected(RELAY);
+        fresh.received(RELAY, &challenge(true));
+        let refused = Message::Refused("the passphrase does not open main on the relay".into());
+        fresh.received(RELAY, &refused.encode().unwrap());
+        assert!(fresh.key_in_doubt());
+
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        let mut a = device("dev-a");
+        b.load("dev-a", write(&mut a, "Boiler").keep.remove(0).lines);
+        assert!(b.key_in_doubt(), "a key that opens nothing here");
     }
 
     #[test]
