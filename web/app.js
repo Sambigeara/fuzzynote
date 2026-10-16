@@ -237,7 +237,7 @@ function key(why = '') {
   form.hidden = false;
   document.body.classList.add('locked');
   secret.disabled = false;
-  secret.focus();
+  if (!coarse.matches) secret.focus();
   return new Promise((resolve) => {
     form.onsubmit = (event) => {
       event.preventDefault();
@@ -544,15 +544,18 @@ async function copy(text) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    // A page not served securely has no clipboard to ask, so the old way.
+    // A page not served securely has no clipboard to ask, so the old way, in a text area that a
+    // phone raises no keyboard for, and the focus goes back where it was.
+    const had = document.activeElement;
     const scratch = el('textarea');
     scratch.value = text;
     scratch.className = 'scratch';
+    scratch.readOnly = true;
     document.body.append(scratch);
     scratch.select();
     document.execCommand('copy');
     scratch.remove();
-    line.focus();
+    if (had && had !== document.body) had.focus({ preventScroll: true });
   }
 }
 
@@ -632,6 +635,14 @@ narrow.addEventListener('change', () => view && paintSoon());
 // keyboard up.
 const coarse = window.matchMedia('(hover: none) and (pointer: coarse)');
 const typing = () => [line, box, $('secret')].includes(document.activeElement) || !!editor?.hasFocus;
+// The keyboard there is the person's: the page moves the focus while a field has it, and
+// otherwise only for a press that asked to write, which sets this until the painting that
+// follows has given the field the focus. A key pressed asks to write too: on a touch screen it is
+// a keyboard joined to the device, and raises nothing. A phone shows no keyboard for a focus
+// nobody asked for, leaving the page typing into nothing, or raises one under the hands; and a
+// focus given inside the press's own event is the only kind for which iOS raises one.
+let wantsText = false;
+const mayFocus = () => !coarse.matches || typing() || wantsText !== false;
 
 // On a touch screen the page is a frame the size of the visual viewport, the part of the screen
 // that the keyboard and the browser's bars leave (see style.css). Two variables say where it is
@@ -759,6 +770,9 @@ box.addEventListener('blur', (event) => leftFor(event));
 function leftFor(event) {
   if (quiet || !view?.field?.whole) return;
   const to = event.relatedTarget;
+  // On a touch screen a focus that goes nowhere is the keyboard put away, and the body stays open
+  // to be read; `done`, or the back gesture, closes it.
+  if (coarse.matches && !to) return;
   // Anywhere in the sheet is still in it.
   if (to?.closest?.('#buffer')) return;
   if (!(to ? document.body.contains(to) : document.hasFocus())) return;
@@ -839,7 +853,7 @@ box.addEventListener('keydown', (event) => {
 
 // The focus goes where the cursor is: the box when it is on a row, the line when it is not.
 function follow() {
-  if (!view) return;
+  if (!view || !mayFocus()) return;
   if (view.cursor != null && boxIn && view.field?.whole && editor) {
     if (document.activeElement !== editor.contentDOM) editor.focus();
     return;
@@ -1018,9 +1032,12 @@ list.addEventListener(
 // for somewhere else keeps its hands off, and vim's prompt for a command, at the sheet's foot, which
 // is still in the body, and text the person has selected outside the fields, in the body beside the
 // list or above the line, to copy it: a painting for a line from the relay must not take that away.
-// The next key typed brings the focus back.
+// The next key typed brings the focus back. On a touch screen the focus is taken only while a field
+// had it as the painting began, or for a press that asked to write (see wantsText).
 const reading = () => document.activeElement === document.body && getSelection()?.type === 'Range';
+let wasTyping = false;
 const takesFocus = (field) =>
+  (!coarse.matches || wasTyping || wantsText !== false) &&
   !leaving &&
   !reading() &&
   document.activeElement !== field &&
@@ -1034,6 +1051,7 @@ function paintRows() {
   // held it.
   const wasWhole = box.classList.contains('whole');
   const hadEditor = !!editor?.dom.isConnected;
+  wasTyping = typing();
   quiet = true;
 
   // The cursor has left the row the box was in: that row goes back to being read.
@@ -1151,6 +1169,7 @@ function paintRows() {
   } else if (takesFocus(line)) {
     line.focus({ preventScroll: true });
   }
+  wantsText = false;
   quiet = false;
 
   // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from
@@ -1211,8 +1230,11 @@ function word(hint) {
   const key = keyFor(hint.action);
   if (key) button.title = key;
   button.onclick = () => {
+    // A new note is asked for to be written in, so the keyboard comes for it.
+    if (named(hint.action) === 'write') wantsText = true;
     act(hint.action);
     follow();
+    wantsText = false;
   };
   return button;
 }
@@ -1539,6 +1561,15 @@ const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey &
 // cursor is in, so a letter pressed on a word in the foot takes the focus there before it lands.
 // A button that has the focus keeps Enter and Space.
 document.addEventListener('keydown', (event) => {
+  wantsText = true;
+  try {
+    pressed(event);
+  } finally {
+    wantsText = false;
+  }
+});
+
+function pressed(event) {
   if (event.isComposing || !view || !fzn) return;
   if (event.target === box || event.composedPath().includes(buffer)) return;
   const onButton = event.target instanceof HTMLButtonElement;
@@ -1610,7 +1641,7 @@ document.addEventListener('keydown', (event) => {
   }
   event.preventDefault();
   follow();
-});
+}
 
 $('clear').onclick = () => {
   act({ type: '' });
@@ -1629,6 +1660,19 @@ list.addEventListener('mousedown', (event) => {
 });
 buffer.addEventListener('mousedown', (event) => {
   if (event.target === buffer || event.target === sheet) event.preventDefault();
+});
+// On a touch screen the body need not have the focus, the keyboard being down, so a press beside
+// the sheet closes it here rather than by the blur that closes it on a desktop. A press on its row
+// behind it, or on a word in the foot, does not, as on a desktop.
+document.addEventListener('mousedown', (event) => {
+  if (!coarse.matches || !view?.field?.whole || event.target.closest('#buffer, #foot')) return;
+  if (event.target.closest('.row')?.dataset.id === boxIn) return;
+  leaving = true;
+  try {
+    act('close');
+  } finally {
+    leaving = false;
+  }
 });
 // A press on a link, in a row or a body read, leaves the focus where it was, as the cursor stays.
 document.addEventListener('mousedown', (event) => {
@@ -1663,11 +1707,17 @@ $('path').addEventListener('click', (event) => {
   follow();
 });
 
-// A word in the foot is pressed without taking the focus from the box, so that "put back" is
-// about the note and an open body is not closed first.
-$('foot').addEventListener('mousedown', (event) => {
-  if (view?.field && event.target.closest('button')) event.preventDefault();
-});
+// A control that is not text never takes the focus: the words in the foot, the cross and the
+// arrows, a step of the path act on where the cursor is and leave the focus, and so a phone's
+// keyboard, where it was; "put back" is about the note, and an open body is not closed first. On
+// a touch screen a press on a row while a field has the focus leaves it there too, so that the
+// keyboard stays up while the cursor moves (see the list's click).
+for (const part of [$('top'), $('path'), $('foot'), list]) {
+  part.addEventListener('mousedown', (event) => {
+    if (event.target.closest('button')) event.preventDefault();
+    else if (part === list && coarse.matches && typing() && event.target !== box) event.preventDefault();
+  });
+}
 
 // A page put away with the cursor on a row writes what the row holds, if it changed. Being hidden
 // comes before being unloaded and leaves more time for the line to be kept and sent, so it is
@@ -1756,6 +1806,7 @@ const busy = () =>
   composing ||
   !!editor?.composing ||
   Date.now() - lastKey < 2000 ||
+  (coarse.matches && typing()) ||
   (!!view?.field?.whole && view.hints.some((hint) => named(hint.action) === 'undo'));
 
 let later = 0;

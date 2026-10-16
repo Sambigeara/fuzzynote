@@ -809,7 +809,9 @@ and `ZQ` put the text back first, and `:w` writes and stays, scrolled where it w
 is drawn from the editor's coordinates, a block in normal and visual mode and a bar in insert mode.
 Vim's prompt for a command is at the foot of the sheet, under the text and a hairline. The head
 stays an ordinary field. Until the editor has loaded, and if it never does, the sheet holds a plain
-text area. The `editor` the engine offers is not shown here.
+text area. The `editor` the engine offers is not shown here. On a phone the sheet is the whole frame
+above the bar and opens without the keyboard, which a tap in the text raises; putting the keyboard
+away leaves it open, and `done`, or the back gesture, closes it.
 
 *Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body (the
 head is a text box by then, and a tap in it places the caret), a tap on the `›` at the end of
@@ -2045,6 +2047,18 @@ repeats it only where the reason needs it.
   rejected because it leaves Safari a document to scroll on every focus, which the sticky line, the
   bar and the sheet would each have to correct; and a bar wrapped to two rows, because it would
   change height between states and move the list.
+
+  The keyboard is the person's. On a touch screen the page moves the focus between fields while one
+  has it, and otherwise gives it only for something that asked to write: a finger on a head's words,
+  a key pressed on a keyboard joined to the device, or the word `new note`, which would otherwise
+  leave an empty row that has to be tapped a second time before anything can be typed in it. A phone
+  shows no keyboard for a focus nobody asked for, which leaves the page typing into nothing, or
+  raises one under the hands; and a focus given inside the press is the only kind iOS raises one
+  for. No control takes the focus, on any width: the words, the cross, the arrows and the path's
+  steps act on where the cursor is and leave the keyboard as it was. Putting the keyboard away is
+  not leaving: an open body stays open until `done`, the back gesture, or a tap on the page beside
+  it, as a click there closes it on a desktop. A page with the keyboard up is in the middle of
+  something, so a new build waits for it.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
