@@ -2092,6 +2092,15 @@ repeats it only where the reason needs it.
   that the box is the head's first three characters, so the page does not judge a task by its text.
   This closes the open question on a box in the page's row.
 
+  A manifest and an icon, the page's own drawn on its paper, let the page be added to a home screen
+  as an app of its own, with the browser's bars in the paper's colour. The manifest names no address
+  to start at, so an app added from a space opens that space. A home-screen app on iOS keeps storage
+  of its own, apart from Safari's, so it asks for the passphrase once more, and a space under a name
+  on a relay is reached from it only once the link with the token has been opened in it, which an
+  app with no address bar makes awkward; that waits until someone with a name on the relay adds one.
+  Whether a home-screen app opens standalone over plain http is for the phone to say; if it needs
+  TLS, that is one more reason on that pile.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document.
