@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Header, names_a_log};
 use fzn_engine::seal::is_sealed;
-use fzn_engine::{Device, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Weights};
+use fzn_engine::{Device, Given, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Weights};
 
 use crate::config::DEVICE_FILE;
 use crate::system::{self, System};
@@ -239,6 +239,57 @@ pub fn tick(
     Ok(())
 }
 
+/// Writes notes given as the lines `fzn query` writes, one a line, as [`Device::apply`] says,
+/// while the app may have the space open: as the commands' writer, in their turn, as a tick is.
+/// Writes each note it was given as it now stands, in the order given. All or none: a line that
+/// is not a note, or one the device refuses, is said and nothing is written.
+pub fn apply(dir: &Path, space: &str, key: Key, input: &str, out: &mut impl Write) -> Result<()> {
+    let given = given(input)?;
+    if given.is_empty() {
+        return Ok(());
+    }
+    let _turn = Lock::wait(dir)?;
+    let mut device = Device::new(Box::new(System), commands(dir)?, Weights::default(), key);
+    let mut logs = open(dir, space, Writer::Commands, &mut device)?;
+    let (todo, notes) = device
+        .apply(given)
+        .map_err(|why| anyhow!("{why}, so nothing was written"))?;
+    logs.keep(&todo, Writer::Commands)?;
+    write_lines(&notes.iter().collect::<Vec<_>>(), out)?;
+    Ok(())
+}
+
+/// The notes in what `fzn apply` was given, one a line. Blank lines at the end are how a file
+/// ends; one anywhere else is a line that is not a note, so that a line's number is the one the
+/// device names it by.
+fn given(input: &str) -> Result<Vec<Given>> {
+    // A file an editor saved with a byte-order mark is a file of notes all the same.
+    let input = input.trim_start_matches('\u{feff}').trim_end();
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+    let read = |n: usize, line: &str| -> Result<Given> {
+        let not_a_note = || anyhow!("line {n} is not a note, so nothing was written");
+        let value: serde_json::Value = serde_json::from_str(line).map_err(|_| not_a_note())?;
+        // A line with neither an id nor a text says nothing of a note: a sealed line of a log,
+        // say, which is not what apply reads.
+        let names = |field: &str| value.get(field).is_some();
+        if !value.is_object() || !names("id") && !names("text") {
+            return Err(not_a_note());
+        }
+        let format = value.get("v").and_then(serde_json::Value::as_u64);
+        if format.is_some_and(|v| v > u64::from(Record::FORMAT)) {
+            bail!("line {n} is from a later fzn, so nothing was written");
+        }
+        serde_json::from_value(value).map_err(|_| not_a_note())
+    };
+    input
+        .lines()
+        .enumerate()
+        .map(|(i, line)| read(i + 1, line))
+        .collect()
+}
+
 /// The right to write a space's directory, for as long as it is held.
 pub struct Lock {
     _file: File,
@@ -410,7 +461,8 @@ impl Store {
         Ok(())
     }
 
-    /// Writes every live note, archived ones included, as plain lines, one a note, oldest first.
+    /// Writes every live note, archived ones included, as plain lines, one a note, oldest first,
+    /// since a whole export is read back in the order it was written.
     pub fn export(&self, out: &mut impl Write) -> Result<usize> {
         let mut records: Vec<&Record> = self.notes.records().collect();
         records.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
@@ -418,8 +470,9 @@ impl Store {
     }
 
     /// Writes the notes a line holds at the top of the space as plain lines, in the order the app
-    /// would list them, ranked by the same weights, and every one of them, archived ones too.
-    pub fn export_found(self, line: &str, weights: Weights, out: &mut impl Write) -> Result<usize> {
+    /// would list them, ranked by the same weights, and every one of them, archived ones too:
+    /// with nothing to rank by the space's order, and otherwise best first.
+    pub fn query(self, line: &str, weights: Weights, out: &mut impl Write) -> Result<usize> {
         let session = Session::new(Box::new(System), String::new(), weights, self.notes);
         write_lines(&session.query(line), out)
     }
@@ -742,7 +795,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_export_with_a_query_writes_what_the_line_holds_archived_ones_too_in_its_order() {
+    fn a_query_writes_what_the_line_holds_archived_ones_too_in_its_order() {
         let dir = temp_dir();
         let mut s = open(&dir, "dev-a");
         s.put(rec("gutter", "clear the gutter #house", 10)).unwrap();
@@ -756,9 +809,7 @@ pub(crate) mod tests {
         let ids = |line: &str| {
             let store = Store::open(&dir, String::new(), seal()).unwrap();
             let mut out = Vec::new();
-            let n = store
-                .export_found(line, Weights::default(), &mut out)
-                .unwrap();
+            let n = store.query(line, Weights::default(), &mut out).unwrap();
             let text = String::from_utf8(out).unwrap();
             let ids: Vec<String> = text
                 .lines()
@@ -793,6 +844,168 @@ pub(crate) mod tests {
 
     fn commands_id(dir: &Path) -> String {
         read_id(&dir.join(".commands")).unwrap().unwrap()
+    }
+
+    /// Runs `fzn query` on a space, and gives back each line it wrote, as JSON.
+    fn queried(dir: &Path, line: &str) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        let store = Store::open(dir, String::new(), seal()).unwrap();
+        store.query(line, Weights::default(), &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        out.lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    /// Runs `fzn apply` on a space with these lines, and gives back what it wrote out.
+    fn applied(dir: &Path, lines: &[serde_json::Value]) -> Result<Vec<Record>> {
+        let input: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        let mut out = Vec::new();
+        apply(dir, "main", Key::from_bytes([7; 32]), &input, &mut out)?;
+        let out = String::from_utf8(out).unwrap();
+        Ok(out
+            .lines()
+            .map(|line| Record::read(line.as_bytes()).unwrap())
+            .collect())
+    }
+
+    /// A space the app has written three notes in, and their lines as `fzn query` writes them.
+    fn written(dir: &Path) -> [serde_json::Value; 3] {
+        set_writer(dir, "3f9a01c2").unwrap();
+        let mut app = open(dir, "3f9a01c2");
+        for (id, text, at) in [
+            ("gate", "Fix the gate", 10),
+            ("oil", "[ ] Order oil #house", 20),
+            ("boiler", "Boiler #house", 30),
+        ] {
+            let stamp = Some(Moment::utc(at));
+            app.put(Record {
+                stamp,
+                ..rec(id, text, at)
+            })
+            .unwrap();
+        }
+        let line = |id: &str| {
+            let found = queried(dir, "");
+            found.into_iter().find(|line| line["id"] == id).unwrap()
+        };
+        [line("gate"), line("oil"), line("boiler")]
+    }
+
+    #[test]
+    fn apply_writes_what_it_is_given_by_the_apps_rules_and_says_each_note_as_it_now_stands() {
+        let dir = temp_dir();
+        let [gate, oil, boiler] = written(&dir);
+
+        // Given as it was read, nothing is written, and each is said as it stands.
+        let said = applied(&dir, &[oil.clone(), boiler.clone()]).unwrap();
+        let ids: Vec<&str> = said.iter().map(|note| note.id.as_str()).collect();
+        assert_eq!(ids, ["oil", "boiler"]);
+        assert!(lines(&dir, &commands_id(&dir)).is_empty());
+
+        let mut ticked = oil.clone();
+        ticked["archived"] = true.into();
+        let mut moved = boiler.clone();
+        moved["text"] = "Boiler #garden, see [[Fix the gate]]".into();
+        let new = serde_json::json!({"text": "Prune the roses /today #garden"});
+        let said = applied(&dir, &[moved, new, ticked]).unwrap();
+        let texts: Vec<&str> = said.iter().map(|note| note.text.as_str()).collect();
+        assert_eq!(texts[0], "Boiler #garden, see [[Fix the gate]]");
+        assert!(texts[1].starts_with("Prune the roses 20") && !texts[1].contains("/today"));
+        assert_eq!(texts[2], "[x] Order oil #house");
+        assert!(said[2].archived);
+        assert_eq!(said[0].links, ["gate"], "the brackets are a link");
+        assert_eq!(
+            lines(&dir, &commands_id(&dir)).len(),
+            3,
+            "a version a note changed"
+        );
+        let found = queried(&dir, "#garden");
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            found[0]["id"],
+            said[1].id.as_str(),
+            "the new note is at the top"
+        );
+
+        let mut gone = gate;
+        gone["deleted"] = true.into();
+        assert!(applied(&dir, &[gone]).unwrap()[0].deleted);
+        assert!(queried(&dir, "").iter().all(|line| line["id"] != "gate"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_writes_nothing_when_a_line_cannot_be_written_and_says_which() {
+        let dir = temp_dir();
+        let [gate, oil, _] = written(&dir);
+        let mut later = oil.clone();
+        later["text"] = "[ ] Order oil and coal #house".into();
+        applied(&dir, &[later]).unwrap();
+        let log = lines(&dir, &commands_id(&dir));
+
+        let mut stale = oil.clone();
+        stale["text"] = "[ ] Order oil today #house".into();
+        let mut unknown = gate.clone();
+        unknown["id"] = "gutter".into();
+        for (given, why) in [
+            (vec![stale], "oil has changed since it was read"),
+            (vec![gate.clone(), unknown], "no note has the id gutter"),
+            (vec![gate.clone(), gate.clone()], "gate is given twice"),
+        ] {
+            let said = applied(&dir, &given).unwrap_err().to_string();
+            assert_eq!(said, format!("{why}, so nothing was written"));
+        }
+        let apply_text = |input: &str| {
+            apply(
+                &dir,
+                "main",
+                Key::from_bytes([7; 32]),
+                input,
+                &mut Vec::new(),
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        let gate = gate.to_string();
+        for (input, why) in [
+            (format!("{gate}\nnot a note\n"), "line 2 is not a note"),
+            (format!("[1, 2]\n{gate}"), "line 1 is not a note"),
+            (r#"{"s":1,"c":"sealed"}"#.to_owned(), "line 1 is not a note"),
+            (format!("{gate}\n\n{gate}"), "line 2 is not a note"),
+            (
+                r#"{"v":99,"id":"gate"}"#.to_owned(),
+                "line 1 is from a later fzn",
+            ),
+        ] {
+            assert_eq!(apply_text(&input), format!("{why}, so nothing was written"));
+        }
+        assert_eq!(lines(&dir, &commands_id(&dir)), log, "and nothing was");
+
+        // Nothing given is nothing to do, and a key that opens nothing here writes nothing.
+        apply(
+            &dir,
+            "main",
+            Key::from_bytes([7; 32]),
+            "\n\n",
+            &mut Vec::new(),
+        )
+        .unwrap();
+        let wrong = apply(
+            &dir,
+            "main",
+            Key::from_bytes([9; 32]),
+            &gate,
+            &mut Vec::new(),
+        );
+        assert!(
+            wrong
+                .unwrap_err()
+                .to_string()
+                .starts_with("the passphrase does not open main")
+        );
+        assert_eq!(lines(&dir, &commands_id(&dir)), log);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

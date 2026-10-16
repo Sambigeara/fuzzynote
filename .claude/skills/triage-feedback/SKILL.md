@@ -3,7 +3,7 @@ name: triage-feedback
 description: "Gathers the feedback on fzn that the author has written in fzn itself, the notes tagged #fzn #feedback, triages it against the code and DESIGN.md, and ticks entries off once they are dealt with. Use when asked to check, read, go through or triage fzn feedback, or to tick feedback off."
 argument-hint: "[tick ENTRY ...]"
 allowed-tools:
-  - "Bash(fzn export '#fzn #feedback')"
+  - "Bash(fzn query '#fzn #feedback')"
   - "Bash(jq -c '{id, created, archived, text}')"
   - Bash(git log *)
   - Bash(git status --short)
@@ -14,7 +14,7 @@ allowed-tools:
 
 Feedback is what the author writes down while using fzn, as a note in fzn tagged `#fzn
 #feedback`, mostly a one-line task headed `[ ]`. It lives in the author's own space under
-`~/.fzn`, and `fzn export` with that line reads it out. This skill gathers what is open, works
+`~/.fzn`, and `fzn query` with that line reads it out. This skill gathers what is open, works
 out what each entry is and what to do about it, and ticks an entry off once it is dealt with,
 as ticking a task in the app does.
 
@@ -30,7 +30,7 @@ words or a paraphrase that would recognise them, and not their ids or times eith
 told in the app's own terms, of a note and a key, with invented material: Boiler, House, a
 garden. Before any commit, scan the diff and the unpushed history as CLAUDE.md says.
 
-The export line is the only way into the notes. Never run `fzn export` without it, which writes
+`fzn query '#fzn #feedback'` is the only way into the notes. Never run `fzn export`, which writes
 every note in the space, never read the files under `~/.fzn`, and never open the app against
 `~/.fzn` to reproduce something: reproduce on a scratch root, as CLAUDE.md says.
 
@@ -38,7 +38,7 @@ every note in the space, never read the files under `~/.fzn`, and never open the
 
 From the repository's root, run these together:
 
-- `fzn export '#fzn #feedback' | jq -c '{id, created, archived, text}'`, the
+- `fzn query '#fzn #feedback' | jq -c '{id, created, archived, text}'`, the
   feedback, open and ticked;
 - `git status --short`, the work in progress in the checkout, which may be another session's;
 - `ls -l ~/.cargo/bin/fzn`, for when the build the author runs was installed.
@@ -48,9 +48,11 @@ the commits made since, any of which may have dealt with one.
 
 `fzn` on the path is the build the author runs, installed from the checkout with `cargo install
 --path crates/fzn --locked`. If it is missing, say so and ask before installing it, since an
-install replaces what the author runs with whatever is in the checkout. If the export says it
-needs the passphrase, no key is kept for the space on this machine: ask the author to open fzn
-once in a terminal, and never set `FZN_PASSPHRASE`.
+install replaces what the author runs with whatever is in the checkout. If it answers `unknown
+argument "query"`, the build predates the command, and the way on is to install first, asked
+for in the same way; never fall back to `fzn export`. If the query says it needs the
+passphrase, no key is kept for the space on this machine: ask the author to open fzn once in a
+terminal, and never set `FZN_PASSPHRASE`.
 
 Reading an entry:
 
@@ -68,7 +70,7 @@ say; where they do not and it matters, look at both.
 
 ## Triage
 
-Number the open entries 1, 2, 3 in the order the export lists them. The numbers are for this
+Number the open entries 1, 2, 3 in the order the query lists them. The numbers are for this
 conversation only and are how the author answers.
 
 For each entry, before saying what it is:
@@ -122,7 +124,7 @@ An entry is dealt with when its fix is in the build the author runs (committed, 
 to do nothing about it.
 
 Tick off only the entries named, or agreed to when you proposed them. Take their ids from a
-fresh export, since numbers from a triage mean nothing in another conversation and words can
+fresh query, since numbers from a triage mean nothing in another conversation and words can
 match more than one head: if they do, ask which. Then:
 
 ```sh
@@ -130,15 +132,15 @@ fzn tick ID [ID ...]
 ```
 
 It ticks each as Ctrl-V does in the app, `[ ]` to `[x]` and archived, and writes each as it now
-stands, the line the export writes for it. It ticks all or none: an id that names no note, or a
+stands, the line the query writes for it. It ticks all or none: an id that names no note, or a
 note that is not an open task, is said by its id, nothing is ticked, and it exits non-zero. It
 works with the app open on the space, which shows the tick within a second, and never asks for
 the passphrase. Report each entry by its head as it now stands, and how many are still open,
-from the export run again.
+from the query run again.
 
 If it answers `unknown argument "tick"`, the build predates the command. Give the author the
 heads to tick in the app instead: `#fzn #feedback` on the line and Tab goes into them, and
-Ctrl-V on each ticks it. Run the export again once they say it is done; a tick made on another
+Ctrl-V on each ticks it. Run the query again once they say it is done; a tick made on another
 device shows here once fzn on this machine has synced.
 
 To undo a tick, `fzn untick ID [ID ...]` brings each back, `[ ]` and unarchived;

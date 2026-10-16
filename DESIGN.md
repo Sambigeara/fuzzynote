@@ -268,7 +268,8 @@ Nothing is added to the engine until daily use asks for it.
   app, each run appending to a log of the commands' own under a lock of their own, never the
   app's; the app looks in the directory about once a second for what has been added to logs it
   does not write, and takes that in as it takes in the relay's lines (see "A command writes
-  beside the app, as a writer of its own"). `fzn export` takes no lock. Nothing else writes
+  beside the app, as a writer of its own"), and so does `fzn apply`. `fzn query` and `fzn export`
+  take no lock. Nothing else writes
   there: Syncthing and the like are not supported and not needed; the relay is the way between
   machines. What arrives from the relay comes through the engine, which asks the face to keep it.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
@@ -278,17 +279,20 @@ Nothing is added to the engine until daily use asks for it.
   in `session.rs` and `record.rs`, not a swap behind the store. Compaction already turns a
   history into one snapshot a note, which is what a CRDT log needs from time to time too.
 - Sharing is sharing a subset of updates. Deferred, but nothing above prevents it.
-- **The snapshot line is the way in and out, for good.** `fzn export` writes every live note as
-  one plain line, by your own hand and to wherever you point it, so notes can always be read and
-  taken away without the app; `fzn export QUERY` writes only what that line finds at the top of
-  the space, archived notes too, in the line's order (see "Export takes the line"). `fzn tick ID …`
-  and `fzn untick ID …` do to the notes the export names what Ctrl-V does to a task, and write
-  each as the export would. `fzn import-jsonl` is the way back in, and `fzn import-markdown` reads
-  a directory of pages (see "Imported pages become the notes they would have been"); a plain file
-  is not read as a log by being put in the directory, since it would then be sent in the clear.
-  When the logs carry CRDT updates this format stays. It carries the facts beside the text as
-  well as the text: the 2022 corpus is what it looks like when only the text gets out (creation
-  time survives on 7% of its notes).
+- **The snapshot line is the way in and out, for good.** `fzn export` writes every live note as one
+  plain line, oldest first, by your own hand and to wherever you point it, so notes can always be
+  read and taken away without the app; `fzn query LINE` writes what that line finds at the top of
+  the space, archived notes too, in the order the app lists them. `fzn apply` takes such lines back
+  and writes each note as it then reads, by the app's own rules, all or none, beside the open app;
+  `fzn tick ID …` and `fzn untick ID …` do to the notes named what Ctrl-V does to a task; and each
+  of the three writes out every note it was given as it now stands, the line `query` would write
+  (see "The line is a query, and a snapshot is a write"). `fzn import-jsonl` is the way back in for
+  a whole export, a restore and not an edit, since it takes ids and times as they are given, and
+  `fzn import-markdown` reads a directory of pages (see "Imported pages become the notes they would
+  have been"); a plain file is not read as a log by being put in the directory, since it would then
+  be sent in the clear. When the logs carry CRDT updates this format stays. It carries the facts
+  beside the text as well as the text: the 2022 corpus is what it looks like when only the text gets
+  out (creation time survives on 7% of its notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
 
@@ -1448,7 +1452,9 @@ repeats it only where the reason needs it.
   order the line lists them, one JSON line each as the plain export writes them, ranked with the
   config's weights. Archived notes are in because archiving is how a task is ticked, and a log
   of what was done wants them; each line carries the flag. Without a query the export is as it
-  was. It takes no lock, so it runs while the app is open.
+  was. It takes no lock, so it runs while the app is open. Revised 2026-10-16 by "The line is a
+  query, and a snapshot is a write": the line is asked with `fzn query`, and `fzn export` takes
+  none.
 - **A task is a note headed by its box.** Decided 2026-10-16, agreed with Sam. A task is a note
   whose head starts with a box, `[ ]` while it is open and `[x]` once it is done, and nothing else
   is one: a `- [ ]` in a body is markdown, read as a drawn box where a body is read, and makes no
@@ -1840,6 +1846,35 @@ repeats it only where the reason needs it.
   What is still over 5 ms there is a word of two letters being typed, whose prefix expands to
   hundreds of words; bounding that changes the ranking, and waits for a measurement on a real
   space.
+- **The line is a query, and a snapshot is a write.** Decided 2026-10-16, agreed with Sam,
+  revising "Export takes the line" and "The snapshot line is the way in and out, for good". `fzn
+  export QUERY` was two things under one name, and the triage skill, the one script, had to be
+  told never to leave the query off, since without it every note in the space is written out. Now
+  `fzn query LINE` writes what the line finds, archived notes too, in the app's order, and `fzn
+  export` writes every note, oldest first, and takes no line: there is no alias, since one name is
+  one thing, and a script that still says `export QUERY` is told the new name, exits 2 and writes
+  nothing, where an alias kept quietly would one day be a whole space written to the wrong place.
+  Ordering is not a form of the line: the line filters, the order is the space's or the scores',
+  and `jq` orders for scripts, from `created`, `updated` and `archived`, which are on every line;
+  `--help` says what the order is. For writing from outside, three shapes were weighed: waiting
+  for the first real refactor, which would then be done through `import-jsonl` and the space's
+  lock, or by hand against the app's rules; a set of verbs addressed by id, as `gh` has, six names
+  restating what one line already says, each with its own all-or-none story; and the snapshot line
+  as the way in, as `task import` and `kubectl apply` take it. The third adds one word. `fzn
+  apply` reads the lines `query` writes and takes `text`, `links`, `archived` and `deleted` from
+  each by the app's own rules (see the engine's Session), leaving the rest to fzn; a line with no
+  id is a new note at the top. It writes all or none, beside the open app as a writer of its own,
+  as `fzn tick` does. It refuses a line whose `stamp` and `device` are not the note's as held, so
+  that a note changed after it was read is not written over unseen, and a line that would move a
+  note, since moving from outside waits until use asks; a note moved since it was read keeps its
+  new place. It writes out each note as it now stands, so `fzn query '#old' | jq … | fzn apply` is
+  a change with its receipt, and running it again writes nothing. Lines are numbered as given,
+  and a blank one before the end is a line that is not a note, so that a line's number is the
+  same in what it says as in the file. `tick` and `untick` stay as the common case, shorter and
+  safer than a `jq` expression for what is done daily. Every command says what went wrong on one
+  line, `fzn: ` and why, and exits 1 when nothing was done and 2 when the arguments made no sense,
+  which is what a script or an agent checks; a usage mistake no longer prints the manual. An MCP
+  server, if one is wanted, is these commands as tools and nothing more.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

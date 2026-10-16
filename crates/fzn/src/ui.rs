@@ -375,16 +375,26 @@ fn scrolled(text: &str, caret: usize, room: usize) -> (String, usize) {
     (shown, before)
 }
 
-/// Takes the terminal for the app: raw, the alternate screen, and a paste sent whole rather than
-/// as keys. Without a terminal to draw on it says so, in place of a backtrace.
-fn take_terminal() -> Result<DefaultTerminal> {
-    let none = || anyhow!("fzn needs a terminal to draw on; fzn export writes notes to a pipe");
-    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
-        return Err(none());
+/// What fzn says when it is run with no terminal to draw on, as from a script.
+const NO_TERMINAL: &str = "there is no terminal to draw on; to a pipe, fzn query LINE writes \
+                           what a line finds and fzn export every note";
+
+/// Says so when there is no terminal to draw on, in place of a backtrace.
+pub fn need_terminal() -> Result<()> {
+    if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+        Ok(())
+    } else {
+        Err(anyhow!(NO_TERMINAL))
     }
+}
+
+/// Takes the terminal for the app: raw, the alternate screen, and a paste sent whole rather than
+/// as keys.
+fn take_terminal() -> Result<DefaultTerminal> {
+    need_terminal()?;
     let terminal = ratatui::try_init().map_err(|_| {
         ratatui::restore();
-        none()
+        anyhow!(NO_TERMINAL)
     })?;
     if let Err(why) = execute!(std::io::stdout(), EnableBracketedPaste) {
         ratatui::restore();

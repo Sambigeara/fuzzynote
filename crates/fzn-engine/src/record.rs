@@ -104,6 +104,9 @@ struct Versioned<R> {
 }
 
 impl Record {
+    /// The version of the line format this build writes, and the latest it reads.
+    pub const FORMAT: u32 = FORMAT;
+
     /// A version of a note with this text and nothing else: no links, no times, at the top, and
     /// with no stamp or writer, which writing it fills in.
     pub fn new(id: impl Into<String>, text: impl Into<String>) -> Self {

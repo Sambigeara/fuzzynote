@@ -139,21 +139,27 @@ fzn relay --listen 0.0.0.0:3960 --web web
 A build of fzn after `web/build.sh` carries the page as it then stands; one without `web/pkg`
 carries none, and says so.
 
-## Import and export
+## From the command line
 
 ```sh
-fzn export > notes.jsonl         # every live note, one plain JSON line each
-fzn export '#house /-mon..'      # what that line finds, archived notes too, in its order
-fzn tick ID ...                  # tick these tasks, by the ids the export gives them
+fzn query '#house /-mon..'       # what that line finds, archived notes too, in the app's order
+fzn export > notes.jsonl         # every live note, one plain JSON line each, oldest first
+fzn tick ID ...                  # tick these tasks, by the ids query gives them
 fzn untick ID ...                # and bring them back
-fzn import-jsonl notes.jsonl     # the way back in
+fzn query '#old' | jq -c '.text |= sub("#old"; "#house")' | fzn apply   # a change, by jq
+fzn import-jsonl notes.jsonl     # the way back in: a restore, ids and times as they were
 fzn import-markdown ~/pages      # a directory of markdown pages
 ```
 
-Each takes `--space` like the app. The export is plain and unsealed, so your notes can always be
-read and taken away without fzn. `tick` does what Ctrl-V does to a task, `[ ]` to `[x]` and
-archived, to every note it names or to none, and writes each as the export would. It works with
-fzn open on the space, which shows the tick within a second.
+Each takes `--space` like the app. What `query` and `export` write is plain and unsealed, so your
+notes can always be read and taken away without fzn, and `jq` orders and picks from it. `apply`
+reads those lines back and writes each note as it then reads, by the app's own rules: date words
+written out, `[[brackets]]` made links, a task's box and its archived flag kept together. It
+writes all of them or none, refuses a note that changed after it was read, and writes out each
+note as it now stands. `tick` does what Ctrl-V does to a task, `[ ]` to `[x]` and archived, to
+every note it names or to none. `query`, `apply`, `tick` and `untick` work with fzn open on the
+space, which shows what they wrote within a second. Each says what went wrong on one line and
+exits 1, or 2 when the arguments made no sense.
 
 ## Design
 
