@@ -768,8 +768,9 @@ above the line, rendered, under the path and in the path's smaller size, clamped
 opened with a tap, so that where you are is all above the line and what is found follows it
 directly; the margin grows downwards only for a body longer than it has room for. At a phone's
 width, 640px and under, the column is the screen's width with the line at the top, a long path gives
-up its middle, the note you are in is clamped to three lines and hidden while a field has the focus,
-and the foot is a bar (see "Keys").
+up its middle, the note you are in is clamped to three lines and, on a touch screen, hidden while
+the keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in
+sight: it has the room, and a field there has the focus almost always.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back

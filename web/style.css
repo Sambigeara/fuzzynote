@@ -617,14 +617,17 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   #page { width: 100%; margin: 0; padding: 0 var(--gutter); }
   .above { padding-top: 0.5rem; padding-bottom: 0.25rem; }
   /* Where you are: the steps in the path's size, and the note you are in three lines of it, and
-     none while the keyboard is up, so that what is found stays in sight. */
+     none while a touch screen's keyboard is up, so that what is found stays in sight. A narrow
+     window with a mouse has the room, and a field there has the focus almost always. */
   #path { font-size: 0.9375rem; gap: 0.5rem; }
   #here:not(.open) { max-height: calc(3 * 1.5em); }
   #here.clamp:not(.open) {
     mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
   }
-  body.typing #here { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    body.typing #here { display: none; }
+  }
   #top { padding: 0.625rem 0 0.5rem; gap: 0.25rem; }
   #list { margin: 0 calc(-1 * var(--gutter)); padding: 0.5rem 0 calc(2 * var(--row)); }
   body.resting #list {
