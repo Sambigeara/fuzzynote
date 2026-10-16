@@ -628,9 +628,13 @@ the list fading out by the eighth. As you type, what is found takes their place;
 is new fades in, and nothing else moves. The path, in a place, is in the margin above the line,
 `main › Boiler`: the space's name and then each step, each a way back to it, the first to the
 top, a note's step read as its row is, and on a phone a long path gives up its middle. The tab's
-title stays `fzn`, or `fzn · garden` in another space. No colour: paper, ink and two greys, light
-and dark by the system's preference. On a page at least
-75rem wide the body of what the cursor is on is read beside the list: the note under the cursor,
+title stays `fzn`, or `fzn · garden` in another space. The path is the browser's history too: each
+step in, and a body opened, is an entry, so the browser's Back, a mouse's back button or a phone's
+back gesture steps out as Escape does and closes an open body, and a step out made on the page
+goes back through the history, which so never holds more entries than the path has steps. Forward
+has nothing to go into and is gone back from. No colour: paper, ink and two greys, light and dark by
+the system's preference. On a page at least 75rem wide the body of what the cursor is on is read
+beside the list: the note under the cursor,
 or with the cursor on the line in a place the note you are in. It is rendered as markdown, in
 the soft grey, from the top of the first row's text, with no border, scrolled on its own and
 faded at its foot as the list is. A narrower page has no room for it: a note's body is read
@@ -710,7 +714,8 @@ area. The `editor` the engine offers is not shown here.
 *Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body (the
 head is a text box by then, and a tap in it places the caret), a tap on the `›` at the end of
 the selected row goes into the note and on the one after the line into what the line names, a
-tap on a link in a row opens it and leaves the cursor where it was, and the path is the way back.
+tap on a link in a row opens it and leaves the cursor where it was, and the path, or the phone's
+own back gesture, is the way back.
 
 *One tab at a time* is the device. A tab that opens says so over a broadcast channel and the
 older one stands down, closing its socket and offering `use it here`, since two of them writing
@@ -1669,6 +1674,22 @@ repeats it only where the reason needs it.
   character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`; measured over 10,000
   invented notes, seven in ten of them marked, a marked head takes 7 µs to read, a plain one nothing
   to speak of.
+- **The path is the browser's history.** Decided 2026-10-16, with the phone (Sam asked for the best
+  that can be made there), on every width. A phone's back gesture, and a mouse's back button, are
+  how a person leaves a place in every app they use; a page that ignored them left fzn altogether on
+  the gesture that should have stepped out of `#house`. So each step in, a note, a label or a body
+  opened, pushes an entry whose state says its depth, and the browser's Back does what Escape does,
+  a step at a time, closing an open body first. A step out made on the page, by Escape or the path,
+  goes back through the history rather than pushing, so the history never holds more entries than
+  the path has steps, and leaving fzn by Back is as many presses as the path is long. Nothing else
+  is done to the history until the browser says it has gone, so a quick in, out and in again settles
+  where the keys left it. Forward has nothing to go into, since the page does not keep what a step
+  out left, and is gone back from at once. A step in pushes inside the gesture that made it, which
+  is when Safari honours one. The entry's state holds the depth beside whatever else the page keeps
+  there, which every write leaves alone. Not the address: a place in the address would have to be
+  put back on load, which is the reload's work, and an address that named a note would put it in the
+  browser's history, which a browser may sync off the device. Once a place can be saved and given
+  back to the engine, an entry could hold its steps and Forward go back in.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

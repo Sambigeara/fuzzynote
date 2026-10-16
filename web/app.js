@@ -246,7 +246,70 @@ function look() {
   }
   if (place(view) !== was) safely();
   else paintSoon();
+  keepHistory();
 }
+
+// The path is the browser's history: each step in, a note, a label or a body opened, is an entry,
+// so that the browser's Back, a mouse's back button or a phone's back gesture steps out as Escape
+// does, and the history holds no more entries than the path has steps. The entry says how deep it
+// is as `depth` in its state, beside whatever else the page keeps there, which is left alone. A
+// step in pushes its entry inside the gesture that made it, which is when a browser honours one; a
+// step out from the page goes back through the history, and the browser says when it has, so
+// nothing else is done to the history until then. Forward has nothing to go back into, since
+// the page does not keep where a step out came from, so it is gone back from at once. While the
+// page is hidden nothing is done, as it is being put away rather than walked, and while `:w`
+// writes a body by closing and opening it the history waits for it to be open again.
+let depth = 0;
+let travelling = false;
+let trips = 0;
+const entry = () => history.state ?? {};
+const deep = () => (view ? view.path.length + (view.field?.whole ? 1 : 0) : 0);
+
+function keepHistory() {
+  if (!view || !standing || travelling || keeping || document.visibilityState !== 'visible') return;
+  const want = deep();
+  if (want > depth) {
+    while (depth < want) history.pushState({ depth: ++depth }, '');
+  } else if (want < depth) {
+    travelling = true;
+    const trip = ++trips;
+    history.go(want - depth);
+    // A browser that does not go, for an entry that is not there, says nothing; the page does
+    // not wait on it for good.
+    setTimeout(() => {
+      if (!travelling || trip !== trips) return;
+      travelling = false;
+      depth = entry().depth ?? 0;
+      keepHistory();
+    }, 1000);
+  }
+}
+
+window.addEventListener('popstate', () => {
+  if (!view || !standing) return;
+  const at = entry().depth ?? 0;
+  if (travelling) {
+    travelling = false;
+    depth = at;
+    keepHistory();
+    return;
+  }
+  // Back: out of the body, then a step at a time, as the path's steps go, until the page is as
+  // deep as the entry. A step that changes nothing ends it, rather than going round for ever.
+  depth = at;
+  travelling = true;
+  try {
+    for (let was = deep(); was > at; was = deep()) {
+      act(view.field?.whole ? 'close' : 'back');
+      if (deep() >= was) break;
+    }
+  } finally {
+    travelling = false;
+  }
+  keepHistory();
+  follow();
+});
+document.addEventListener('visibilitychange', () => keepHistory());
 
 function connect() {
   if (!standing || socket) return;
@@ -602,6 +665,7 @@ const editorHooks = {
       } finally {
         keeping = false;
       }
+      keepHistory();
       sheet.scrollTop = scrolled;
     } else {
       // Put back is asked for only when the engine offers it, since on a body that has not
@@ -1324,6 +1388,8 @@ async function start() {
   store = await openStore().catch(() => null);
   if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
   carryOut(fzn.opened());
+  // The page opens at the top, so the entry it opens in is the top, whatever it was before.
+  history.replaceState({ ...entry(), depth }, '');
   look();
   line.focus();
   connect();
