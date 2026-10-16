@@ -5,8 +5,8 @@
 // for what, painting the view, the socket to the relay this page came from, the other tabs open
 // on the space, and somewhere to keep lines between visits.
 //
-// There is one cursor on the page and it moves. On the line it is the caret, and typing finds.
-// Down puts it on a row, whose head becomes a text box with the caret at its end, so typing there
+// There is one cursor on the page and it moves. On the line it is the caret, and typing finds. Down
+// puts it on a row, whose head becomes a text box with the caret at its end, so typing there
 // changes the head and nothing has to be pressed to begin or to keep it: the engine writes each
 // change as it is typed. Enter with text on the line writes it and puts the box in the note it
 // wrote. Enter on a row opens a new note under it, its empty head the box, so that Enter, type,
@@ -14,16 +14,17 @@
 // original's chord for it, in the sheet: a bounded overlay over the dimmed page, scrolled on its
 // own, where the box holds the whole note, or an editor takes its place once one has been fetched
 // (see loadEditor). The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
-// leaving it for anywhere else on the page closes it too. Touch has no chord, so a second tap on
-// the row opens it, off its head: the head is the box by then, and a tap there is the caret's. A
-// body is never shown under its row. On a wide page the body of what the cursor is on is read
-// beside the list: the note under it, or from the line the note you are in. On a narrower one a
-// note's body is read by opening it, and the note you are in is read above the line. A body read
-// is rendered as markdown, and a row's links are links (see render). Tab goes into the note from
-// anywhere in its head, and from the line into what it names, and the arrows are the caret's; Escape
-// comes back a rung at a time, off the row, off the text on the line, out of the place. Control
-// with an arrow moves the note on the row up or down the list. Everything else is a word in the
-// foot, moving a note included, and only what applies right now gets one.
+// leaving it for anywhere else on the page closes it too. Touch has no chord: a tap beside a head's
+// words puts the cursor on the note and a second there opens it, and a tap on the words writes in
+// the head with the caret under the finger. A body is never shown under its row. On a wide page the
+// body of what the cursor is on is read beside the list: the note under it, or from the line the
+// note you are in. On a narrower one a note's body is read by opening it, and the note you are in
+// is read above the line. A body read is rendered as markdown, and a row's links are links (see
+// render). Tab goes into the note from anywhere in its head, and from the line into what it names,
+// and the arrows are the caret's; Escape comes back a rung at a time, off the row, off the text on
+// the line, out of the place. Control with an arrow moves the note on the row up or down the list.
+// Everything else is a word in the foot, moving a note included, and only what applies right now
+// gets one.
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
 // are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
@@ -637,7 +638,8 @@ const coarse = window.matchMedia('(hover: none) and (pointer: coarse)');
 const typing = () => [line, box, $('secret')].includes(document.activeElement) || !!editor?.hasFocus;
 // The keyboard there is the person's: the page moves the focus while a field has it, and
 // otherwise only for a press that asked to write, which sets this until the painting that
-// follows has given the field the focus. A key pressed asks to write too: on a touch screen it is
+// follows has given the field the focus: true, or where in the head a press on its words landed,
+// which may be 0. A key pressed asks to write too: on a touch screen it is
 // a keyboard joined to the device, and raises nothing. A phone shows no keyboard for a focus
 // nobody asked for, leaving the page typing into nothing, or raises one under the hands; and a
 // focus given inside the press's own event is the only kind for which iOS raises one.
@@ -1162,7 +1164,8 @@ function paintRows() {
       fit();
     }
     const end = box.value.length;
-    const at = field.fresh ?? end;
+    // A press on a head's words puts the caret where it landed.
+    const at = field.fresh ?? (landed && typeof wantsText === 'number' ? Math.min(wantsText, end) : end);
     if (landed || (toggled && !field.whole) || (told && field.fresh != null)) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
     if (takesFocus(box)) box.focus({ preventScroll: true });
@@ -1419,18 +1422,66 @@ let caretWas = '';
 // not measured twice.
 let measured = null;
 const inEditor = () => !!editor && held === editor.contentDOM;
-const asMeasured = () =>
-  held &&
-  [held, held.selectionStart, held.selectionEnd, held.value, held.parentElement, held.className,
-    $('dates').textContent, view?.cursor, composing,
-    inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
-      editor.composing, editor.dom.parentElement] : ''].join('\u0000');
+// On a touch screen the caret is drawn where the cursor is whether or not the keyboard is up, still
+// rather than breathing, so that the blank page has its cursor before a finger asks for the
+// keyboard: in the box when the cursor is on a row, and on the line otherwise. A field without the
+// focus keeps the selection last set in it, which the painter sets as the cursor lands.
+const restingField = () =>
+  coarse.matches && view && !view.field?.whole && !document.body.classList.contains('locked')
+    ? (view.cursor != null && boxIn ? box : line)
+    : null;
+const caretField = () => (held && held === document.activeElement ? held : restingField());
+const asMeasured = () => {
+  const field = caretField();
+  return (
+    field &&
+    [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, field.className,
+      $('dates').textContent, view?.cursor, composing, field === document.activeElement,
+      inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
+        editor.composing, editor.dom.parentElement] : ''].join('\u0000')
+  );
+};
 const caretMoved = () => {
   if (asMeasured() !== measured) placeCaret();
 };
 
+// The mirror is given the field's face, when the field, its class or the window's width has
+// changed.
+function dress(field) {
+  const style = getComputedStyle(field);
+  const face = `${field.id} ${field.className} ${innerWidth}`;
+  if (mirror.dataset.face !== face) {
+    mirror.dataset.face = face;
+    for (const name of COPIED) mirror.style[name] = style[name];
+    mirror.style.whiteSpace = field === box ? 'pre-wrap' : 'pre';
+    mirror.style.overflowWrap = field === box ? 'anywhere' : 'normal';
+  }
+  return style;
+}
+
+// Where the lines of a field's words are on the screen, measured in the mirror, whose box lies
+// over the field's as the caret's measure has it.
+function wordsOf(field) {
+  const style = dress(field);
+  const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  mirror.style.width = `${field.clientWidth - padding}px`;
+  const words = document.createTextNode(field.value);
+  mirror.replaceChildren(words);
+  const range = document.createRange();
+  range.selectNodeContents(words);
+  const from = mirror.getBoundingClientRect();
+  const to = field.getBoundingClientRect();
+  const [dx, dy] = [to.left - from.left - field.scrollLeft, to.top - from.top - field.scrollTop];
+  return [...range.getClientRects()].map((r) => ({
+    left: r.left + dx,
+    right: r.right + dx,
+    top: r.top + dy,
+    bottom: r.bottom + dy,
+  }));
+}
+
 function placeCaret() {
-  const field = held === document.activeElement ? held : null;
+  const field = caretField();
   const shown =
     field &&
     view &&
@@ -1447,16 +1498,8 @@ function placeCaret() {
   }
   // The mirror is written first and the layout read after, once: the field's width and place and
   // the span's come from the same layout. The mirror's width follows the field's, and is written
-  // between the two reads only when it has changed, which a keystroke seldom does. Its face is
-  // copied only when the field, its class or the window's width has changed.
-  const style = getComputedStyle(field);
-  const face = `${field.id} ${field.className} ${innerWidth}`;
-  if (mirror.dataset.face !== face) {
-    mirror.dataset.face = face;
-    for (const name of COPIED) mirror.style[name] = style[name];
-    mirror.style.whiteSpace = field === box ? 'pre-wrap' : 'pre';
-    mirror.style.overflowWrap = field === box ? 'anywhere' : 'normal';
-  }
+  // between the two reads only when it has changed, which a keystroke seldom does.
+  const style = dress(field);
   const size = parseFloat(style.fontSize);
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
   const at = field.selectionStart;
@@ -1482,6 +1525,7 @@ function placeCaret() {
   const parent = field.parentElement;
   if (caret.parentElement !== parent) parent.append(caret);
   caret.classList.remove('bar');
+  caret.classList.toggle('still', field !== document.activeElement);
   showCaret(left, top, wide, tall);
 }
 
@@ -1679,18 +1723,88 @@ document.addEventListener('mousedown', (event) => {
   if (event.target.closest('a')) event.preventDefault();
 });
 
-// A tap puts the cursor on a note, and a second, off the head, which is the box's, opens its body.
-// The arrow on the selected row goes in, and a link in a row opens and does nothing else.
+// Whether a point is on the words of a head, a few pixels round each line of them counting, since
+// a finger is not a point: false when it is not, and otherwise where in the head's text, or true,
+// for the end, when that cannot be counted, as in a head read with its marks.
+const SLOP = 6;
+const near = (r, x, y) => x >= r.left - SLOP && x <= r.right + SLOP && y >= r.top - SLOP && y <= r.bottom + SLOP;
+function hitText(head, x, y) {
+  if (!head) return false;
+  const words = document.createRange();
+  words.selectNodeContents(head);
+  if (![...words.getClientRects()].some((r) => near(r, x, y))) return false;
+  const parts = [...head.childNodes];
+  if (!parts.every((node) => node.nodeType === Node.TEXT_NODE)) return true;
+  const at = letterAt(x, y);
+  let before = 0;
+  for (const node of parts) {
+    if (node === at?.offsetNode) return before + at.offset;
+    before += node.length;
+  }
+  return true;
+}
+
+// The text and the place in it under a point, by the standard's call or by WebKit's older one,
+// which Safari before 18 has alone.
+function letterAt(x, y) {
+  if (document.caretPositionFromPoint) return document.caretPositionFromPoint(x, y);
+  const range = document.caretRangeFromPoint?.(x, y);
+  return range && { offsetNode: range.startContainer, offset: range.startOffset };
+}
+
+// A tap beside a head's words puts the cursor on the note, and a second there, the head being the
+// box's by then, opens its body; a tap on the words puts the cursor there too and writes in it,
+// with the caret where it landed, which on a phone is what raises the keyboard. The arrow on the
+// selected row goes in, and a link in a row opens and does nothing else.
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
   if (!item || event.target === box || event.target.closest('a')) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
   if (event.target.closest('.chev')) act('go_in');
-  else if (at !== view.cursor) act({ select: at });
-  else if (!view.field?.whole) act('open');
+  else if (at !== view.cursor) {
+    wantsText = hitText(item.querySelector('.head'), event.clientX, event.clientY);
+    act({ select: at });
+  } else if (!view.field?.whole) act('open');
+  follow();
+  wantsText = false;
+});
+// A browser takes a tap near a text box into the box, and the head under the cursor is a box as
+// wide as the row, so a second tap beside its words, on its own line or on the date under it,
+// would only place the caret. So where the finger landed is read from the touch, which neither
+// browser moves, and judged as the first tap is: off the box, or in it past the lines of its
+// words, it opens the body. It is heard on the list, since WebKit sends a touch to what is under
+// the finger and Chromium to the box. While the head is being written a tap in it is the caret's,
+// so that a finger can put the caret at the end of the line; and a new row's empty head is all
+// words.
+let besideHead = false;
+list.addEventListener(
+  'touchstart',
+  (event) => {
+    besideHead = event.touches.length === 1 && besideTheWords(event.touches[0]);
+  },
+  { passive: true },
+);
+list.addEventListener('touchmove', () => (besideHead = false), { passive: true });
+list.addEventListener('touchend', (event) => {
+  if (!besideHead || !event.cancelable) return;
+  besideHead = false;
+  event.preventDefault();
+  act('open');
   follow();
 });
+
+function besideTheWords({ clientX: x, clientY: y }) {
+  if (!view?.field || view.field.whole || !boxIn || document.activeElement === box) return false;
+  const row = rows.get(boxIn);
+  const within = (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  if (!row || !within(row.getBoundingClientRect())) return false;
+  const chev = row.querySelector('.chev');
+  if (chev && within(chev.getBoundingClientRect())) return false;
+  if (!near(box.getBoundingClientRect(), x, y)) return true;
+  return box.value !== '' && !wordsOf(box).some((r) => near(r, x, y));
+}
+
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));
 
 // A tap on the note you are in gives the rest of it, unless it was on a link, which opens and does
@@ -1953,6 +2067,7 @@ async function start() {
   $('for').innerHTML = ASK;
   document.body.classList.remove('locked');
   follow();
+  placeCaret();
   requestAnimationFrame(prefetchOnPause);
   document.addEventListener('keydown', prefetchOnPause, true);
   connect();

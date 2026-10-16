@@ -813,11 +813,16 @@ text area. The `editor` the engine offers is not shown here. On a phone the shee
 above the bar and opens without the keyboard, which a tap in the text raises; putting the keyboard
 away leaves it open, and `done`, or the back gesture, closes it.
 
-*Touch.* A tap puts the cursor on a note, a second tap on it off its head opens its body (the
-head is a text box by then, and a tap in it places the caret), a tap on the `›` at the end of
-the selected row goes into the note and on the one after the line into what the line names, a
-tap on a link in a row opens it and leaves the cursor where it was, and the path, or the phone's
-own back gesture, is the way back.
+*Touch.* A tap on the words of a head puts the cursor on the note and the caret under the finger,
+and the keyboard comes; a tap beside the words puts the cursor there and nothing more, and a second
+tap beside them, the head being a text box by then, opens the body, though while the head is being
+written a tap in it is the caret's. The `›` at the end of the selected row goes into the note and
+the one after the line into what the line names; a link in a row opens and leaves the cursor where
+it was; the path is the way back, and so is the phone's own back gesture, since each step in is a
+step of the browser's history. The keyboard is never raised by the page, only by a finger on text, a
+key pressed, or the word `new note`, and never dropped by a tap on a control. The caret is drawn
+where the cursor is whether or not the keyboard is up, still while it is down. There is no gesture
+of the app's own: tap, scroll and the system's back are the whole of it.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own (see "A client is a writer of its own, leased from a pool"). Where the browser gives
@@ -2060,6 +2065,21 @@ repeats it only where the reason needs it.
   it, as a click there closes it on a desktop. A page with the keyboard up is in the middle of
   something, so a new build waits for it.
 
+  A tap beside a head's words picks the note and a tap on them writes in it, with the caret under
+  the finger. Beside means off the lines of the head's words as they are laid out, a few pixels
+  round them counting for a finger. A second tap beside them, on the row under the cursor, opens the
+  body. It is judged the same way, against the words in the head's text box, and by where the finger
+  landed, since a browser takes a tap that near a text box into the box: Chromium did, on a short
+  head's own line and on the date under it, until the page read the touch itself. While the head is
+  being written, with the keyboard up, a tap in it is the caret's, so that a finger can put the
+  caret at the end of the line. This closes the open question on Touch. The caret is drawn where the
+  cursor is whether or not the keyboard is up, still rather than breathing while it is down, so that
+  the blank page has its cursor before a tap; it is the same one cursor. There is no gesture of the
+  app's own: swipe actions on rows, a long press to move and a pull to refresh were considered
+  against Mail, Reminders and Things and dropped, since a gesture that is not seen must be redundant
+  with a word anyway, a sideways swipe fights the edge swipe back and the bar's own scroll, and sync
+  is live, so there is nothing to pull for.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document.
@@ -2103,15 +2123,13 @@ repeats it only where the reason needs it.
 - The browser's keys past the four, and Ctrl-D, Ctrl-O and Tab. Words at the foot, pressed or
   tapped, are a start: nothing to remember, but slower than a chord for archiving ten notes in a
   row. Undo has no key at all yet. On a phone every one of them is a word in the bar.
-- Touch. A tap puts the cursor on a note, a second opens its body, the `›` goes in, and the
-  path at the top is the way back. Whether any of that is right is for use on a phone to say.
-  Seen 2026-10-15 in Chromium's and WebKit's touch emulation: once the cursor is on a row its
-  head is the text box and fills the row, so a second tap on the head puts the caret there. A
-  second tap off it, on the date under the head on a phone, opens the body when it lands there,
-  but a browser takes a tap that near a text box into the box: WebKit every time it was tried,
-  Chromium some of the time. Until 2026-10-15 the body read under the row was where a second
-  tap opened it in both, and it went with the body; on a phone the word in the foot is now the
-  one sure way to open a body, and whether the row wants a target of its own for it is open.
+- Touch: whether a tap, a second tap and the path were right on a phone. Seen 2026-10-15 in
+  Chromium's and WebKit's touch emulation, a second tap off the head, on the date under it, was
+  taken into the head's text box as often as not. Closed 2026-10-16 by "The phone is a frame with a
+  bar": the first tap tells the words from beside them, so picking a note no longer raises the
+  keyboard, and the second, beside the words on the row under the cursor, is judged by where the
+  finger landed rather than where the browser took it, so it opens the body; `body` in the bar is
+  the sure way, and the phone itself says whether WebKit sends that touch where Chromium does.
 - On a row Esc keeps rather than cancels, which spreadsheet hands will find out once; daily use
   confirms it. (Which key goes in, open here beside it until 2026-10-16, is settled by "Tab goes
   in".)
