@@ -1821,10 +1821,6 @@ function letterAt(x, y) {
   return range && { offsetNode: range.startContainer, offset: range.startOffset };
 }
 
-// A tap beside a head's words puts the cursor on the note, and a second there, the head being the
-// box's by then, opens its body; a tap on the words puts the cursor there too and writes in it,
-// with the caret where it landed, which on a phone is what raises the keyboard. The arrow on the
-// selected row goes in, and a link in a row opens and does nothing else.
 // Where the last touch on the list landed, as the finger put it. A browser moves a tap onto a
 // control near it, a task's box among them, and the click's point with it, so a tap on a task's
 // first letter would tick it; the box is pressed only where the finger landed on its room.
@@ -1838,6 +1834,10 @@ list.addEventListener(
   { passive: true },
 );
 
+// A tap beside a head's words puts the cursor on the note, and a second there, the head being the
+// box's by then, opens its body; a tap on the words puts the cursor there too and writes in it,
+// with the caret where it landed, which on a phone is what raises the keyboard. The arrow on the
+// selected row goes in, and a link in a row opens and does nothing else.
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
   if (!item || event.target === box || event.target.closest('a')) return;
