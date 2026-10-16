@@ -113,8 +113,8 @@ makes no network call, so the same code runs in a terminal, in a browser tab and
 out.
 - In: an *action*, which is what was asked for and never which key asked: the line now reads
   this, move the cursor, write the line, go into a note or a label, step back, archive, delete,
-  link, undo, the text of a note as it was edited. An action that does not apply where the
-  cursor is does nothing.
+  link, undo, the text of a note as it was edited, go back to a path a face kept. An action that
+  does not apply where the cursor is does nothing.
 - In: versions of notes written elsewhere, by another device or another writer on this one.
 - In, from the host: the time, an id for a new note, and randomness for sealing.
 - Out: *effects*, which are what the face has to do about an action: keep this version, put
@@ -125,6 +125,9 @@ out.
   as it is being written, the note you are in, what just happened, and what can be asked for
   where the cursor is, each with what to call it there. A face puts its own key or button beside
   each.
+- Out, when a face asks: the path as *steps*, each note by its id and each label as it was typed,
+  with the search each was found with, for a face that is about to be reloaded under the person
+  to keep and give back. A face that never reloads pays nothing for it.
 
 Everything decided about how the app behaves lives here: what going into a note does with the
 line, what is listed first, what a note written in place links to, what is offered where. Under
@@ -1584,6 +1587,20 @@ repeats it only where the reason needs it.
   into only if it carries the place's labels, since those are the rows that read so: inside
   `#house`, `order oil` goes into `Order oil #house` though `Order oil #garden` is called the
   same. Without the second tier the row would read one thing and answer to another.
+- **A face keeps the path as steps.** Decided 2026-10-16, at Sam's direction, revising "A tag is
+  a place you can go into" where it left out remembering the path across restarts. A page is
+  reloaded under the person when a new build is served, and a reload must not throw them out of
+  their place. The engine gives the path as steps, `[{"note":"…","search":"boi"},
+  {"label":"#house"}]`, and takes them back as an action, `{"restore":[…]}`, which goes into each
+  from the top as going in from the line would, passes over a note that has gone, a label that
+  is not one and a place already on the path, and leaves the cursor on an empty line; the face
+  then types the line it kept. A note is kept by its id, since a head is neither unique nor
+  stable, and the search each step was found with is kept, so that stepping back after a reload
+  brings back what it would have before. It is an action because it must leave an open field
+  first, as any move does, and because the page crosses to the engine as text. The cursor's row,
+  an open body and the undo stack are not kept: the list may differ under a new build, the body
+  is written before the reload, and a reload is a restart. Steps are asked for, not put in every
+  view, so the terminal, which is not reloaded, pays nothing.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

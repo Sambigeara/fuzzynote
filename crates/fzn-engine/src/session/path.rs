@@ -8,7 +8,7 @@ use crate::record::Record;
 use crate::text;
 use crate::time::Day;
 
-use super::Session;
+use super::{KeptStep, Session};
 
 /// A step of the path: what was gone into, a note or a label typed on the line, with the search
 /// it was found with. A note written in a place inherits it, as a link to the note or as the label
@@ -66,6 +66,22 @@ impl Step {
             Step::Note { search: s, .. } | Step::Label { search: s, .. } => *s = search,
         }
         self
+    }
+
+    /// The step as a face keeps it.
+    pub(super) fn kept(&self) -> KeptStep {
+        match self {
+            Step::Note { id, search, .. } => KeptStep::Note {
+                note: id.clone(),
+                search: search.clone(),
+            },
+            Step::Label {
+                written, search, ..
+            } => KeptStep::Label {
+                label: written.clone(),
+                search: search.clone(),
+            },
+        }
     }
 
     /// The search it was found with, to put back on the way out.
@@ -258,6 +274,41 @@ impl Session {
     /// head: with the place's labels taken off its end, by [`head_shown`].
     pub(super) fn shown(&self, head: &str, has_body: bool) -> Option<String> {
         head_shown(head, has_body, self.labels_here().map(|(label, _)| label))
+    }
+
+    /// Goes back to where a face kept you: each step from the top, as going in from the line
+    /// would, passing over a note that has gone, a label that is not one, and a place already on
+    /// the path. The line clears, and the cursor is on it.
+    pub(super) fn restore_path(&mut self, steps: Vec<KeptStep>) {
+        self.path.clear();
+        self.line.clear();
+        let today = self.today();
+        for kept in steps {
+            let step = match kept {
+                KeptStep::Note { note, search } => {
+                    let Some(head) = self.step_name(&note) else {
+                        continue;
+                    };
+                    let id = note;
+                    Step::Note { id, head, search }
+                }
+                KeptStep::Label { label, search } => {
+                    let query = Query::read(&label, today);
+                    let ([typed], true) = (&query.labels[..], query.only_labels()) else {
+                        continue;
+                    };
+                    Step::Label {
+                        label: typed.label.clone(),
+                        written: typed.written.clone(),
+                        search,
+                    }
+                }
+            };
+            if !self.path.iter().any(|s| s.is(&step)) {
+                self.path.push(step);
+            }
+        }
+        self.refresh(true);
     }
 
     /// What the path calls a note gone into from here: its head as its row reads where it was

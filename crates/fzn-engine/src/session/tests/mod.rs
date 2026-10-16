@@ -11,6 +11,7 @@ mod forms;
 mod line;
 mod order;
 mod places;
+mod restore;
 mod shown;
 mod tasks;
 

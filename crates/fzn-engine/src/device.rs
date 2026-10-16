@@ -31,7 +31,7 @@ use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
 use crate::seal::{Key, Seal, is_sealed};
-use crate::session::{Action, Effect, Host, Session, View};
+use crate::session::{Action, Effect, Host, KeptStep, Session, View};
 use crate::time::Moment;
 
 /// The relay, as a device numbers its one peer.
@@ -355,6 +355,11 @@ impl Device {
     /// What to show.
     pub fn view(&self) -> View<'_> {
         self.session.view()
+    }
+
+    /// Where you are, as a face keeps it across a reload: the path's steps, outermost first.
+    pub fn steps(&self) -> Vec<KeptStep> {
+        self.session.steps()
     }
 
     /// This writer's id, and so the name of the log it writes.

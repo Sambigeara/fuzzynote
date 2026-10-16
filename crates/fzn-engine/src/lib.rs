@@ -33,5 +33,5 @@ pub use note::Note;
 pub use record::{Notes, Read, Record};
 pub use score::{Reason, Scorer, Weights};
 pub use seal::{Key, Opened, Seal};
-pub use session::{Action, Effect, Field, Hint, Host, Row, Session, View};
+pub use session::{Action, Effect, Field, Hint, Host, KeptStep, Row, Session, View};
 pub use time::{Day, Moment};

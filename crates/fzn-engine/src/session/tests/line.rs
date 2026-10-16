@@ -896,6 +896,19 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         (Action::Select(None), r#"{"select":null}"#),
         (Action::Select(Some(3)), r#"{"select":3}"#),
         (
+            Action::Restore(vec![
+                KeptStep::Note {
+                    note: "n1".into(),
+                    search: Some("boi".into()),
+                },
+                KeptStep::Label {
+                    label: "#house".into(),
+                    search: None,
+                },
+            ]),
+            r##"{"restore":[{"note":"n1","search":"boi"},{"label":"#house"}]}"##,
+        ),
+        (
             Action::Save {
                 id: "n1".into(),
                 text: "a\nb".into(),
@@ -977,6 +990,7 @@ fn only_the_actions_that_can_change_a_note_write() {
         Action::OpenUrl,
         Action::ShowArchived,
         Action::ShowScores,
+        Action::Restore(Vec::new()),
     ];
     for action in writes {
         assert!(action.writes(), "{action:?}");

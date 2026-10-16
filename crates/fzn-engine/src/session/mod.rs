@@ -81,7 +81,9 @@
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
-//! is given it, so the session is only ever told what the line now reads.
+//! is given it, so the session is only ever told what the line now reads. A face that is
+//! reloaded under the person keeps where they were as the path's steps, and asks to be put back
+//! there, so the engine gives the path as steps and takes it back as an action.
 
 use serde::{Deserialize, Serialize};
 
@@ -183,6 +185,29 @@ pub enum Action {
     ShowArchived,
     /// Say what each listed note scored, or stop.
     ShowScores,
+    /// Go back to where a face kept you: these steps from the top, each gone into as it would be
+    /// from the line, passing over a note that has gone, a label that is not one, and a place
+    /// already on the path. The line clears, and the cursor is on it.
+    Restore(Vec<KeptStep>),
+}
+
+/// A step of the path as a face keeps it across a reload: the note gone into, by its id, or the
+/// label as it was typed, with the search the step was found with, if it was one. As JSON,
+/// `{"note":"3f9a01c2-0001","search":"boi"}` or `{"label":"#house"}`. It is apart from the
+/// path's own step, which holds what the session reads off the note and the label as well.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeptStep {
+    Note {
+        note: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        search: Option<String>,
+    },
+    Label {
+        label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        search: Option<String>,
+    },
 }
 
 impl Action {
@@ -212,7 +237,8 @@ impl Action {
             | Action::Copy
             | Action::OpenUrl
             | Action::ShowArchived
-            | Action::ShowScores => false,
+            | Action::ShowScores
+            | Action::Restore(_) => false,
         }
     }
 }
@@ -424,6 +450,7 @@ impl Session {
                 self.refresh(false);
             }
             Action::ShowScores => self.show_scores = !self.show_scores,
+            Action::Restore(steps) => self.restore_path(steps),
         }
     }
 
@@ -468,6 +495,12 @@ impl Session {
     /// effect could not be carried out, say.
     pub fn say(&mut self, status: impl Into<String>) {
         self.status = status.into();
+    }
+
+    /// Where you are, as a face keeps it across a reload: each step of the path, outermost
+    /// first, to give back as [`Action::Restore`].
+    pub fn steps(&self) -> Vec<KeptStep> {
+        self.path.iter().map(Step::kept).collect()
     }
 
     pub fn view(&self) -> View<'_> {

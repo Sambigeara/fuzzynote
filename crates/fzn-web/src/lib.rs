@@ -127,6 +127,13 @@ impl Fzn {
         }
     }
 
+    /// Where the page is, to keep across a reload: the path's steps as JSON, to give back as
+    /// `{"restore": …}`.
+    pub fn steps(&self) -> String {
+        // It cannot fail, but if it did, no path is still a path to give back.
+        serde_json::to_string(&self.device.steps()).unwrap_or_else(|_| "[]".into())
+    }
+
     /// This writer's id, and so the name of the log it writes.
     pub fn device(&self) -> String {
         self.device.device().to_owned()
