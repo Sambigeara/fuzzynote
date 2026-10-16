@@ -27,7 +27,7 @@ mod session;
 pub mod text;
 pub mod time;
 
-pub use device::{Device, Editing, Kept, Todo};
+pub use device::{Device, Editing, Kept, RELAY, Said, Todo};
 pub use engine::Engine;
 pub use note::Note;
 pub use record::{Notes, Read, Record};

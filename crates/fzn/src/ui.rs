@@ -54,7 +54,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use fzn_engine::{Action, Device, Editing, Hint, Key, Moment, Row, Todo, View, Weights, time};
+use fzn_engine::{
+    Action, Device, Editing, Hint, Key, Moment, RELAY, Row, Todo, View, Weights, time,
+};
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers,
@@ -1022,9 +1024,10 @@ impl App {
     fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
         self.logs.keep(&todo, Writer::App)?;
         if let Some((_, link)) = &self.sync {
-            for text in todo.send {
+            // The relay is this window's only peer.
+            for said in todo.send.into_iter().filter(|said| said.to == RELAY) {
                 // A thread that has gone is a relay that is not there, which the footer says.
-                let _ = link.to_relay.send(text);
+                let _ = link.to_relay.send(said.text);
             }
         }
         if let Some(text) = todo.copy
@@ -1057,16 +1060,16 @@ impl App {
                 sync::Event::Connected => {
                     self.not_syncing = false;
                     self.unreachable = None;
-                    let todo = self.device.connected();
+                    let todo = self.device.connected(RELAY);
                     self.carry_out(todo)?;
                 }
                 sync::Event::Message(text) => {
-                    let todo = self.device.received(text);
+                    let todo = self.device.received(RELAY, text);
                     self.carry_out(todo)?;
                 }
                 sync::Event::Disconnected => {
                     self.not_syncing = true;
-                    self.device.disconnected();
+                    self.device.disconnected(RELAY);
                 }
                 sync::Event::Unreachable(why) => {
                     self.not_syncing = true;
@@ -3141,7 +3144,7 @@ mod tests {
             app.device
                 .view()
                 .status
-                .starts_with("the log dev-b here is not the dev-b on the relay"),
+                .starts_with("the log dev-b here is not the dev-b elsewhere"),
             "{}",
             app.device.view().status
         );

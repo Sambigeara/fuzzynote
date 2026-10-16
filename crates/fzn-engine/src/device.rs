@@ -9,7 +9,13 @@
 //! session wants kept is sealed and becomes a line of this writer's log, which the replica holds
 //! and sends on; a line the replica takes from a peer is opened and given to the session, and so
 //! is one that another writer on the same machine has added where the face keeps them. The face
-//! is left with what only it can do: keeping lines for the next time, and the socket.
+//! is left with what only it can do: keeping lines for the next time, and the connections.
+//!
+//! A device's peers are the relay and its siblings: other clients open on the same space on the
+//! same machine, such as another tab, each writing a log of its own. A sibling is a peer like
+//! the relay, so what one writes reaches the others as a line from anywhere does, and what one
+//! hears from the relay it passes on. The relay is peer 0, as every face numbers it, and is the
+//! one peer whose clock is taken.
 //!
 //! What the face is to do comes back as a [`Todo`], and it does the keeping before the deleting.
 //! A compaction starts a new log whose header retires the old one, so one `Todo` can hold both
@@ -34,8 +40,8 @@ use crate::seal::{Key, Seal, is_sealed};
 use crate::session::{Action, Effect, Given, Host, KeptStep, Session, View};
 use crate::time::Moment;
 
-/// The relay, as a device numbers its one peer.
-const RELAY: Peer = 0;
+/// The relay, as every face numbers it. Siblings on the same machine are 1, 2, and so on.
+pub const RELAY: Peer = 0;
 
 /// A writer's log longer than this, and more than [`GROWTH`] times as long as the notes in it,
 /// is compacted when the device opens.
@@ -56,6 +62,13 @@ pub struct Kept {
     pub lines: Vec<String>,
 }
 
+/// A message for a peer, to send as it is.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct Said {
+    pub to: Peer,
+    pub text: String,
+}
+
 /// A note to put in front of the person for editing.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Editing {
@@ -70,8 +83,8 @@ pub struct Todo {
     pub keep: Vec<Kept>,
     /// Logs retired, to delete from wherever lines are kept. Done after `keep`.
     pub delete: Vec<String>,
-    /// Messages for the relay, each one to send as it is.
-    pub send: Vec<String>,
+    /// Messages for peers, each one to send as it is, in order.
+    pub send: Vec<Said>,
     /// This writer's new id, when it has changed, for the face to keep in place of the old.
     pub device: Option<String>,
     /// A note to hand to the face's editor. What is made of it comes back as the action `save`.
@@ -175,8 +188,10 @@ impl Device {
     }
 
     /// Takes in lines that another writer on this machine has added to the end of a log where
-    /// the face keeps it, as lines from the relay are taken in, but for keeping them, since they
-    /// are kept already. The relay is sent them as it would be a peer's.
+    /// the face keeps it, as lines from a peer are taken in, but for keeping them, since they
+    /// are kept already. The peers are sent them as they would be a peer's. The face hands over
+    /// only lines past those it has handed over before, in order, since they are added to the
+    /// end of what is held without being checked against it.
     pub fn added(&mut self, log: &str, lines: Vec<String>) -> Todo {
         let lines: Vec<String> = lines
             .into_iter()
@@ -310,31 +325,36 @@ impl Device {
         todo
     }
 
-    /// The socket to the relay has opened.
-    pub fn connected(&mut self) -> Todo {
+    /// A connection to a peer has opened: the relay's socket, or a sibling's channel.
+    pub fn connected(&mut self, peer: Peer) -> Todo {
         let mut todo = Todo::default();
-        let out = self.replica.connect(RELAY);
+        let out = self.replica.connect(peer);
         self.carry_out(out, &mut todo);
         self.compact_if_superseded(&mut todo);
         todo
     }
 
-    /// The socket to the relay has closed. What the relay said of its clock is learnt again
+    /// A connection to a peer has closed. What the relay said of its clock is learnt again
     /// when it comes back.
-    pub fn disconnected(&mut self) {
-        self.replica.disconnect(RELAY);
-        self.ahead = None;
+    pub fn disconnected(&mut self, peer: Peer) {
+        self.replica.disconnect(peer);
+        if peer == RELAY {
+            self.ahead = None;
+        }
     }
 
-    /// The relay has said something. What this build does not know is passed over.
-    pub fn received(&mut self, text: &str) -> Todo {
+    /// A peer has said something. What this build does not know is passed over, and so is a
+    /// clock from any peer but the relay, since a sibling's is this machine's own.
+    pub fn received(&mut self, peer: Peer, text: &str) -> Todo {
         let mut todo = Todo::default();
         match Message::decode(text) {
             Some(Message::Now(relay)) => {
-                self.ahead = Some(self.host.now().ms.saturating_sub(relay.ms))
+                if peer == RELAY {
+                    self.ahead = Some(self.host.now().ms.saturating_sub(relay.ms));
+                }
             }
             Some(message) => {
-                let out = self.replica.receive(RELAY, message);
+                let out = self.replica.receive(peer, message);
                 self.carry_out(out, &mut todo);
             }
             None => {}
@@ -506,8 +526,8 @@ impl Device {
         versions
     }
 
-    /// Does what the replica wants done. Lines that came from the relay are for the face to
-    /// keep and for the session to read.
+    /// Does what the replica wants done. Lines that came from a peer are for the face to keep
+    /// and for the session to read.
     fn carry_out(&mut self, out: Vec<Out>, todo: &mut Todo) {
         for out in out {
             match out {
@@ -523,9 +543,9 @@ impl Device {
                     let from = held.saturating_sub(lines.len()) as u64;
                     todo.keep.push(Kept { log, from, lines });
                 }
-                Out::Send(_, message) => {
+                Out::Send(to, message) => {
                     if let Ok(text) = message.encode() {
-                        todo.send.push(text);
+                        todo.send.push(Said { to, text });
                     }
                 }
                 // A fork of this device's own log is two machines writing under one id. The
@@ -534,11 +554,11 @@ impl Device {
                 Out::Forked { log, .. } if log == self.device => {
                     self.superseded = true;
                     self.session.say(format!(
-                        "the log {log} here is not the {log} on the relay, so a new one is started"
+                        "the log {log} here is not the {log} elsewhere, so a new one is started"
                     ));
                 }
                 Out::Forked { log, .. } => self.session.say(format!(
-                    "the log {log} here is not the {log} on the relay, so it is not syncing"
+                    "the log {log} here is not the {log} elsewhere, so it is not syncing"
                 )),
                 Out::Retire(log) => todo.delete.push(log),
                 Out::Superseded(log) => {
@@ -672,47 +692,89 @@ mod tests {
     }
 
     /// A relay between devices: what each device sends goes to it, and what it sends goes to
-    /// them.
+    /// them. Two devices may also be siblings, as two tabs are, each a peer of the other.
     struct Net {
         relay: Replica,
         devices: Vec<Device>,
+        /// Each pair of siblings, and the peer each numbers the other by.
+        siblings: Vec<[(usize, Peer); 2]>,
     }
 
     impl Net {
+        fn new(devices: Vec<Device>) -> Self {
+            Self {
+                relay: Replica::new(),
+                devices,
+                siblings: Vec::new(),
+            }
+        }
+
         fn connect(&mut self, device: usize) {
             let greeting = self.relay.connect(device as Peer);
-            let todo = self.devices[device].connected();
-            self.relay_hears(device, todo);
+            let todo = self.devices[device].connected(RELAY);
+            self.deliver(device, todo);
             self.devices_hear(greeting);
         }
 
-        fn relay_hears(&mut self, device: usize, todo: Todo) {
-            for text in todo.send {
-                let message = Message::decode(&text).unwrap();
-                let out = self.relay.receive(device as Peer, message);
-                self.devices_hear(out);
+        /// Makes two devices siblings, each numbering the other by the next peer it has.
+        fn sibling(&mut self, a: usize, b: usize) {
+            let next = |d: usize| {
+                let had = self.siblings.iter().flatten().filter(|(x, _)| *x == d);
+                1 + had.count() as Peer
+            };
+            let (calls_b, calls_a) = (next(a), next(b));
+            self.siblings.push([(a, calls_b), (b, calls_a)]);
+            let (to_b, to_a) = (
+                self.devices[a].connected(calls_b),
+                self.devices[b].connected(calls_a),
+            );
+            self.deliver(a, to_b);
+            self.deliver(b, to_a);
+        }
+
+        /// What a device has said reaches the peer it is for: the relay, or a sibling.
+        fn deliver(&mut self, from: usize, todo: Todo) {
+            for said in todo.send {
+                if said.to == RELAY {
+                    let message = Message::decode(&said.text).unwrap();
+                    let out = self.relay.receive(from as Peer, message);
+                    self.devices_hear(out);
+                    continue;
+                }
+                let (to, back) = self
+                    .siblings
+                    .iter()
+                    .find_map(|[x, y]| match () {
+                        _ if *x == (from, said.to) => Some(*y),
+                        _ if *y == (from, said.to) => Some(*x),
+                        _ => None,
+                    })
+                    .expect("a sibling");
+                let todo = self.devices[to].received(back, &said.text);
+                self.deliver(to, todo);
             }
         }
 
         fn devices_hear(&mut self, out: Vec<Out>) {
             for out in out {
                 if let Out::Send(peer, message) = out {
-                    let todo = self.devices[peer as usize].received(&message.encode().unwrap());
-                    self.relay_hears(peer as usize, todo);
+                    let text = message.encode().unwrap();
+                    let todo = self.devices[peer as usize].received(RELAY, &text);
+                    self.deliver(peer as usize, todo);
                 }
             }
         }
 
         fn act(&mut self, device: usize, action: Action) {
             let todo = self.devices[device].act(action);
-            self.relay_hears(device, todo);
+            self.deliver(device, todo);
         }
 
         /// Every device loses the relay, to write on its own until it is connected again.
         fn part(&mut self) {
             for (i, device) in self.devices.iter_mut().enumerate() {
                 self.relay.disconnect(i as Peer);
-                device.disconnected();
+                device.disconnected(RELAY);
             }
         }
 
@@ -733,10 +795,7 @@ mod tests {
     /// Two devices and a relay, each device having written these notes from the line in turn,
     /// and each come back to the line.
     fn pair(texts: &[&str]) -> Net {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), device("dev-b")],
-        };
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
         net.rejoin();
         for text in texts {
             net.act(0, Action::Type((*text).to_owned()));
@@ -790,10 +849,7 @@ mod tests {
 
     #[test]
     fn a_device_filled_from_several_logs_says_nothing_of_it() {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), device("dev-b"), device("dev-c")],
-        };
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b"), device("dev-c")]);
         net.connect(0);
         net.connect(1);
         net.act(0, Action::Type("bleed the radiators".into()));
@@ -807,10 +863,7 @@ mod tests {
 
     #[test]
     fn two_devices_and_a_relay_show_each_other_what_they_write() {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), device("dev-b")],
-        };
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
         write(&mut net.devices[0], "written before anyone was connected");
         net.connect(0);
         net.connect(1);
@@ -847,10 +900,7 @@ mod tests {
 
     #[test]
     fn a_device_opened_afresh_gets_its_own_log_back_from_the_relay() {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a")],
-        };
+        let mut net = Net::new(vec![device("dev-a")]);
         net.connect(0);
         net.act(0, Action::Type("kept only by the relay".into()));
         net.act(0, Action::Write);
@@ -859,8 +909,8 @@ mod tests {
         net.relay.disconnect(0);
         net.devices[0] = device("dev-a");
         let greeting = net.relay.connect(0);
-        let todo = net.devices[0].connected();
-        net.relay_hears(0, todo);
+        let todo = net.devices[0].connected(RELAY);
+        net.deliver(0, todo);
         net.devices_hear(greeting);
         assert_eq!(heads(&net.devices[0]), ["kept only by the relay"]);
     }
@@ -896,15 +946,15 @@ mod tests {
 
         // What is not a message is passed over. A fork of another writer's log is said; a fork
         // of this device's own is put right there and then, with a new log.
-        assert_eq!(a.received("not a message"), Todo::default());
-        a.connected();
-        a.received(r#"{"forked":"dev-z"}"#);
+        assert_eq!(a.received(RELAY, "not a message"), Todo::default());
+        a.connected(RELAY);
+        a.received(RELAY, r#"{"forked":"dev-z"}"#);
         assert!(
             status(&a).starts_with("the log dev-z here is not"),
             "{}",
             status(&a)
         );
-        let todo = a.received(r#"{"forked":"dev-a"}"#);
+        let todo = a.received(RELAY, r#"{"forked":"dev-a"}"#);
         let new = todo.device.clone().expect("a new writer id");
         assert_ne!(new, "dev-a");
         assert_eq!(a.device(), new);
@@ -935,7 +985,7 @@ mod tests {
         let added = net.devices[0].added("dev-c", kept.lines.clone());
         assert!(added.keep.is_empty(), "it is kept already");
         assert_eq!(status(&net.devices[0]), "1 changed elsewhere");
-        net.relay_hears(0, added);
+        net.deliver(0, added);
         assert_eq!(net.relay.lines("dev-c"), kept.lines);
         assert!(
             net.agreed().is_empty(),
@@ -997,6 +1047,157 @@ mod tests {
         assert_eq!(
             json,
             r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null}"#
+        );
+        let said = Todo {
+            send: vec![Said {
+                to: 2,
+                text: "{}".into(),
+            }],
+            ..Todo::default()
+        };
+        assert!(
+            serde_json::to_string(&said)
+                .unwrap()
+                .contains(r#""send":[{"to":2,"text":"{}"}]"#)
+        );
+    }
+
+    #[test]
+    fn two_tabs_on_one_browser_show_each_other_each_keystroke_with_no_relay() {
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
+        net.sibling(0, 1);
+        net.act(0, Action::Write);
+        for text in ["B", "Bo", "Boiler #house"] {
+            net.act(0, Action::Edited(text.into()));
+            assert_eq!(heads(&net.devices[1]), [text]);
+        }
+        // What the second keeps of the first's log is where the first wrote it.
+        let todo = net.devices[0].act(Action::Edited("Boiler #house, serviced".into()));
+        let [Said { to, text }] = &todo.send[..] else {
+            panic!("{todo:?}");
+        };
+        let kept = net.devices[1].received(1, text).keep;
+        assert_eq!(*to, 1);
+        assert_eq!(
+            (kept[0].log.as_str(), kept[0].from, kept[0].lines.len()),
+            ("dev-a", 3, 1)
+        );
+        assert!(net.relay.have().is_empty(), "no relay was there");
+    }
+
+    #[test]
+    fn a_siblings_lines_reach_the_relay_through_whichever_tab_is_connected() {
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b"), device("dev-c")]);
+        net.sibling(0, 1);
+        net.connect(1);
+        net.connect(2);
+        write(&mut net.devices[0], "written offline");
+        net.act(0, Action::Write);
+        net.act(0, Action::Edited("Boiler #house".into()));
+        assert_eq!(net.relay.lines("dev-a").len(), 2, "through the second tab");
+        assert_eq!(
+            heads(&net.devices[2]),
+            ["written offline", "Boiler #house"],
+            "and on to another device"
+        );
+    }
+
+    #[test]
+    fn a_line_from_the_relay_reaches_every_sibling_through_the_one_that_heard_it() {
+        let mut net = Net::new(vec![
+            device("dev-a"),
+            device("dev-b"),
+            device("dev-c"),
+            device("dev-z"),
+        ]);
+        net.sibling(0, 1);
+        net.sibling(1, 2);
+        net.connect(0);
+        net.connect(3);
+        write(&mut net.devices[3], "Order oil #house");
+        net.act(3, Action::Select(None));
+        net.connect(3);
+        for i in 0..3 {
+            assert_eq!(heads(&net.devices[i]), ["Order oil #house"], "tab {i}");
+        }
+        assert_eq!(net.devices[2].replica.lines("dev-z").len(), 1);
+    }
+
+    #[test]
+    fn a_sibling_that_compacts_is_followed_and_the_old_log_is_told_to_be_deleted_everywhere() {
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
+        net.sibling(0, 1);
+        net.connect(1);
+        write(&mut net.devices[0], "Boiler #house");
+        net.act(0, Action::Select(None));
+        let todo = net.devices[0].compact();
+        let new = todo.device.clone().unwrap();
+        assert_eq!(todo.delete, ["dev-a"]);
+        let siblings = net.devices[1].replica.retired().clone();
+        assert!(!siblings.contains("dev-a"));
+        net.deliver(0, todo);
+        assert!(net.devices[1].replica.retired().contains("dev-a"));
+        assert!(net.devices[1].replica.lines("dev-a").is_empty());
+        assert_eq!(net.relay.lines(&new).len(), 2, "a header and the snapshot");
+        assert!(net.relay.retired().contains("dev-a"));
+        assert_eq!(heads(&net.devices[1]), ["Boiler #house"]);
+    }
+
+    #[test]
+    fn a_sibling_gone_is_sent_nothing_and_a_line_is_not_sent_back_where_it_came_from() {
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
+        net.sibling(0, 1);
+        net.act(0, Action::Write);
+        let todo = net.devices[0].act(Action::Edited("Boiler".into()));
+        let [Said { to: 1, text }] = &todo.send[..] else {
+            panic!("{todo:?}");
+        };
+        let back = net.devices[1].received(1, text);
+        assert_eq!(back.keep.len(), 1);
+        assert!(back.send.is_empty(), "not back to the sibling it came from");
+
+        net.devices[0].disconnected(1);
+        let todo = net.devices[0].act(Action::Edited("Boiler #house".into()));
+        assert_eq!(todo.keep.len(), 1);
+        assert!(todo.send.is_empty(), "nobody is there");
+    }
+
+    #[test]
+    fn now_is_taken_only_from_the_relay() {
+        let relay = Message::Now(Moment::utc(1_791_892_800 - 600))
+            .encode()
+            .unwrap();
+        let mut device = clocked(0);
+        device.connected(1);
+        device.received(1, &relay);
+        assert_eq!(device.clock(), None, "a sibling's clock is this machine's");
+        device.connected(RELAY);
+        device.received(RELAY, &relay);
+        assert_eq!(
+            device.clock().as_deref(),
+            Some("this device's clock is 10 min ahead")
+        );
+        device.disconnected(1);
+        assert!(device.clock().is_some(), "a sibling going is not the relay");
+        device.disconnected(RELAY);
+        assert_eq!(device.clock(), None);
+    }
+
+    #[test]
+    fn a_fork_is_said_to_be_elsewhere_whichever_peer_told_of_it() {
+        let mut a = device("dev-a");
+        write(&mut a, "Boiler");
+        a.connected(1);
+        a.received(1, r#"{"forked":"dev-z"}"#);
+        assert_eq!(
+            status(&a),
+            "the log dev-z here is not the dev-z elsewhere, so it is not syncing"
+        );
+        let todo = a.received(1, r#"{"forked":"dev-a"}"#);
+        assert!(
+            status(&a).starts_with("compacted"),
+            "{} {todo:?}",
+            status(&a)
         );
     }
 
@@ -1090,10 +1291,7 @@ mod tests {
 
     #[test]
     fn typing_into_a_new_row_sends_the_relay_a_line_a_letter() {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), device("dev-b")],
-        };
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
         net.connect(0);
         net.connect(1);
         net.act(0, Action::Write);
@@ -1113,10 +1311,7 @@ mod tests {
 
     #[test]
     fn a_new_row_inside_a_tag_is_in_the_tag_on_another_device_from_its_first_letter() {
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), device("dev-b")],
-        };
+        let mut net = Net::new(vec![device("dev-a"), device("dev-b")]);
         net.connect(0);
         net.connect(1);
         for device in 0..2 {
@@ -1175,10 +1370,7 @@ mod tests {
             Weights::default(),
             Key::from_bytes([9; 32]),
         );
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![device("dev-a"), wrong],
-        };
+        let mut net = Net::new(vec![device("dev-a"), wrong]);
         net.connect(0);
         net.act(0, Action::Type("Boiler".into()));
         net.act(0, Action::Write);
@@ -1322,10 +1514,7 @@ mod tests {
         write(&mut a, "House");
         write(&mut b, "a garden");
 
-        let mut net = Net {
-            relay: Replica::new(),
-            devices: vec![a, b],
-        };
+        let mut net = Net::new(vec![a, b]);
         net.connect(0);
         net.connect(1);
         let first = net.devices[0].device().to_owned();
@@ -1512,20 +1701,20 @@ mod tests {
             (3 * 86_400, Some("this device's clock is 3 days ahead")),
         ] {
             let mut device = clocked(ahead);
-            device.connected();
-            assert!(device.received(&relay).send.is_empty());
+            device.connected(RELAY);
+            assert!(device.received(RELAY, &relay).send.is_empty());
             assert_eq!(device.clock().as_deref(), said, "{ahead} s");
             assert_eq!(status(&device), "", "a passing word is not used for it");
         }
 
         let mut device = clocked(300);
-        device.connected();
-        device.received(&relay);
-        device.disconnected();
+        device.connected(RELAY);
+        device.received(RELAY, &relay);
+        device.disconnected(RELAY);
         assert_eq!(device.clock(), None, "learnt again on connecting");
 
         // A time no clock could show is still only said.
-        device.received(r#"{"now":-9223372036854775808}"#);
+        device.received(RELAY, r#"{"now":-9223372036854775808}"#);
         assert!(device.clock().unwrap().ends_with("days ahead"));
     }
 
@@ -1533,9 +1722,9 @@ mod tests {
     fn a_hello_without_the_field_gives_nothing() {
         // A relay from before clocks says what it holds first, and nothing of the time.
         let mut device = clocked(3_600);
-        device.connected();
+        device.connected(RELAY);
         let have = Message::Have(BTreeMap::new()).encode().unwrap();
-        device.received(&have);
+        device.received(RELAY, &have);
         assert_eq!(device.clock(), None);
     }
 }

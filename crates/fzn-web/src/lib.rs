@@ -94,19 +94,20 @@ impl Fzn {
         }
     }
 
-    /// The socket to the relay has opened.
-    pub fn connected(&mut self) -> String {
-        json(&self.device.connected())
+    /// A connection to a peer has opened: the relay's socket, which is peer 0, or a sibling
+    /// tab's.
+    pub fn connected(&mut self, peer: u32) -> String {
+        json(&self.device.connected(peer))
     }
 
-    /// The socket to the relay has closed.
-    pub fn disconnected(&mut self) {
-        self.device.disconnected();
+    /// A connection to a peer has closed.
+    pub fn disconnected(&mut self, peer: u32) {
+        self.device.disconnected(peer);
     }
 
-    /// The relay has said something.
-    pub fn received(&mut self, text: &str) -> String {
-        json(&self.device.received(text))
+    /// A peer has said something.
+    pub fn received(&mut self, peer: u32, text: &str) -> String {
+        json(&self.device.received(peer, text))
     }
 
     /// Puts a message on the status line.

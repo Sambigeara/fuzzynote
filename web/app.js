@@ -232,7 +232,10 @@ function carryOut(json) {
     }
   }
   if (todo.device) keep(WRITER, todo.device);
-  for (const text of todo.send) if (socket?.readyState === WebSocket.OPEN) socket.send(text);
+  // The relay is peer 0, and for now the page's only one.
+  for (const said of todo.send) {
+    if (said.to === 0 && socket?.readyState === WebSocket.OPEN) socket.send(said.text);
+  }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
   look();
@@ -332,13 +335,13 @@ function connect() {
   opened.onopen = () => {
     wait = 1000;
     synced = 'syncing';
-    carryOut(fzn.connected());
+    carryOut(fzn.connected(0));
   };
-  opened.onmessage = (event) => carryOut(fzn.received(event.data));
+  opened.onmessage = (event) => carryOut(fzn.received(0, event.data));
   opened.onclose = () => {
     if (socket !== opened) return;
     socket = null;
-    fzn.disconnected();
+    fzn.disconnected(0);
     synced = 'not syncing';
     look();
     if (standing) setTimeout(connect, wait);

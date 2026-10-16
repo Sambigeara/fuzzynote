@@ -370,15 +370,20 @@ tab and the relay all run the same code.
   `--relay`. There is no command for it. While the app is open a thread keeps the space's logs
   in step with the relay, and the foot says only when that is not going. With no relay named,
   nothing leaves the machine.
-- **The engine is where sync and the app meet.** A *device* is a session and a replica joined
-  in memory, with the space's key, and it is in the engine as `Device`: the same code in the
-  terminal, in a tab and in a test. A version the session wants kept is sealed, becomes a line
-  of this writer's log, and the replica sends it on; a line the replica takes from the relay, or
-  that another writer on the machine added where the face keeps lines, is opened and given to
-  the session. The face is left with what only it can do: the socket, and keeping lines for the
-  next time. In the terminal that is one thread holding the websocket and passing text both ways
-  over channels, and a directory of files. Nothing is locked per write and nothing can go stale
-  under the replica: each line of another writer's log is read once, as a peer's line is.
+- **The engine is where sync and the app meet.** A *device* is a session and a replica joined in
+  memory, with the space's key, and it is in the engine as `Device`: the same code in the terminal,
+  in a tab and in a test. A version the session wants kept is sealed, becomes a line of this
+  writer's log, and the replica sends it on; a line the replica takes from the relay, or that
+  another writer on the machine added where the face keeps lines, is opened and given to the
+  session. Its peers are the relay, which every face numbers 0, and its siblings, 1, 2 and on:
+  other clients open on the same space on the same machine, each writing a log of its own. A
+  sibling is a peer like the relay, so what one writes reaches the others as any line does and what
+  one hears from the relay it passes on; the relay's clock is the only one taken, since a sibling's
+  is this machine's own. The face is left with what only it can do: the connections, and keeping
+  lines for the next time. In the terminal that is one thread holding the websocket and passing
+  text both ways over channels, and a directory of files. Nothing is locked per write and nothing
+  can go stale under the replica: each line of another writer's log is read once, as a peer's line
+  is.
 - **A fork is how a mistake shows.** The one that will happen is a writer's id copied to a
   second machine along with the rest of a directory, so that two machines write different
   logs under one name. Without the digest neither would send, each believing the other had its
