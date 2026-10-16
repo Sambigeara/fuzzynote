@@ -382,15 +382,16 @@ tab and the relay all run the same code.
   replica that does not know it. The one line a replica reads is the first of a log, to see
   whether it is a compaction header, which is bookkeeping about logs and not about notes.
   This is what lets the text CRDT arrive without the relay changing.
-- **A connection** is a websocket to `/1/main` on the relay: the version of this exchange,
-  then the space, or for a space under a name, `/1/joe/main`. It is entered with the space's
-  key: the relay says its clock and then its challenge, and nothing of the space until the
-  device has answered. A device that makes a space offers a token in its greeting, as the
-  subprotocol `fzn.token.<hex>` beside `fzn`, and the relay says back `fzn` alone. A message is
-  at most 8 MiB at either end, which only a single note larger than that could reach. Each end
-  pings a quiet peer every fifteen seconds and gives up on one silent for 45. A lost relay is
-  dialled again, waiting longer each time up to half a minute, and a device says what it holds
-  whenever it connects, so nothing said while there was no connection needs keeping.
+- **A connection** is a websocket to `/1/main` on the relay: the version of this exchange, then the
+  space, or for a space under a name, `/1/joe/main`. It is entered with the space's key: the relay
+  says its clock and then its challenge, and nothing of the space until the device has answered. A
+  device that makes a space offers a token in its greeting, as the subprotocol `fzn.token.<hex>`
+  beside `fzn`, and the relay says back `fzn` alone. A message is at most 8 MiB at either end, which
+  only a single note larger than that could reach. Each end pings a quiet peer every fifteen seconds
+  and gives up on one silent for 45. A lost relay is dialled again, waiting longer each time up to
+  half a minute, a connection the relay ends within its greeting counting as one not made, so that a
+  device it refuses does not ask again every second; and a device says what it holds whenever it
+  connects, so nothing said while there was no connection needs keeping.
 - **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves every
   space under its root and keeps each as the same files a device keeps, sealed, and holds each
   space's lock alone, where clients share it, so nothing else writes them while it runs. It listens
@@ -427,8 +428,11 @@ tab and the relay all run the same code.
   in step with the relay, and the foot says only when that is not going. With several windows
   open on a space, one holds the socket and keeps the relay's lines, the keeper, by a lease on
   `.relay` that the next window takes within a look of its going; the others reach the relay
-  through it, by way of the directory. With no relay named,
-  nothing leaves the machine.
+  through it, by way of the directory. The address may carry a token, `ws://joe:TOKEN@nas.local`,
+  which is what lets a device make a space on the relay: it is read with a URI parser, goes no
+  further than the greeting (see "A connection"), and is never said, the status row naming the
+  relay by its host alone. With no relay named, nothing leaves
+  the machine.
 - **The engine is where sync and the app meet.** A *device* is a session and a replica joined in
   memory, with the space's key, and it is in the engine as `Device`: the same code in the terminal,
   in a tab and in a test. A version the session wants kept is sealed, becomes a line of this
@@ -678,7 +682,8 @@ its height. Nothing says how many notes there are or that sync is working; `not 
 the corner of the foot when it is not, and in its place, while syncing, how far this machine's clock
 is from the relay's when that is more than two minutes, `this device's clock is 5 min ahead`. A
 window that does not hold the socket says neither, since what it writes reaches the relay through
-the one that does.
+the one that does. Why a relay refused this device is said on the status row, after the relay's
+host, until a relay takes it in.
 
 Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
 inverse, Ctrl-^ export.

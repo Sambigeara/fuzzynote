@@ -52,7 +52,9 @@ pub const TEMPLATE: &str = r#"# fzn configuration.
 # A relay to sync with: a machine running `fzn relay` that your devices can reach. With this
 # set, fzn syncs whichever space it opens for as long as it is open, and works as before when
 # the relay is out of reach. What it is sent is sealed with the space's passphrase, so the
-# relay cannot read it. Leave it out and nothing leaves this machine.
+# relay cannot read it. Leave it out and nothing leaves this machine. A token in the address,
+# ws://NAME:TOKEN@host, is what lets this device make a space on the relay; fzn relay add prints
+# one.
 # relay = "ws://nas.local:3960"
 
 [weights]

@@ -1187,13 +1187,17 @@ impl App {
     }
 
     /// What the status row says: what the last key did, or what happened since, and when
-    /// nothing did, the trouble that lasts until it is put right. With none, there is no row.
+    /// nothing did, the trouble that lasts until it is put right: a passphrase that opens
+    /// nothing, a relay that refused this device, until one takes it in, or a relay that cannot
+    /// be reached. With none, there is no row.
     fn status_of(&self, view: &View) -> Option<String> {
         let said = view.status;
         if !said.is_empty() {
             Some(said.to_owned())
         } else if !self.device.key_verified() {
             Some(WRONG_KEY.to_owned())
+        } else if let (Some(why), Some((relay, _))) = (self.device.refused(), &self.sync) {
+            Some(format!("{relay}: {why}"))
         } else {
             self.unreachable.clone()
         }
@@ -2213,8 +2217,13 @@ mod tests {
 
     /// Names a relay for a window, and gives back where the far ends of each link it dials go.
     fn dialler(app: &mut App) -> Receiver<Ends> {
+        dialler_shown(app, "nas.local")
+    }
+
+    /// [`dialler`], with the relay shown as `host`.
+    fn dialler_shown(app: &mut App, host: &str) -> Receiver<Ends> {
         let (ends, dialled) = mpsc::channel();
-        app.relay("nas.local".into(), move || {
+        app.relay(host.into(), move || {
             let (to_relay, sent) = mpsc::channel();
             let (tell, from_relay) = mpsc::channel();
             let _ = ends.send((sent, tell));
@@ -3391,6 +3400,36 @@ mod tests {
             "{}",
             app.device.view().status
         );
+        done(&space);
+    }
+
+    #[test]
+    fn a_refusal_is_said_by_the_relays_host_and_not_its_token_until_a_relay_takes_the_device_in() {
+        let (mut app, space) = app();
+        let token = "3f9a01c23f9a01c23f9a01c23f9a01c2";
+        let dial = sync::dial_of(&format!("ws://joe:{token}@nas.local:4000")).unwrap();
+        let (sent, tell) = dialler_shown(&mut app, &dial.shown).try_recv().unwrap();
+        tell.send(sync::Event::Connected).unwrap();
+        let refused = r#"{"refused":"joe needs the relay's token to make a space"}"#;
+        tell.send(sync::Event::Message(refused.into())).unwrap();
+        tell.send(sync::Event::Disconnected).unwrap();
+        assert!(app.hear().unwrap());
+        press(&mut app, KeyCode::Left, false);
+        let said = "nas.local:4000: joe needs the relay's token to make a space";
+        assert_eq!(app.status_of(&app.device.view()).as_deref(), Some(said));
+        let painted = screen(&mut app, 80, 8);
+        assert!(
+            painted.rows.iter().any(|row| row.contains(said)),
+            "{:?}",
+            painted.rows
+        );
+        assert!(painted.rows.iter().all(|row| !row.contains(token)));
+
+        // A relay that takes the device in puts it right.
+        let mut relay = Replica::new();
+        connect(&mut app, &mut relay, &sent, &tell);
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(app.status_of(&app.device.view()), None);
         done(&space);
     }
 

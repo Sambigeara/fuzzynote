@@ -383,6 +383,11 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Open => {
+            // A relay's address is read before anything is asked for, so that one that is not
+            // an address is said first.
+            let env_relay = std::env::var("FZN_RELAY").ok();
+            let named = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg);
+            let dial = named.as_deref().map(sync::dial_of).transpose()?;
             // A window is a writer of its own, in a slot it holds for as long as it is open.
             let _in_use = store::Lock::share(&dir, &space)?;
             let slot = store::Slot::take(&dir, &config_dir)?;
@@ -398,17 +403,12 @@ fn run() -> Result<()> {
                 config::editor(&cfg),
             )?;
             // With a relay named, the window that keeps the space's lines from it holds a socket
-            // to it, on a thread of its own, for as long as it is open.
-            let env_relay = std::env::var("FZN_RELAY").ok();
-            let named = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg);
-            if let Some(relay) = named {
-                // The status row names the relay by its host, as it was given.
-                let host = relay
-                    .trim()
-                    .trim_start_matches("ws://")
-                    .trim_end_matches('/')
-                    .to_owned();
-                app.relay(host, move || sync::start(relay.clone(), space.clone()))?;
+            // to it, on a thread of its own, for as long as it is open. The status row names it
+            // by its host alone, never by the token its address may carry.
+            if let (Some(relay), Some(dial)) = (named, dial) {
+                app.relay(dial.shown, move || {
+                    sync::start(relay.clone(), space.clone())
+                })?;
             }
             app.run()?;
         }
