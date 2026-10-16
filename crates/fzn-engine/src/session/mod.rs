@@ -329,14 +329,6 @@ pub struct Session {
     out: Vec<Effect>,
 }
 
-/// Whether there is more to read than the head. A line of nothing but tags is a label, not
-/// reading.
-fn has_body(text: &str) -> bool {
-    text.lines()
-        .skip(1)
-        .any(|line| !line.trim().is_empty() && !text::only_tags(line))
-}
-
 impl Session {
     /// Opens a space. `device` names this device in the versions it writes, and breaks ties
     /// between versions written in the same millisecond.

@@ -58,17 +58,10 @@ pub fn jsonl(path: &Path, store: &mut Store) -> Result<usize> {
         let secs = |nanos: i64| (nanos > 0).then(|| system::local(nanos / 1_000_000_000));
         let created = secs(item.created_unix_nano);
         let record = Record {
-            id: format!("fzn:{}", item.key),
-            text,
-            links: Vec::new(),
             created,
             updated: secs(item.updated_unix_nano).or(created),
-            stamp: None,
-            after: None,
-            placed: None,
             archived: item.hidden,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(format!("fzn:{}", item.key), text)
         };
         if put_imported(store, record)? {
             imported += 1;
@@ -425,17 +418,9 @@ impl Page {
 
     fn records(&self) -> Vec<Record> {
         let record = |id: String, text: String, when: (Option<Moment>, Option<Moment>)| Record {
-            id,
-            text,
-            links: Vec::new(),
             created: when.0,
             updated: when.1.or(when.0),
-            stamp: None,
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(id, text)
         };
         let written = self
             .day
@@ -715,17 +700,11 @@ impl Lifted<'_> {
             .map(|(i, (note, id))| {
                 let (created, updated) = when(i);
                 Record {
-                    id,
-                    text: note.text,
                     links: note.about.into_iter().collect(),
                     created,
                     updated,
-                    stamp: None,
-                    after: None,
-                    placed: None,
                     archived: note.archived,
-                    deleted: false,
-                    device: String::new(),
+                    ..Record::new(id, note.text)
                 }
             })
             .collect()
@@ -845,17 +824,9 @@ mod tests {
         let dir = temp_dir();
         let mut from = open(&dir.join("a"));
         let note = |id: &str, text: &str, secs: i64| Record {
-            id: id.into(),
-            text: text.into(),
-            links: Vec::new(),
             created: Some(Moment::utc(secs)),
             updated: Some(Moment::utc(secs)),
-            stamp: None,
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(id, text)
         };
         from.put(note("n1", "Boiler", 10)).unwrap();
         from.put(Record {

@@ -44,10 +44,6 @@ pub fn day_from_unix_secs(secs: i64) -> Day {
     secs.div_euclid(SECS_PER_DAY) as Day
 }
 
-pub fn day_from_unix_nanos(nanos: i64) -> Day {
-    day_from_unix_secs(nanos.div_euclid(1_000_000_000))
-}
-
 /// The day of the week, counting from Monday as 0.
 pub fn weekday(day: Day) -> usize {
     // 1970-01-01 was a Thursday.
@@ -242,10 +238,6 @@ mod tests {
     fn unix_conversions() {
         assert_eq!(day_from_unix_secs(86_399), 0);
         assert_eq!(day_from_unix_secs(86_400), 1);
-        assert_eq!(
-            day_from_unix_nanos(1_642_000_000_000_000_000),
-            day_from_civil(2022, 1, 12)
-        );
         assert_eq!(format_day(day_from_civil(2026, 9, 5)), "2026-09-05");
     }
 

@@ -8,7 +8,7 @@ use crate::record::{Record, links_on_save};
 use crate::text;
 use crate::time::Moment;
 
-use super::{Action, Effect, Row, Session, has_body};
+use super::{Action, Effect, Row, Session};
 
 /// The note under the cursor as it is being written: what it now reads, and what it was. One
 /// lasts as long as one visit of the cursor to a row, and everything it writes in that time is
@@ -317,22 +317,16 @@ impl Session {
             around.map_or(&[], std::slice::from_ref),
         );
         Record {
-            id: field.id.clone(),
-            text,
             links,
             created: Some(field.opened),
             updated: Some(self.host.now()),
-            stamp: None,
             after: self
                 .rows
                 .iter()
                 .position(|r| r.id == field.id)
                 .and_then(|i| i.checked_sub(1))
                 .map(|i| self.rows[i].id.clone()),
-            placed: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(field.id.clone(), text)
         }
     }
 
@@ -378,11 +372,8 @@ impl Session {
         } else {
             self.gather(record);
         }
-        if blank && let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
-            row.head = String::new();
-            row.has_body = false;
-            row.links = Vec::new();
-            row.updated = None;
+        if blank {
+            self.blank_row(&id);
         }
         self.mend_row(&id);
         self.stale = true;
@@ -585,12 +576,7 @@ impl Session {
             deleted: true,
             ..held
         });
-        if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
-            row.head = String::new();
-            row.has_body = false;
-            row.links = Vec::new();
-            row.updated = None;
-        }
+        self.blank_row(&id);
         self.stale = true;
     }
 
@@ -611,6 +597,16 @@ impl Session {
         };
     }
 
+    /// Puts a new note's row back as it opened: no head, no body and no links.
+    fn blank_row(&mut self, id: &str) {
+        if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
+            row.head = String::new();
+            row.has_body = false;
+            row.links = Vec::new();
+            row.updated = None;
+        }
+    }
+
     /// Puts a row right where it stands, from the note as it is now held.
     fn mend_row(&mut self, id: &str) {
         let Some(record) = self.notes.get(id) else {
@@ -618,7 +614,7 @@ impl Session {
         };
         let (head, body, links) = (
             record.head().to_owned(),
-            has_body(&record.text),
+            text::has_body(&record.text),
             self.link_heads(record),
         );
         let updated = record.updated;

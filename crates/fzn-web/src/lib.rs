@@ -86,7 +86,11 @@ impl Fzn {
     pub fn act(&mut self, action: &str) -> String {
         match serde_json::from_str::<Action>(action) {
             Ok(action) => json(&self.device.act(action)),
-            Err(_) => json(&Todo::default()),
+            // A face cannot otherwise tell a bug from nothing happening.
+            Err(err) => {
+                self.device.say(format!("not an action: {err}"));
+                json(&Todo::default())
+            }
         }
     }
 
@@ -111,8 +115,16 @@ impl Fzn {
     }
 
     /// What to show, as JSON.
-    pub fn view(&self) -> String {
-        serde_json::to_string(&self.device.view()).unwrap_or_default()
+    pub fn view(&mut self) -> String {
+        match serde_json::to_string(&self.device.view()) {
+            Ok(view) => view,
+            // Said, so that the next view that can be written says why this one was not.
+            Err(err) => {
+                self.device
+                    .say(format!("the view could not be written: {err}"));
+                String::new()
+            }
+        }
     }
 
     /// This writer's id, and so the name of the log it writes.

@@ -1,5 +1,6 @@
 //! The note model.
 
+use crate::text;
 use crate::time::{Day, Moment};
 
 /// Stable identity of a note. Opaque to the engine and assigned by whoever stores the note.
@@ -51,7 +52,7 @@ impl Note {
 
     /// The first line, trimmed.
     pub fn head(&self) -> &str {
-        self.text.lines().next().unwrap_or("").trim()
+        text::head(&self.text)
     }
 
     /// Everything after the first line.

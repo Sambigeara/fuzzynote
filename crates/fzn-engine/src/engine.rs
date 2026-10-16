@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::index::{DocId, Index, TermId};
 use crate::note::{Note, NoteId};
 use crate::query::{Hold, Query};
-use crate::score::{self, Candidates, Context, Label, QueryLabel, Reason, Weights};
+use crate::score::{self, Candidates, Context, Label, QueryLabel, Reason, Scorer, Weights};
 use crate::text::{self, Facts};
 use crate::time::Day;
 
@@ -106,14 +106,6 @@ pub struct Hit<'a> {
     pub named: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Stats {
-    pub notes: usize,
-    pub archived: usize,
-    pub terms: usize,
-    pub tokens: u64,
-}
-
 impl Engine {
     pub fn new() -> Self {
         Self::default()
@@ -130,10 +122,6 @@ impl Engine {
         &self.weights
     }
 
-    pub fn weights_mut(&mut self) -> &mut Weights {
-        &mut self.weights
-    }
-
     pub fn len(&self) -> usize {
         self.by_id.len()
     }
@@ -145,10 +133,6 @@ impl Engine {
     pub fn get(&self, id: &NoteId) -> Option<&Note> {
         let &d = self.by_id.get(id)?;
         self.docs[d as usize].as_ref().map(|doc| &doc.note)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Note> {
-        self.docs.iter().flatten().map(|d| &d.note)
     }
 
     /// Adds a note, or replaces the note with the same id.
@@ -261,7 +245,7 @@ impl Engine {
             found.truncate(end);
         }
         let reason = Reason {
-            scorer: "letters",
+            scorer: Scorer::Letters,
             text: query.free.split_whitespace().collect::<Vec<_>>().join(", "),
         };
         found
@@ -576,20 +560,6 @@ impl Engine {
         links
     }
 
-    pub fn stats(&self) -> Stats {
-        Stats {
-            notes: self.index.live_docs(),
-            archived: self
-                .docs
-                .iter()
-                .flatten()
-                .filter(|d| d.note.archived)
-                .count(),
-            terms: self.index.term_count(),
-            tokens: self.index.total_tokens(),
-        }
-    }
-
     /// Scores the candidates and lists them best first, after the notes in `first`, which is
     /// sorted: those are the notes being named, and they are listed whatever they score. So are
     /// the notes in `facts`, also sorted, which are the facts of the place being looked around.
@@ -640,7 +610,7 @@ impl Engine {
                     reasons.insert(
                         0,
                         Reason {
-                            scorer: "link",
+                            scorer: Scorer::Link,
                             text: text.to_owned(),
                         },
                     );
@@ -649,7 +619,7 @@ impl Engine {
                     reasons.insert(
                         0,
                         Reason {
-                            scorer: "name",
+                            scorer: Scorer::Name,
                             text: "its name".to_owned(),
                         },
                     );
@@ -801,7 +771,7 @@ mod tests {
     fn has_reason(hit: &Hit, scorer: &str, contains: &str) -> bool {
         hit.reasons
             .iter()
-            .any(|r| r.scorer == scorer && r.text.contains(contains))
+            .any(|r| r.scorer.to_string() == scorer && r.text.contains(contains))
     }
 
     #[test]
@@ -1012,7 +982,7 @@ mod tests {
             found[0].score < found[1].score,
             "first for its name, where its score would not put it"
         );
-        assert_eq!(found[0].reasons[0].scorer, "name");
+        assert_eq!(found[0].reasons[0].scorer, Scorer::Name);
         assert_eq!(named("boiler service"), ["doc"]);
 
         // However it is typed, and with its last word unfinished.
@@ -1318,7 +1288,7 @@ mod tests {
         assert!(e.remove(&NoteId::new("a")).is_some());
         assert!(e.remove(&NoteId::new("a")).is_none());
         assert!(search(&e, "cake", &SearchOptions::default()).is_empty());
-        assert_eq!(e.stats().notes, 1);
+        assert_eq!(e.len(), 1);
         e.upsert(Note::new("c", "cake again"));
         assert_eq!(ids(&search(&e, "cake", &SearchOptions::default())), ["c"]);
     }
@@ -1341,6 +1311,5 @@ mod tests {
             )
             .is_empty()
         );
-        assert_eq!(e.stats().archived, 1);
     }
 }

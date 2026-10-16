@@ -138,14 +138,6 @@ impl Index {
         self.live_docs
     }
 
-    pub fn term_count(&self) -> usize {
-        self.terms.len()
-    }
-
-    pub fn total_tokens(&self) -> u64 {
-        self.total_len
-    }
-
     pub fn doc_len(&self, doc: DocId) -> u32 {
         self.doc_len.get(doc as usize).copied().unwrap_or(0)
     }
@@ -289,14 +281,14 @@ mod tests {
             "rarer terms weigh more"
         );
         assert_eq!(ix.live_docs(), 3);
-        assert_eq!(ix.total_tokens(), 7);
+        assert_eq!(ix.total_len, 7);
 
         ix.remove(0);
         ix.remove(0);
         assert_eq!(ix.df(kb), 1);
         assert_eq!(ix.docs_with(&Label::Tag("gym".into())), &[2]);
         assert_eq!(ix.live_docs(), 2);
-        assert_eq!(ix.total_tokens(), 4);
+        assert_eq!(ix.total_len, 4);
         assert!(ix.doc_terms(0).is_empty());
     }
 

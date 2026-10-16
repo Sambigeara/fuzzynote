@@ -10,9 +10,11 @@ use crate::engine::{self, Hit, SearchOptions};
 use crate::note::NoteId;
 use crate::query::Query;
 use crate::record::Record;
+use crate::score::Scorer;
+use crate::text;
 
 use super::path::Step;
-use super::{FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT, has_body};
+use super::{FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
 
 impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
@@ -45,7 +47,7 @@ impl Session {
             id: r.id.clone(),
             head: r.head().to_owned(),
             archived: r.archived,
-            has_body: has_body(&r.text),
+            has_body: text::has_body(&r.text),
             linked: false,
             links: self.link_heads(r),
             reasons: Vec::new(),
@@ -223,7 +225,7 @@ impl Session {
             id: hit.note.id.as_str().to_owned(),
             head: hit.note.head().to_owned(),
             archived: hit.note.archived,
-            has_body: has_body(&hit.note.text),
+            has_body: text::has_body(&hit.note.text),
             linked: hit.linked,
             links: record.map(|r| self.link_heads(r)).unwrap_or_default(),
             reasons: hit
@@ -231,7 +233,7 @@ impl Session {
                 .iter()
                 .map(|r| match r.scorer {
                     // A link is a fact and reads as one, with no scorer to credit. So is a name.
-                    "link" | "name" => r.text.clone(),
+                    Scorer::Link | Scorer::Name => r.text.clone(),
                     scorer => format!("{scorer}: {}", r.text),
                 })
                 .collect(),

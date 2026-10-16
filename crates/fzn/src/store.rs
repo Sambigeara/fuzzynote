@@ -453,17 +453,9 @@ pub(crate) mod tests {
 
     fn rec(id: &str, text: &str, updated: i64) -> Record {
         Record {
-            id: id.into(),
-            text: text.into(),
-            links: Vec::new(),
             created: Some(Moment::utc(updated)),
             updated: Some(Moment::utc(updated)),
-            stamp: None,
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(id, text)
         }
     }
 

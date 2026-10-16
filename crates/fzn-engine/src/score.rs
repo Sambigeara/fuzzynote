@@ -99,11 +99,34 @@ impl Default for Weights {
 /// Why a note was suggested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reason {
-    /// The scorer that produced it: `words`, `explicit` or `time`. Or `link`, for a note linked
-    /// to or from the one being looked around, or `name`, for a note headed with what was typed:
-    /// those are facts and not scores.
-    pub scorer: &'static str,
+    pub scorer: Scorer,
     pub text: String,
+}
+
+/// What gave a reason: a scorer, or a fact. `Link`, for a note linked to or from the one being
+/// looked around, and `Name`, for a note headed with what was typed, are facts and not scores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scorer {
+    Words,
+    Explicit,
+    Time,
+    Letters,
+    Link,
+    Name,
+}
+
+impl std::fmt::Display for Scorer {
+    /// The scorer's name as a reason credits it: `words`, `explicit`, `time` or `letters`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Scorer::Words => "words",
+            Scorer::Explicit => "explicit",
+            Scorer::Time => "time",
+            Scorer::Letters => "letters",
+            Scorer::Link => "link",
+            Scorer::Name => "name",
+        })
+    }
 }
 
 #[derive(Default)]
@@ -270,7 +293,7 @@ pub(crate) fn lexical(index: &Index, ctx: &Context, w: &Weights, c: &mut Candida
             names.join(", ")
         };
         c.entry(doc).reasons.push(Reason {
-            scorer: "words",
+            scorer: Scorer::Words,
             text,
         });
     }
@@ -436,7 +459,7 @@ pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: 
         p.explicit += (sum / 3.0).min(1.0);
         if !texts.is_empty() {
             p.reasons.push(Reason {
-                scorer: "explicit",
+                scorer: Scorer::Explicit,
                 text: texts.join(", "),
             });
         }
@@ -477,7 +500,7 @@ pub(crate) fn temporal(
             let p = c.entry(doc);
             p.temporal += 0.5;
             p.reasons.push(Reason {
-                scorer: "time",
+                scorer: Scorer::Time,
                 text: format!("same date {}", time::format_day(d)),
             });
         }
@@ -496,7 +519,7 @@ pub(crate) fn temporal(
             }
             p.temporal += bonus;
             p.reasons.push(Reason {
-                scorer: "time",
+                scorer: Scorer::Time,
                 text: describe_gap(delta),
             });
         }

@@ -29,6 +29,7 @@ use crate::engine::Engine;
 use crate::note::{Note, NoteId};
 use crate::seal::{Opened, Seal};
 use crate::session::Host;
+use crate::text;
 use crate::time::Moment;
 
 /// The version of the line format this build writes. Lines with no version are from before
@@ -103,9 +104,27 @@ struct Versioned<R> {
 }
 
 impl Record {
+    /// A version of a note with this text and nothing else: no links, no times, at the top, and
+    /// with no stamp or writer, which writing it fills in.
+    pub fn new(id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            text: text.into(),
+            links: Vec::new(),
+            created: None,
+            updated: None,
+            stamp: None,
+            after: None,
+            placed: None,
+            archived: false,
+            deleted: false,
+            device: String::new(),
+        }
+    }
+
     /// The first line, trimmed.
     pub fn head(&self) -> &str {
-        self.text.lines().next().unwrap_or("").trim()
+        text::head(&self.text)
     }
 
     /// The note as relevance sees it: the text, the links, when it was written, and the day it
@@ -358,6 +377,8 @@ impl Notes {
                 let mut climbed = HashSet::new();
                 let mut head = stray;
                 while climbed.insert(head) {
+                    // It cannot fire: what hangs from a walked note is walked, so every note
+                    // above an unwalked one is unwalked too, and no unwalked note is a top.
                     head = under[head].expect("only a note at the top hangs from nothing");
                 }
                 let start = walked.len();
@@ -397,17 +418,10 @@ mod tests {
 
     fn rec(id: &str, text: &str, updated: i64) -> Record {
         Record {
-            id: id.into(),
-            text: text.into(),
-            links: Vec::new(),
             created: Some(Moment::utc(updated)),
             updated: Some(Moment::utc(updated)),
-            stamp: None,
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
             device: "dev-a".into(),
+            ..Record::new(id, text)
         }
     }
 

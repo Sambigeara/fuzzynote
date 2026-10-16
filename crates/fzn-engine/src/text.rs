@@ -141,6 +141,19 @@ pub fn only_tags(line: &str) -> bool {
     words.peek().is_some() && words.all(|w| w.starts_with('#') && facts(w).tags.len() == 1)
 }
 
+/// A note's head: its first line, trimmed.
+pub fn head(text: &str) -> &str {
+    text.lines().next().unwrap_or("").trim()
+}
+
+/// Whether a note has more to read than its head. A line of nothing but tags is a label, not
+/// reading.
+pub fn has_body(text: &str) -> bool {
+    text.lines()
+        .skip(1)
+        .any(|line| !line.trim().is_empty() && !only_tags(line))
+}
+
 /// The box an open task starts with.
 pub const OPEN: &str = "[ ]";
 /// The box a done task starts with.
@@ -505,6 +518,16 @@ fn date_named(word: &str, today: Day) -> Option<Day> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heads_and_bodies() {
+        assert!(has_body("head\nbody"));
+        assert!(!has_body("head\n  \n"));
+        assert!(!has_body("head\n#house #plan\n"));
+        assert!(has_body("head\n#house\n- and more"));
+        assert!(has_body("head\n# A heading"));
+        assert!(!has_body("head"));
+    }
 
     #[test]
     fn fit_truncates_by_characters() {

@@ -808,17 +808,11 @@ fn down_off_an_empty_new_note_at_the_top_lands_on_the_first_row_even_when_the_li
     assert_eq!(s.cursor, Some(0));
     // A version arriving while the cursor is on the list waits for the line.
     assert!(s.absorb([Record {
-        id: "theirs".into(),
-        text: "written elsewhere".into(),
-        links: Vec::new(),
         created: Some(NOON),
         updated: Some(NOON),
         stamp: Some(NOON),
-        after: None,
-        placed: None,
-        archived: false,
-        deleted: false,
         device: "other".into(),
+        ..Record::new("theirs", "written elsewhere")
     }]));
     s.act(Action::Move(1));
     assert_eq!(

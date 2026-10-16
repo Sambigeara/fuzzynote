@@ -63,17 +63,10 @@ fn add(s: &mut Session, text: &str) -> Vec<Effect> {
 /// with whatever is asked next.
 fn put(s: &mut Session, id: &str, text: &str, links: &[&str], updated: i64) {
     s.commit(Record {
-        id: id.into(),
-        text: text.into(),
         links: links.iter().map(|&l| l.to_owned()).collect(),
         created: Some(Moment::utc(updated)),
         updated: Some(Moment::utc(updated)),
-        stamp: None,
-        after: None,
-        placed: None,
-        archived: false,
-        deleted: false,
-        device: String::new(),
+        ..Record::new(id, text)
     });
     s.refresh(true);
     s.land();
@@ -144,17 +137,12 @@ fn field(s: &Session) -> Option<(String, bool, bool)> {
 /// A version written on another device, a minute or two after midday.
 fn theirs(id: &str, text: &str, at: i64) -> Record {
     Record {
-        id: id.into(),
-        text: text.into(),
-        links: Vec::new(),
         created: Some(NOON),
         updated: Some(NOON.plus_secs(at)),
         stamp: Some(NOON.plus_secs(at)),
-        after: None,
         placed: Some(NOON.plus_secs(at)),
-        archived: false,
-        deleted: false,
         device: "3f9a01c2".into(),
+        ..Record::new(id, text)
     }
 }
 

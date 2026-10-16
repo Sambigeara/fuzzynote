@@ -614,17 +614,11 @@ mod tests {
     /// A version written before sealing, as a plain line.
     fn plain(id: &str, text: &str, secs: i64) -> String {
         Record {
-            id: id.to_owned(),
-            text: text.to_owned(),
-            links: Vec::new(),
             created: Some(Moment::utc(secs)),
             updated: Some(Moment::utc(secs)),
             stamp: Some(Moment::utc(secs)),
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
             device: "dev-a".to_owned(),
+            ..Record::new(id, text)
         }
         .line()
         .unwrap()

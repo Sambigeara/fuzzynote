@@ -186,17 +186,10 @@ impl Session {
         let links = links_on_save(&self.engine, &id, "", &text, around);
         let now = self.host.now();
         self.commit(Record {
-            id: id.clone(),
-            text,
             links,
             created: Some(now),
             updated: Some(now),
-            stamp: None,
-            after: None,
-            placed: None,
-            archived: false,
-            deleted: false,
-            device: String::new(),
+            ..Record::new(id.clone(), text)
         });
         self.line.clear();
         self.refresh(true);

@@ -168,17 +168,11 @@ fn what_is_written_elsewhere_shows_up() {
     );
 
     let theirs = Record {
-        id: "theirs".into(),
-        text: "written elsewhere".into(),
-        links: Vec::new(),
         created: Some(NOON),
         updated: Some(NOON.plus_secs(60)),
         stamp: Some(NOON),
-        after: None,
-        placed: None,
-        archived: false,
-        deleted: false,
         device: "other".into(),
+        ..Record::new("theirs", "written elsewhere")
     };
     s.act(Action::Move(1));
     assert!(s.absorb([theirs.clone()]));
@@ -868,17 +862,10 @@ fn a_space_opens_with_the_notes_it_is_given() {
         ("c", "kettlebell halo", 4_000, true),
     ] {
         notes.apply(Record {
-            id: id.into(),
-            text: text.into(),
-            links: Vec::new(),
-            created: None,
             updated: Some(Moment::utc(updated)),
-            stamp: None,
-            after: None,
-            placed: None,
             archived,
-            deleted: false,
             device: "other".into(),
+            ..Record::new(id, text)
         });
     }
     let mut s = Session::new(
@@ -959,16 +946,6 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         serde_json::to_string(&effect).unwrap(),
         r#"{"editor":{"id":"hub","text":"Boiler"}}"#
     );
-}
-
-#[test]
-fn heads_and_bodies() {
-    assert!(has_body("head\nbody"));
-    assert!(!has_body("head\n  \n"));
-    assert!(!has_body("head\n#house #plan\n"));
-    assert!(has_body("head\n#house\n- and more"));
-    assert!(has_body("head\n# A heading"));
-    assert!(!has_body("head"));
 }
 
 #[test]
