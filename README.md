@@ -20,10 +20,13 @@ original Go app is kept at the tag `go-final`.
 ## Build and run
 
 ```sh
-cargo build --release -p fzn
-target/release/fzn
-target/release/fzn --help
+cargo install --path crates/fzn --locked
+fzn
+fzn --help
 ```
+
+The install builds into `target/release` and copies the binary to `~/.cargo/bin`, which rustup
+puts on the path. Run it again to take up a change.
 
 The config file is `~/.config/fzn/config.toml`. Notes live in spaces, separate sets of notes
 kept apart from each other, one directory each under `~/.fzn/<space>/`. Plain `fzn` opens the

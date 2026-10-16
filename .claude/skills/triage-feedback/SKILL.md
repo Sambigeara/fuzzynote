@@ -3,11 +3,11 @@ name: triage-feedback
 description: "Gathers the feedback on fzn that the author has written in fzn itself, the notes tagged #fzn #feedback, triages it against the code and DESIGN.md, and ticks entries off once they are dealt with. Use when asked to check, read, go through or triage fzn feedback, or to tick feedback off."
 argument-hint: "[tick ENTRY ...]"
 allowed-tools:
-  - "Bash(target/release/fzn export '#fzn #feedback')"
+  - "Bash(fzn export '#fzn #feedback')"
   - "Bash(jq -c '{id, created, archived, text}')"
   - Bash(git log *)
   - Bash(git status --short)
-  - Bash(ls -l target/release/fzn)
+  - Bash(ls -l ~/.cargo/bin/fzn)
 ---
 
 # Triage feedback
@@ -38,19 +38,19 @@ every note in the space, never read the files under `~/.fzn`, and never open the
 
 From the repository's root, run these together:
 
-- `target/release/fzn export '#fzn #feedback' | jq -c '{id, created, archived, text}'`, the
+- `fzn export '#fzn #feedback' | jq -c '{id, created, archived, text}'`, the
   feedback, open and ticked;
 - `git status --short`, the work in progress in the checkout, which may be another session's;
-- `ls -l target/release/fzn`, for when the build the author runs was made.
+- `ls -l ~/.cargo/bin/fzn`, for when the build the author runs was installed.
 
 Then `git log --since=DATE --format='%h %ci %s'`, DATE the `created` of the oldest open entry:
 the commits made since, any of which may have dealt with one.
 
-`target/release/fzn` is the build the author runs; nothing is installed on the path. If it is
-missing, say so and ask before building it, since a build replaces what the author runs with
-whatever is in the checkout. If the export says it needs the passphrase, no key is kept for the
-space on this machine: ask the author to open fzn once in a terminal, and never set
-`FZN_PASSPHRASE`.
+`fzn` on the path is the build the author runs, installed from the checkout with `cargo install
+--path crates/fzn --locked`. If it is missing, say so and ask before installing it, since an
+install replaces what the author runs with whatever is in the checkout. If the export says it
+needs the passphrase, no key is kept for the space on this machine: ask the author to open fzn
+once in a terminal, and never set `FZN_PASSPHRASE`.
 
 Reading an entry:
 
@@ -85,8 +85,8 @@ For each entry, before saying what it is:
    leaves to remember, and against CLAUDE.md's shape of the app: the footer shows only what
    applies, and no key means something that depends on the key before it.
 4. See whether it is already dealt with: a commit since it was written, work in progress in
-   the checkout, or a ticked entry that says the same. A commit made after `target/release/fzn`
-   was built is not in the author's hands yet, and a fix to the page is not until the page is
+   the checkout, or a ticked entry that says the same. A commit made after `~/.cargo/bin/fzn`
+   was installed is not in the author's hands yet, and a fix to the page is not until the page is
    on the relay.
 5. Put entries about the same thing together.
 
@@ -118,7 +118,7 @@ names nothing from it: the next triage finds it by its date and what it touches.
 ## Tick off
 
 An entry is dealt with when its fix is in the build the author runs (committed, and
-`target/release/fzn` built after it; for the page, on the relay), or when it has been decided
+`fzn` installed after it; for the page, on the relay), or when it has been decided
 to do nothing about it.
 
 Tick off only the entries named, or agreed to when you proposed them. Take their ids from a
@@ -126,7 +126,7 @@ fresh export, since numbers from a triage mean nothing in another conversation a
 match more than one head: if they do, ask which. Then:
 
 ```sh
-target/release/fzn tick ID [ID ...]
+fzn tick ID [ID ...]
 ```
 
 It ticks each as Ctrl-V does in the app, `[ ]` to `[x]` and archived, and writes each as it now
@@ -141,5 +141,5 @@ heads to tick in the app instead: `#fzn #feedback` on the line and Right goes in
 Ctrl-V on each ticks it. Run the export again once they say it is done; a tick made on another
 device shows here once fzn on this machine has synced.
 
-To undo a tick, `target/release/fzn untick ID [ID ...]` brings each back, `[ ]` and unarchived;
+To undo a tick, `fzn untick ID [ID ...]` brings each back, `[ ]` and unarchived;
 the app's undo cannot, since the app did not make it.
