@@ -152,6 +152,14 @@ impl Session {
                     field.whole = false;
                 }
             }
+            // Kept as it stands, and nothing else changes. A new note with nothing in it has
+            // nothing to keep, and a head emptied, or cleared to be typed again, is not kept,
+            // since only leaving the row writes that: keeping it would delete the note, or make
+            // its body's first line its head, under the hands.
+            Action::Keep if field.blank() || field.head_empty() => {}
+            Action::Keep => {
+                self.flush();
+            }
             Action::ShowScores => self.show_scores = !self.show_scores,
             // A new note with nothing in it deleted goes as if it was never anything.
             Action::Delete if field.blank() => {

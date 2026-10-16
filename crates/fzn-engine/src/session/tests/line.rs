@@ -890,6 +890,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         (Action::Done, r#""done""#),
         (Action::Editor, r#""editor""#),
         (Action::Erase, r#""erase""#),
+        (Action::Keep, r#""keep""#),
         (Action::Edited("a\nb".into()), r#"{"edited":"a\nb"}"#),
         (Action::Type("a line".into()), r#"{"type":"a line"}"#),
         (Action::Move(-1), r#"{"move":-1}"#),
@@ -970,6 +971,7 @@ fn only_the_actions_that_can_change_a_note_write() {
         Action::Edited("Boiler: bleed the radiators".into()),
         Action::Editor,
         Action::Done,
+        Action::Keep,
         Action::Save {
             id: "n1".into(),
             text: "Boiler: bleed the radiators".into(),

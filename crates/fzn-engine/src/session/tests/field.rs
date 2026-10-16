@@ -1255,3 +1255,66 @@ fn enter_with_text_on_the_line_takes_the_cursor_to_the_note_it_wrote_in_a_zoom_t
     assert_eq!(s.notes.get(&new.id).unwrap().links, ["boiler"]);
     assert_eq!(s.line, "");
 }
+
+#[test]
+fn keep_writes_the_field_as_it_stands_and_stays_where_it_is() {
+    let mut s = session();
+    three(&mut s);
+    put(&mut s, "boiler", "Boiler\nthe combi", &[], 4_000);
+    s.act(Action::Select(None));
+
+    // A head's date words are written out, and the cursor stays on it.
+    select(&mut s, "House");
+    edited(&mut s, "House viewing /tom");
+    let now = s.act(Action::Keep);
+    assert_eq!(kept(&now)[0].text, "House viewing 2026-10-14");
+    assert_eq!(s.selected().unwrap().id, "house");
+    assert_eq!(field(&s).unwrap().0, "House viewing 2026-10-14");
+    assert!(s.act(Action::Keep).is_empty(), "nothing more to keep");
+
+    // An open body is kept as a version and stays open.
+    select(&mut s, "Boiler");
+    s.act(Action::Edit);
+    edited(&mut s, "Boiler\nthe combi under the stairs");
+    let now = s.act(Action::Keep);
+    assert_eq!(kept(&now)[0].text, "Boiler\nthe combi under the stairs");
+    assert_eq!(
+        field(&s),
+        Some(("Boiler\nthe combi under the stairs".into(), false, true))
+    );
+    assert!(!s.unwritten());
+
+    // A new note with nothing in it has nothing to keep, and stays a row to write in.
+    s.act(Action::Done);
+    s.act(Action::Write);
+    assert!(s.act(Action::Keep).is_empty());
+    assert!(field(&s).unwrap().1);
+
+    // On the line there is nothing to keep.
+    s.act(Action::Select(None));
+    assert!(s.act(Action::Keep).is_empty());
+}
+
+#[test]
+fn keep_leaves_a_head_emptied_or_cleared_to_be_typed_again_as_it_is_held() {
+    let mut s = session();
+    put(&mut s, "oil", "Order oil\nfrom the depot", &[], 1_000);
+    put(&mut s, "pump", "Pump", &[], 2_000);
+    s.act(Action::Select(None));
+
+    select(&mut s, "Pump");
+    edited(&mut s, "");
+    assert!(s.act(Action::Keep).is_empty());
+    assert_eq!(s.notes.get("pump").unwrap().text, "Pump");
+    assert_eq!(s.selected().unwrap().id, "pump");
+    assert_eq!(field(&s).unwrap().0, "");
+
+    select(&mut s, "Order oil");
+    edited(&mut s, "\nfrom the depot");
+    assert!(s.act(Action::Keep).is_empty());
+    assert_eq!(
+        s.notes.get("oil").unwrap().text,
+        "Order oil\nfrom the depot"
+    );
+    assert_eq!(s.selected().unwrap().id, "oil");
+}

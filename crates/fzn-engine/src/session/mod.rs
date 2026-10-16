@@ -155,6 +155,10 @@ pub enum Action {
     /// and close its body. The cursor stays: a note emptied is deleted, and a new note with
     /// nothing in it stays as an empty row, what was kept of it as it was typed taken back.
     Done,
+    /// Write the note under the cursor as it stands, with its date words written out and its
+    /// body, if it is open, kept as a version, and stay: the body stays open and the cursor
+    /// where it is. What a face asks before it is hidden or reloaded, and vim's `:w`.
+    Keep,
     /// Hand the note under the cursor to the face's editor, as it now reads. Comes back as
     /// [`Effect::Editor`], and what the editor leaves comes back as [`Action::Save`].
     Editor,
@@ -221,6 +225,7 @@ impl Action {
             | Action::Edited(_)
             | Action::Editor
             | Action::Done
+            | Action::Keep
             | Action::Save { .. }
             | Action::Archive
             | Action::Delete
@@ -435,7 +440,12 @@ impl Session {
             Action::Back => self.back_to(self.path.len().saturating_sub(1)),
             // On the line there is no note to open, change, write, hand to the editor or take
             // away.
-            Action::Edit | Action::Edited(_) | Action::Done | Action::Editor | Action::Erase => {}
+            Action::Edit
+            | Action::Edited(_)
+            | Action::Done
+            | Action::Keep
+            | Action::Editor
+            | Action::Erase => {}
             Action::Save { id, text } => self.save(&id, &text),
             Action::Archive => self.archive(),
             Action::Delete => self.delete(),

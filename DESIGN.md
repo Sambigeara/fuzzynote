@@ -113,7 +113,8 @@ makes no network call, so the same code runs in a terminal, in a browser tab and
 out.
 - In: an *action*, which is what was asked for and never which key asked: the line now reads
   this, move the cursor, write the line, go into a note or a label, step back, archive, delete,
-  link, undo, the text of a note as it was edited, go back to a path a face kept. An action that
+  link, undo, the text of a note as it was edited, keep the note as it stands, go back to a path
+  a face kept. An action that
   does not apply where the cursor is does nothing.
 - In: versions of notes written elsewhere, by another device or another writer on this one.
 - In, from the host: the time, an id for a new note, and randomness for sealing.
@@ -1601,6 +1602,14 @@ repeats it only where the reason needs it.
   an open body and the undo stack are not kept: the list may differ under a new build, the body
   is written before the reload, and a reload is a restart. Steps are asked for, not put in every
   view, so the terminal, which is not reloaded, pays nothing.
+- **Keep writes and stays.** Decided 2026-10-16. A face sometimes needs the note under the
+  cursor written without the cursor moving: vim's `:w`, a tab being hidden, a page about to be
+  reloaded. Until now the page closed the body and opened it again, which had to put back where
+  it was scrolled and wrote through two actions. `Keep` writes the field as it stands, date words written
+  out and an open body as a version, and leaves the body open and the cursor where it is; a new
+  row with nothing in it has nothing to keep. A head emptied, or cleared to be typed again, is
+  not kept, since only leaving the row writes that: a tab hidden mid-retype must not delete the
+  note or make its body's first line its head.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

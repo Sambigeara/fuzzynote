@@ -210,6 +210,7 @@ fn key_for(action: &Action) -> &'static str {
         | Action::Type(_)
         | Action::Edited(_)
         | Action::Save { .. }
+        | Action::Keep
         | Action::Erase
         | Action::Restore(_) => "",
     }
