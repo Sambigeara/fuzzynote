@@ -8,6 +8,7 @@ mod store;
 mod sync;
 mod system;
 mod ui;
+mod web_files;
 mod wire;
 
 use std::path::{Path, PathBuf};
@@ -61,9 +62,10 @@ out of reach. A relay serves every space under its root and holds their sealed l
 cannot read. Its root is its own: fzn will not open a space the relay holds. It listens on
 127.0.0.1:3960 unless --listen says otherwise. It has no password and no TLS yet, so anyone who
 can reach it can take a copy of the sealed lines, or add lines that no device can open: let it
-listen only where your own devices reach it. With --web DIR it also hands out the web app from
-that directory, the web directory of this repository once built, so that a browser can open the
-relay's address and be one more device.
+listen only where your own devices reach it. It also hands out the web app, which is built into
+fzn, so that a browser can open the relay's address and be one more device. With --web DIR it
+hands out the page in that directory instead, the web directory of this repository, which is
+how the page is worked on.
 
 If fzn says a log has forked, two machines have been writing under one writer id, usually
 because a space's directory was copied from one to the other. Nothing is lost, and nothing is
@@ -218,17 +220,24 @@ fn main() -> Result<()> {
         // A relay is nobody's device: it writes nothing of its own, so it has no id.
         let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", wire::PORT));
         let relay = relay::Relay::bind(root.clone(), &listen, web.clone())?;
+        println!("fzn relay: {}", version());
         println!(
             "fzn relay: passing on the spaces under {} to whoever connects to {}",
             root.display(),
             relay.address()?
         );
-        if let Some(web) = &web {
-            println!(
-                "fzn relay: the web app in {} is at http://{}/",
-                web.display(),
-                relay.address()?
-            );
+        let address = relay.address()?;
+        match (relay.build(), &web) {
+            (Some(build), Some(web)) => println!(
+                "fzn relay: the web app in {} (build {build}) is at http://{address}/",
+                web.display()
+            ),
+            (Some(build), None) => {
+                println!("fzn relay: the web app (build {build}) is at http://{address}/")
+            }
+            (None, _) => println!(
+                "fzn relay: no web app: this build has none built in and --web names no directory"
+            ),
         }
         println!(
             "fzn relay: there is no password and no TLS yet, so anyone who can reach that \

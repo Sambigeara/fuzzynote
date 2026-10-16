@@ -1,5 +1,5 @@
 //! The relay: a replica of every space under a root that writes nothing of its own, and the
-//! pages of the web app if it is given them.
+//! web app's page, which it carries.
 //!
 //! A relay is the only writer of its directories while it runs. Each space is locked when the
 //! first connection asks for it, read whole once, and from then on its files are only ever
@@ -9,10 +9,15 @@
 //! refused. If writing a space fails, the space is closed and its connections dropped: each
 //! device connects again and the space is opened again from what is on disk.
 //!
-//! A relay can also hand out the pages of the web app, from a directory it is pointed at, so
-//! that a browser has one address to open: the page comes from the relay and connects back to
-//! it.
+//! A relay also hands out the web app, so that a browser has one address to open: the page
+//! comes from the relay and connects back to it. The page is built into fzn, so it and the
+//! policy it is served under are always of one release; `--web` points the relay at a directory
+//! instead, read again for every request, which is how the page is worked on. Every answer names
+//! the page's build, and `index.html` carries it, so a tab can tell when the relay has a page
+//! newer than the one it runs. A built-in file is sent with a tag the browser can ask again by,
+//! answered `304` with nothing, and gzipped when the browser takes it.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read, Write};
@@ -30,6 +35,7 @@ use tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tungstenite::http::StatusCode;
 
 use crate::system;
+use crate::web_files;
 use crate::wire::{GREETING, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
@@ -189,10 +195,90 @@ pub struct Relay {
     hub: Arc<Hub>,
 }
 
+/// The page as fzn was built with it, from the table the build script wrote.
+mod built {
+    /// A file's path, its bytes, its gzip twin when that is smaller, and its tag.
+    pub type File = (
+        &'static str,
+        &'static [u8],
+        Option<&'static [u8]>,
+        &'static str,
+    );
+    include!(concat!(env!("OUT_DIR"), "/page.rs"));
+}
+
+/// A file of the page as the relay serves it: its bytes, a gzip twin when that is smaller, and
+/// the tag a browser holds it by.
+struct Served {
+    body: Cow<'static, [u8]>,
+    gzip: Option<Cow<'static, [u8]>>,
+    etag: String,
+}
+
+/// A page the relay carries, ready to serve, by path, with the build its files make.
+struct Page {
+    files: HashMap<String, Served>,
+    build: String,
+}
+
+impl Page {
+    /// The page built into fzn, or nothing if it was built without one.
+    fn built_in() -> Option<Self> {
+        if built::FILES.is_empty() {
+            return None;
+        }
+        let files = built::FILES
+            .iter()
+            .map(|&(path, body, gzip, etag)| {
+                let served = Served {
+                    body: Cow::Borrowed(body),
+                    gzip: gzip.map(Cow::Borrowed),
+                    etag: etag.to_owned(),
+                };
+                (path.to_owned(), served)
+            })
+            .collect();
+        Some(Self {
+            files,
+            build: built::BUILD.to_owned(),
+        })
+    }
+
+    /// A page from files in memory, as the build script would make it but with no gzip twins.
+    #[cfg(test)]
+    fn from_files(files: Vec<(&str, Vec<u8>)>) -> Self {
+        let mut files = files;
+        files.sort();
+        let build = web_files::build_of(files.iter().map(|(p, b)| (*p, b.as_slice())));
+        let files = files
+            .into_iter()
+            .map(|(path, body)| {
+                let body = if path == "index.html" {
+                    web_files::with_build(&body, &build)
+                } else {
+                    body
+                };
+                let served = Served {
+                    etag: web_files::etag_of(&body),
+                    body: Cow::Owned(body),
+                    gzip: None,
+                };
+                (path.to_owned(), served)
+            })
+            .collect();
+        Self { files, build }
+    }
+}
+
 struct Hub {
     root: PathBuf,
-    /// Where the pages of the web app are, if this relay hands them out.
+    /// Where the page's files are read from, when a directory was given with --web.
     web: Option<PathBuf>,
+    /// The page served when no directory was given.
+    page: Option<Page>,
+    /// For a directory, its build as last worked out and when, worked out again at most once a
+    /// second, so that a page being worked on is named anew within a second of a change.
+    dir_build: Mutex<Option<(Instant, String)>>,
     spaces: Mutex<HashMap<String, Space>>,
     /// Spaces held by another process, said once each.
     refused: Mutex<HashSet<String>>,
@@ -260,15 +346,26 @@ fn asked_for(path: &str) -> Result<&str, StatusCode> {
 }
 
 impl Relay {
-    /// Starts listening. Nothing is served until [`Relay::serve`]. With a directory for `web`,
-    /// the relay hands out the files in it to a browser that asks.
+    /// Starts listening. Nothing is served until [`Relay::serve`]. The relay hands out the page
+    /// built into fzn, or with a directory for `web`, the files in it.
     pub fn bind(root: PathBuf, listen: &str, web: Option<PathBuf>) -> Result<Self> {
+        Self::bind_with(root, listen, web, Page::built_in())
+    }
+
+    fn bind_with(
+        root: PathBuf,
+        listen: &str,
+        web: Option<PathBuf>,
+        page: Option<Page>,
+    ) -> Result<Self> {
         let listener = TcpListener::bind(listen).with_context(|| format!("listen on {listen}"))?;
         Ok(Self {
             listener,
             hub: Arc::new(Hub {
                 root,
                 web,
+                page,
+                dir_build: Mutex::new(None),
                 spaces: Mutex::new(HashMap::new()),
                 refused: Mutex::new(HashSet::new()),
                 peers: AtomicU32::new(1),
@@ -278,6 +375,11 @@ impl Relay {
 
     pub fn address(&self) -> Result<SocketAddr> {
         Ok(self.listener.local_addr()?)
+    }
+
+    /// The build of the page this relay hands out, or nothing if it has none to hand out.
+    pub fn build(&self) -> Option<String> {
+        self.hub.build()
     }
 
     /// Serves until the process ends.
@@ -314,36 +416,33 @@ fn opening(stream: &TcpStream) -> Result<Vec<u8>> {
     }
 }
 
-/// Whether a request asks for a websocket, and not for a page.
-fn asks_for_a_socket(head: &str) -> bool {
-    head.lines().skip(1).any(|line| {
-        line.split_once(':').is_some_and(|(name, value)| {
-            name.trim().eq_ignore_ascii_case("upgrade")
-                && value.trim().eq_ignore_ascii_case("websocket")
-        })
+/// A header of a request, by its name in any case, with its value trimmed.
+fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim().eq_ignore_ascii_case(name).then(|| value.trim())
     })
 }
 
-/// The file of the web app that a request names, if it names one plainly: every part of its
-/// path a plain name, as a log's is, so that nothing outside the directory can be asked for.
-fn file_asked_for(web: &Path, target: &str) -> Option<PathBuf> {
+/// Whether a request asks for a websocket, and not for a page.
+fn asks_for_a_socket(head: &str) -> bool {
+    header(head, "upgrade").is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+}
+
+/// The file of the web app that a request names, as a path under the page, if it names one
+/// plainly: every part of its path a plain name, as a log's is, so that nothing outside the
+/// directory can be asked for.
+fn file_asked_for(target: &str) -> Option<String> {
     let path = target.split(['?', '#']).next()?.strip_prefix('/')?;
     if path.is_empty() {
-        return Some(web.join("index.html"));
+        return Some("index.html".to_owned());
     }
-    let mut file = web.to_owned();
-    for part in path.split('/') {
-        if !names_a_log(part) {
-            return None;
-        }
-        file.push(part);
-    }
-    Some(file)
+    path.split('/').all(names_a_log).then(|| path.to_owned())
 }
 
 /// What kind of thing a file is, for the browser, going by its name.
-fn kind_of(file: &Path) -> &'static str {
-    match file.extension().and_then(|x| x.to_str()) {
+fn kind_of(file: &str) -> &'static str {
+    match Path::new(file).extension().and_then(|x| x.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
@@ -352,6 +451,156 @@ fn kind_of(file: &Path) -> &'static str {
         Some("png") => "image/png",
         Some("json" | "webmanifest") => "application/json",
         _ => "application/octet-stream",
+    }
+}
+
+/// Whether a file is named by its contents, as the bundles' shared chunks are, so that a browser
+/// may keep it without asking again: a change to it is a new name.
+fn named_by_its_contents(path: &str) -> bool {
+    path.starts_with("vendor/chunk-") && path.ends_with(".js")
+}
+
+/// Whether a browser already holds the file it asks for, under this tag.
+fn still_held(head: &str, etag: &str) -> bool {
+    header(head, "if-none-match").is_some_and(|tags| {
+        tags.split(',').any(|tag| {
+            let tag = tag.trim();
+            tag == "*" || tag.trim_start_matches("W/").trim_matches('"') == etag
+        })
+    })
+}
+
+/// Whether a browser takes a gzipped answer: gzip named, and not with a weight of nothing.
+fn takes_gzip(head: &str) -> bool {
+    header(head, "accept-encoding").is_some_and(|codings| {
+        codings.split(',').any(|coding| {
+            let mut parts = coding.split(';');
+            parts
+                .next()
+                .is_some_and(|c| c.trim().eq_ignore_ascii_case("gzip"))
+                && !parts.any(|p| {
+                    p.trim()
+                        .strip_prefix("q=")
+                        .and_then(|q| q.parse::<f32>().ok())
+                        .is_some_and(|q| q == 0.0)
+                })
+        })
+    })
+}
+
+/// An answer to a request for a page, before it is written. No body is a `304`.
+struct Answer {
+    status: &'static str,
+    kind: &'static str,
+    body: Option<Cow<'static, [u8]>>,
+    /// The header lines particular to this answer, each ending in a line break.
+    headers: String,
+}
+
+impl Answer {
+    fn plain(status: &'static str, body: &'static str, headers: String) -> Self {
+        Self {
+            status,
+            kind: "text/plain; charset=utf-8",
+            body: Some(Cow::Borrowed(body.as_bytes())),
+            headers: headers + "Cache-Control: no-cache\r\n",
+        }
+    }
+}
+
+impl Hub {
+    /// The build of the page this relay hands out, if it hands one out.
+    fn build(&self) -> Option<String> {
+        match (&self.web, &self.page) {
+            (Some(web), _) => Some(self.dir_build(web)),
+            (None, Some(page)) => Some(page.build.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// The build of the page in a directory, worked out over its listed files as the build
+    /// script works it out, so that the same files are the same build either way.
+    fn dir_build(&self, web: &Path) -> String {
+        let mut held = self
+            .dir_build
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some((when, build)) = held.as_ref()
+            && when.elapsed() < Duration::from_secs(1)
+        {
+            return build.clone();
+        }
+        let files: Vec<(String, Vec<u8>)> = web_files::listed(web)
+            .into_iter()
+            .filter_map(|path| fs::read(web.join(&path)).ok().map(|bytes| (path, bytes)))
+            .collect();
+        let build = web_files::build_of(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
+        *held = Some((Instant::now(), build.clone()));
+        build
+    }
+
+    /// What a request for a page is answered with: from the directory if one was given, else
+    /// from the page built in.
+    fn answer(&self, target: &str, head: &str) -> Answer {
+        let build = self.build();
+        let mut headers = String::new();
+        if let Some(build) = &build {
+            headers.push_str(&format!("Fzn-Build: {build}\r\n"));
+        }
+        let missing = |headers| Answer::plain("404 Not Found", "nothing here\n", headers);
+        let Some(path) = file_asked_for(target) else {
+            return missing(headers);
+        };
+        if let Some(web) = &self.web {
+            // Only what would be built in, so that a file of a kind the page's list lacks is
+            // missed while the page is worked on, not once it is built in.
+            if !web_files::is_listed(&path) {
+                return missing(headers);
+            }
+            let Ok(body) = fs::read(web.join(&path)) else {
+                return missing(headers);
+            };
+            let body = match &build {
+                Some(build) if path == "index.html" => web_files::with_build(&body, build),
+                _ => body,
+            };
+            return Answer {
+                status: "200 OK",
+                kind: kind_of(&path),
+                body: Some(Cow::Owned(body)),
+                headers: headers + "Cache-Control: no-cache\r\n",
+            };
+        }
+        let Some(served) = self.page.as_ref().and_then(|page| page.files.get(&path)) else {
+            return missing(headers);
+        };
+        let cache = if named_by_its_contents(&path) {
+            "max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        };
+        headers.push_str(&format!(
+            "ETag: \"{}\"\r\nCache-Control: {cache}\r\nVary: Accept-Encoding\r\n",
+            served.etag
+        ));
+        let body = if still_held(head, &served.etag) {
+            None
+        } else if let Some(gzip) = served.gzip.as_ref().filter(|_| takes_gzip(head)) {
+            headers.push_str("Content-Encoding: gzip\r\n");
+            Some(gzip.clone())
+        } else {
+            Some(served.body.clone())
+        };
+        Answer {
+            status: if body.is_some() {
+                "200 OK"
+            } else {
+                "304 Not Modified"
+            },
+            kind: kind_of(&path),
+            body,
+            headers,
+        }
     }
 }
 
@@ -365,27 +614,33 @@ fn page(hub: &Hub, mut stream: TcpStream, head: &[u8]) -> Result<()> {
     let mut request = head.lines().next().unwrap_or_default().split(' ');
     let method = request.next().unwrap_or_default();
     let target = request.next().unwrap_or_default();
-    let found = hub
-        .web
-        .as_deref()
-        .filter(|_| method == "GET")
-        .and_then(|web| file_asked_for(web, target))
-        .and_then(|file| fs::read(&file).ok().map(|body| (kind_of(&file), body)));
-    let plain = "text/plain; charset=utf-8";
-    let (status, kind, body) = match found {
-        Some((kind, body)) => ("200 OK", kind, body),
-        None if method != "GET" => ("405 Method Not Allowed", plain, b"only GET\n".to_vec()),
-        None => ("404 Not Found", plain, b"nothing here\n".to_vec()),
+    let Answer {
+        status,
+        kind,
+        body,
+        headers,
+    } = match method {
+        "GET" | "HEAD" => hub.answer(target, &head),
+        _ => Answer::plain(
+            "405 Method Not Allowed",
+            "only GET and HEAD\n",
+            String::new(),
+        ),
     };
-    let answer = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\
-         Cache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n\
-         Referrer-Policy: no-referrer\r\nContent-Security-Policy: {PAGE_POLICY}\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
+    let length = body
+        .as_ref()
+        .map(|body| format!("Content-Length: {}\r\n", body.len()))
+        .unwrap_or_default();
+    let said = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\n{length}{headers}\
+         X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
+         Content-Security-Policy: {PAGE_POLICY}\r\nConnection: close\r\n\r\n"
     );
-    stream.write_all(answer.as_bytes())?;
-    stream.write_all(&body)?;
+    stream.write_all(said.as_bytes())?;
+    // A HEAD is answered as a GET would be, without the body.
+    if let Some(body) = body.filter(|_| method != "HEAD") {
+        stream.write_all(&body)?;
+    }
     stream.flush()?;
     Ok(())
 }
@@ -784,6 +1039,10 @@ pub(crate) mod tests {
         fs::write(web.join("app.js"), "export {};").unwrap();
         fs::write(web.join("pkg").join("fzn_web_bg.wasm"), [0u8, 97, 115, 109]).unwrap();
         fs::write(web.join(".secret"), "no").unwrap();
+        fs::write(web.join("build.sh"), "no").unwrap();
+        fs::write(web.join("pkg").join("notes.txt"), "no").unwrap();
+        fs::create_dir_all(web.join("editor")).unwrap();
+        fs::write(web.join("editor").join("render.js"), "no").unwrap();
         fs::write(root.join("outside"), "no").unwrap();
         let address = relay_with(&hub, Some(web));
 
@@ -807,6 +1066,10 @@ pub(crate) mod tests {
             "/pkg/../../outside",
             "/.secret",
             "//app.js",
+            // In the directory, but not the page's: only what would be built in is served.
+            "/build.sh",
+            "/pkg/notes.txt",
+            "/editor/render.js",
         ] {
             let (head, _) = get(&address, path);
             assert!(head.starts_with("HTTP/1.1 404"), "{path}: {head}");
@@ -820,9 +1083,288 @@ pub(crate) mod tests {
         a.connects();
         assert!(a.until(|| read(&hub.join("main"), "dev-a") == "a1\n"));
 
-        // A relay that was given no pages has none to hand out.
-        let bare = relay(&hub.join("elsewhere-root"));
+        // A relay built with no page and given no directory has none to hand out.
+        let bare = relay_page(&hub.join("elsewhere-root"), None);
         assert!(get(&bare, "/").0.starts_with("HTTP/1.1 404"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A relay that carries this page and was given no directory.
+    fn relay_page(root: &Path, page: Option<Page>) -> String {
+        let relay = Relay::bind_with(root.to_owned(), "127.0.0.1:0", None, page).unwrap();
+        let address = relay.address().unwrap().to_string();
+        thread::spawn(move || relay.serve());
+        address
+    }
+
+    fn ask_with(address: &str, method: &str, path: &str, headers: &str) -> (String, Vec<u8>) {
+        ask(
+            address,
+            &format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\n{headers}\r\n"),
+        )
+    }
+
+    const INDEX: &str = "<!doctype html><meta name=\"fzn-build\" content=\"\"><title>fzn</title>";
+
+    /// A page as small as one can be: the files the relay treats as the page's.
+    fn a_page() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("index.html", INDEX.into()),
+            ("app.js", "export {};".into()),
+            ("pkg/fzn_web_bg.wasm", vec![0, 97, 115, 109]),
+            ("vendor/chunk-ABCDEFGH.js", "export const a = 1;".into()),
+        ]
+    }
+
+    fn write_page(web: &Path, files: &[(&str, Vec<u8>)]) {
+        for (path, bytes) in files {
+            let file = web.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, bytes).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_relay_names_the_build_of_a_directory_on_every_answer_and_writes_it_into_the_page() {
+        let root = temp_dir();
+        let (web, hub) = (root.join("web"), root.join("relay"));
+        write_page(&web, &a_page());
+        let address = relay_with(&hub, Some(web.clone()));
+
+        let builds: Vec<String> = ["/", "/app.js", "/pkg/fzn_web_bg.wasm", "/missing.js"]
+            .into_iter()
+            .map(|path| {
+                let (head, _) = get(&address, path);
+                header(&head, "fzn-build").unwrap().to_owned()
+            })
+            .collect();
+        let build = &builds[0];
+        assert_eq!(build.len(), 16, "{build}");
+        assert!(builds.iter().all(|b| b == build), "{builds:?}");
+        // The same files are the same build, whether in a directory or built in.
+        assert_eq!(*build, Page::from_files(a_page()).build);
+        let (_, body) = get(&address, "/");
+        let filled = format!("<meta name=\"fzn-build\" content=\"{build}\">");
+        assert!(String::from_utf8_lossy(&body).contains(&filled));
+
+        // Writing the same files again names the same build; changing one names another, once
+        // the second the last one is held for has passed.
+        write_page(&web, &a_page());
+        thread::sleep(Duration::from_millis(1100));
+        assert_eq!(
+            header(&get(&address, "/").0, "fzn-build"),
+            Some(build.as_str())
+        );
+        fs::write(web.join("app.js"), "export {}; ").unwrap();
+        thread::sleep(Duration::from_millis(1100));
+        let (head, body) = get(&address, "/");
+        let now = header(&head, "fzn-build").unwrap();
+        assert_ne!(now, build);
+        assert!(String::from_utf8_lossy(&body).contains(now));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_page_the_browser_still_holds_is_answered_304_without_a_body() {
+        let root = temp_dir();
+        let page = Page::from_files(a_page());
+        let build = page.build.clone();
+        let address = relay_page(&root, Some(page));
+
+        let (head, body) = get(&address, "/app.js");
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, b"export {};");
+        assert_eq!(header(&head, "cache-control"), Some("no-cache"));
+        assert_eq!(header(&head, "fzn-build"), Some(build.as_str()));
+        let etag = header(&head, "etag").unwrap().to_owned();
+
+        let (head, body) = ask_with(
+            &address,
+            "GET",
+            "/app.js",
+            &format!("If-None-Match: {etag}\r\n"),
+        );
+        assert!(head.starts_with("HTTP/1.1 304 Not Modified"), "{head}");
+        assert!(body.is_empty());
+        assert_eq!(header(&head, "content-length"), None);
+        assert_eq!(header(&head, "etag"), Some(etag.as_str()));
+        assert_eq!(header(&head, "fzn-build"), Some(build.as_str()));
+
+        let other = "If-None-Match: \"0000000000000000\", W/\"1111111111111111\"\r\n";
+        let (head, body) = ask_with(&address, "GET", "/app.js", other);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, b"export {};");
+
+        // The page itself carries its build, and its tag is over what is sent.
+        let (head, body) = get(&address, "/");
+        let filled = format!("<meta name=\"fzn-build\" content=\"{build}\">");
+        assert!(String::from_utf8_lossy(&body).contains(&filled));
+        let etag = header(&head, "etag").unwrap();
+        assert_eq!(etag, format!("\"{}\"", web_files::etag_of(&body)));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_is_sent_gzipped_only_to_a_browser_that_takes_it() {
+        use flate2::read::GzDecoder;
+        let root = temp_dir();
+        let mut page = Page::from_files(a_page());
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        gz.write_all(b"export {};").unwrap();
+        page.files.get_mut("app.js").unwrap().gzip = Some(Cow::Owned(gz.finish().unwrap()));
+        let address = relay_page(&root, Some(page));
+
+        let takes = "Accept-Encoding: br, gzip;q=0.8, deflate\r\n";
+        let (head, body) = ask_with(&address, "GET", "/app.js", takes);
+        assert_eq!(header(&head, "content-encoding"), Some("gzip"), "{head}");
+        assert_eq!(header(&head, "vary"), Some("Accept-Encoding"));
+        let length = body.len().to_string();
+        assert_eq!(header(&head, "content-length"), Some(length.as_str()));
+        let mut inflated = Vec::new();
+        GzDecoder::new(body.as_slice())
+            .read_to_end(&mut inflated)
+            .unwrap();
+        assert_eq!(inflated, b"export {};");
+
+        for refuses in [
+            "",
+            "Accept-Encoding: br\r\n",
+            "Accept-Encoding: gzip;q=0\r\n",
+        ] {
+            let (head, body) = ask_with(&address, "GET", "/app.js", refuses);
+            assert_eq!(header(&head, "content-encoding"), None, "{refuses}");
+            assert_eq!(body, b"export {};");
+        }
+        // A file with no twin is sent as it is, whatever the browser takes.
+        let (head, body) = ask_with(&address, "GET", "/pkg/fzn_web_bg.wasm", takes);
+        assert_eq!(header(&head, "content-encoding"), None);
+        assert_eq!(body, [0u8, 97, 115, 109]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_head_is_answered_as_a_get_without_the_body() {
+        let root = temp_dir();
+        let address = relay_page(&root, Some(Page::from_files(a_page())));
+        let (got, _) = get(&address, "/app.js");
+        let (head, body) = ask_with(&address, "HEAD", "/app.js", "");
+        assert_eq!(head, got);
+        assert!(body.is_empty());
+        assert_eq!(header(&head, "content-length"), Some("10"));
+        let (head, body) = ask_with(&address, "HEAD", "/missing.js", "");
+        assert!(head.starts_with("HTTP/1.1 404"), "{head}");
+        assert!(body.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_chunk_named_by_its_contents_is_held_for_a_year() {
+        let root = temp_dir();
+        let address = relay_page(&root, Some(Page::from_files(a_page())));
+        let (head, body) = get(&address, "/vendor/chunk-ABCDEFGH.js");
+        assert_eq!(
+            header(&head, "cache-control"),
+            Some("max-age=31536000, immutable")
+        );
+        assert_eq!(body, b"export const a = 1;");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_directory_given_with_web_is_served_in_place_of_the_page_built_in() {
+        let root = temp_dir();
+        let web = root.join("web");
+        write_page(&web, &[("app.js", "export const fromDisk = 1;".into())]);
+        let relay = Relay::bind_with(
+            root.join("relay"),
+            "127.0.0.1:0",
+            Some(web),
+            Some(Page::from_files(a_page())),
+        )
+        .unwrap();
+        let address = relay.address().unwrap().to_string();
+        thread::spawn(move || relay.serve());
+        let (head, body) = get(&address, "/app.js");
+        assert_eq!(body, b"export const fromDisk = 1;");
+        assert_eq!(header(&head, "etag"), None);
+        assert!(
+            get(&address, "/vendor/chunk-ABCDEFGH.js")
+                .0
+                .starts_with("HTTP/1.1 404")
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_page_built_in_is_the_web_directory_named_as_a_directory_would_be() {
+        let Some(page) = Page::built_in() else {
+            // Built without web/pkg: there is nothing built in to check.
+            return;
+        };
+        let web = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web");
+        let listed = web_files::listed(&web);
+        let mut held: Vec<&String> = page.files.keys().collect();
+        held.sort();
+        assert_eq!(held, listed.iter().collect::<Vec<_>>());
+        assert!(listed.contains(&"pkg/fzn_web_bg.wasm".to_owned()));
+        assert!(
+            !listed
+                .iter()
+                .any(|p| p.starts_with("editor/") || p == "build.sh")
+        );
+        assert_eq!(page.build.len(), 16);
+        let index = String::from_utf8_lossy(&page.files["index.html"].body).into_owned();
+        assert!(
+            index.contains(&format!("content=\"{}\"", page.build)),
+            "{index}"
+        );
+        let files: Vec<(String, Vec<u8>)> = listed
+            .into_iter()
+            .map(|p| {
+                let bytes = fs::read(web.join(&p)).unwrap();
+                (p, bytes)
+            })
+            .collect();
+        let build = web_files::build_of(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
+        assert_eq!(page.build, build);
+
+        // Every twin is smaller and is its file gzipped, and each tag is over what is sent.
+        for (path, served) in &page.files {
+            assert_eq!(served.etag, web_files::etag_of(&served.body), "{path}");
+            if let Some(gzip) = &served.gzip {
+                assert!(gzip.len() < served.body.len(), "{path}");
+                let mut inflated = Vec::new();
+                flate2::read::GzDecoder::new(&gzip[..])
+                    .read_to_end(&mut inflated)
+                    .unwrap();
+                assert_eq!(inflated, &served.body[..], "{path}");
+            }
+        }
+        assert!(page.files["pkg/fzn_web_bg.wasm"].gzip.is_some());
+    }
+
+    #[test]
+    fn a_relay_given_no_directory_hands_out_the_page_built_in() {
+        if Page::built_in().is_none() {
+            return;
+        }
+        let root = temp_dir();
+        let address = relay(&root);
+        let (head, body) = ask_with(&address, "GET", "/", "Accept-Encoding: gzip\r\n");
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(header(&head, "fzn-build"), Some(built::BUILD));
+        assert_eq!(header(&head, "content-encoding"), Some("gzip"));
+        let mut page = String::new();
+        flate2::read::GzDecoder::new(&body[..])
+            .read_to_string(&mut page)
+            .unwrap();
+        let filled = format!("<meta name=\"fzn-build\" content=\"{}\">", built::BUILD);
+        assert!(page.contains(&filled));
+        let etag = header(&head, "etag").unwrap();
+        let again = format!("If-None-Match: {etag}\r\n");
+        let (head, body) = ask_with(&address, "GET", "/", &again);
+        assert!(head.starts_with("HTTP/1.1 304"), "{head}");
+        assert!(body.is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

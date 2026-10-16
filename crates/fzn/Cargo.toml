@@ -17,7 +17,21 @@ ratatui = "0.30"
 # How many columns a letter takes, as ratatui counts them when it draws; it brings it in already.
 unicode-width = "0.2"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+# Names the page in a directory given with --web, as the build names the one it carries. The
+# engine already brings it in.
+sha2.workspace = true
 
 # For the offset of the local clock from UTC, which the standard library cannot say.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[build-dependencies]
+# Gzips the page's files as they are built into fzn, so that the relay sends them small with no
+# compressor of its own. Pure Rust, and never in the binary. sha2 names the page, as the relay
+# names a directory given with --web.
+flate2 = "1"
+sha2.workspace = true
+
+[dev-dependencies]
+# For reading back what the relay sent gzipped.
+flate2 = "1"

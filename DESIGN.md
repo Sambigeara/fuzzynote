@@ -346,7 +346,8 @@ tab and the relay all run the same code.
   anyone who can connect can take a copy of the sealed lines and add lines of their own, which
   no device will be able to open. What keeps it private is the key, which it never has; what
   keeps it tidy is the address it listens on and whom the machine lets reach it. As a systemd
-  service, `IPAddressAllow=` says whom.
+  service, `IPAddressAllow=` says whom. It carries the page and hands it out on the same
+  address, so a browser has one address to open; `--web` points it at a directory instead.
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with
   `--relay`. There is no command for it. While the app is open a thread keeps the space's logs
   in step with the relay, and the foot says only when that is not going. With no relay named,
@@ -591,8 +592,11 @@ text: an action goes in as JSON and what to do and what to show come back as JSO
 action being exactly what to send back to ask for it. A tab is one more device. It has a writer
 id and a log of its own for each space, keeps every log of the space in IndexedDB between
 visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
-from, so there is one address to open and nothing to set up. A relay hands the page out when it
-is pointed at the `web` directory with `--web`.
+from, so there is one address to open and nothing to set up. The relay carries the page, built
+into fzn from the `web` directory; `--web web` points it at the directory instead while the page
+is worked on. Every answer the relay gives for the page names its build, in `Fzn-Build`, and
+`index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it runs and can
+ask with one `HEAD` which the relay now serves.
 
 *The page.* One column, a little left of centre, with a third of the room beside it on its left,
 text left-aligned, and the line a little above a third of the way down, where it stays: it does
@@ -811,7 +815,8 @@ repeats it only where the reason needs it.
 - **The relay hands out the page.** Decided 2026-10-13. A page loaded from the relay knows
   where its relay is, is covered by whatever lets a device reach the relay, and needs no second
   server. The page is a directory the relay is pointed at, not something built into the binary,
-  so that changing how the page looks is a reload.
+  so that changing how the page looks is a reload. Revised 2026-10-16 by "The relay carries the
+  page; a directory stands in for it while the page is worked on".
 - **Dumb relay, self-hosted, before the browser.** Decided 2026-10-13, reversing the order. A
   tab needs its notes from somewhere, and a tab is one more device, so what syncs two machines
   is also what gives a browser its notes.
@@ -1420,6 +1425,33 @@ repeats it only where the reason needs it.
   goes, as the replica already keeps a device's own log from a peer's header. Undo in the app
   takes back only what the app did, so it cannot take back a tick, as it cannot an edit from
   another device; `fzn untick` is the undo.
+- **The relay carries the page; a directory stands in for it while the page is worked on.**
+  Decided 2026-10-16, revising "The relay hands out the page" where it says the page is "not
+  something built into the binary, so that changing how the page looks is a reload". The page
+  is built into fzn by its build script, so a release is one file, nothing has to be found, and
+  the page and the policy that serves it cannot be at different versions, which the
+  hand-copied deploy once let happen: a page with the editor on a relay whose policy forbade its
+  styles. `--web DIR` serves a directory instead, read again for every request, which is how the
+  page is worked on, so the old reason holds where it mattered; in deployment a page change is a
+  release like any other, and a tab reloads itself when the relay's page changes. The page is
+  the directory's listed files, by place and kind, never the whole of `web/`, where the bundles'
+  sources and their `node_modules` live. The relay names the page's build: sixteen hex digits of
+  a SHA-256 over its files, the same whether built in or read from a directory, a content hash
+  so that the same files put back are the same build and no tab reloads for nothing. It says it
+  in `Fzn-Build` on every answer and writes it into the page's `<meta name="fzn-build">`, since
+  a page cannot read the headers of the response that loaded it, and not in the websocket's
+  first messages, which are about logs, nor in `Server-Timing`, which a browser hides over plain
+  http. With each built-in file it sends an `ETag` and answers a browser that still holds it
+  with a `304`, a gzip twin made at build time to a browser that takes one, so the relay
+  carries no compressor, and a year's caching for the chunks whose names are their hashes; it
+  answers `HEAD` as `GET` without the body. A directory is named again at most once a second,
+  sent whole, and serves only the files that would be built in, so a file the list lacks is
+  missed while the page is worked on and not once it ships. The alternative, an archive
+  unpacked to a data directory the relay looks in by default, was a second thing to install and
+  a chain of places to look. What it costs: about 2.5 MB in every binary, 1.8 MB of page and
+  0.7 MB of gzip twins, the terminal's included, which never serves it. A build with no page
+  built (`web/build.sh`) carries none and says so, one whose page is older than the engine's
+  sources says that, and a release builds the page itself first.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -1471,10 +1503,6 @@ repeats it only where the reason needs it.
   engine's syntax (tags, people, dates) in place in the body, in the two greys, is a small
   decoration left until use asks; URLs and bracketed names are marked as markdown since
   2026-10-15.
-- The page's reading of markdown, 78 KB, is fetched on every page load, and the editor, 392 KB
-  more, on each one in which a body opens, since the relay sends no validators or compression;
-  whether that is felt on the phone is for use to say, and `Last-Modified` with 304s, or long
-  caching for the files whose names are already their hashes, is the fix.
 - Whether the body should be kept as it is typed too. A version is the whole note, so a
   keystroke in a long body writes all of it; it is kept when it closes, as the terminal's editor
   keeps it. Use will say whether that is felt.
