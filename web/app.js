@@ -181,9 +181,34 @@ const pane = $('pane');
 const buffer = $('buffer');
 const sheet = $('sheet');
 
+// An action the engine fails on is said in the foot rather than thrown inside a key's handler,
+// where it would go unseen, and its cause is written to the console with its stack. A failure
+// inside the WebAssembly can leave the engine unable to do anything more, so a second one says
+// that the page wants loading again; the count never goes back down, since a trap leaves the
+// engine as it was when it failed for good.
+let failures = 0;
 function act(action) {
   if (!fzn || !standing) return;
-  carryOut(fzn.act(JSON.stringify(action)));
+  let todo;
+  try {
+    todo = fzn.act(JSON.stringify(action));
+  } catch (cause) {
+    console.error(cause);
+    failures++;
+    trouble(failures > 1 ? 'fzn needs reloading' : `fzn could not do that: ${cause}`);
+    return;
+  }
+  carryOut(todo);
+}
+
+// Says in the foot what went wrong, in ink, until the engine has something else to say: it does
+// not fade as what the engine says does.
+function trouble(text) {
+  clearTimeout(fading);
+  const status = $('status');
+  status.textContent = text;
+  status.classList.remove('faded');
+  status.classList.add('trouble');
 }
 
 // Does what the engine wants done, in its order: lines to keep, then logs to delete, which a
@@ -355,9 +380,8 @@ function safely() {
   try {
     paint();
   } catch (cause) {
-    const status = $('status');
-    status.textContent = `fzn could not show that: ${cause}`;
-    status.classList.add('trouble');
+    console.error(cause);
+    trouble(`fzn could not show that: ${cause}`);
   }
 }
 
@@ -1405,7 +1429,6 @@ async function start() {
 }
 
 start().catch((why) => {
-  const status = $('status');
-  status.textContent = `fzn could not start: ${why}`;
-  status.classList.add('trouble');
+  console.error(why);
+  trouble(`fzn could not start: ${why}`);
 });
