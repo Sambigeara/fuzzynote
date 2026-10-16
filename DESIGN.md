@@ -626,8 +626,10 @@ not move when you type or when results arrive. A faint hairline under the line s
 from the rows. The blank page is the caret and, under it in faint grey, the heads at the top of
 the list fading out by the eighth. As you type, what is found takes their place; only a row that
 is new fades in, and nothing else moves. The path, in a place, is in the margin above the line,
-`fzn › Boiler`, each step a way back to it, and on a phone a long path gives up its middle. No
-colour: paper, ink and two greys, light and dark by the system's preference. On a page at least
+`main › Boiler`: the space's name and then each step, each a way back to it, the first to the
+top, a note's step read as its row is, and on a phone a long path gives up its middle. The tab's
+title stays `fzn`, or `fzn · garden` in another space. No colour: paper, ink and two greys, light
+and dark by the system's preference. On a page at least
 75rem wide the body of what the cursor is on is read beside the list: the note under the cursor,
 or with the cursor on the line in a place the note you are in. It is rendered as markdown, in
 the soft grey, from the top of the first row's text, with no border, scrolled on its own and
@@ -1540,6 +1542,8 @@ repeats it only where the reason needs it.
   for. Now the first step of the path is the space, in both faces: ` main › #house `, and in the
   page that first step is pressed to go back to the top, as every step is a way back to it; the
   page's title stays `fzn`, or `fzn · garden`, which is for the tab and not for where you are in it.
+  A note's step on the page reads as its row does, its marks rendered, its heading's mark dropped
+  and a link in it read as its text, since a step is a button.
   At the top, outside any place, the terminal still draws no path row, since the space does not
   change while the app is open and what is not asked for is not on the screen; a dim `main` above
   the line at all times was weighed for knowing which space a window is on, and left to Sam to ask

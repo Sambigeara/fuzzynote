@@ -399,11 +399,12 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) :is(th, td) { padding: 0.125em 1.25em 0.125em 0; text-align: left; vertical-align: top; }
 :is(#here, #pane) th { border-bottom: 1px solid var(--rule); }
 
-/* A head reads its marks as a body does, in the row's one size: strong text and headings by
-   weight, emphasis slanted, code in the monospace a tenth smaller, struck text struck thin. */
-:is(#here, #pane, .head) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
-:is(#here, #pane, .head) code { font-family: var(--mono); font-size: 0.9em; }
-:is(#here, #pane, .head) del { text-decoration: line-through; text-decoration-thickness: 1px; }
+/* A head reads its marks as a body does, and so does a note's step on the path, each in its one
+   size: strong text and headings by weight, emphasis slanted, code in the monospace a tenth
+   smaller, struck text struck thin. */
+:is(#here, #pane, .head, #path) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
+:is(#here, #pane, .head, #path) code { font-family: var(--mono); font-size: 0.9em; }
+:is(#here, #pane, .head, #path) del { text-decoration: line-through; text-decoration-thickness: 1px; }
 
 /* A link has no colour: it is in the colour of what it is in, underlined a pixel thin in a tint of
    that colour and clear of the descenders, so that it reads as a link under ink, soft or faint

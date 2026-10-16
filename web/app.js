@@ -857,6 +857,12 @@ function paintFoot() {
   sync.hidden = !said;
 }
 
+const readStep = (text) => {
+  const read = render ? render.head(text) : text;
+  if (typeof read !== 'string') for (const a of read.querySelectorAll('a')) a.replaceWith(...a.childNodes);
+  return read;
+};
+
 function paintPath() {
   const path = $('path');
   const zoomed = view.path.length > 0;
@@ -865,16 +871,20 @@ function paintPath() {
     path.addEventListener('animationend', () => path.classList.remove('in'), { once: true });
   }
   path.hidden = !zoomed;
-  // Each step back along the path is a way back to it. On a narrow screen a long path gives up
-  // its middle.
-  set(path, JSON.stringify([view.path, narrow.matches]), () => {
-    const steps = [title, ...view.path];
+  // Each step back along the path is a way back to it, and the first, the space's name, is the way
+  // to the top: where you are is inside the space, and the app's name says nothing about that. A
+  // note's step reads as its row does, its marks rendered and its heading's mark dropped, and a
+  // link in it reads as its text, since a step is a button and a link inside one would be a second
+  // thing to press. On a narrow screen a long path gives up its middle.
+  set(path, JSON.stringify([view.path, narrow.matches, !!render]), () => {
+    const steps = [space, ...view.path];
     const parts = [];
     steps.forEach((head, depth) => {
       const middle = narrow.matches && steps.length > 3 && depth > 0 && depth < steps.length - 1;
       if (depth > 0) parts.push(el('span', middle ? 'gone' : null, '›'));
       if (middle && depth === 1) parts.push(el('span', null, '…'));
-      const step = el('button', middle ? 'gone' : null, head);
+      const step = el('button', middle ? 'gone' : null);
+      step.append(depth > 0 ? readStep(head) : head);
       step.type = 'button';
       step.dataset.depth = depth;
       if (depth === steps.length - 1) step.setAttribute('aria-current', 'location');
