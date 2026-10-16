@@ -46,7 +46,8 @@ lays out releases, such as `dist/` after `release.sh`, served over http or read 
 The config file is `~/.config/fzn/config.toml`. Notes live in spaces, separate sets of notes
 kept apart from each other, one directory each under `~/.fzn/<space>/`. Plain `fzn` opens the
 space named in the config file (`main` to begin with); `fzn --space garden` opens another and
-creates it if it is new.
+creates it if it is new. Several windows may have one space open, each in its own place, and
+what one writes the others list within a moment.
 
 The whole app in one sentence: type to find or to write; Enter writes the line, or opens a new
 note under the one you are on; Tab goes into the note you are on, or from the line into the

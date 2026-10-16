@@ -1,17 +1,26 @@
 //! A space's directory: a file of lines for each log, the locks that say who writes them, and
 //! the ids this machine writes the space under.
 //!
-//! Two writers on a machine write a space: the app, and the commands that write beside it while
-//! it is open, `fzn tick` say. Each appends to a log of its own under an id of its own, so that a
-//! log has one process appending to it, and the two cannot conflict, since versions settle by
-//! their stamps whichever log they are in. The app holds the space's lock, which a second window,
-//! an importer and a relay are refused; a command waits its turn on a lock of the commands' own
-//! and never asks for the app's. So a log may be read while another process appends to it, and
-//! what is read of it is only as far as its last whole line; an unfinished line is cut only by
-//! the process about to append to that log, since only it could have left one there. The app
-//! reads every log when it opens the space and, about once a second after that, what has been
-//! added since, and gives the lines to its device, which knows what they say; a command does the
-//! same once. The importers and the exporter read them here as a [`Store`].
+//! Every client open on a space on this machine writes it: each window, and each command that
+//! writes beside them, `fzn tick` say, and an importer. Each is a writer of its own, so that a
+//! log has one process appending to it, and they cannot conflict, since versions settle by their
+//! stamps whichever log they are in. A client takes a slot of a small pool for its life: slot 0
+//! is `.writer`, slot n `.writer.n`, the lowest nobody holds first, held by a lock on that file
+//! and given back by the kernel however the client ends. The slot's file holds the id it writes
+//! under, which the next holder of the slot goes on with, so the pool grows to the most clients
+//! ever open at once and no further. Nobody waits for a slot, and nothing is locked per write.
+//!
+//! So a log may be read while another process appends to it, and what is read of it is only as
+//! far as its last whole line; an unfinished line is cut only by the process about to append to
+//! that log, since only it could have left one there. A window reads every log when it opens the
+//! space and, four times a second after that, what has been added since, and gives the lines to
+//! its device, which knows what they say: that is how windows see each other. A command does the
+//! same once. One window at a time holds the keeper's lease, `.relay`, and with it the socket to
+//! the relay and the appending of the relay's lines, since those are logs too and want one
+//! appender; another window takes the lease within a look of its going, and needs nothing handed
+//! over, since what the keeper kept is in the directory. Clients share the space's lock, `.lock`,
+//! and a relay holds it alone, so a relay and a client never share a directory. The exporter and
+//! the importers read the logs here as a [`Store`].
 //!
 //! A writer's id lives in the directory, not in the config, because it names the log this
 //! machine writes in this space, and a compaction changes it.
@@ -20,6 +29,8 @@ use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::PoisonError;
 
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Header, names_a_log};
@@ -29,28 +40,16 @@ use fzn_engine::{Device, Given, Key, Moment, Notes, Read, Record, Seal, Session,
 use crate::config::DEVICE_FILE;
 use crate::system::{self, System};
 
-/// The file whose lock says which process writes a space's directory. A relay locks the same
-/// file, so a relay and an app never share a directory.
+/// The file whose lock says the directory is in use: shared by clients, held alone by a relay.
 const LOCK_FILE: &str = ".lock";
-
-/// A writer on this machine: the app, or the commands that write beside it while it is open.
-/// Each appends to a log of its own, named for the id kept in a file of its own.
-#[derive(Clone, Copy)]
-pub enum Writer {
-    App,
-    Commands,
-}
-
-impl Writer {
-    /// The file in a space's directory that holds the id it writes under. The commands' is
-    /// also their lock, which holds only while an id is written over in place.
-    fn file(self) -> &'static str {
-        match self {
-            Writer::App => ".writer",
-            Writer::Commands => ".commands",
-        }
-    }
-}
+/// Slot 0's file, and the start of every other slot's, `.writer.1` and on.
+const SLOT_FILE: &str = ".writer";
+/// The keeper's lease: which window holds the socket to the relay.
+const KEEPER_FILE: &str = ".relay";
+/// Where the commands kept their id before they took slots, and slot 1's file since.
+const COMMANDS_FILE: &str = ".commands";
+/// More slots than this would be clients without end, which is a bug and not a use.
+const SLOTS_MOST: usize = 64;
 
 /// The files of one space's logs.
 pub struct Logs {
@@ -162,15 +161,13 @@ impl Logs {
         Ok(())
     }
 
-    /// Deletes a log's file, unless a writer here writes it now. A header from elsewhere retires
-    /// such a log when a copy of this directory wrote under its name, and its lines may then be
-    /// ones nobody else has: its writer carries them into a log of its own, and keeps the new
+    /// Deletes a log's file, unless a slot here names it. A header from elsewhere retires such a
+    /// log when a copy of this directory wrote under its name, and its lines may then be ones
+    /// nobody else has: the slot's holder carries them into a log of its own, and keeps the new
     /// id, before it goes. One that is not there is already as asked.
     pub fn delete(&mut self, log: &str) -> Result<()> {
-        for writer in [Writer::App, Writer::Commands] {
-            if read_id(&self.dir.join(writer.file()))?.as_deref() == Some(log) {
-                return Ok(());
-            }
+        if self.slot_names(log)? {
+            return Ok(());
         }
         self.ends.remove(log);
         let path = self.path(log);
@@ -182,16 +179,48 @@ impl Logs {
         }
     }
 
-    /// Does what a device writing as `writer` asks of the directory: keeps its lines, then its
-    /// new id, then deletes the logs it retires. The lines first, so that a compaction stopped
-    /// half way leaves both logs and not neither, and the id before the deleting, so that the
-    /// old log is no longer its writer's when it goes.
-    pub fn keep(&mut self, todo: &Todo, writer: Writer) -> Result<()> {
+    /// Whether a slot in the directory names this log, as the one its holder writes.
+    fn slot_names(&self, log: &str) -> Result<bool> {
+        Ok(self.slot_naming(log)?.is_some())
+    }
+
+    /// The file of the slot in the directory that names this log, if one does.
+    fn slot_naming(&self, log: &str) -> Result<Option<PathBuf>> {
+        let entries =
+            fs::read_dir(&self.dir).with_context(|| format!("read {}", self.dir.display()))?;
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let named = entry.file_name().to_str().is_some_and(holds_an_id)
+                && read_id(&entry.path())?.as_deref() == Some(log);
+            if named {
+                return Ok(Some(entry.path()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Does what a device writing in `slot` asks of the directory: keeps its lines, then its new
+    /// id, then deletes the logs it retires. The lines first, so that a compaction stopped half
+    /// way leaves both logs and not neither, and the id before the deleting, so that the old log
+    /// is no longer its writer's when it goes. Lines of a log another slot here names, which
+    /// the relay holds further than the disk does, as after a power cut lost a tail that had
+    /// reached it, are appended under that slot's lock, when nobody holds it, since this is then
+    /// that log's one appender for the moment; while a sibling holds it, the log is its to write
+    /// and they are left.
+    pub fn keep(&mut self, todo: &Todo, slot: &mut Slot) -> Result<()> {
         for kept in &todo.keep {
+            if kept.log != slot.id()
+                && let Some(path) = self.slot_naming(&kept.log)?
+            {
+                let theirs = lock_file(&path)?;
+                if try_lock(&theirs, false).is_ok() {
+                    self.append(&kept.log, &kept.lines)?;
+                }
+                continue;
+            }
             self.append(&kept.log, &kept.lines)?;
         }
         if let Some(id) = &todo.device {
-            keep_id(&self.dir.join(writer.file()), id)?;
+            slot.keep_id(id)?;
         }
         for log in &todo.delete {
             self.delete(log)?;
@@ -200,61 +229,78 @@ impl Logs {
     }
 }
 
-/// Opens a space's directory for a device writing as `writer`: every log is given to the device
+/// Opens a space's directory for a device writing in `slot`: every log is given to the device
 /// and what it asks for kept, and then whatever opening it is due, a compaction say. Fails if the
 /// key opens none of the sealed lines there, since nothing could be written.
-pub fn open(dir: &Path, space: &str, writer: Writer, device: &mut Device) -> Result<Logs> {
+pub fn open(dir: &Path, space: &str, slot: &mut Slot, device: &mut Device) -> Result<Logs> {
     let mut logs = Logs::open(dir)?;
     for (log, lines) in logs.load()? {
         let todo = device.load(&log, lines);
-        logs.keep(&todo, writer)?;
+        logs.keep(&todo, slot)?;
     }
     if !device.key_verified() {
         bail!("the passphrase does not open {space}: run fzn key to enter it again");
     }
     let todo = device.opened();
-    logs.keep(&todo, writer)?;
+    logs.keep(&todo, slot)?;
     Ok(logs)
 }
 
-/// Ticks these tasks, or unticks them, as Ctrl-V does, while the app may have the space open: as
-/// the commands' writer, in their turn and never on the app's lock. Writes each note as it now
-/// stands, as the export writes it. All or none: if one cannot be, nothing is written.
+/// Ticks these tasks, or unticks them, as Ctrl-V does, while windows may have the space open.
+/// Writes each note as it now stands, as `fzn query` writes it. All or none: if one cannot be,
+/// nothing is written.
 pub fn tick(
     dir: &Path,
     space: &str,
+    config_dir: &Path,
     key: Key,
     ids: &[String],
     done: bool,
     out: &mut impl Write,
 ) -> Result<()> {
-    let _turn = Lock::wait(dir)?;
-    let mut device = Device::new(Box::new(System), commands(dir)?, Weights::default(), key);
-    let mut logs = open(dir, space, Writer::Commands, &mut device)?;
-    let (todo, ticked) = device
-        .tick(ids, done)
-        .map_err(|why| anyhow!("{why}, so nothing was written"))?;
-    logs.keep(&todo, Writer::Commands)?;
-    write_lines(&ticked.iter().collect::<Vec<_>>(), out)?;
-    Ok(())
+    beside(dir, space, config_dir, key, out, |device| {
+        device.tick(ids, done)
+    })
 }
 
 /// Writes notes given as the lines `fzn query` writes, one a line, as [`Device::apply`] says,
-/// while the app may have the space open: as the commands' writer, in their turn, as a tick is.
-/// Writes each note it was given as it now stands, in the order given. All or none: a line that
-/// is not a note, or one the device refuses, is said and nothing is written.
-pub fn apply(dir: &Path, space: &str, key: Key, input: &str, out: &mut impl Write) -> Result<()> {
+/// while windows may have the space open. Writes each note it was given as it now stands, in
+/// the order given. All or none: a line that is not a note, or one the device refuses, is said
+/// and nothing is written.
+pub fn apply(
+    dir: &Path,
+    space: &str,
+    config_dir: &Path,
+    key: Key,
+    input: &str,
+    out: &mut impl Write,
+) -> Result<()> {
     let given = given(input)?;
     if given.is_empty() {
         return Ok(());
     }
-    let _turn = Lock::wait(dir)?;
-    let mut device = Device::new(Box::new(System), commands(dir)?, Weights::default(), key);
-    let mut logs = open(dir, space, Writer::Commands, &mut device)?;
-    let (todo, notes) = device
-        .apply(given)
-        .map_err(|why| anyhow!("{why}, so nothing was written"))?;
-    logs.keep(&todo, Writer::Commands)?;
+    beside(dir, space, config_dir, key, out, |device| {
+        device.apply(given)
+    })
+}
+
+/// Does what a command asks of a device of its own, as a client of the space beside whatever
+/// windows have it open: in a slot of its own, which it never waits for, and hearing no relay.
+/// Writes out the notes the device gives back.
+fn beside(
+    dir: &Path,
+    space: &str,
+    config_dir: &Path,
+    key: Key,
+    out: &mut impl Write,
+    act: impl FnOnce(&mut Device) -> Result<(Todo, Vec<Record>), String>,
+) -> Result<()> {
+    let _in_use = Lock::share(dir, space)?;
+    let mut slot = Slot::take(dir, config_dir)?;
+    let mut device = Device::new(Box::new(System), slot.id(), Weights::default(), key);
+    let mut logs = open(dir, space, &mut slot, &mut device)?;
+    let (todo, notes) = act(&mut device).map_err(|why| anyhow!("{why}, so nothing was written"))?;
+    logs.keep(&todo, &mut slot)?;
     write_lines(&notes.iter().collect::<Vec<_>>(), out)?;
     Ok(())
 }
@@ -290,36 +336,164 @@ fn given(input: &str) -> Result<Vec<Given>> {
         .collect()
 }
 
-/// The right to write a space's directory, for as long as it is held.
+/// The right to use a space's directory, for as long as it is held: shared by every client, so
+/// that windows, commands and importers run side by side, and refused while a relay holds it.
 pub struct Lock {
     _file: File,
 }
 
 impl Lock {
-    /// Takes the lock on a space's directory, making the directory if it is new. Gives nothing
-    /// if another process holds it.
-    pub fn take(dir: &Path) -> Result<Option<Lock>> {
+    /// Shares the lock on a space's directory, making the directory if it is new, or says that
+    /// a relay holds it.
+    pub fn share(dir: &Path, space: &str) -> Result<Lock> {
         fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let path = dir.join(LOCK_FILE);
         let file = lock_file(&path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(Lock { _file: file })),
+        match try_lock(&file, true) {
+            Ok(()) => Ok(Lock { _file: file }),
+            Err(TryLockError::WouldBlock) => {
+                bail!("a relay, or an fzn from before 0.26, holds {space}")
+            }
+            Err(TryLockError::Error(e)) => {
+                Err(e).with_context(|| format!("lock {}", path.display()))
+            }
+        }
+    }
+}
+
+/// A slot of the pool: the id this client writes under, and the lock that says the slot is this
+/// client's, held for its life and given back by the kernel however it ends.
+pub struct Slot {
+    file: File,
+    path: PathBuf,
+    id: String,
+}
+
+impl Slot {
+    /// Takes the lowest slot nobody holds, making the directory if it is new, and the id kept in
+    /// it: for slot 0 on a space new here the one this machine had for every space, if it had
+    /// one, and otherwise a new one, kept.
+    pub fn take(dir: &Path, config_dir: &Path) -> Result<Slot> {
+        fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        commands_to_slot_one(dir)?;
+        for n in 0..SLOTS_MOST {
+            let path = match n {
+                0 => dir.join(SLOT_FILE),
+                n => dir.join(format!("{SLOT_FILE}.{n}")),
+            };
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&path)
+                .with_context(|| format!("open {}", path.display()))?;
+            match try_lock(&file, false) {
+                Ok(()) => {}
+                Err(TryLockError::WouldBlock) => continue,
+                Err(TryLockError::Error(e)) => {
+                    return Err(e).with_context(|| format!("lock {}", path.display()));
+                }
+            }
+            let mut text = String::new();
+            file.read_to_string(&mut text)
+                .with_context(|| format!("read {}", path.display()))?;
+            let mut slot = Slot {
+                file,
+                path,
+                id: text.trim().to_owned(),
+            };
+            if slot.id.is_empty() {
+                let legacy = match n {
+                    0 => read_id(&config_dir.join(DEVICE_FILE))?,
+                    _ => None,
+                };
+                slot.keep_id(&legacy.unwrap_or_else(new_id))?;
+            }
+            return Ok(slot);
+        }
+        bail!("{SLOTS_MOST} clients have {} open at once", dir.display())
+    }
+
+    /// The id this slot's client writes under.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Writes a new id over the old, through the locked file and in place, never by renaming
+    /// another over it, which would leave the lock on a file no longer in the directory. The id
+    /// goes over the old one before the file is cut to its length, so that another process
+    /// reading it sees one id or the other and never an empty file.
+    fn keep_id(&mut self, id: &str) -> Result<()> {
+        let path = &self.path;
+        let line = format!("{id}\n");
+        self.file
+            .seek(SeekFrom::Start(0))
+            .and_then(|_| self.file.write_all(line.as_bytes()))
+            .and_then(|()| self.file.set_len(line.len() as u64))
+            .and_then(|()| self.file.flush())
+            .with_context(|| format!("write {}", path.display()))?;
+        self.id = id.to_owned();
+        Ok(())
+    }
+}
+
+/// Makes the commands' file from before slots slot 1's, once, by a link that fails when slot 1
+/// is there already, so that a client that took slot 1 meanwhile keeps the file it locked.
+fn commands_to_slot_one(dir: &Path) -> Result<()> {
+    let (from, to) = (dir.join(COMMANDS_FILE), dir.join(format!("{SLOT_FILE}.1")));
+    match fs::hard_link(&from, &to) {
+        Ok(()) => fs::remove_file(&from).with_context(|| format!("remove {}", from.display())),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::AlreadyExists) => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("link {} as {}", from.display(), to.display())),
+    }
+}
+
+/// The keeper's lease: the one window that holds the socket to the relay and keeps the relay's
+/// lines in the directory, so that each of those logs has one appender too.
+pub struct Keeper {
+    _file: File,
+}
+
+impl Keeper {
+    /// Takes the lease, or gives nothing while another window holds it.
+    pub fn take(dir: &Path) -> Result<Option<Keeper>> {
+        let path = dir.join(KEEPER_FILE);
+        let file = lock_file(&path)?;
+        match try_lock(&file, false) {
+            Ok(()) => Ok(Some(Keeper { _file: file })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(e)) => {
                 Err(e).with_context(|| format!("lock {}", path.display()))
             }
         }
     }
+}
 
-    /// Waits for the commands' turn to write a space beside the app, on the file that holds
-    /// their id: a lock of their own, so that the app is never asked to let go of its own.
-    pub fn wait(dir: &Path) -> Result<Lock> {
-        let path = dir.join(Writer::Commands.file());
-        let file = lock_file(&path)?;
-        file.lock()
-            .with_context(|| format!("lock {}", path.display()))?;
-        Ok(Lock { _file: file })
+/// Takes a lock on a file, shared or alone, or says that it would have to wait.
+fn try_lock(file: &File, shared: bool) -> Result<(), TryLockError> {
+    #[cfg(test)]
+    let _settled = STARTING.write().unwrap_or_else(PoisonError::into_inner);
+    if shared {
+        file.try_lock_shared()
+    } else {
+        file.try_lock()
     }
+}
+
+/// Tests run side by side in one process, and a process that one of them starts holds a copy of
+/// every file open in it until the program it runs has begun, and with it every lock; a test that
+/// lets a lock go and takes it again could find it held. So in tests a lock is taken only while
+/// no process is being started, and a process is started under [`starting`], which is held for
+/// the start and not for the run. fzn itself needs nothing of the kind: every file is opened to
+/// be closed when a program starts, a start returns only once the program has, and fzn never lets
+/// a lock go while it runs to take it again, so a copy held for that moment costs a look at most.
+#[cfg(test)]
+static STARTING: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+#[cfg(test)]
+pub(crate) fn starting() -> std::sync::RwLockReadGuard<'static, ()> {
+    STARTING.read().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn lock_file(path: &Path) -> Result<File> {
@@ -331,45 +505,8 @@ fn lock_file(path: &Path) -> Result<File> {
         .with_context(|| format!("open {}", path.display()))
 }
 
-/// The id this machine's app writes a space under, made the first time the space is opened here.
-/// A machine that had one id for every space, kept in the config directory, goes on with it.
-pub fn writer(dir: &Path, config_dir: &Path) -> Result<String> {
-    let path = dir.join(Writer::App.file());
-    if let Some(id) = read_id(&path)? {
-        return Ok(id);
-    }
-    let id = match read_id(&config_dir.join(DEVICE_FILE))? {
-        Some(legacy) => legacy,
-        None => new_id(),
-    };
-    set_writer(dir, &id)?;
-    Ok(id)
-}
-
-/// The id the commands write a space under, made the first time one writes there. Read and
-/// kept only in their turn.
-fn commands(dir: &Path) -> Result<String> {
-    let path = dir.join(Writer::Commands.file());
-    if let Some(id) = read_id(&path)? {
-        return Ok(id);
-    }
-    let id = new_id();
-    keep_id(&path, &id)?;
-    Ok(id)
-}
-
-/// Keeps the id this machine's app writes a space under, making the directory if it is new.
-pub fn set_writer(dir: &Path, id: &str) -> Result<()> {
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    keep_id(&dir.join(Writer::App.file()), id)
-}
-
 fn new_id() -> String {
     format!("{:08x}", system::random_u64() as u32)
-}
-
-fn keep_id(path: &Path, id: &str) -> Result<()> {
-    fs::write(path, format!("{id}\n")).with_context(|| format!("write {}", path.display()))
 }
 
 /// The id in a file, if the file is there and holds one.
@@ -381,9 +518,19 @@ fn read_id(path: &Path) -> Result<Option<String>> {
     }
 }
 
-/// A space on disk as the importers and the exporter see it: the notes its logs add up to, and
-/// the writer's log to add to. The importers work while the app is closed, holding its lock, and
-/// add versions sealed as the app would; the exporter only reads, and may while it is open.
+/// Whether a file in a space's directory is a slot's, or the commands' from before slots.
+fn holds_an_id(name: &str) -> bool {
+    name == SLOT_FILE
+        || name == COMMANDS_FILE
+        || name
+            .strip_prefix(SLOT_FILE)
+            .and_then(|n| n.strip_prefix('.'))
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+}
+
+/// A space on disk as the importers, `fzn query` and `fzn export` see it: the notes its logs add
+/// up to, and the writer's log to add to. An importer writes in a slot of its own, beside any
+/// window open on the space, and adds versions sealed as the app would; the others only read.
 pub struct Store {
     notes: Notes,
     logs: Logs,
@@ -490,9 +637,6 @@ fn write_lines(records: &[&Record], out: &mut impl Write) -> Result<usize> {
 pub(crate) mod tests {
     use super::*;
     use crate::system::{self, random_u64};
-    use std::sync::mpsc;
-    use std::thread;
-    use std::time::Duration;
 
     pub(crate) fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fzn-store-test-{:x}", random_u64()));
@@ -578,47 +722,60 @@ pub(crate) mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn one_process_holds_a_space_until_it_lets_go() {
-        let dir = temp_dir();
-        let lock = Lock::take(&dir).unwrap().unwrap();
-        assert!(
-            Lock::take(&dir).unwrap().is_none(),
-            "a second taker is refused"
-        );
-
-        // The commands take turns on a lock of their own, whoever holds the space's.
-        let turn = Lock::wait(&dir).unwrap();
-        let (told, waited) = mpsc::channel();
-        let second = thread::spawn({
-            let dir = dir.clone();
-            move || told.send(Lock::wait(&dir).unwrap())
-        });
-        assert!(waited.recv_timeout(Duration::from_millis(200)).is_err());
-        drop(turn);
-        waited.recv_timeout(Duration::from_secs(5)).unwrap();
-        second.join().unwrap().unwrap();
-
-        drop(lock);
-        assert!(Lock::take(&dir).unwrap().is_some());
-        fs::remove_dir_all(&dir).unwrap();
+    /// Keeps the id slot 0 writes a space under, making the directory if it is new, as a window
+    /// that had written there would have left it.
+    pub(crate) fn set_writer(dir: &Path, id: &str) -> Result<()> {
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join(SLOT_FILE), format!("{id}\n"))?;
+        Ok(())
     }
 
     #[test]
-    fn the_writer_id_is_made_once_and_taken_from_the_old_device_file() {
+    fn slots_are_taken_lowest_free_first_and_continued_by_the_next_holder() {
         let dir = temp_dir();
         let (space, config) = (dir.join("space"), dir.join("config"));
-        let id = writer(&space, &config).unwrap();
-        assert_eq!(id.len(), 8);
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(writer(&space, &config).unwrap(), id, "and is stable");
-        set_writer(&space, "3f9a01c2").unwrap();
-        assert_eq!(writer(&space, &config).unwrap(), "3f9a01c2");
+        let first = Slot::take(&space, &config).unwrap();
+        let second = Slot::take(&space, &config).unwrap();
+        assert_eq!(first.id().len(), 8);
+        assert!(first.id().chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first.id(), second.id());
+        assert_eq!(
+            read_id(&space.join(".writer")).unwrap().as_deref(),
+            Some(first.id())
+        );
+        assert_eq!(
+            read_id(&space.join(".writer.1")).unwrap().as_deref(),
+            Some(second.id())
+        );
 
+        // The lowest free is taken again, with its id; a slot is never waited for.
+        let (id, held) = (first.id().to_owned(), second.id().to_owned());
+        drop(first);
+        let again = Slot::take(&space, &config).unwrap();
+        assert_eq!(again.id(), id);
+        let third = Slot::take(&space, &config).unwrap();
+        assert_eq!(
+            read_id(&space.join(".writer.2")).unwrap().as_deref(),
+            Some(third.id())
+        );
+        drop(second);
+        assert_eq!(Slot::take(&space, &config).unwrap().id(), held);
+
+        // A new id is written over the old in place, under the lock.
+        let mut slot = Slot::take(&space, &config).unwrap();
+        slot.keep_id("3f9a01c2").unwrap();
+        assert_eq!(
+            read_id(&space.join(".writer.1")).unwrap().as_deref(),
+            Some("3f9a01c2")
+        );
+        drop(slot);
+        assert_eq!(Slot::take(&space, &config).unwrap().id(), "3f9a01c2");
+
+        // Slot 0 of a space new here goes on with the id the machine had for every space.
         fs::create_dir_all(&config).unwrap();
         fs::write(config.join(DEVICE_FILE), "dev-a\n").unwrap();
         let other = dir.join("other");
-        assert_eq!(writer(&other, &config).unwrap(), "dev-a");
+        assert_eq!(Slot::take(&other, &config).unwrap().id(), "dev-a");
         assert_eq!(
             fs::read_to_string(other.join(".writer")).unwrap(),
             "dev-a\n"
@@ -627,6 +784,80 @@ pub(crate) mod tests {
             config.join(DEVICE_FILE).exists(),
             "the old file is left alone"
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_commands_file_from_before_is_slot_one() {
+        let dir = temp_dir();
+        set_writer(&dir, "3f9a01c2").unwrap();
+        fs::write(dir.join(".commands"), "c0ffee00\n").unwrap();
+        let config = dir.join("config");
+        let window = Slot::take(&dir, &config).unwrap();
+        assert_eq!(window.id(), "3f9a01c2");
+        assert!(!dir.join(".commands").exists());
+        assert_eq!(Slot::take(&dir, &config).unwrap().id(), "c0ffee00");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_client_shares_the_directory_and_a_relay_holds_it_alone() {
+        let dir = temp_dir();
+        let relays = || {
+            let file = File::open(dir.join(LOCK_FILE)).unwrap();
+            try_lock(&file, false).map(|()| file)
+        };
+        let window = Lock::share(&dir, "main").unwrap();
+        let tick = Lock::share(&dir, "main").unwrap();
+        assert!(
+            relays().is_err(),
+            "a relay is refused while a client is open"
+        );
+        drop((window, tick));
+        let relay = relays().unwrap();
+        let why = Lock::share(&dir, "main").err().unwrap().to_string();
+        assert_eq!(why, "a relay, or an fzn from before 0.26, holds main");
+        drop(relay);
+        assert!(Lock::share(&dir, "main").is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn one_window_at_a_time_holds_the_keepers_lease() {
+        let dir = temp_dir();
+        let keeper = Keeper::take(&dir).unwrap().unwrap();
+        assert!(Keeper::take(&dir).unwrap().is_none());
+        drop(keeper);
+        assert!(Keeper::take(&dir).unwrap().is_some());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_window_appends_to_a_log_another_slot_here_names_only_while_nobody_holds_it() {
+        let dir = temp_dir();
+        let config = dir.join("config");
+        let mut mine = Slot::take(&dir, &config).unwrap();
+        let theirs = Slot::take(&dir, &config).unwrap();
+        let (id, held) = (mine.id().to_owned(), theirs.id().to_owned());
+        let mut logs = Logs::open(&dir).unwrap();
+        let kept = |log: &str| fzn_engine::Kept {
+            log: log.to_owned(),
+            from: 0,
+            lines: vec!["x".to_owned()],
+        };
+        let todo = Todo {
+            keep: vec![kept(&id), kept(&held), kept("dev-b")],
+            ..Todo::default()
+        };
+        logs.keep(&todo, &mut mine).unwrap();
+        assert_eq!(lines(&dir, &id), ["x"]);
+        assert!(lines(&dir, &held).is_empty(), "a sibling holds it");
+        assert_eq!(lines(&dir, "dev-b"), ["x"]);
+
+        drop(theirs);
+        logs.keep(&todo, &mut mine).unwrap();
+        assert_eq!(lines(&dir, &held), ["x"], "nobody holds it now");
+        assert_eq!(Slot::take(&dir, &config).unwrap().id(), held);
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -832,7 +1063,15 @@ pub(crate) mod tests {
     fn ticked(dir: &Path, ids: &[&str], done: bool) -> Result<String> {
         let ids: Vec<String> = ids.iter().map(|&id| id.to_owned()).collect();
         let mut out = Vec::new();
-        tick(dir, "main", Key::from_bytes([7; 32]), &ids, done, &mut out)?;
+        tick(
+            dir,
+            "main",
+            &config(dir),
+            Key::from_bytes([7; 32]),
+            &ids,
+            done,
+            &mut out,
+        )?;
         Ok(String::from_utf8(out).unwrap())
     }
 
@@ -842,8 +1081,14 @@ pub(crate) mod tests {
         text.lines().map(str::to_owned).collect()
     }
 
-    fn commands_id(dir: &Path) -> String {
-        read_id(&dir.join(".commands")).unwrap().unwrap()
+    /// The id slot 1 writes under, which is the slot a command takes beside a window.
+    fn slot_one(dir: &Path) -> String {
+        read_id(&dir.join(".writer.1")).unwrap().unwrap()
+    }
+
+    /// Where the tests keep a machine's config, which is nowhere a slot looks for an id.
+    fn config(dir: &Path) -> PathBuf {
+        dir.join("config")
     }
 
     /// Runs `fzn query` on a space, and gives back each line it wrote, as JSON.
@@ -861,7 +1106,14 @@ pub(crate) mod tests {
     fn applied(dir: &Path, lines: &[serde_json::Value]) -> Result<Vec<Record>> {
         let input: String = lines.iter().map(|line| format!("{line}\n")).collect();
         let mut out = Vec::new();
-        apply(dir, "main", Key::from_bytes([7; 32]), &input, &mut out)?;
+        apply(
+            dir,
+            "main",
+            &config(dir),
+            Key::from_bytes([7; 32]),
+            &input,
+            &mut out,
+        )?;
         let out = String::from_utf8(out).unwrap();
         Ok(out
             .lines()
@@ -869,9 +1121,11 @@ pub(crate) mod tests {
             .collect())
     }
 
-    /// A space the app has written three notes in, and their lines as `fzn query` writes them.
-    fn written(dir: &Path) -> [serde_json::Value; 3] {
+    /// A space a window has open and has written three notes in, their lines as `fzn query`
+    /// writes them, and the window's slot.
+    fn written(dir: &Path) -> ([serde_json::Value; 3], Slot) {
         set_writer(dir, "3f9a01c2").unwrap();
+        let window = Slot::take(dir, &config(dir)).unwrap();
         let mut app = open(dir, "3f9a01c2");
         for (id, text, at) in [
             ("gate", "Fix the gate", 10),
@@ -889,19 +1143,19 @@ pub(crate) mod tests {
             let found = queried(dir, "");
             found.into_iter().find(|line| line["id"] == id).unwrap()
         };
-        [line("gate"), line("oil"), line("boiler")]
+        ([line("gate"), line("oil"), line("boiler")], window)
     }
 
     #[test]
     fn apply_writes_what_it_is_given_by_the_apps_rules_and_says_each_note_as_it_now_stands() {
         let dir = temp_dir();
-        let [gate, oil, boiler] = written(&dir);
+        let ([gate, oil, boiler], _window) = written(&dir);
 
         // Given as it was read, nothing is written, and each is said as it stands.
         let said = applied(&dir, &[oil.clone(), boiler.clone()]).unwrap();
         let ids: Vec<&str> = said.iter().map(|note| note.id.as_str()).collect();
         assert_eq!(ids, ["oil", "boiler"]);
-        assert!(lines(&dir, &commands_id(&dir)).is_empty());
+        assert!(lines(&dir, &slot_one(&dir)).is_empty());
 
         let mut ticked = oil.clone();
         ticked["archived"] = true.into();
@@ -916,7 +1170,7 @@ pub(crate) mod tests {
         assert!(said[2].archived);
         assert_eq!(said[0].links, ["gate"], "the brackets are a link");
         assert_eq!(
-            lines(&dir, &commands_id(&dir)).len(),
+            lines(&dir, &slot_one(&dir)).len(),
             3,
             "a version a note changed"
         );
@@ -938,11 +1192,11 @@ pub(crate) mod tests {
     #[test]
     fn apply_writes_nothing_when_a_line_cannot_be_written_and_says_which() {
         let dir = temp_dir();
-        let [gate, oil, _] = written(&dir);
+        let ([gate, oil, _], _window) = written(&dir);
         let mut later = oil.clone();
         later["text"] = "[ ] Order oil and coal #house".into();
         applied(&dir, &[later]).unwrap();
-        let log = lines(&dir, &commands_id(&dir));
+        let log = lines(&dir, &slot_one(&dir));
 
         let mut stale = oil.clone();
         stale["text"] = "[ ] Order oil today #house".into();
@@ -960,6 +1214,7 @@ pub(crate) mod tests {
             apply(
                 &dir,
                 "main",
+                &config(&dir),
                 Key::from_bytes([7; 32]),
                 input,
                 &mut Vec::new(),
@@ -980,20 +1235,18 @@ pub(crate) mod tests {
         ] {
             assert_eq!(apply_text(&input), format!("{why}, so nothing was written"));
         }
-        assert_eq!(lines(&dir, &commands_id(&dir)), log, "and nothing was");
+        assert_eq!(lines(&dir, &slot_one(&dir)), log, "and nothing was");
 
-        // Nothing given is nothing to do, and a key that opens nothing here writes nothing.
-        apply(
-            &dir,
-            "main",
-            Key::from_bytes([7; 32]),
-            "\n\n",
-            &mut Vec::new(),
-        )
-        .unwrap();
+        // Nothing given is nothing to do, a byte-order mark is no line, and a key that opens
+        // nothing here writes nothing.
+        for input in ["\n\n".to_owned(), format!("\u{feff}{gate}")] {
+            let key = Key::from_bytes([7; 32]);
+            apply(&dir, "main", &config(&dir), key, &input, &mut Vec::new()).unwrap();
+        }
         let wrong = apply(
             &dir,
             "main",
+            &config(&dir),
             Key::from_bytes([9; 32]),
             &gate,
             &mut Vec::new(),
@@ -1004,14 +1257,15 @@ pub(crate) mod tests {
                 .to_string()
                 .starts_with("the passphrase does not open main")
         );
-        assert_eq!(lines(&dir, &commands_id(&dir)), log);
+        assert_eq!(lines(&dir, &slot_one(&dir)), log);
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn a_tick_is_a_version_a_note_in_the_commands_own_log_said_as_the_export_says_it() {
+    fn a_tick_is_a_version_a_note_in_a_slot_of_its_own_said_as_the_query_says_it() {
         let dir = temp_dir();
         set_writer(&dir, "3f9a01c2").unwrap();
+        let _window = Slot::take(&dir, &config(&dir)).unwrap();
         let mut app = open(&dir, "3f9a01c2");
         app.put(rec("oil", "[ ] Order oil #house", 10)).unwrap();
         app.put(rec("gate", "[ ] Fix the gate #house", 20)).unwrap();
@@ -1025,10 +1279,10 @@ pub(crate) mod tests {
             let said = ticked(&dir, ids, true).unwrap_err().to_string();
             assert_eq!(said, format!("{why}, so nothing was written"));
         }
-        assert!(lines(&dir, &commands_id(&dir)).is_empty());
+        assert!(lines(&dir, &slot_one(&dir)).is_empty());
 
         let said = ticked(&dir, &["oil", "gate"], true).unwrap();
-        let id = commands_id(&dir);
+        let id = slot_one(&dir);
         assert_eq!(lines(&dir, &id).len(), 2, "a version a note");
         let mut exported = Vec::new();
         Store::open(&dir, String::new(), seal())
@@ -1055,7 +1309,7 @@ pub(crate) mod tests {
             (gate.text.as_str(), gate.archived),
             ("[ ] Fix the gate #house", false)
         );
-        assert_eq!(commands_id(&dir), id);
+        assert_eq!(slot_one(&dir), id);
         assert_eq!(lines(&dir, &id).len(), 3);
         assert_eq!(
             lines(&dir, "3f9a01c2"),
@@ -1067,6 +1321,7 @@ pub(crate) mod tests {
         let wrong = tick(
             &dir,
             "main",
+            &config(&dir),
             Key::from_bytes([9; 32]),
             &["oil".into()],
             false,
@@ -1081,7 +1336,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn each_writer_here_compacts_its_own_log_by_one_rule_and_leaves_the_others() {
+    fn a_tick_takes_the_first_free_slot_and_never_waits() {
+        let dir = temp_dir();
+        set_writer(&dir, "3f9a01c2").unwrap();
+        open(&dir, "3f9a01c2")
+            .put(rec("oil", "[ ] Order oil #house", 10))
+            .unwrap();
+        ticked(&dir, &["oil"], true).unwrap();
+        assert_eq!(
+            lines(&dir, "3f9a01c2").len(),
+            2,
+            "with no window open, slot 0"
+        );
+
+        let window = Slot::take(&dir, &config(&dir)).unwrap();
+        let other = Slot::take(&dir, &config(&dir)).unwrap();
+        ticked(&dir, &["oil"], false).unwrap();
+        let third = read_id(&dir.join(".writer.2")).unwrap().unwrap();
+        assert_eq!(lines(&dir, &third).len(), 1);
+        assert!(lines(&dir, other.id()).is_empty());
+        assert_eq!(lines(&dir, window.id()).len(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_slot_here_compacts_its_own_log_by_one_rule_and_leaves_the_others() {
         let dir = temp_dir();
         let grown = |log: &str, id: &str, text: &str| {
             let versions: Vec<String> = (0..1_500)
@@ -1091,13 +1370,14 @@ pub(crate) mod tests {
         };
         set_writer(&dir, "3f9a01c2").unwrap();
         grown("3f9a01c2", "oil", "[ ] Order oil #house");
-        keep_id(&dir.join(".commands"), "c0ffee00").unwrap();
+        fs::write(dir.join(".writer.1"), "c0ffee00\n").unwrap();
         grown("c0ffee00", "gate", "[ ] Fix the gate #house");
         let commands = lines(&dir, "c0ffee00");
 
         let key = Key::from_bytes([7; 32]);
         let mut app = Device::new(Box::new(System), "3f9a01c2", Weights::default(), key);
-        super::open(&dir, "main", Writer::App, &mut app).unwrap();
+        let mut window = Slot::take(&dir, &config(&dir)).unwrap();
+        super::open(&dir, "main", &mut window, &mut app).unwrap();
         let apps = read_id(&dir.join(".writer")).unwrap().unwrap();
         assert_ne!(apps, "3f9a01c2");
         assert!(lines(&dir, "3f9a01c2").is_empty());
@@ -1105,7 +1385,7 @@ pub(crate) mod tests {
 
         let compacted = lines(&dir, &apps);
         ticked(&dir, &["gate"], true).unwrap();
-        let id = commands_id(&dir);
+        let id = slot_one(&dir);
         assert_ne!(id, "c0ffee00");
         assert!(lines(&dir, "c0ffee00").is_empty());
         let log = lines(&dir, &id);
@@ -1122,30 +1402,32 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_commands_log_retired_from_elsewhere_stays_until_they_carry_it_into_their_own() {
+    fn a_slots_log_retired_from_elsewhere_stays_until_its_holder_carries_it_into_its_own() {
         let dir = temp_dir();
         set_writer(&dir, "3f9a01c2").unwrap();
-        keep_id(&dir.join(".commands"), "c0ffee00").unwrap();
+        fs::write(dir.join(".writer.1"), "c0ffee00\n").unwrap();
         let mut logs = Logs::open(&dir).unwrap();
         let gate = rec("gate", "[ ] Fix the gate #house", 10);
         logs.append("c0ffee00", &[gate.sealed(&seal(), &System).unwrap()])
             .unwrap();
-        // A copy of this directory elsewhere wrote under the commands' id, and compacted it.
+        // A copy of this directory elsewhere wrote under slot 1's id, and compacted it.
         let header = Header {
             compacts: vec!["c0ffee00".into()],
             snapshot: 0,
         };
         logs.append("feed0001", &[header.line()]).unwrap();
 
-        // The app retires it, and leaves it for its writer.
+        // A window retires it, and leaves it for its writer.
         let key = Key::from_bytes([7; 32]);
         let mut app = Device::new(Box::new(System), "3f9a01c2", Weights::default(), key);
-        super::open(&dir, "main", Writer::App, &mut app).unwrap();
+        let mut window = Slot::take(&dir, &config(&dir)).unwrap();
+        super::open(&dir, "main", &mut window, &mut app).unwrap();
         assert_eq!(lines(&dir, "c0ffee00").len(), 1);
 
-        // The next command carries what it held into a log of its own, as any writer does.
+        // The next client in slot 1 carries what it held into a log of its own, as any writer
+        // does.
         ticked(&dir, &["gate"], true).unwrap();
-        let id = commands_id(&dir);
+        let id = slot_one(&dir);
         assert_ne!(id, "c0ffee00");
         assert!(lines(&dir, "c0ffee00").is_empty());
         let log = lines(&dir, &id);

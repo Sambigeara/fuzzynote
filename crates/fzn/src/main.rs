@@ -44,10 +44,10 @@ the space named in ~/.config/fzn/config.toml, which is main to begin with. --spa
 opens another, and creates it if it is new.
 
 The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Only fzn
-writes a space's directory, and one window at a time: a second window on a space is told so and
-stops. query, export, apply, tick and untick work beside the open window, which shows what they
-wrote within a second. A relay, not copying files, is how a space gets from one machine to
-another.
+writes a space's directory. Several windows may have a space open at once on one machine, each
+in its own place, and what one writes the others list within a moment; query, export, apply,
+tick, untick and the importers work beside them. A relay, not copying files, is how a space gets
+from one machine to another.
 
 Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
 twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
@@ -348,27 +348,27 @@ fn run() -> Result<()> {
                 return Ok(());
             }
             let key = kept_key(&space, &config_dir)?;
-            store::apply(&dir, &space, key, &input, &mut std::io::stdout().lock())?;
+            let out = &mut std::io::stdout().lock();
+            store::apply(&dir, &space, &config_dir, key, &input, out)?;
         }
         Cmd::Tick { ids, done } => {
             let key = kept_key(&space, &config_dir)?;
-            store::tick(&dir, &space, key, &ids, done, &mut std::io::stdout().lock())?;
+            let out = &mut std::io::stdout().lock();
+            store::tick(&dir, &space, &config_dir, key, &ids, done, out)?;
         }
         Cmd::ImportJsonl(path) => {
-            let _lock = hold(&dir, &space)?;
-            let mut store = importing(&dir, &space, &config_dir)?;
-            let n = import::jsonl(&path, &mut store)?;
-            let linked = import::link_named(&mut store)?;
+            let mut into = importing(&dir, &space, &config_dir)?;
+            let n = import::jsonl(&path, &mut into.store)?;
+            let linked = import::link_named(&mut into.store)?;
             println!(
                 "imported {n} notes into {}, and linked {linked} to the notes they name",
                 dir.display()
             );
         }
         Cmd::ImportMarkdown(pages) => {
-            let _lock = hold(&dir, &space)?;
-            let mut store = importing(&dir, &space, &config_dir)?;
-            let done = import::markdown(&pages, &mut store)?;
-            let linked = import::link_named(&mut store)?;
+            let mut into = importing(&dir, &space, &config_dir)?;
+            let done = import::markdown(&pages, &mut into.store)?;
+            let linked = import::link_named(&mut into.store)?;
             println!(
                 "imported {} notes from {} pages into {}, and linked {linked} to the notes they name",
                 done.notes,
@@ -383,31 +383,32 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Open => {
-            // This process is the only writer of the space's directory for as long as it is open.
-            let _lock = hold(&dir, &space)?;
-            let writer = store::writer(&dir, &config_dir)?;
+            // A window is a writer of its own, in a slot it holds for as long as it is open.
+            let _in_use = store::Lock::share(&dir, &space)?;
+            let slot = store::Slot::take(&dir, &config_dir)?;
             let key = key::key_for(&space, &config_dir, &dir)?;
             // The device is the app. The terminal is one face on it, and the directory is where
             // it keeps its lines.
             let mut app = ui::App::open(
                 &dir,
                 &space,
-                writer,
+                slot,
                 key,
                 cfg.weights.clone(),
                 config::editor(&cfg),
             )?;
-            // With a relay named, a thread holds a socket to it for as long as the app is open.
+            // With a relay named, the window that keeps the space's lines from it holds a socket
+            // to it, on a thread of its own, for as long as it is open.
             let env_relay = std::env::var("FZN_RELAY").ok();
             let named = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg);
             if let Some(relay) = named {
-                let link = sync::start(relay.clone(), space.clone());
                 // The status row names the relay by its host, as it was given.
                 let host = relay
                     .trim()
                     .trim_start_matches("ws://")
-                    .trim_end_matches('/');
-                app.sync(host.to_owned(), link);
+                    .trim_end_matches('/')
+                    .to_owned();
+                app.relay(host, move || sync::start(relay.clone(), space.clone()))?;
             }
             app.run()?;
         }
@@ -478,23 +479,25 @@ fn kept_key(space: &str, config_dir: &Path) -> Result<fzn_engine::Key> {
     })
 }
 
-/// Takes the lock on a space's directory, or says who has it: another fzn, or a relay.
-fn hold(dir: &Path, space: &str) -> Result<store::Lock> {
-    store::Lock::take(dir)?
-        .ok_or_else(|| anyhow!("{space} is open in another window, or a relay holds it"))
-}
-
 /// A space opened to be read, as `query` and `export` read it.
 fn reading(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store> {
     let key = key::key_for(space, config_dir, dir)?;
     store::Store::open(dir, String::new(), Seal::new(key))
 }
 
-/// A space opened for an importer to write, which holds its lock.
-fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store> {
-    let writer = store::writer(dir, config_dir)?;
+/// A space opened for an importer to write, in a slot of its own, beside any window open on it,
+/// which lists what it imports within a look.
+struct Importing {
+    store: store::Store,
+    _slot: store::Slot,
+    _in_use: store::Lock,
+}
+
+fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<Importing> {
+    let in_use = store::Lock::share(dir, space)?;
+    let slot = store::Slot::take(dir, config_dir)?;
     let key = key::key_for(space, config_dir, dir)?;
-    let store = store::Store::open(dir, writer, Seal::new(key))?;
+    let store = store::Store::open(dir, slot.id().to_owned(), Seal::new(key))?;
     if store.skipped() > 0 {
         eprintln!(
             "{} lines in {} could not be read, and are left as they are",
@@ -502,7 +505,11 @@ fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store>
             dir.display()
         );
     }
-    Ok(store)
+    Ok(Importing {
+        store,
+        _slot: slot,
+        _in_use: in_use,
+    })
 }
 
 #[cfg(test)]

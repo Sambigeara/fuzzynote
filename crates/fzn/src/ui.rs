@@ -38,14 +38,18 @@
 //! whatever the note holds. A status row is there only while there is something to say, and each
 //! key clears what the one before it said.
 //!
-//! With a relay named, a thread holds the socket and the app hears from it between keys, waiting
-//! on the keyboard a twentieth of a second at a time; with none it waits as long as it looks: what
-//! the relay says goes to the device, and what the device wants kept or said comes back here to
-//! be done, like anything else it asks for. Nothing is said while sync works, and `not syncing`
-//! while it does not, in the corner of the foot that also says when this machine's clock is far
-//! from the relay's. Between keys too, about once a second, it looks in the space's directory for
-//! what another writer on this machine has added, `fzn tick` say, which writes a log of its own
-//! there, and that goes to the device as the relay's lines do.
+//! Several windows may have a space open, each a writer of its own in a slot of the directory's
+//! (see `store`). Between keys, four times a second, a window looks in the space's directory for
+//! what another writer on this machine has added, another window or `fzn tick` say, and that
+//! goes to the device as the relay's lines do: that is how windows see each other. With a relay
+//! named, the one window that holds the keeper's lease has a thread holding the socket, and hears
+//! from it between keys, waiting on the keyboard a twentieth of a second at a time; another window
+//! takes the lease within a look of its going. What the relay says goes to the device, and what
+//! the device wants kept or said comes back here to be done, like anything else it asks for.
+//! Nothing is said while sync works, and `not syncing` while it does not, in the corner of the
+//! foot that also says when this machine's clock is far from the relay's; a window that does not
+//! hold the socket says nothing of sync, since what it writes reaches the relay through the one
+//! that does.
 
 use std::fs;
 use std::io::{IsTerminal as _, Write as _};
@@ -69,19 +73,24 @@ use ratatui::{DefaultTerminal, Frame};
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
-use crate::store::{self, Logs, Writer};
+use crate::store::{self, Keeper, Logs, Slot};
 use crate::sync::{self, Link};
 use crate::system::System;
 
 /// How long the keyboard is waited on before the relay is listened to, when there is one.
 const TICK: Duration = Duration::from_millis(50);
-/// How often the space's directory is looked at for what another writer here has added.
-const LOOK: Duration = Duration::from_secs(1);
+/// How often the space's directory is looked at for what another writer here has added. It is
+/// how long a note typed in one window takes to be listed in another, and to reach the relay
+/// from a window that does not hold the socket, so it is short; a look is a listing of the
+/// directory and a read of each log from where the last one ended, well under a millisecond.
+const LOOK: Duration = Duration::from_millis(250);
 /// The most rows the body of what the cursor is on takes at the foot of the list.
 const PREVIEW_ROWS: usize = 5;
 /// The mark before the text of the line, in the column the rows leave empty, so that the line
 /// reads as where typing goes and the rows' text lines up under its own.
 const PROMPT: &str = ">";
+/// What an empty space says, until the first key or the first note to come from elsewhere.
+const NO_NOTES: &str = "no notes yet: type and press Enter, or see fzn --help to import";
 /// What the status row says for as long as the passphrase opens nothing the relay has sent.
 const WRONG_KEY: &str =
     "the passphrase does not open this space: quit, and run fzn key to enter it again";
@@ -89,6 +98,14 @@ const WRONG_KEY: &str =
 pub struct App {
     device: Device,
     logs: Logs,
+    /// The space's directory, where the keeper's lease is taken.
+    dir: PathBuf,
+    /// The slot this window writes in, held for as long as it is open.
+    slot: Slot,
+    /// The relay named for the space, which this window dials once it holds the keeper's lease.
+    relay: Option<Relay>,
+    /// The keeper's lease, while this window is the one that holds the socket to the relay.
+    keeper: Option<Keeper>,
     editor: String,
     /// The space's name, which heads the path.
     space: String,
@@ -100,7 +117,8 @@ pub struct App {
     top: usize,
     /// Whether the previous key was Escape, which makes a second one quit.
     escaped: bool,
-    /// The relay this space syncs with, as the status row names it, and the link to it.
+    /// The relay this window syncs with, as the status row names it, and the link to it: only
+    /// while it holds the keeper's lease.
     sync: Option<(String, Link)>,
     /// Whether the relay has been lost or could not be reached, and is not back yet.
     not_syncing: bool,
@@ -108,6 +126,13 @@ pub struct App {
     unreachable: Option<String>,
     /// When the space's directory was last looked at for what another writer here added.
     looked: Instant,
+}
+
+/// The relay named for a space: how the status row names it, and how to start the thread that
+/// holds the socket to it.
+struct Relay {
+    host: String,
+    dial: Box<dyn FnMut() -> Link>,
 }
 
 /// What the act of a key is measured against: the line, the note under the cursor and whether
@@ -572,10 +597,13 @@ fn edit_in(editor: &str, id: &str, text: &str) -> Result<String, String> {
     };
     let handed = Handed::new(id, text)
         .map_err(|e| format!("could not hand the note over: {}", plainly(&e)))?;
-    let status = Command::new(program)
-        .args(parts)
-        .arg(&handed.path)
-        .status()
+    let started = {
+        #[cfg(test)]
+        let _starting = store::starting();
+        Command::new(program).args(parts).arg(&handed.path).spawn()
+    };
+    let status = started
+        .and_then(|mut child| child.wait())
         .map_err(|e| format!("could not run {program}: {}", plainly(&e)))?;
     if !status.success() {
         let how = status
@@ -784,22 +812,26 @@ fn paint_right(frame: &mut Frame, y: usize, text: &str) {
 }
 
 impl App {
-    /// Opens a space's directory as a device writing under `writer`: every log is given to the
+    /// Opens a space's directory as a device writing in `slot`: every log is given to the
     /// device, what it asks for is done, and then whatever opening it is due, a compaction say.
     /// Fails if the key opens none of the sealed lines there, since nothing could be written.
     pub fn open(
         dir: &Path,
         space: &str,
-        writer: String,
+        mut slot: Slot,
         key: Key,
         weights: Weights,
         editor: String,
     ) -> Result<Self> {
-        let mut device = Device::new(Box::new(System), writer, weights, key);
-        let logs = store::open(dir, space, Writer::App, &mut device)?;
+        let mut device = Device::new(Box::new(System), slot.id(), weights, key);
+        let logs = store::open(dir, space, &mut slot, &mut device)?;
         let mut app = Self {
             device,
             logs,
+            dir: dir.to_owned(),
+            slot,
+            relay: None,
+            keeper: None,
             editor,
             space: space.to_owned(),
             cursor: 0,
@@ -814,9 +846,7 @@ impl App {
         // An empty space says how to begin, until the first key.
         if app.device.view().status.is_empty() {
             match (app.device.unopened(), app.device.view().notes) {
-                (0, 0) => app
-                    .device
-                    .say("no notes yet: type and press Enter, or see fzn --help to import"),
+                (0, 0) => app.device.say(NO_NOTES),
                 (0, _) => {}
                 (shut, _) => app.device.say(format!(
                     "{shut} lines here that this passphrase does not open"
@@ -826,10 +856,45 @@ impl App {
         Ok(app)
     }
 
-    /// Syncs with a relay over a link to the thread that holds the socket. `relay` is how the
-    /// status row names it when it cannot be reached.
-    pub fn sync(&mut self, relay: String, link: Link) {
-        self.sync = Some((relay, link));
+    /// Syncs with a relay while this window holds the keeper's lease, which it takes now if no
+    /// other window has it and otherwise when the one that has it goes. `host` is how the status
+    /// row names the relay, and `dial` starts the thread that holds the socket.
+    pub fn relay(&mut self, host: String, dial: impl FnMut() -> Link + 'static) -> Result<()> {
+        self.relay = Some(Relay {
+            host,
+            dial: Box::new(dial),
+        });
+        self.keep_relay()?;
+        Ok(())
+    }
+
+    /// Gives up the keeper's lease, and with it the socket, when this window holds them.
+    fn let_relay_go(&mut self) {
+        if self.keeper.take().is_some() {
+            self.sync = None;
+            self.not_syncing = false;
+            self.unreachable = None;
+            self.device.disconnected(RELAY);
+        }
+    }
+
+    /// Takes the keeper's lease if a relay is named and no window holds it, and with it the
+    /// socket, and says whether anything was taken in. What the last keeper kept is read first,
+    /// since this window is to append to those logs from now on and has to continue from their
+    /// ends; the last keeper let go of the lease only once it would append nothing more.
+    fn keep_relay(&mut self) -> Result<bool> {
+        if self.keeper.is_some() || self.relay.is_none() {
+            return Ok(false);
+        }
+        let Some(keeper) = Keeper::take(&self.dir)? else {
+            return Ok(false);
+        };
+        self.keeper = Some(keeper);
+        let changed = self.look()?;
+        if let Some(relay) = &mut self.relay {
+            self.sync = Some((relay.host.clone(), (relay.dial)()));
+        }
+        Ok(changed)
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -853,6 +918,7 @@ impl App {
                 if self.looked.elapsed() >= LOOK {
                     self.looked = Instant::now();
                     changed |= self.look()?;
+                    changed |= self.keep_relay()?;
                 }
                 if changed {
                     terminal.draw(|frame| self.draw(frame))?;
@@ -1032,9 +1098,10 @@ impl App {
     /// Does what the device asks: what it asks of the directory first, then what is to go to
     /// the relay, then the rest.
     fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
-        self.logs.keep(&todo, Writer::App)?;
+        self.logs.keep(&todo, &mut self.slot)?;
         if let Some((_, link)) = &self.sync {
-            // The relay is this window's only peer.
+            // The relay is this window's only peer: its siblings read what it writes in the
+            // directory, as it reads theirs.
             for said in todo.send.into_iter().filter(|said| said.to == RELAY) {
                 // A thread that has gone is a relay that is not there, which the footer says.
                 let _ = link.to_relay.send(said.text);
@@ -1092,12 +1159,13 @@ impl App {
         if verified && !self.device.key_verified() {
             self.device.say("");
         }
+        self.not_empty_now();
         Ok(!heard.is_empty())
     }
 
-    /// Takes in what another writer on this machine, `fzn tick` say, has added to the space's
-    /// logs since they were last read, as lines from the relay are taken in, and says whether
-    /// there was anything.
+    /// Takes in what another writer on this machine, another window or `fzn tick` say, has added
+    /// to the space's logs since they were last read, as lines from the relay are taken in, and
+    /// says whether there was anything.
     fn look(&mut self) -> Result<bool> {
         let added = self.logs.load()?;
         let any = !added.is_empty();
@@ -1105,7 +1173,17 @@ impl App {
             let todo = self.device.added(&log, lines);
             self.carry_out(todo)?;
         }
+        self.not_empty_now();
         Ok(any)
+    }
+
+    /// Takes back what an empty space said once a note has come from elsewhere, since a first
+    /// fill is not news and nothing else would say anything in its place.
+    fn not_empty_now(&mut self) {
+        let view = self.device.view();
+        if view.notes > 0 && view.status == NO_NOTES {
+            self.device.say("");
+        }
     }
 
     /// What the status row says: what the last key did, or what happened since, and when
@@ -1129,6 +1207,10 @@ impl App {
         id: String,
         text: &str,
     ) -> Result<()> {
+        // Nothing is heard or looked at while the editor has the terminal, so a keeper lets the
+        // relay go for as long, and another window takes it within a look; this one tries to
+        // take it back at its next look after.
+        self.let_relay_go();
         give_terminal_back();
         let edited = edit_in(&self.editor, &id, text);
         // What the editor left is saved before the terminal is taken back, so that failing to
@@ -1336,7 +1418,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::store::Store;
-    use crate::store::tests::temp_dir;
+    use crate::store::tests::{set_writer, temp_dir};
     use fzn_engine::replica::{Header, Message, Out, Replica};
     use fzn_engine::{Moment, Record, Seal};
     use std::path::PathBuf;
@@ -1350,21 +1432,14 @@ mod tests {
 
     /// The app opened on a space's directory with a key, as `fzn` opens it.
     fn open_with(space: &Path, key: Key) -> Result<App> {
-        let writer = store::writer(space, &space.with_file_name("config"))?;
-        App::open(
-            space,
-            "main",
-            writer,
-            key,
-            Weights::default(),
-            "true".into(),
-        )
+        let slot = Slot::take(space, &space.with_file_name("config"))?;
+        App::open(space, "main", slot, key, Weights::default(), "true".into())
     }
 
     /// The app on a new space under a scratch root, and the space's directory.
     fn app() -> (App, PathBuf) {
         let space = temp_dir().join("main");
-        store::set_writer(&space, WRITER).unwrap();
+        set_writer(&space, WRITER).unwrap();
         (open_with(&space, key()).unwrap(), space)
     }
 
@@ -1516,7 +1591,7 @@ mod tests {
     #[test]
     fn a_plain_log_from_before_sealing_is_compacted_at_open() {
         let space = temp_dir().join("main");
-        store::set_writer(&space, WRITER).unwrap();
+        set_writer(&space, WRITER).unwrap();
         let plain = |id: &str, text: &str, secs: i64| {
             Record {
                 id: id.into(),
@@ -2133,18 +2208,30 @@ mod tests {
         done(&space);
     }
 
-    /// The far ends of an app's link: what it sent, and a way to tell it things.
-    fn link(app: &mut App) -> (Receiver<String>, Sender<sync::Event>) {
-        let (to_relay, sent) = mpsc::channel();
-        let (tell, from_relay) = mpsc::channel();
-        app.sync(
-            "nas.local".into(),
+    /// The far ends of a link to a relay: what the window sent, and a way to tell it things.
+    type Ends = (Receiver<String>, Sender<sync::Event>);
+
+    /// Names a relay for a window, and gives back where the far ends of each link it dials go.
+    fn dialler(app: &mut App) -> Receiver<Ends> {
+        let (ends, dialled) = mpsc::channel();
+        app.relay("nas.local".into(), move || {
+            let (to_relay, sent) = mpsc::channel();
+            let (tell, from_relay) = mpsc::channel();
+            let _ = ends.send((sent, tell));
             Link {
                 to_relay,
                 from_relay,
-            },
-        );
-        (sent, tell)
+            }
+        })
+        .unwrap();
+        dialled
+    }
+
+    /// The far ends of a window's link to the relay, which it dials at once as the only window.
+    fn link(app: &mut App) -> Ends {
+        dialler(app)
+            .try_recv()
+            .expect("the only window holds the keeper's lease")
     }
 
     /// Connects the app to a relay, and passes what each says to the other until neither has
@@ -2254,6 +2341,7 @@ mod tests {
             store::tick(
                 &space,
                 "main",
+                &space.with_file_name("config"),
                 key(),
                 std::slice::from_ref(&oil),
                 done,
@@ -2268,7 +2356,7 @@ mod tests {
         assert_eq!(heads(&app), ["Boiler"]);
         assert_eq!(app.device.view().status, "1 changed elsewhere");
         settle(&mut app, &mut relay, &sent, &tell);
-        let commands = fs::read_to_string(space.join(".commands")).unwrap();
+        let commands = fs::read_to_string(space.join(".writer.1")).unwrap();
         let log = space.join(format!("{}.jsonl", commands.trim()));
         let kept = fs::read_to_string(&log).unwrap();
         assert_eq!(
@@ -2295,10 +2383,138 @@ mod tests {
     }
 
     #[test]
+    fn two_windows_on_one_directory_list_each_others_notes_within_a_look() {
+        let (mut first, space) = app();
+        let mut second = open_with(&space, key()).unwrap();
+        assert_ne!(first.device.device(), second.device.device());
+
+        write(&mut first, "Boiler #house");
+        assert!(second.look().unwrap());
+        assert_eq!(heads(&second), ["Boiler #house"]);
+        assert_eq!(
+            second.status_of(&second.device.view()),
+            None,
+            "a first fill is no news"
+        );
+
+        // Each in its own place, and each writing a log of its own.
+        type_in(&mut first, "#house");
+        press(&mut first, KeyCode::Tab, false);
+        assert_eq!(path(&first), ["#house"]);
+        write(&mut second, "Order oil #house");
+        assert!(path(&second).is_empty());
+        assert!(first.look().unwrap());
+        assert_eq!(heads(&first), ["Order oil #house", "Boiler #house"]);
+        assert!(
+            !first.look().unwrap(),
+            "and nothing more until something is added"
+        );
+        let logs = |slot: &str| {
+            let id = fs::read_to_string(space.join(slot)).unwrap();
+            fs::read_to_string(space.join(format!("{}.jsonl", id.trim())))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        assert_eq!((logs(".writer"), logs(".writer.1")), (1, 1));
+
+        // Opened again, a window has both.
+        drop((first, second));
+        assert_eq!(heads(&open_with(&space, key()).unwrap()).len(), 2);
+        done(&space);
+    }
+
+    #[test]
+    fn only_the_keeper_holds_the_socket_and_keeps_the_relays_lines_and_the_other_reads_them() {
+        let (mut first, space) = app();
+        let mut second = open_with(&space, key()).unwrap();
+        let (sent, tell) = link(&mut first);
+        let dialled = dialler(&mut second);
+        assert!(
+            dialled.try_recv().is_err(),
+            "the second window dials nothing"
+        );
+
+        let mut relay = Replica::new();
+        relay.append("dev-b", written_elsewhere("Pressure dropped", key()));
+        connect(&mut first, &mut relay, &sent, &tell);
+        assert_eq!(heads(&first), ["Pressure dropped"]);
+        assert!(second.look().unwrap());
+        assert_eq!(heads(&second), ["Pressure dropped"]);
+        assert_eq!(
+            second.status_of(&second.device.view()),
+            None,
+            "nor is it said to sync"
+        );
+
+        // What the second window writes reaches the relay through the first.
+        write(&mut second, "Boiler #house");
+        assert!(first.look().unwrap());
+        settle(&mut first, &mut relay, &sent, &tell);
+        assert_eq!(relay.lines(second.device.device()).len(), 1);
+
+        // The keeper goes, and the other takes the lease at its next look and dials.
+        relay.append("dev-b", written_elsewhere("Gate fixed", key()));
+        drop(first);
+        assert!(dialled.try_recv().is_err());
+        second.keep_relay().unwrap();
+        let (sent, tell) = dialled
+            .try_recv()
+            .expect("the second window dials once it keeps");
+        connect(&mut second, &mut relay, &sent, &tell);
+        let mut seen = heads(&second);
+        seen.sort();
+        assert_eq!(seen, ["Boiler #house", "Gate fixed", "Pressure dropped"]);
+        let kept = fs::read_to_string(space.join("dev-b.jsonl")).unwrap();
+        assert_eq!(
+            kept.lines().collect::<Vec<_>>(),
+            relay.lines("dev-b"),
+            "no line twice"
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn a_keeper_lets_the_relay_go_while_its_editor_has_the_terminal() {
+        let (mut first, space) = app();
+        let mut second = open_with(&space, key()).unwrap();
+        let _ends = link(&mut first);
+        let dialled = dialler(&mut second);
+        assert!(dialled.try_recv().is_err());
+
+        // What hands the terminal to the editor lets the lease go first.
+        first.let_relay_go();
+        assert!(first.sync.is_none() && first.keeper.is_none());
+        second.keep_relay().unwrap();
+        assert!(
+            dialled.try_recv().is_ok(),
+            "the other window keeps the relay meanwhile"
+        );
+        first.keep_relay().unwrap();
+        assert!(first.keeper.is_none(), "and keeps it until it goes");
+        done(&space);
+    }
+
+    #[test]
+    fn what_an_importer_writes_beside_an_open_window_is_listed_within_a_look() {
+        let (mut app, space) = app();
+        let _in_use = store::Lock::share(&space, "main").unwrap();
+        let slot = Slot::take(&space, &space.with_file_name("config")).unwrap();
+        let mut importing = Store::open(&space, slot.id().to_owned(), Seal::new(key())).unwrap();
+        let mut record = Record::new("imported", "Prune the roses #garden");
+        record.created = Some(Moment::utc(10));
+        record.updated = record.created;
+        importing.put(record).unwrap();
+        assert!(app.look().unwrap());
+        assert_eq!(heads(&app), ["Prune the roses #garden"]);
+        done(&space);
+    }
+
+    #[test]
     fn a_device_given_lines_its_passphrase_does_not_open_writes_nothing() {
         let (mut app, space) = {
             let space = temp_dir().join("main");
-            store::set_writer(&space, WRITER).unwrap();
+            set_writer(&space, WRITER).unwrap();
             (open_with(&space, Key::from_bytes([9; 32])).unwrap(), space)
         };
         let (sent, tell) = link(&mut app);
@@ -2935,10 +3151,10 @@ mod tests {
     }
 
     #[test]
-    fn with_no_relay_the_app_looks_about_once_a_second_however_fast_the_keys_come() {
+    fn with_no_relay_the_app_looks_four_times_a_second_however_fast_the_keys_come() {
         let (mut app, space) = app();
-        app.looked = Instant::now() - Duration::from_millis(600);
-        assert!(app.wait() <= Duration::from_millis(400), "{:?}", app.wait());
+        app.looked = Instant::now() - Duration::from_millis(150);
+        assert!(app.wait() <= Duration::from_millis(100), "{:?}", app.wait());
         app.looked = Instant::now() - LOOK;
         assert_eq!(app.wait(), Duration::ZERO, "it is time to look");
         let _link = link(&mut app);

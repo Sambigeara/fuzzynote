@@ -1,8 +1,10 @@
 //! Importers: a file of lines, either fzn's own export or a fuzzynote 2022 export, and a
 //! directory of markdown pages.
 //!
-//! They write the writer's log directly, as sealed lines, and only while the app is closed: the
-//! lock on the space's directory, which the importer holds, guarantees that.
+//! They write a log directly, as sealed lines, in a slot of the importer's own, so that an import
+//! runs beside any window open on the space, which lists what it brings in within a look. They
+//! take ids and times as they are given, which is why they are not the way to change a note
+//! from outside: `fzn apply` is.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
