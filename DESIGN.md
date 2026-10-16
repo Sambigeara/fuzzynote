@@ -117,6 +117,12 @@ out.
   a face kept. An action that
   does not apply where the cursor is does nothing.
 - In: versions of notes written elsewhere, by another device or another writer on this one.
+- In: notes given from outside, each as a line of `fzn query` has it, changed or not: written by
+  the app's own rules, the text as the editor saves it, brackets followed when the text changes
+  and a task's box and flag kept together, all or none. A line that changes nothing writes
+  nothing. A note edited since it was read is refused; one moved since keeps its new place and
+  takes the text given, since an edit and a move merge apart; a move asked for is refused until
+  use asks for one.
 - In, from the host: the time, an id for a new note, and randomness for sealing.
 - Out: *effects*, which are what the face has to do about an action: keep this version, put
   this note in front of the person to edit, copy this, open this URL. The session has already

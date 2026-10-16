@@ -31,7 +31,7 @@ use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
 use crate::seal::{Key, Seal, is_sealed};
-use crate::session::{Action, Effect, Host, KeptStep, Session, View};
+use crate::session::{Action, Effect, Given, Host, KeptStep, Session, View};
 use crate::time::Moment;
 
 /// The relay, as a device numbers its one peer.
@@ -269,6 +269,17 @@ impl Device {
             })
             .collect();
         Ok((self.todo(effects), ticked))
+    }
+
+    /// Writes notes given from outside, as [`Session::apply`] says, and gives back each note as
+    /// it now stands, in the order given, with what the face is to do. Nothing is written until
+    /// the key is known to be the space's.
+    pub fn apply(&mut self, given: Vec<Given>) -> Result<(Todo, Vec<Record>), String> {
+        if !self.key_verified() {
+            return Err(WRONG_KEY.to_owned());
+        }
+        let (notes, effects) = self.session.apply(given)?;
+        Ok((self.todo(effects), notes))
     }
 
     /// What the face is to do about what the session asks for: each version it wants kept
@@ -929,6 +940,54 @@ mod tests {
         assert!(
             net.agreed().is_empty(),
             "ticked, and so archived, everywhere"
+        );
+    }
+
+    #[test]
+    fn notes_applied_beside_the_app_are_sealed_into_a_log_of_their_own_and_given_back() {
+        let net = pair(&["Boiler #house"]);
+        let mut beside = device("dev-c");
+        beside.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        let given = vec![
+            Given {
+                id: Some("dev-a-0001".into()),
+                text: Some("Boiler service #house".into()),
+                ..Given::default()
+            },
+            Given {
+                text: Some("Bleed the radiators #house".into()),
+                ..Given::default()
+            },
+        ];
+        let (todo, notes) = beside.apply(given).unwrap();
+        assert_eq!(
+            notes.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["Boiler service #house", "Bleed the radiators #house"]
+        );
+        let kept: Vec<(&str, Record)> = todo
+            .keep
+            .iter()
+            .flat_map(|kept| {
+                kept.lines
+                    .iter()
+                    .map(|line| (kept.log.as_str(), opened(line)))
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [("dev-c", notes[0].clone()), ("dev-c", notes[1].clone())]
+        );
+
+        let mut shut = Device::new(
+            host("dev-d", 0),
+            "dev-d",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        shut.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        assert_eq!(
+            shut.apply(vec![Given::default()]),
+            Err(WRONG_KEY.to_owned())
         );
     }
 

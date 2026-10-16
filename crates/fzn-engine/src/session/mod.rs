@@ -94,11 +94,13 @@ use crate::score::Weights;
 use crate::text;
 use crate::time::{Day, Moment};
 
+mod apply;
 mod field;
 mod list;
 mod path;
 mod undo;
 
+pub use apply::Given;
 use field::Writing;
 use path::Step;
 use undo::Change;

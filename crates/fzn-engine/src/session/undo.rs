@@ -74,7 +74,7 @@ impl Session {
     /// says, unchanged, keeps the stamp and the writer it was written with. A place that is the
     /// one held keeps the later of its two clocks: a move to where the note already is stamps
     /// its own, to be put before what was placed there since.
-    fn write(&mut self, mut record: Record) -> Record {
+    pub(super) fn write(&mut self, mut record: Record) -> Record {
         let now = self.host.now();
         let held = self.notes.version(&record.id);
         (record.stamp, record.device) = match held {
