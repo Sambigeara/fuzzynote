@@ -934,9 +934,12 @@ function paintFoot() {
     clearTimeout(fading);
     if (status) fading = setTimeout(() => node.classList.add('faded'), 5000);
   }
+  // A key that opens nothing says so with a way to type it again. A key nothing has yet proved,
+  // in a space with no notes, has the word to type it again; once a note has been opened with it
+  // there is nothing to retype, and the word goes.
   const shut = !fzn.key_verified();
   $('trouble').hidden = !shut;
-  $('passphrase').hidden = shut;
+  $('passphrase').hidden = shut || view.notes > 0;
   const sync = $('sync');
   const said = synced === 'not syncing' ? synced : (fzn.clock() ?? '');
   if (sync.textContent !== said) sync.textContent = said;

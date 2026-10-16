@@ -614,11 +614,13 @@ text: an action goes in as JSON and what to do and what to show come back as JSO
 action being exactly what to send back to ask for it. A tab is one more device. It has a writer
 id and a log of its own for each space, keeps every log of the space in IndexedDB between
 visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
-from, so there is one address to open and nothing to set up. The relay carries the page, built
-into fzn from the `web` directory; `--web web` points it at the directory instead while the page
-is worked on. Every answer the relay gives for the page names its build, in `Fzn-Build`, and
-`index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it runs and can
-ask with one `HEAD` which the relay now serves.
+from, so there is one address to open and nothing to set up. The word `passphrase` in the foot
+types it again, and is there only while nothing has proved the key: in a space with no notes yet. A
+key that opens nothing says so, with its own way to type it again. The relay carries the page, built
+into fzn from the `web` directory; `--web web` points it at the directory instead while the page is
+worked on. Every answer the relay gives for the page names its build, in `Fzn-Build`, and
+`index.html` carries it in `<meta name="fzn-build">`, so a tab knows which page it runs and can ask
+with one `HEAD` which the relay now serves.
 
 *The page.* One column, a little left of centre, with a third of the room beside it on its left,
 text left-aligned, and the line a little above a third of the way down, where it stays: it does
