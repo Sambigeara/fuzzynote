@@ -431,6 +431,7 @@ impl Session {
             Row {
                 id: id.clone(),
                 head: String::new(),
+                shown: None,
                 archived: false,
                 has_body: false,
                 // Written here, it will be linked to the note being looked around, or carry the
@@ -600,6 +601,7 @@ impl Session {
     fn blank_row(&mut self, id: &str) {
         if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
             row.head = String::new();
+            row.shown = None;
             row.has_body = false;
             row.links = Vec::new();
             row.updated = None;
@@ -611,14 +613,16 @@ impl Session {
         let Some(record) = self.notes.get(id) else {
             return;
         };
-        let (head, body, links) = (
+        let body = text::has_body(&record.text);
+        let (head, shown, links) = (
             record.head().to_owned(),
-            text::has_body(&record.text),
+            self.shown(record.head(), body),
             self.link_heads(record),
         );
         let updated = record.updated;
         if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
             row.head = head;
+            row.shown = shown;
             row.has_body = body;
             row.links = links;
             row.updated = updated;

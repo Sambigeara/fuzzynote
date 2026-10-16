@@ -23,6 +23,10 @@ pub enum Label {
     /// The words of the note's head, in alphabetical order with a space between: what the note
     /// is called, in whatever order and case that is typed.
     Name(String),
+    /// The same, for a head that ends with labels, of its words without them: what its row
+    /// reads in a place that says them. A name of the second tier, asked for only when no head
+    /// is what was typed.
+    Called(String),
     /// A day the note was created on or mentions.
     Date(Day),
     /// The note is an open task: its head starts with `[ ]`, and it is not archived.

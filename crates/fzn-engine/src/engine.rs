@@ -175,7 +175,7 @@ impl Engine {
         if query.letters {
             return self.letters(query, &held, opts);
         }
-        let named = self.headed(&query.name());
+        let (named, _) = self.named_among(&query.name(), &held, opts.include_archived);
         self.typed(&query.words, &named, opts, &[], &held)
     }
 
@@ -299,8 +299,20 @@ impl Engine {
 
     /// The notes whose head is what was typed, sorted: every word of the head was typed and no
     /// other word was. The last word typed stands for the one head word it starts, unless
-    /// whitespace follows it.
+    /// whitespace follows it. Only when no head is, the notes whose head is what was typed with
+    /// the labels that end it left off, so that a name never stops naming the note it named for
+    /// a note that only ends the same way.
     fn headed(&self, text: &str) -> Vec<DocId> {
+        let full = self.headed_by(text, Label::Name);
+        if full.is_empty() {
+            self.headed_by(text, Label::Called)
+        } else {
+            full
+        }
+    }
+
+    /// The notes one tier of names gives for what was typed, sorted.
+    fn headed_by(&self, text: &str, tier: fn(String) -> Label) -> Vec<DocId> {
         let mut words = text::tokens(text);
         let last = if text.ends_with(char::is_whitespace) {
             None
@@ -309,7 +321,7 @@ impl Engine {
         };
         words.sort_unstable();
         words.dedup();
-        let called = |words: &[String]| self.index.docs_with(&Label::Name(words.join(" ")));
+        let called = |words: &[String]| self.index.docs_with(&tier(words.join(" ")));
         let mut found: Vec<DocId> = match &last {
             None => called(&words).to_vec(),
             // One name for each word the unfinished one may be.
@@ -499,20 +511,44 @@ impl Engine {
         })
     }
 
-    /// The one note the line names, by the rule that lists a name first in `find`, if exactly
-    /// one is and it holds what the line holds. The app goes into it from the line. Letters name
-    /// nothing.
-    pub(crate) fn the_note_named(&self, query: &Query, include_archived: bool) -> Option<&Note> {
+    /// The notes the line names, by the rule that lists a name first in `find`, that hold what
+    /// the line holds: those whose head is what was typed, or only when there are none, those
+    /// whose head is with the labels that end it left off, which says `true` beside them. The
+    /// app goes into the one there is. Letters name nothing.
+    pub(crate) fn notes_named(&self, query: &Query, include_archived: bool) -> (Vec<&Note>, bool) {
         if query.letters {
-            return None;
+            return (Vec::new(), false);
         }
         let held = self.held(query);
-        let mut named = self.headed(&query.name()).into_iter().filter_map(|d| {
-            let note = &self.docs[d as usize].as_ref()?.note;
-            ((include_archived || !note.archived) && held.holds(d, note)).then_some(note)
-        });
-        let one = named.next()?;
-        named.next().is_none().then_some(one)
+        let (named, called) = self.named_among(&query.name(), &held, include_archived);
+        let notes = named
+            .into_iter()
+            .filter_map(|d| Some(&self.docs[d as usize].as_ref()?.note))
+            .collect();
+        (notes, called)
+    }
+
+    /// The notes a name names among those that can be listed, sorted, and whether they are of the
+    /// second tier. The tier is chosen among what is left once archived notes and notes that do
+    /// not hold the line are left out, so that the list and going in agree: a head that would
+    /// name a note no one can see does not keep the name from the notes that can be.
+    fn named_among(&self, name: &str, held: &Held, include_archived: bool) -> (Vec<DocId>, bool) {
+        let tier = |tier: fn(String) -> Label| -> Vec<DocId> {
+            self.headed_by(name, tier)
+                .into_iter()
+                .filter(|&d| {
+                    self.docs[d as usize].as_ref().is_some_and(|doc| {
+                        (include_archived || !doc.note.archived) && held.holds(d, &doc.note)
+                    })
+                })
+                .collect()
+        };
+        let full = tier(Label::Name);
+        if full.is_empty() {
+            (tier(Label::Called), true)
+        } else {
+            (full, false)
+        }
     }
 
     /// The notes a text names in `[[brackets]]`, by their heads. Brackets are a way of typing a
@@ -660,6 +696,13 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     head_terms.dedup();
     if !head_terms.is_empty() {
         labels.push(Label::Name(head_terms.join(" ")));
+    }
+    // A head is called without the labels that end it too, since a row in their place reads so.
+    let mut called = text::tokens(text::name_of(note.head()));
+    called.sort_unstable();
+    called.dedup();
+    if !called.is_empty() && called != head_terms {
+        labels.push(Label::Called(called.join(" ")));
     }
     labels.extend(head_terms.into_iter().map(Label::HeadTerm));
     labels.extend(facts.dates.iter().copied().map(Label::Date));
@@ -1130,13 +1173,13 @@ mod tests {
             "the oil tank does not hold #garden, so it is not there to name"
         );
         let query = Query::read("oil tank #house", today);
-        assert_eq!(
-            e.the_note_named(&query, true).unwrap().id.as_str(),
-            "tank",
-            "a head says its tag as a word"
-        );
+        let named = |query: &Query| -> Vec<&str> {
+            let (notes, _) = e.notes_named(query, true);
+            notes.into_iter().map(|n| n.id.as_str()).collect()
+        };
+        assert_eq!(named(&query), ["tank"], "a head says its tag as a word");
         let query = Query::read("oil tank #garden", today);
-        assert!(e.the_note_named(&query, true).is_none());
+        assert!(named(&query).is_empty());
     }
 
     #[test]

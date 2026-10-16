@@ -684,12 +684,12 @@ fn score_of(row: &Row, shown: bool) -> String {
     }
 }
 
-/// A row of the list as it is when the cursor is not on it: the head, then as much of the tail
+/// A row of the list as it is when the cursor is not on it: the head as the row shows it, then as much of the tail
 /// as there is room for. The head is cut only when it alone does not fit.
 fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     let score = score_of(row, scores);
     let room = width.saturating_sub(2 + score.width());
-    let head = fit(&row.head, room);
+    let head = fit(row.shown.as_deref().unwrap_or(&row.head), room);
     let rest = room - head.width();
     let tail = tail(row);
     let mut spans = vec![Span::raw(" "), Span::raw(score).dim(), Span::raw(head)];

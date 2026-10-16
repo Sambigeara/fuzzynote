@@ -915,6 +915,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     assert_eq!(view["cursor"], 0);
     assert_eq!(view["rows"][0]["head"], "Boiler");
     assert_eq!(view["rows"][0]["has_body"], true);
+    assert_eq!(view["rows"][0]["shown"], serde_json::Value::Null);
     assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00.000Z");
     assert_eq!(view["notes"], 1);
     assert_eq!(view["here"], serde_json::Value::Null);

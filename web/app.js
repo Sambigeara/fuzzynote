@@ -616,7 +616,8 @@ function rowKey(row, selected, apart) {
     // body open in the sheet the row reads its head as it is being written. Nor is its date in
     // the key, which a new note's first letter gives it: the date is set in place, since filling
     // the row would take the box out under a composition the first letter began.
-    field && !field.whole ? null : field ? headOf(field.text) : row.head, !!render,
+    field && !field.whole ? null : field ? headOf(field.text) : row.shown ?? row.head,
+    !!render,
     row.links, row.reasons, row.archived, row.has_body, apart, selected,
     view.scores_shown ? row.score : null,
   ]);
@@ -639,7 +640,9 @@ function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  main.append(field && !field.whole ? box : readHead(field ? headOf(field.text) : row.head));
+  // Off the cursor a row reads as the engine shows it, without the place's labels at its end.
+  const head = field ? headOf(field.text) : row.shown ?? row.head;
+  main.append(field && !field.whole ? box : readHead(head));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));

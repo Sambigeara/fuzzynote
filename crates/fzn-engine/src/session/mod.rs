@@ -35,7 +35,11 @@
 //! label, as it would have been typed, so that it reads as one written with the label on the line
 //! always has. A new row opens with the label already in its head and the caret before it, so
 //! that what the writer sees is what is written, and the note is in its place on every device
-//! from its first letter. Only a note written in the place inherits it.
+//! from its first letter. Only a note written in the place inherits it. Since the place says its
+//! labels, a row there that is not under the cursor shows its head without them where they end
+//! it, when the note is a head only, and the path names a note as its row read where it was gone
+//! into from. A head is named without the labels that end it too, so the words a row reads go
+//! into it.
 //!
 //! Labels gone into one after another are one place, so that going into today from inside a
 //! tag is today's notes in that tag: what is in it is the notes carrying every one of them, and
@@ -241,6 +245,11 @@ pub struct Hint {
 pub struct Row {
     pub id: String,
     pub head: String,
+    /// The head as the row shows it when the cursor is not on it, where that differs from the
+    /// head: in a place, with the place's labels taken off its end, when the note is a head only
+    /// and they end it. None when it reads as it is. The row under the cursor shows its text as
+    /// it is, whatever this says.
+    pub shown: Option<String>,
     pub archived: bool,
     /// Whether there is more to read than the head.
     pub has_body: bool,

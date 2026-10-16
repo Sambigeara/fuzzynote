@@ -154,6 +154,54 @@ pub fn has_body(text: &str) -> bool {
         .any(|line| !line.trim().is_empty() && !only_tags(line))
 }
 
+/// A label written as a word of its own: a tag, a person, or a day written `2026-10-16`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Labelled {
+    Tag(String),
+    Mention(String),
+    Day(Day),
+}
+
+/// The label a word is, if it is one and nothing else: `#house` and `#House` are the tag, while
+/// `#house,` and `#household?` are not `#house`, since something follows it.
+pub(crate) fn label_word(word: &str) -> Option<Labelled> {
+    let chars: Vec<char> = word.chars().collect();
+    let whole = |(label, end): (String, usize)| (end == chars.len()).then_some(label);
+    match chars.first()? {
+        '#' => take_tag(&chars, 1).and_then(whole).map(Labelled::Tag),
+        '@' => take_mention(&chars, 1)
+            .and_then(whole)
+            .map(Labelled::Mention),
+        _ => take_iso_date(&chars, 0)
+            .filter(|&(_, end)| end == chars.len())
+            .map(|(day, _)| Labelled::Day(day)),
+    }
+}
+
+/// A head with the words that end it taken off, one at a time from the end, for as long as
+/// `ends` says the last is one to take: what is left, with no space at its end. A head every
+/// word of which is taken leaves nothing.
+pub(crate) fn without_end(head: &str, mut ends: impl FnMut(&str) -> bool) -> &str {
+    let mut rest = head.trim_end();
+    while !rest.is_empty() {
+        let at = rest
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map_or(0, |(at, c)| at + c.len_utf8());
+        if !ends(&rest[at..]) {
+            break;
+        }
+        rest = rest[..at].trim_end();
+    }
+    rest
+}
+
+/// A head with the labels that end it taken off: what it is called, the labels being where it
+/// is kept. `Order oil #house 2026-10-16` is called `Order oil`.
+pub(crate) fn name_of(head: &str) -> &str {
+    without_end(head, |word| label_word(word).is_some())
+}
+
 /// The box an open task starts with.
 pub const OPEN: &str = "[ ]";
 /// The box a done task starts with.
@@ -698,5 +746,16 @@ mod tests {
                 time::day_from_civil(2026, 9, 5)
             ]
         );
+    }
+
+    #[test]
+    fn a_heads_name_is_what_is_left_with_the_labels_that_end_it_taken_off() {
+        assert_eq!(name_of("Order oil #house 2026-10-16 @joe "), "Order oil");
+        assert_eq!(name_of("Order oil #house, soon"), "Order oil #house, soon");
+        assert_eq!(name_of("Order oil #household?"), "Order oil #household?");
+        assert_eq!(name_of("#house #garden"), "");
+        assert_eq!(name_of("Boiler\u{a0}#house"), "Boiler");
+        assert_eq!(label_word("#House"), Some(Labelled::Tag("house".into())));
+        assert_eq!(label_word("2026-10-16x"), None);
     }
 }

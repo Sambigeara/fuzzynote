@@ -727,9 +727,9 @@ fn a_note_and_the_labels_gone_into_after_it_are_one_place() {
     assert_eq!(held.text, "Check the valve #house");
     assert_eq!(held.links, ["boiler"]);
 
-    // A note gone into from there starts a new place.
+    // A note gone into from there starts a new place. The path names it as its row read there.
     go_to(&mut s, "Pressure dropped #house");
-    assert_eq!(path(&s), ["Boiler", "#house", "Pressure dropped #house"]);
+    assert_eq!(path(&s), ["Boiler", "#house", "Pressure dropped"]);
     s.act(Action::Write);
     assert_eq!(field(&s), Some((String::new(), true, false)));
     assert_eq!(heads(&s)[1..], ["Boiler"]);

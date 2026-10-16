@@ -483,7 +483,18 @@ holds as it does at the top: the note the line names is listed first, saying `it
 is and whatever the limit, so Tab goes where the list shows, and typing a name is the way from any
 place to any note. A line that names neither, or names where you already are, leaves Tab doing
 nothing, and types nothing: a tab is never written into the line or a head. The path shows a label
-as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`.
+as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`, and a note as its row read where it was
+gone into from: `#house › Boiler`, not `#house › Boiler #house`, and `Boiler`, not `# Boiler`.
+
+A row that is not under the cursor shows its head without the place's labels where they end it,
+in any order and any case, when the note is a head only, since the place already says them:
+inside `#house`, `Order oil #house` reads `Order oil`. The box at the start stays, since it says
+what the row is; a head of nothing but its labels, or its box and its labels, shows as it is; a
+note with a body keeps its head whole, since that head is its name; and the row under the cursor
+shows its text as it is. Labels before the last note on the path hide nothing, and nor does a
+label only typed on the line. The engine says the head each row shows, so neither face carries
+the rule. A head is named without the labels that end it too, so typing what a row reads is
+typing its name, unless another note's whole head is what was typed.
 
 The place is the last note on the path, if there is one, together with every label gone into
 after it; labels before the note are only how you got there, so `#house › Boiler › today` is the
@@ -1546,6 +1557,33 @@ repeats it only where the reason needs it.
   editor that cannot be run is said on the status row and the app stays, and `fzn` with no terminal
   to draw on says so in one sentence. The editor is still a command split on spaces, so `code
   --wait` works and a path with a space in it does not; the config's template says so.
+- **A row hides the place's labels.** Decided 2026-10-16, at Sam's direction, revising "A name is
+  a fact too" by one clause. Inside `#house` every row ended `#house`, which the path already
+  says: a row not under the cursor now shows its head without the place's labels where they end
+  it, when the note is a head only (see "Zoom and places"). What counts is what a note written
+  there would inherit, the labels gone into since the last note on the path, so what is hidden
+  is exactly what the place would have added. The labels before that note show, since a note in
+  `Boiler` need not carry them, and a label only typed on the line hides nothing, since rows
+  would lose and regain it as `#ho` became `#house`. The box stays: it is at the start, not the
+  end, it tells `[ ]` from `[x]` when archived notes are shown, and it is what a thumb ticks. A
+  token is taken off only when it is exactly the label, `#House` for `#house` but not `#house,`,
+  and a head that would be left with nothing, or only its box, shows whole, since a row of
+  nothing says less than a row of its label. A note with a body keeps its head whole, since that
+  head is the note's name. The engine gives each row the head it shows, as a string, so that
+  neither face carries the rule and the page does not slice characters by its own units. The
+  path names a note by the same rule, against the labels of the place it was gone into from,
+  and without a heading mark at its start, as a rendered heading reads. Mail clients hide the
+  label you are reading inside and show it in search results; task apps hide a project inside
+  that project. What it revises: names now come in two tiers. A head is named by every word of
+  it, as before, and only when no head is what was typed is a head named by its words without
+  the labels that end it: `order oil` names `Order oil #house` when no note is headed
+  `Order oil`, and `order oil house` still names it. A second tier, and not a second name of the
+  same rank, because a name must never stop naming the note it named: beside a hub `Standup`,
+  the dated `Standup 2026-10-12` and `Standup 2026-10-13` would otherwise make `standup` name
+  three notes and go into none. Inside a place, a note named only in the second tier is gone
+  into only if it carries the place's labels, since those are the rows that read so: inside
+  `#house`, `order oil` goes into `Order oil #house` though `Order oil #garden` is called the
+  same. Without the second tier the row would read one thing and answer to another.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

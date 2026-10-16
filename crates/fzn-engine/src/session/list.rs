@@ -42,11 +42,13 @@ impl Session {
 
     /// A note as the empty line lists it, with nothing to say why.
     fn listed(&self, r: &Record) -> Row {
+        let has_body = text::has_body(&r.text);
         Row {
             id: r.id.clone(),
             head: r.head().to_owned(),
+            shown: self.shown(r.head(), has_body),
             archived: r.archived,
-            has_body: text::has_body(&r.text),
+            has_body,
             linked: false,
             links: self.link_heads(r),
             reasons: Vec::new(),
@@ -220,11 +222,13 @@ impl Session {
 
     fn row(&self, hit: &Hit<'_>) -> Row {
         let record = self.notes.get(hit.note.id.as_str());
+        let has_body = text::has_body(&hit.note.text);
         Row {
             id: hit.note.id.clone(),
             head: hit.note.head().to_owned(),
+            shown: self.shown(hit.note.head(), has_body),
             archived: hit.note.archived,
-            has_body: text::has_body(&hit.note.text),
+            has_body,
             linked: hit.linked,
             links: record.map(|r| self.link_heads(r)).unwrap_or_default(),
             reasons: hit

@@ -11,6 +11,7 @@ mod forms;
 mod line;
 mod order;
 mod places;
+mod shown;
 mod tasks;
 
 /// Midday on Tuesday 2026-10-13, in UTC.

@@ -76,6 +76,59 @@ impl Step {
     }
 }
 
+/// Whether a word of a head, read as a label, is this one of the place's: `#house` or `#House`
+/// for the tag, `@joe` for the person, `2026-10-16` for the day. The box is never at the end of a
+/// head.
+fn is_label(word: &text::Labelled, label: &Label) -> bool {
+    match (word, label) {
+        (text::Labelled::Tag(tag), Label::Tag(of)) => tag == of,
+        (text::Labelled::Mention(person), Label::Mention(of)) => person == of,
+        (text::Labelled::Day(day), Label::Day(of)) => day == of,
+        _ => false,
+    }
+}
+
+/// A head as a row that is not under the cursor shows it in a place whose labels are these:
+/// with them taken off its end, in any order and any case, when the note is a head only and
+/// they end it. The place already says them. A note with a body keeps its head whole, since that
+/// head is its name; the box at the start stays, since it says what the row is; and a head of
+/// nothing but the labels, or the box and the labels, shows as it is, since a row of nothing
+/// says less than a row of its label, as does a heading mark with nothing after it. None when
+/// nothing is taken off.
+pub(super) fn head_shown<'a>(
+    head: &str,
+    has_body: bool,
+    labels: impl Iterator<Item = &'a Label> + Clone,
+) -> Option<String> {
+    if has_body {
+        return None;
+    }
+    let rest = text::without_end(head, |word| {
+        text::label_word(word).is_some_and(|word| labels.clone().any(|l| is_label(&word, l)))
+    });
+    if rest.len() == head.trim_end().len() {
+        return None;
+    }
+    let bare = match text::task(rest) {
+        Some(_) => rest[text::OPEN.len()..].trim(),
+        None => rest,
+    };
+    // A heading mark with nothing after it is nothing too, since it reads as an empty heading.
+    let bare = unmarked(bare);
+    let marks_only = bare.chars().all(|c| c == '#');
+    (!marks_only).then(|| rest.to_owned())
+}
+
+/// A head with the heading mark it starts with taken off, `# Boiler` read as `Boiler`, as a
+/// rendered heading reads.
+fn unmarked(head: &str) -> &str {
+    let marks = head.len() - head.trim_start_matches('#').len();
+    match head[marks..].strip_prefix(' ') {
+        Some(rest) if (1..=6).contains(&marks) && !rest.trim().is_empty() => rest.trim_start(),
+        _ => head,
+    }
+}
+
 /// A text with a label written into its head, as it would have been typed there: the box at its
 /// start, and anything else at its end.
 fn with_label(text: &str, label: &Label, written: &str) -> String {
@@ -113,9 +166,10 @@ impl Session {
                 .get(&id)
                 .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
             || self.engine.searched(&id, &Query::read(&self.line, today));
+        let head = self.step_name(&id).unwrap_or_else(|| row.head.clone());
         let step = Step::Note {
             id,
-            head: row.head.clone(),
+            head,
             search: None,
         };
         if let Some(at) = self.path.iter().position(|s| s.is(&step)) {
@@ -177,15 +231,43 @@ impl Session {
                 );
                 return places;
             }
-        } else if let Some(note) = self.engine.the_note_named(&query, self.show_archived) {
-            places.push(Step::Note {
-                id: note.id.clone(),
-                head: note.head().to_owned(),
-                search: None,
-            });
+        } else {
+            let (mut named, called) = self.engine.notes_named(&query, self.show_archived);
+            // A note named only without the labels that end it is named here if its row reads
+            // so here: if it carries the place's labels.
+            if called {
+                named.retain(|note| {
+                    let day = note.written().unwrap_or(Day::MIN);
+                    self.labels_here()
+                        .all(|(label, _)| label.carried_by(&note.text, day))
+                });
+            }
+            if let [note] = named[..] {
+                places.push(Step::Note {
+                    id: note.id.clone(),
+                    head: self.step_name(&note.id).unwrap_or_default(),
+                    search: None,
+                });
+            }
         }
         places.retain(|place| !self.path.last().is_some_and(|s| s.is(place)));
         places
+    }
+
+    /// A head as a row that is not under the cursor shows it here, if that differs from the
+    /// head: with the place's labels taken off its end, by [`head_shown`].
+    pub(super) fn shown(&self, head: &str, has_body: bool) -> Option<String> {
+        head_shown(head, has_body, self.labels_here().map(|(label, _)| label))
+    }
+
+    /// What the path calls a note gone into from here: its head as its row reads where it was
+    /// gone into from, its heading mark and the place's labels at its end taken off.
+    pub(super) fn step_name(&self, id: &str) -> Option<String> {
+        let record = self.notes.get(id)?;
+        let head = unmarked(record.head());
+        let labels = self.labels_here().map(|(label, _)| label);
+        let has_body = text::has_body(&record.text);
+        Some(head_shown(head, has_body, labels).unwrap_or_else(|| head.to_owned()))
     }
 
     /// The note being looked around: the last note on the path, if there is one. It is the
@@ -197,7 +279,7 @@ impl Session {
     /// The labels being looked around, as they were typed, outermost first: those gone into one
     /// after another since the last note on the path, or since its start. They are one place
     /// with that note. Labels before it are only how it was reached.
-    pub(super) fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> {
+    pub(super) fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> + Clone {
         let from = self
             .path
             .iter()
