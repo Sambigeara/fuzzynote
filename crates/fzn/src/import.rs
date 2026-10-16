@@ -807,7 +807,7 @@ mod tests {
     use crate::store::tests::{seal, temp_dir};
 
     fn open(space: &Path) -> Store {
-        Store::open(space, "dev".into(), seal(), true).unwrap()
+        Store::open(space, "dev".into(), seal()).unwrap()
     }
 
     #[test]

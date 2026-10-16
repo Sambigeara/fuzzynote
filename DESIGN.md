@@ -226,7 +226,12 @@ Nothing is added to the engine until daily use asks for it.
   time has a space open on a machine, settled by a lock on a file in the directory, and a
   second window is told so and stops. Nothing is reread while the app runs: what arrives from
   the relay comes through the engine, which asks the face to keep it. Syncthing and the like
-  are not supported and not needed; the relay is the way between machines.
+  are not supported and not needed; the relay is the way between machines. Revised 2026-10-16
+  by "A command writes beside the app, as a writer of its own": one window at a time still has a
+  space open, and `fzn tick` and `fzn untick` write beside it, each run appending to a log of
+  the commands' own under a lock of their own, never the window's. So the app reads the
+  directory while it runs after all, about once a second, for what has been added to logs it
+  does not write, and takes that in as it takes in the relay's lines.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
   sealed CRDT updates instead of sealed snapshots. The replica and the relay do not change,
   since they never read a line; the session and `Notes` do, since the session reads and makes
@@ -326,7 +331,11 @@ tab and the relay all run the same code.
   left with what only it can do: the socket, and keeping lines for the next time. In the
   terminal that is one thread holding the websocket and passing text both ways over channels,
   and a directory of files that only this process writes. Nothing is reread, nothing is
-  locked per write, and nothing can go stale under the replica.
+  locked per write, and nothing can go stale under the replica. Revised 2026-10-16 by "A
+  command writes beside the app, as a writer of its own": the commands write the directory too,
+  each run to a log of their own, and the app reads what they add to it, each line once and as a
+  peer's line is read, so still nothing is locked per write and nothing can go stale under the
+  replica.
 - **A fork is how a mistake shows.** The one that will happen is a writer's id copied to a
   second machine along with the rest of a directory, so that two machines write different
   logs under one name. Without the digest neither would send, each believing the other had its
@@ -1438,6 +1447,53 @@ tab and the relay all run the same code.
   each note's `updated`, since when it was done is not known, and so that importing the export
   taken before it puts it back. Until every device runs this build, one from before archives a
   task without ticking it; unticking and ticking it here puts it right.
+- **A command writes beside the app, as a writer of its own.** Decided 2026-10-16, agreed with
+  Sam, revising "fzn is the only thing that writes a space's directory" and "The engine is where
+  sync and the app meet" where they say nothing is reread while the app runs. `fzn tick ID …`
+  does to each note it names, by the id `fzn export` writes, what Ctrl-V does to a task in the
+  app, by the same code: one version a note, `[ ]` to `[x]` and archived. `fzn untick ID …`
+  takes it back. As with Ctrl-V, the flag decides which way a task goes, so an archived `[ ]` is
+  unticked and never ticked. All or none: an id that names no note, or a note that is not a task
+  the command can act on, is said by its id, nothing is written, and it exits with an error. It
+  writes out each note as it now stands, the line `fzn export` writes for it. It takes ids and
+  never a query, on purpose: a query that matched one note too many would tick it unseen. It is
+  for the triage skill, which ticks feedback off while the app has the same space open and may
+  have the terminal, so it asks for nothing: it takes the key kept for the space, says so when
+  none is kept, and with a key that opens nothing there writes nothing.
+
+  It is a second writer on the machine, with an id of its own kept in the space's directory as
+  `.commands` beside the app's `.writer`, so that one run after another goes on with one log. It
+  appends only to that log, and compacts it, or starts another when a header has retired it, by
+  the rule any writer follows when it opens. It never takes the space's lock, which the app
+  holds; it locks `.commands`, so that two at once take turns. It reads every log as far as its
+  last whole line, since the app may be adding one, and connects to no relay. The app, open on
+  the space, reads each log past what it has read or written of it about once a second, and
+  takes in what another writer added as it takes in the relay's lines: the session says
+  `1 changed elsewhere`, and the replica sends them on to the relay. `fzn export` takes no lock,
+  so it shows a tick once the command has exited. The importers take the space's lock as before
+  and write the app's log. An app from before this build does not look: it shows a tick once it
+  is opened again, and a note edited there before then is written over the tick, as an edit
+  made apart on two devices is.
+
+  Why a writer of its own and not the app's log: a log has one process appending to it, and two
+  sharing one would mean a lock around every save and the app reading its own log back after
+  each, which is what "The engine owns sync" did away with. Two writers on one machine cannot
+  conflict, since a version settles by its stamp whichever log it is in. Why not through the
+  relay: it would need a relay running and reachable, and the copy on this machine would lag by
+  the relay's round trip. Why not a socket into the app: it would be a second way in, local only,
+  kept beside the relay's.
+
+  What else it changed. Since a log may be read while another process appends to it, an
+  unfinished last line is cut only by the process about to append to that log, where only it
+  could have left one, and no longer from every log when a space is opened. A log is a file,
+  not a link to one, so a file gone between listing the directory and reading it is a log a
+  compaction retired, and the directory is listed again for its successor. Neither writer
+  deletes the log the other writes now, though a header from elsewhere retires it: a copy of
+  the directory that wrote under the same id elsewhere may have left it holding lines nobody
+  else has, and its writer carries them into a log of its own, and keeps the new id, before it
+  goes, as the replica already keeps a device's own log from a peer's header. Undo in the app
+  takes back only what the app did, so it cannot take back a tick, as it cannot an edit from
+  another device; `fzn untick` is the undo.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -1515,6 +1571,13 @@ tab and the relay all run the same code.
 - A log is compacted only when its device opens, and a head is now a sealed line a keystroke; a
   tab left open for days grows its log until it is reloaded. Compacting when grown, not only
   when opened, is the fix if it is felt.
+- A fork in the commands' log. A space's directory copied to a second machine takes `.commands`
+  with it, and once both machines tick, two logs have one name. The relay finds it and the app
+  says so, as for any log not its own, but the commands hear no relay, so neither side starts a
+  new log for it as the app does for its own: what the second machine ticked stays on it until
+  a header retires the shared name, which only the other side's commands compacting would write.
+  Copying a directory is not supported, so this waits until it is seen; the app taking the
+  commands' log into its next compaction is one way to close it.
 - The clock is compared once a connection, when the relay's `now` is heard, so a clock set right
   while connected is still said to be off until the next connection. And the terminal hears the
   relay only between keys: a connection made again while the editor has the screen is heard

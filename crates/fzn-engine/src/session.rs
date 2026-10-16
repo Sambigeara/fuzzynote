@@ -1952,29 +1952,65 @@ impl Session {
         })
     }
 
-    /// Archives the note under the cursor, or brings it back. A task's box says the same in its
-    /// text, ticked or not, and is written in the same version, so that no device sees one
-    /// without the other and undo puts back both.
+    /// Archives the note under the cursor, or brings it back.
     fn archive(&mut self) {
         let Some(record) = self.selected_record().cloned() else {
             return;
         };
-        let (id, archived) = (record.id.clone(), !record.archived);
-        let task = text::task(&record.text).is_some();
-        let record = match task.then(|| text::tick(&record.text, archived)) {
-            Some(ticked) if ticked != record.text => self.revise(&id, ticked).unwrap_or(record),
-            _ => record,
-        };
-        self.commit(Record { archived, ..record });
-        self.status = match (task, archived) {
-            (true, true) => "ticked",
-            (true, false) => "unticked",
-            (false, true) => "archived",
-            (false, false) => "unarchived",
+        let id = record.id.clone();
+        let (record, ticked) = self.archiving(record);
+        self.status = match (ticked, record.archived) {
+            (Some(true), _) => "ticked",
+            (Some(false), _) => "unticked",
+            (None, true) => "archived",
+            (None, false) => "unarchived",
         }
         .into();
+        self.commit(record);
         self.refresh(false);
         self.reselect(&id);
+    }
+
+    /// A note archived, or brought back if it is archived, as the version to write, and for a
+    /// task whether it is now done. A task's box says the same in its text, ticked or not, and is
+    /// written in the same version, so that no device sees one without the other and undo puts
+    /// back both.
+    fn archiving(&self, record: Record) -> (Record, Option<bool>) {
+        let archived = !record.archived;
+        let ticked = text::task(&record.text).map(|_| archived);
+        let record = match ticked.map(|done| text::tick(&record.text, done)) {
+            Some(text) if text != record.text => self.revise(&record.id, text).unwrap_or(record),
+            _ => record,
+        };
+        (Record { archived, ..record }, ticked)
+    }
+
+    /// Ticks these tasks, or unticks them, each as archiving it under the cursor would: one
+    /// version a note. All or none: an id that names no note, or a note that archiving would not
+    /// tick, or untick, is said by its id, and nothing is written. Asked of a session that is
+    /// writing no note, as the command line's is, and gives back what is to be kept.
+    pub fn tick(&mut self, ids: &[String], done: bool) -> Result<Vec<Effect>, String> {
+        let mut versions: Vec<Record> = Vec::new();
+        for id in ids {
+            if versions.iter().any(|version| &version.id == id) {
+                continue;
+            }
+            let Some(record) = self.notes.get(id).cloned() else {
+                return Err(format!("no note has the id {id}"));
+            };
+            match self.archiving(record) {
+                (version, Some(ticked)) if ticked == done => versions.push(version),
+                _ => {
+                    let task = if done { "an open" } else { "a done" };
+                    return Err(format!("{id} is not {task} task"));
+                }
+            }
+        }
+        for version in versions {
+            self.write(version);
+        }
+        self.refresh(false);
+        Ok(std::mem::take(&mut self.out))
     }
 
     fn delete(&mut self) {
@@ -6179,6 +6215,68 @@ mod tests {
             s.notes.get("boiler").unwrap().text,
             "Boiler #house\n- [ ] get three quotes"
         );
+    }
+
+    #[test]
+    fn ticking_by_id_writes_what_ctrl_v_writes_and_nothing_unless_every_id_can_be() {
+        let ids = |ids: &[&str]| -> Vec<String> { ids.iter().map(|&id| id.to_owned()).collect() };
+        let mut by_key = session();
+        tasks(&mut by_key);
+        select(&mut by_key, "[ ] Order oil #house");
+        let mut s = session();
+        tasks(&mut s);
+        clear(&mut s);
+        assert_eq!(
+            s.tick(&ids(&["oil"]), true),
+            Ok(by_key.act(Action::Archive)),
+            "the version Ctrl-V writes"
+        );
+
+        // An id that names nothing, a note that is not a task, and a task that archiving would
+        // untick rather than tick, as it would the shed, its box open but archived, or the other
+        // way round: each is said, and nothing else on the list is written.
+        for (list, done, why) in [
+            (
+                &["radiators", "gutter"][..],
+                true,
+                "no note has the id gutter",
+            ),
+            (&["radiators", "boiler"], true, "boiler is not an open task"),
+            (&["radiators", "shed"], true, "shed is not an open task"),
+            (
+                &["chimney", "radiators"],
+                false,
+                "radiators is not a done task",
+            ),
+        ] {
+            assert_eq!(s.tick(&ids(list), done), Err(why.to_owned()));
+            assert_eq!(
+                s.notes.get("radiators").unwrap().text,
+                "[ ] Bleed the radiators #house"
+            );
+        }
+
+        // One version a note, however often it is named; and back.
+        let named = ["radiators", "chimney", "radiators", "shed"];
+        let ticked = s.tick(&ids(&named[..1]), true).unwrap();
+        assert_eq!(ticked.len(), 1);
+        let unticked = s.tick(&ids(&named), false).unwrap();
+        let written: Vec<(&str, bool)> = unticked
+            .iter()
+            .map(|effect| match effect {
+                Effect::Keep(version) => (version.text.as_str(), version.archived),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            written,
+            [
+                ("[ ] Bleed the radiators #house", false),
+                ("[ ] Sweep the chimney #house", false),
+                ("[ ] Paint the shed #house", false),
+            ]
+        );
+        assert!(heads(&s).contains(&"[ ] Bleed the radiators #house"));
     }
 
     #[test]

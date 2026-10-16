@@ -1,23 +1,30 @@
-//! A space's directory: a file of lines for each log, the lock that says who writes them, and
-//! the id this machine writes the space under.
+//! A space's directory: a file of lines for each log, the locks that say who writes them, and
+//! the ids this machine writes the space under.
 //!
-//! One process writes a space's directory at a time, and the lock settles which. That process
-//! reads every log once, when it opens the space, and from then on the files are only ever what
-//! it was asked to keep, so nothing is reread and nothing is locked per write. The app gives the
-//! lines to its device, which knows what they say; the importers and the exporter, which work
-//! while the app is closed, read them here as a [`Store`].
+//! Two writers on a machine write a space: the app, and the commands that write beside it while
+//! it is open, `fzn tick` say. Each appends to a log of its own under an id of its own, so that a
+//! log has one process appending to it, and the two cannot conflict, since versions settle by
+//! their stamps whichever log they are in. The app holds the space's lock, which a second window,
+//! an importer and a relay are refused; a command waits its turn on a lock of the commands' own
+//! and never asks for the app's. So a log may be read while another process appends to it, and
+//! what is read of it is only as far as its last whole line; an unfinished line is cut only by
+//! the process about to append to that log, since only it could have left one there. The app
+//! reads every log when it opens the space and, about once a second after that, what has been
+//! added since, and gives the lines to its device, which knows what they say; a command does the
+//! same once. The importers and the exporter read them here as a [`Store`].
 //!
-//! The writer's id lives in the directory, not in the config, because it names the log this
+//! A writer's id lives in the directory, not in the config, because it names the log this
 //! machine writes in this space, and a compaction changes it.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Header, names_a_log};
 use fzn_engine::seal::is_sealed;
-use fzn_engine::{Moment, Notes, Read, Record, Seal, Session, Weights};
+use fzn_engine::{Device, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Weights};
 
 use crate::config::DEVICE_FILE;
 use crate::system::{self, System};
@@ -25,12 +32,31 @@ use crate::system::{self, System};
 /// The file whose lock says which process writes a space's directory. A relay locks the same
 /// file, so a relay and an app never share a directory.
 const LOCK_FILE: &str = ".lock";
-/// The file holding the id this machine writes the space under.
-const WRITER_FILE: &str = ".writer";
+
+/// A writer on this machine: the app, or the commands that write beside it while it is open.
+/// Each appends to a log of its own, named for the id kept in a file of its own.
+#[derive(Clone, Copy)]
+pub enum Writer {
+    App,
+    Commands,
+}
+
+impl Writer {
+    /// The file in a space's directory that holds the id it writes under. The commands' is
+    /// also their lock, which holds only while an id is written over in place.
+    fn file(self) -> &'static str {
+        match self {
+            Writer::App => ".writer",
+            Writer::Commands => ".commands",
+        }
+    }
+}
 
 /// The files of one space's logs.
 pub struct Logs {
     dir: PathBuf,
+    /// For each log read or written here, how far in its last whole line ends, in bytes.
+    ends: BTreeMap<String, u64>,
 }
 
 impl Logs {
@@ -39,6 +65,7 @@ impl Logs {
         fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         Ok(Self {
             dir: dir.to_owned(),
+            ends: BTreeMap::new(),
         })
     }
 
@@ -46,50 +73,62 @@ impl Logs {
         self.dir.join(format!("{log}.jsonl"))
     }
 
-    /// Every log, by name and in order of name, as its lines without their newlines. A last
-    /// line with no newline is what a crash left in the middle of a write: it was never a line,
-    /// and it is left out. With `repair` it is also cut from the file, so that what is added
-    /// next starts a line of its own; only the holder of the lock repairs.
-    pub fn load(&mut self, repair: bool) -> Result<Vec<(String, Vec<String>)>> {
-        let mut logs: Vec<(String, PathBuf)> = fs::read_dir(&self.dir)
-            .with_context(|| format!("read {}", self.dir.display()))?
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
-            .filter_map(|p| {
-                let stem = p.file_stem()?.to_str()?.to_owned();
-                names_a_log(&stem).then_some((stem, p))
-            })
-            .collect();
-        logs.sort();
-        let mut loaded = Vec::with_capacity(logs.len());
-        for (log, path) in logs {
-            let mut bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-            let whole = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-            if whole < bytes.len() {
-                if repair {
-                    OpenOptions::new()
-                        .write(true)
-                        .open(&path)
-                        .and_then(|file| file.set_len(whole as u64))
-                        .with_context(|| {
-                            format!("cut the unfinished line from {}", path.display())
-                        })?;
-                }
-                bytes.truncate(whole);
-            }
-            let lines = match bytes.split_last() {
-                Some((_, body)) => body
+    /// The lines added to each log since it was last read or written here, by name and in order
+    /// of name, without their newlines: every line, the first time. A last line with no newline
+    /// is being written, or is what a crash left in the middle of a write, and is not a line yet.
+    /// A log is a file, not a link to one, so a file gone between listing the directory and
+    /// reading it was deleted: a log a compaction retired, whose successor was kept before it
+    /// went. The directory is listed again for that.
+    pub fn load(&mut self) -> Result<Vec<(String, Vec<String>)>> {
+        let mut loaded = Vec::new();
+        loop {
+            let mut logs: Vec<(String, PathBuf)> = fs::read_dir(&self.dir)
+                .with_context(|| format!("read {}", self.dir.display()))?
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    let stem = path.file_stem()?.to_str()?.to_owned();
+                    let named =
+                        path.extension().is_some_and(|x| x == "jsonl") && names_a_log(&stem);
+                    named.then_some((stem, path))
+                })
+                .collect();
+            logs.sort();
+            let mut gone = false;
+            for (log, path) in logs {
+                let mut file = match File::open(&path) {
+                    Ok(file) => file,
+                    Err(e) if e.kind() == ErrorKind::NotFound => {
+                        gone = true;
+                        continue;
+                    }
+                    Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+                };
+                let end = self.ends.get(&log).copied().unwrap_or(0);
+                let mut bytes = Vec::new();
+                file.seek(SeekFrom::Start(end))
+                    .and_then(|_| file.read_to_end(&mut bytes))
+                    .with_context(|| format!("read {}", path.display()))?;
+                let Some(last) = bytes.iter().rposition(|&b| b == b'\n') else {
+                    continue;
+                };
+                self.ends.insert(log.clone(), end + last as u64 + 1);
+                let lines = bytes[..last]
                     .split(|&b| b == b'\n')
                     .map(|line| String::from_utf8_lossy(line).into_owned())
-                    .collect(),
-                None => Vec::new(),
-            };
-            loaded.push((log, lines));
+                    .collect();
+                loaded.push((log, lines));
+            }
+            if !gone {
+                return Ok(loaded);
+            }
         }
-        Ok(loaded)
     }
 
-    /// Adds lines to the end of a log, each with a newline.
+    /// Adds lines to the end of a log, each with a newline, once any unfinished line at its end
+    /// is cut. That is what a crash left in the middle of a write: it was never a line, and these
+    /// start one of their own. One process appends to a log, so only this one could have left it.
     pub fn append(&mut self, log: &str, lines: &[String]) -> Result<()> {
         let path = self.path(log);
         let mut text = String::new();
@@ -99,16 +138,41 @@ impl Logs {
         }
         let mut file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
+        let mut end = self.ends.get(log).copied().unwrap_or(0);
+        let mut past = Vec::new();
+        file.seek(SeekFrom::Start(end))
+            .and_then(|_| file.read_to_end(&mut past))
+            .with_context(|| format!("read {}", path.display()))?;
+        if !past.is_empty() {
+            end += past
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |i| i as u64 + 1);
+            file.set_len(end)
+                .with_context(|| format!("cut the unfinished line from {}", path.display()))?;
+        }
         file.write_all(text.as_bytes())
             .and_then(|()| file.flush())
-            .with_context(|| format!("append to {}", path.display()))
+            .with_context(|| format!("append to {}", path.display()))?;
+        self.ends.insert(log.to_owned(), end + text.len() as u64);
+        Ok(())
     }
 
-    /// Deletes a log's file. One that is not there is already as asked.
+    /// Deletes a log's file, unless a writer here writes it now. A header from elsewhere retires
+    /// such a log when a copy of this directory wrote under its name, and its lines may then be
+    /// ones nobody else has: its writer carries them into a log of its own, and keeps the new
+    /// id, before it goes. One that is not there is already as asked.
     pub fn delete(&mut self, log: &str) -> Result<()> {
+        for writer in [Writer::App, Writer::Commands] {
+            if read_id(&self.dir.join(writer.file()))?.as_deref() == Some(log) {
+                return Ok(());
+            }
+        }
+        self.ends.remove(log);
         let path = self.path(log);
         match fs::remove_file(&path) {
             Err(e) if e.kind() != ErrorKind::NotFound => {
@@ -117,6 +181,62 @@ impl Logs {
             _ => Ok(()),
         }
     }
+
+    /// Does what a device writing as `writer` asks of the directory: keeps its lines, then its
+    /// new id, then deletes the logs it retires. The lines first, so that a compaction stopped
+    /// half way leaves both logs and not neither, and the id before the deleting, so that the
+    /// old log is no longer its writer's when it goes.
+    pub fn keep(&mut self, todo: &Todo, writer: Writer) -> Result<()> {
+        for kept in &todo.keep {
+            self.append(&kept.log, &kept.lines)?;
+        }
+        if let Some(id) = &todo.device {
+            keep_id(&self.dir.join(writer.file()), id)?;
+        }
+        for log in &todo.delete {
+            self.delete(log)?;
+        }
+        Ok(())
+    }
+}
+
+/// Opens a space's directory for a device writing as `writer`: every log is given to the device
+/// and what it asks for kept, and then whatever opening it is due, a compaction say. Fails if the
+/// key opens none of the sealed lines there, since nothing could be written.
+pub fn open(dir: &Path, space: &str, writer: Writer, device: &mut Device) -> Result<Logs> {
+    let mut logs = Logs::open(dir)?;
+    for (log, lines) in logs.load()? {
+        let todo = device.load(&log, lines);
+        logs.keep(&todo, writer)?;
+    }
+    if !device.key_verified() {
+        bail!("the passphrase does not open {space}: run fzn key to enter it again");
+    }
+    let todo = device.opened();
+    logs.keep(&todo, writer)?;
+    Ok(logs)
+}
+
+/// Ticks these tasks, or unticks them, as Ctrl-V does, while the app may have the space open: as
+/// the commands' writer, in their turn and never on the app's lock. Writes each note as it now
+/// stands, as the export writes it. All or none: if one cannot be, nothing is written.
+pub fn tick(
+    dir: &Path,
+    space: &str,
+    key: Key,
+    ids: &[String],
+    done: bool,
+    out: &mut impl Write,
+) -> Result<()> {
+    let _turn = Lock::wait(dir)?;
+    let mut device = Device::new(Box::new(System), commands(dir)?, Weights::default(), key);
+    let mut logs = open(dir, space, Writer::Commands, &mut device)?;
+    let (todo, ticked) = device
+        .tick(ids, done)
+        .map_err(|why| anyhow!("{why}, so nothing was written"))?;
+    logs.keep(&todo, Writer::Commands)?;
+    write_lines(&ticked.iter().collect::<Vec<_>>(), out)?;
+    Ok(())
 }
 
 /// The right to write a space's directory, for as long as it is held.
@@ -130,12 +250,7 @@ impl Lock {
     pub fn take(dir: &Path) -> Result<Option<Lock>> {
         fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let path = dir.join(LOCK_FILE);
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .with_context(|| format!("open {}", path.display()))?;
+        let file = lock_file(&path)?;
         match file.try_lock() {
             Ok(()) => Ok(Some(Lock { _file: file })),
             Err(TryLockError::WouldBlock) => Ok(None),
@@ -144,28 +259,66 @@ impl Lock {
             }
         }
     }
+
+    /// Waits for the commands' turn to write a space beside the app, on the file that holds
+    /// their id: a lock of their own, so that the app is never asked to let go of its own.
+    pub fn wait(dir: &Path) -> Result<Lock> {
+        let path = dir.join(Writer::Commands.file());
+        let file = lock_file(&path)?;
+        file.lock()
+            .with_context(|| format!("lock {}", path.display()))?;
+        Ok(Lock { _file: file })
+    }
 }
 
-/// The id this machine writes a space under, made the first time the space is opened here. A
-/// machine that had one id for every space, kept in the config directory, goes on with it.
+fn lock_file(path: &Path) -> Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))
+}
+
+/// The id this machine's app writes a space under, made the first time the space is opened here.
+/// A machine that had one id for every space, kept in the config directory, goes on with it.
 pub fn writer(dir: &Path, config_dir: &Path) -> Result<String> {
-    let path = dir.join(WRITER_FILE);
+    let path = dir.join(Writer::App.file());
     if let Some(id) = read_id(&path)? {
         return Ok(id);
     }
     let id = match read_id(&config_dir.join(DEVICE_FILE))? {
         Some(legacy) => legacy,
-        None => format!("{:08x}", system::random_u64() as u32),
+        None => new_id(),
     };
     set_writer(dir, &id)?;
     Ok(id)
 }
 
-/// Keeps a new writer id for a space, as after a compaction.
+/// The id the commands write a space under, made the first time one writes there. Read and
+/// kept only in their turn.
+fn commands(dir: &Path) -> Result<String> {
+    let path = dir.join(Writer::Commands.file());
+    if let Some(id) = read_id(&path)? {
+        return Ok(id);
+    }
+    let id = new_id();
+    keep_id(&path, &id)?;
+    Ok(id)
+}
+
+/// Keeps the id this machine's app writes a space under, making the directory if it is new.
 pub fn set_writer(dir: &Path, id: &str) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let path = dir.join(WRITER_FILE);
-    fs::write(&path, format!("{id}\n")).with_context(|| format!("write {}", path.display()))
+    keep_id(&dir.join(Writer::App.file()), id)
+}
+
+fn new_id() -> String {
+    format!("{:08x}", system::random_u64() as u32)
+}
+
+fn keep_id(path: &Path, id: &str) -> Result<()> {
+    fs::write(path, format!("{id}\n")).with_context(|| format!("write {}", path.display()))
 }
 
 /// The id in a file, if the file is there and holds one.
@@ -178,8 +331,8 @@ fn read_id(path: &Path) -> Result<Option<String>> {
 }
 
 /// A space on disk as the importers and the exporter see it: the notes its logs add up to, and
-/// the writer's log to add to. They work while the app is closed, and add versions sealed as
-/// the app would.
+/// the writer's log to add to. The importers work while the app is closed, holding its lock, and
+/// add versions sealed as the app would; the exporter only reads, and may while it is open.
 pub struct Store {
     notes: Notes,
     logs: Logs,
@@ -192,11 +345,11 @@ impl Store {
     /// Reads every log in the directory. An empty `writer` opens it only to read. Fails if the
     /// directory holds sealed lines and the seal opened none of them, since a version sealed
     /// under another key would split the space in two.
-    pub fn open(dir: &Path, writer: String, seal: Seal, repair: bool) -> Result<Self> {
+    pub fn open(dir: &Path, writer: String, seal: Seal) -> Result<Self> {
         let mut logs = Logs::open(dir)?;
         let mut notes = Notes::new();
         let (mut sealed, mut opened, mut shut, mut skipped) = (0, 0, 0, 0);
-        for (_, lines) in logs.load(repair)? {
+        for (_, lines) in logs.load()? {
             for line in lines {
                 if line.trim().is_empty() {
                     continue;
@@ -284,7 +437,9 @@ fn write_lines(records: &[&Record], out: &mut impl Write) -> Result<usize> {
 pub(crate) mod tests {
     use super::*;
     use crate::system::{self, random_u64};
-    use fzn_engine::Key;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     pub(crate) fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fzn-store-test-{:x}", random_u64()));
@@ -313,44 +468,68 @@ pub(crate) mod tests {
     }
 
     fn open(dir: &Path, writer: &str) -> Store {
-        Store::open(dir, writer.into(), seal(), true).unwrap()
+        Store::open(dir, writer.into(), seal()).unwrap()
     }
 
     #[test]
-    fn logs_give_back_their_lines_and_a_torn_tail_is_cut_only_when_repairing() {
+    fn logs_give_back_what_was_added_since_and_only_whole_lines() {
         let dir = temp_dir();
-        let mut logs = Logs::open(&dir.join("space")).unwrap();
+        let space = dir.join("space");
+        let mut logs = Logs::open(&space).unwrap();
         let sealed: Vec<String> = ["Boiler", "House"]
             .iter()
             .map(|text| rec("n1", text, 1).sealed(&seal(), &System).unwrap())
             .collect();
         logs.append("3f9a01c2", &sealed).unwrap();
-        logs.append("dev-b", &["b1".to_owned()]).unwrap();
-        fs::write(dir.join("space").join("not a log.jsonl"), "x\n").unwrap();
-        fs::write(dir.join("space").join("notes.txt"), "x\n").unwrap();
+        fs::write(space.join("not a log.jsonl"), "x\n").unwrap();
+        fs::write(space.join("notes.txt"), "x\n").unwrap();
+        let mut other = Logs::open(&space).unwrap();
+        other.append("dev-b", &["b1".to_owned()]).unwrap();
         assert_eq!(
-            logs.load(false).unwrap(),
+            Logs::open(&space).unwrap().load().unwrap(),
             [
-                ("3f9a01c2".to_owned(), sealed.clone()),
+                ("3f9a01c2".to_owned(), sealed),
                 ("dev-b".to_owned(), vec!["b1".to_owned()])
-            ]
+            ],
+            "every line, the first time"
         );
+        assert_eq!(
+            logs.load().unwrap(),
+            [("dev-b".to_owned(), vec!["b1".to_owned()])],
+            "and then only what another writer added"
+        );
+        assert!(logs.load().unwrap().is_empty());
 
-        // What a crash leaves, the start of a line with no end, is left out, and cut only by
-        // whoever holds the lock.
-        let path = dir.join("space").join("dev-b.jsonl");
-        fs::write(&path, "b1\n{\"half").unwrap();
-        assert_eq!(logs.load(false).unwrap()[1].1, ["b1"]);
-        assert_eq!(fs::read_to_string(&path).unwrap(), "b1\n{\"half");
-        assert_eq!(logs.load(true).unwrap()[1].1, ["b1"]);
-        assert_eq!(fs::read_to_string(&path).unwrap(), "b1\n");
-        logs.append("dev-b", &["b2".to_owned()]).unwrap();
+        // A line still being written is left until it is whole, and left as it is.
+        let path = space.join("dev-b.jsonl");
+        other.append("dev-b", &["b2".to_owned()]).unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"b3 half")
+            .unwrap();
+        assert_eq!(logs.load().unwrap()[0].1, ["b2"]);
+        assert!(logs.load().unwrap().is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "b1\nb2\nb3 half");
+        fs::write(&path, "b1\nb2\nb3 half, and whole\n").unwrap();
+        assert_eq!(logs.load().unwrap()[0].1, ["b3 half, and whole"]);
+
+        // What a crash left unfinished is cut by the one process that appends to that log.
+        fs::write(&path, "b1\n{\"torn").unwrap();
+        let mut after = Logs::open(&space).unwrap();
+        assert_eq!(after.load().unwrap()[1].1, ["b1"]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "b1\n{\"torn");
+        after.append("dev-b", &["b2".to_owned()]).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "b1\nb2\n");
 
-        logs.delete("dev-b").unwrap();
+        // A log a writer here writes now stays, whatever retires it; any other goes.
+        set_writer(&space, "3f9a01c2").unwrap();
+        after.delete("3f9a01c2").unwrap();
+        after.delete("dev-b").unwrap();
+        assert!(space.join("3f9a01c2.jsonl").exists());
         assert!(!path.exists());
-        logs.delete("dev-b").unwrap();
-        assert_eq!(logs.load(true).unwrap().len(), 1);
+        after.delete("dev-b").unwrap();
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -362,6 +541,19 @@ pub(crate) mod tests {
             Lock::take(&dir).unwrap().is_none(),
             "a second taker is refused"
         );
+
+        // The commands take turns on a lock of their own, whoever holds the space's.
+        let turn = Lock::wait(&dir).unwrap();
+        let (told, waited) = mpsc::channel();
+        let second = thread::spawn({
+            let dir = dir.clone();
+            move || told.send(Lock::wait(&dir).unwrap())
+        });
+        assert!(waited.recv_timeout(Duration::from_millis(200)).is_err());
+        drop(turn);
+        waited.recv_timeout(Duration::from_secs(5)).unwrap();
+        second.join().unwrap().unwrap();
+
         drop(lock);
         assert!(Lock::take(&dir).unwrap().is_some());
         fs::remove_dir_all(&dir).unwrap();
@@ -422,12 +614,7 @@ pub(crate) mod tests {
     fn a_wrong_key_is_refused_and_plain_lines_are_read_beside_sealed_ones() {
         let dir = temp_dir();
         open(&dir, "dev-a").put(rec("n1", "sealed", 10)).unwrap();
-        let wrong = Store::open(
-            &dir,
-            "dev-b".into(),
-            Seal::new(Key::from_bytes([9; 32])),
-            true,
-        );
+        let wrong = Store::open(&dir, "dev-b".into(), Seal::new(Key::from_bytes([9; 32])));
         let why = wrong.err().unwrap().to_string();
         assert!(why.starts_with("the passphrase does not open"), "{why}");
 
@@ -460,15 +647,7 @@ pub(crate) mod tests {
         let plain = dir.join("plain");
         fs::create_dir_all(&plain).unwrap();
         fs::copy(dir.join("dev-b.jsonl"), plain.join("dev-b.jsonl")).unwrap();
-        assert!(
-            Store::open(
-                &plain,
-                String::new(),
-                Seal::new(Key::from_bytes([9; 32])),
-                false
-            )
-            .is_ok()
-        );
+        assert!(Store::open(&plain, String::new(), Seal::new(Key::from_bytes([9; 32]))).is_ok());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -563,7 +742,7 @@ pub(crate) mod tests {
             s.notes().get("n1")
         );
 
-        let read_only = Store::open(&dir, String::new(), seal(), false).unwrap();
+        let read_only = Store::open(&dir, String::new(), seal()).unwrap();
         assert_eq!(read_only.notes().len(), 2);
         let mut read_only = read_only;
         assert!(read_only.put(rec("n3", "x", 1)).is_err());
@@ -583,7 +762,7 @@ pub(crate) mod tests {
         .unwrap();
         s.put(rec("cake", "cake recipe", 40)).unwrap();
         let ids = |line: &str| {
-            let store = Store::open(&dir, String::new(), seal(), false).unwrap();
+            let store = Store::open(&dir, String::new(), seal()).unwrap();
             let mut out = Vec::new();
             let n = store
                 .export_found(line, Weights::default(), &mut out)
@@ -603,6 +782,178 @@ pub(crate) mod tests {
         );
         assert_eq!(ids("#house oil"), ["oil"], "words rank among them");
         assert!(ids("~zzz").is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Runs `fzn tick`, or `fzn untick`, on a space, and gives back what it wrote out.
+    fn ticked(dir: &Path, ids: &[&str], done: bool) -> Result<String> {
+        let ids: Vec<String> = ids.iter().map(|&id| id.to_owned()).collect();
+        let mut out = Vec::new();
+        tick(dir, "main", Key::from_bytes([7; 32]), &ids, done, &mut out)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    /// The lines of a log.
+    fn lines(dir: &Path, log: &str) -> Vec<String> {
+        let text = fs::read_to_string(dir.join(format!("{log}.jsonl"))).unwrap_or_default();
+        text.lines().map(str::to_owned).collect()
+    }
+
+    fn commands_id(dir: &Path) -> String {
+        read_id(&dir.join(".commands")).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_tick_is_a_version_a_note_in_the_commands_own_log_said_as_the_export_says_it() {
+        let dir = temp_dir();
+        set_writer(&dir, "3f9a01c2").unwrap();
+        let mut app = open(&dir, "3f9a01c2");
+        app.put(rec("oil", "[ ] Order oil #house", 10)).unwrap();
+        app.put(rec("gate", "[ ] Fix the gate #house", 20)).unwrap();
+        app.put(rec("boiler", "Boiler #house", 30)).unwrap();
+        let apps = lines(&dir, "3f9a01c2");
+
+        for (ids, why) in [
+            (&["oil", "gutter"][..], "no note has the id gutter"),
+            (&["oil", "boiler"], "boiler is not an open task"),
+        ] {
+            let said = ticked(&dir, ids, true).unwrap_err().to_string();
+            assert_eq!(said, format!("{why}, so nothing was written"));
+        }
+        assert!(lines(&dir, &commands_id(&dir)).is_empty());
+
+        let said = ticked(&dir, &["oil", "gate"], true).unwrap();
+        let id = commands_id(&dir);
+        assert_eq!(lines(&dir, &id).len(), 2, "a version a note");
+        let mut exported = Vec::new();
+        Store::open(&dir, String::new(), seal())
+            .unwrap()
+            .export(&mut exported)
+            .unwrap();
+        let exported = String::from_utf8(exported).unwrap();
+        let line = |id: &str| {
+            let of = |line: &&str| Record::read(line.as_bytes()).unwrap().id == id;
+            format!("{}\n", exported.lines().find(of).unwrap())
+        };
+        assert_eq!(said, [line("oil"), line("gate")].concat());
+        let gate = Record::read(line("gate").as_bytes()).unwrap();
+        assert_eq!(
+            (gate.text.as_str(), gate.archived),
+            ("[x] Fix the gate #house", true)
+        );
+        assert_eq!(gate.device, id);
+
+        // Brought back by the next run, as one more version in the same log.
+        let said = ticked(&dir, &["gate"], false).unwrap();
+        let gate = Record::read(said.as_bytes()).unwrap();
+        assert_eq!(
+            (gate.text.as_str(), gate.archived),
+            ("[ ] Fix the gate #house", false)
+        );
+        assert_eq!(commands_id(&dir), id);
+        assert_eq!(lines(&dir, &id).len(), 3);
+        assert_eq!(
+            lines(&dir, "3f9a01c2"),
+            apps,
+            "and the app's log is the app's"
+        );
+
+        // A key that opens nothing here writes nothing.
+        let wrong = tick(
+            &dir,
+            "main",
+            Key::from_bytes([9; 32]),
+            &["oil".into()],
+            false,
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            wrong.unwrap_err().to_string(),
+            "the passphrase does not open main: run fzn key to enter it again"
+        );
+        assert_eq!(lines(&dir, &id).len(), 3);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_writer_here_compacts_its_own_log_by_one_rule_and_leaves_the_others() {
+        let dir = temp_dir();
+        let grown = |log: &str, id: &str, text: &str| {
+            let versions: Vec<String> = (0..1_500)
+                .map(|n| rec(id, text, n).sealed(&seal(), &System).unwrap())
+                .collect();
+            Logs::open(&dir).unwrap().append(log, &versions).unwrap();
+        };
+        set_writer(&dir, "3f9a01c2").unwrap();
+        grown("3f9a01c2", "oil", "[ ] Order oil #house");
+        keep_id(&dir.join(".commands"), "c0ffee00").unwrap();
+        grown("c0ffee00", "gate", "[ ] Fix the gate #house");
+        let commands = lines(&dir, "c0ffee00");
+
+        let key = Key::from_bytes([7; 32]);
+        let mut app = Device::new(Box::new(System), "3f9a01c2", Weights::default(), key);
+        super::open(&dir, "main", Writer::App, &mut app).unwrap();
+        let apps = read_id(&dir.join(".writer")).unwrap().unwrap();
+        assert_ne!(apps, "3f9a01c2");
+        assert!(lines(&dir, "3f9a01c2").is_empty());
+        assert_eq!(lines(&dir, "c0ffee00"), commands);
+
+        let compacted = lines(&dir, &apps);
+        ticked(&dir, &["gate"], true).unwrap();
+        let id = commands_id(&dir);
+        assert_ne!(id, "c0ffee00");
+        assert!(lines(&dir, "c0ffee00").is_empty());
+        let log = lines(&dir, &id);
+        assert_eq!(
+            Header::read(&log[0]),
+            Some(Header {
+                compacts: vec!["c0ffee00".into()],
+                snapshot: 1
+            })
+        );
+        assert_eq!(log.len(), 3, "the header, the snapshot, the tick");
+        assert_eq!(lines(&dir, &apps), compacted);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_commands_log_retired_from_elsewhere_stays_until_they_carry_it_into_their_own() {
+        let dir = temp_dir();
+        set_writer(&dir, "3f9a01c2").unwrap();
+        keep_id(&dir.join(".commands"), "c0ffee00").unwrap();
+        let mut logs = Logs::open(&dir).unwrap();
+        let gate = rec("gate", "[ ] Fix the gate #house", 10);
+        logs.append("c0ffee00", &[gate.sealed(&seal(), &System).unwrap()])
+            .unwrap();
+        // A copy of this directory elsewhere wrote under the commands' id, and compacted it.
+        let header = Header {
+            compacts: vec!["c0ffee00".into()],
+            snapshot: 0,
+        };
+        logs.append("feed0001", &[header.line()]).unwrap();
+
+        // The app retires it, and leaves it for its writer.
+        let key = Key::from_bytes([7; 32]);
+        let mut app = Device::new(Box::new(System), "3f9a01c2", Weights::default(), key);
+        super::open(&dir, "main", Writer::App, &mut app).unwrap();
+        assert_eq!(lines(&dir, "c0ffee00").len(), 1);
+
+        // The next command carries what it held into a log of its own, as any writer does.
+        ticked(&dir, &["gate"], true).unwrap();
+        let id = commands_id(&dir);
+        assert_ne!(id, "c0ffee00");
+        assert!(lines(&dir, "c0ffee00").is_empty());
+        let log = lines(&dir, &id);
+        assert_eq!(
+            Header::read(&log[0]).unwrap().compacts,
+            ["c0ffee00".to_owned()]
+        );
+        let held = |line: &str| match Record::read_line(&seal(), line) {
+            Read::Version(record) => (record.text, record.archived),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(held(&log[1]), ("[ ] Fix the gate #house".into(), false));
+        assert_eq!(held(&log[2]), ("[x] Fix the gate #house".into(), true));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

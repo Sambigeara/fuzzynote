@@ -35,16 +35,17 @@
 //! the relay says goes to the device, and what the device wants kept or said comes back here to
 //! be done, like anything else it asks for. Nothing is said while sync works, and `not syncing`
 //! while it does not, in the corner of the foot that also says when this machine's clock is far
-//! from the relay's. Nothing is reread from the directory while the app runs, since nothing
-//! else writes it.
+//! from the relay's. Between keys too, about once a second, it looks in the space's directory for
+//! what another writer on this machine has added, `fzn tick` say, which writes a log of its own
+//! there, and that goes to the device as the relay's lines do.
 
 use std::fs;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, ExitStatus};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
 use fzn_engine::text::fit;
 use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -54,12 +55,14 @@ use ratatui::text::{Line, Span};
 use ratatui::{DefaultTerminal, Frame};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
-use crate::store::{self, Logs};
+use crate::store::{self, Logs, Writer};
 use crate::sync::{self, Link};
 use crate::system::System;
 
 /// How long the keyboard is waited on before the relay is listened to.
 const TICK: Duration = Duration::from_millis(50);
+/// How often the space's directory is looked at for what another writer here has added.
+const LOOK: Duration = Duration::from_secs(1);
 /// The most rows the body of what the cursor is on takes at the foot of the list.
 const PREVIEW_ROWS: usize = 5;
 /// The mark before the text of the line, in the column the rows leave empty, so that the line
@@ -72,8 +75,6 @@ const WRONG_KEY: &str =
 pub struct App {
     device: Device,
     logs: Logs,
-    /// The space's directory, where the writer's id is kept.
-    dir: PathBuf,
     editor: String,
     /// What the path row is headed with: the app's name, and the space when it is not the usual one.
     title: String,
@@ -91,6 +92,8 @@ pub struct App {
     not_syncing: bool,
     /// Why the relay could not be reached, said until it is.
     unreachable: Option<String>,
+    /// When the space's directory was last looked at for what another writer here added.
+    looked: Instant,
 }
 
 enum Flow {
@@ -579,12 +582,11 @@ impl App {
         editor: String,
         title: String,
     ) -> Result<Self> {
-        let mut logs = Logs::open(dir)?;
-        let loaded = logs.load(true)?;
+        let mut device = Device::new(Box::new(System), writer, weights, key);
+        let logs = store::open(dir, space, Writer::App, &mut device)?;
         let mut app = Self {
-            device: Device::new(Box::new(System), writer, weights, key),
+            device,
             logs,
-            dir: dir.to_owned(),
             editor,
             title,
             cursor: 0,
@@ -594,16 +596,8 @@ impl App {
             sync: None,
             not_syncing: false,
             unreachable: None,
+            looked: Instant::now(),
         };
-        for (log, lines) in loaded {
-            let todo = app.device.load(&log, lines);
-            app.carry_out(todo)?;
-        }
-        if !app.device.key_verified() {
-            bail!("the passphrase does not open {space}: run fzn key to enter it again");
-        }
-        let todo = app.device.opened();
-        app.carry_out(todo)?;
         // An empty space says how to begin, until the first key.
         if app.device.view().status.is_empty() {
             match (app.device.unopened(), app.device.view().notes) {
@@ -636,7 +630,12 @@ impl App {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
             while !event::poll(TICK)? {
-                if self.hear()? {
+                let mut changed = self.hear()?;
+                if self.looked.elapsed() >= LOOK {
+                    self.looked = Instant::now();
+                    changed |= self.look()?;
+                }
+                if changed {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
@@ -760,19 +759,10 @@ impl App {
         Ok(flow)
     }
 
-    /// Does what the device asks: lines kept before retired logs are deleted, so that a
-    /// compaction stopped half way leaves both logs and not neither, then the new writer id
-    /// kept, then what is to go to the relay, then the rest.
+    /// Does what the device asks: what it asks of the directory first, then what is to go to
+    /// the relay, then the rest.
     fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
-        for kept in &todo.keep {
-            self.logs.append(&kept.log, &kept.lines)?;
-        }
-        for log in &todo.delete {
-            self.logs.delete(log)?;
-        }
-        if let Some(writer) = &todo.device {
-            store::set_writer(&self.dir, writer)?;
-        }
+        self.logs.keep(&todo, Writer::App)?;
         if let Some((_, link)) = &self.sync {
             for text in todo.send {
                 // A thread that has gone is a relay that is not there, which the footer says.
@@ -832,6 +822,19 @@ impl App {
             self.device.say("");
         }
         Ok(!heard.is_empty())
+    }
+
+    /// Takes in what another writer on this machine, `fzn tick` say, has added to the space's
+    /// logs since they were last read, as lines from the relay are taken in, and says whether
+    /// there was anything.
+    fn look(&mut self) -> Result<bool> {
+        let added = self.logs.load()?;
+        let any = !added.is_empty();
+        for (log, lines) in added {
+            let todo = self.device.added(&log, lines);
+            self.carry_out(todo)?;
+        }
+        Ok(any)
     }
 
     /// What the status row says: what the last key did, or what happened since, and when
@@ -1043,6 +1046,7 @@ mod tests {
     use crate::store::tests::temp_dir;
     use fzn_engine::replica::{Header, Message, Out, Replica};
     use fzn_engine::{Moment, Record, Seal};
+    use std::path::PathBuf;
     use std::sync::mpsc::{self, Receiver, Sender};
 
     const WRITER: &str = "3f9a01c2";
@@ -1079,7 +1083,7 @@ mod tests {
 
     /// What the logs in the directory add up to.
     fn on_disk(space: &Path) -> Store {
-        Store::open(space, String::new(), Seal::new(key()), false).unwrap()
+        Store::open(space, String::new(), Seal::new(key())).unwrap()
     }
 
     /// Presses a key, with Control held when `ctrl` is set.
@@ -1885,6 +1889,66 @@ mod tests {
         drop(app);
         let reopened = open_with(&space, key()).unwrap();
         assert_eq!(heads(&reopened).len(), 3);
+        done(&space);
+    }
+
+    #[test]
+    fn what_a_command_writes_beside_the_open_app_is_listed_and_sent_on() {
+        let (mut app, space) = app();
+        write(&mut app, "[ ] Order oil #house");
+        write(&mut app, "Boiler");
+        let (sent, tell) = link(&mut app);
+        let mut relay = Replica::new();
+        connect(&mut app, &mut relay, &sent, &tell);
+        let oil = on_disk(&space)
+            .notes()
+            .records()
+            .find(|record| record.text.starts_with("[ ]"))
+            .unwrap()
+            .id
+            .clone();
+        let tick = |done| {
+            let mut said = Vec::new();
+            store::tick(
+                &space,
+                "main",
+                key(),
+                std::slice::from_ref(&oil),
+                done,
+                &mut said,
+            )
+            .unwrap();
+        };
+        assert!(!app.look().unwrap(), "nothing yet");
+
+        tick(true);
+        assert!(app.look().unwrap());
+        assert_eq!(heads(&app), ["Boiler"]);
+        assert_eq!(app.device.view().status, "1 changed elsewhere");
+        settle(&mut app, &mut relay, &sent, &tell);
+        let commands = fs::read_to_string(space.join(".commands")).unwrap();
+        let log = space.join(format!("{}.jsonl", commands.trim()));
+        let kept = fs::read_to_string(&log).unwrap();
+        assert_eq!(
+            relay.lines(commands.trim()),
+            kept.lines().collect::<Vec<_>>()
+        );
+
+        // A line still being written is taken once it is whole.
+        tick(false);
+        let whole = fs::read(&log).unwrap();
+        fs::write(&log, &whole[..kept.len() + 40]).unwrap();
+        assert!(!app.look().unwrap());
+        assert_eq!(heads(&app), ["Boiler"]);
+        fs::write(&log, &whole).unwrap();
+        assert!(app.look().unwrap());
+        assert_eq!(heads(&app), ["Boiler", "[ ] Order oil #house"]);
+
+        // Reopened, the app reads both logs, and has nothing to say of them.
+        drop(app);
+        let reopened = open_with(&space, key()).unwrap();
+        assert_eq!(heads(&reopened), ["Boiler", "[ ] Order oil #house"]);
+        assert_eq!(reopened.status(), None);
         done(&space);
     }
 

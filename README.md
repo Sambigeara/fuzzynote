@@ -98,12 +98,16 @@ was loaded from.
 ```sh
 fzn export > notes.jsonl         # every live note, one plain JSON line each
 fzn export '#house /-mon..'      # what that line finds, archived notes too, in its order
+fzn tick ID ...                  # tick these tasks, by the ids the export gives them
+fzn untick ID ...                # and bring them back
 fzn import-jsonl notes.jsonl     # the way back in
 fzn import-markdown ~/pages      # a directory of markdown pages
 ```
 
 Each takes `--space` like the app. The export is plain and unsealed, so your notes can always be
-read and taken away without fzn.
+read and taken away without fzn. `tick` does what Ctrl-V does to a task, `[ ]` to `[x]` and
+archived, to every note it names or to none, and writes each as the export would. It works with
+fzn open on the space, which shows the tick within a second.
 
 ## Design
 

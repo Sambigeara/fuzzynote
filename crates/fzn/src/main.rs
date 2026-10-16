@@ -12,13 +12,16 @@ mod wire;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use fzn_engine::Seal;
 
 const USAGE: &str = "\
 fzn [--space NAME]                      open your notes
 fzn [--space NAME] export [QUERY]       write every note to standard output, one to a line,
                                         or what QUERY finds at the top of the space
+fzn [--space NAME] tick ID [ID ...]     tick these tasks, by the ids export writes, and write
+                                        each as it now stands, as export does
+fzn [--space NAME] untick ID [ID ...]   bring these ticked tasks back, the same way
 fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
@@ -30,8 +33,9 @@ the space named in ~/.config/fzn/config.toml, which is main to begin with. --spa
 opens another, and creates it if it is new.
 
 The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Only fzn
-writes a space's directory, and one fzn at a time: a second window on a space is told so and
-stops. A relay, not copying files, is how a space gets from one machine to another.
+writes a space's directory, and one window at a time: a second window on a space is told so and
+stops. tick and untick write beside the open window, which shows what they did within a second.
+A relay, not copying files, is how a space gets from one machine to another.
 
 Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
 twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
@@ -44,6 +48,10 @@ it. Given a query, typed as on the line, it writes the notes that line finds at 
 space instead, every one of them and archived ones too, in the order the line lists them: fzn
 export '#house /-mon..' is everything tagged #house written since last Monday. import-jsonl is
 the way back in: a file put in a space's directory is not read.
+
+tick does to each note named by its id what Ctrl-V does to a task in the app, [ ] to [x] and
+archived, and untick takes it back. If any id names no note, or a note that is not such a task,
+nothing is written. They take the key kept for the space and never ask for the passphrase.
 
 To sync, run fzn relay on a machine your devices can reach, and name that machine on each
 device: relay = \"ws://that-machine:3960\" in the config file, or --relay, or $FZN_RELAY. fzn then
@@ -79,6 +87,11 @@ enum Cmd {
     Key,
     /// With a query, what that line finds; without one, every note.
     Export(Option<String>),
+    /// These notes ticked, or with `done` false unticked.
+    Tick {
+        ids: Vec<String>,
+        done: bool,
+    },
     ImportJsonl(PathBuf),
     ImportMarkdown(PathBuf),
 }
@@ -145,6 +158,17 @@ fn parse_args() -> Result<Args> {
                 std::process::exit(0);
             }
             "export" => cmd = Cmd::Export(args.next_if(|arg| !arg.starts_with('-'))),
+            "tick" | "untick" => {
+                let ids: Vec<String> =
+                    std::iter::from_fn(|| args.next_if(|arg| !arg.starts_with('-'))).collect();
+                if ids.is_empty() {
+                    bail!("{arg} needs the id of a note, as export writes it");
+                }
+                cmd = Cmd::Tick {
+                    ids,
+                    done: arg == "tick",
+                };
+            }
             "import-jsonl" => {
                 cmd = Cmd::ImportJsonl(
                     args.next()
@@ -218,14 +242,24 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Cmd::Export(query) => {
-            // Reading takes no lock, and leaves a torn line for whoever holds one to cut.
+            // Reading takes no lock, and leaves a torn line for whoever appends to its log to cut.
             let key = key::key_for(&space, &config_dir, &dir)?;
-            let store = store::Store::open(&dir, String::new(), Seal::new(key), false)?;
+            let store = store::Store::open(&dir, String::new(), Seal::new(key))?;
             let mut out = std::io::stdout().lock();
             match query {
                 Some(line) => store.export_found(&line, cfg.weights.clone(), &mut out)?,
                 None => store.export(&mut out)?,
             };
+            return Ok(());
+        }
+        Cmd::Tick { ids, done } => {
+            // It writes beside the app, which may have the terminal, so it asks for nothing.
+            let key = key::kept(&space, &config_dir)?.ok_or_else(|| {
+                anyhow!(
+                    "no key for {space} is kept here: open it in fzn once to give its passphrase"
+                )
+            })?;
+            store::tick(&dir, &space, key, &ids, done, &mut std::io::stdout().lock())?;
             return Ok(());
         }
         Cmd::ImportJsonl(path) => {
@@ -318,7 +352,7 @@ fn hold(dir: &Path, space: &str) -> Result<store::Lock> {
 fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store> {
     let writer = store::writer(dir, config_dir)?;
     let key = key::key_for(space, config_dir, dir)?;
-    let store = store::Store::open(dir, writer, Seal::new(key), true)?;
+    let store = store::Store::open(dir, writer, Seal::new(key))?;
     if store.skipped() > 0 {
         eprintln!(
             "{} lines in {} could not be read, and are left as they are",

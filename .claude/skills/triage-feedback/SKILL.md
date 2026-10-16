@@ -129,13 +129,17 @@ match more than one head: if they do, ask which. Then:
 target/release/fzn tick ID [ID ...]
 ```
 
-It ticks each as Ctrl-V does in the app, `[ ]` to `[x]` and archived. Report each entry by its
-head as it now stands, and how many are still open, from the export run again.
+It ticks each as Ctrl-V does in the app, `[ ]` to `[x]` and archived, and writes each as it now
+stands, the line the export writes for it. It ticks all or none: an id that names no note, or a
+note that is not an open task, is said by its id, nothing is ticked, and it exits non-zero. It
+works with the app open on the space, which shows the tick within a second, and never asks for
+the passphrase. Report each entry by its head as it now stands, and how many are still open,
+from the export run again.
 
 If it answers `unknown argument "tick"`, the build predates the command. Give the author the
 heads to tick in the app instead: `#fzn #feedback` on the line and Right goes into them, and
 Ctrl-V on each ticks it. Run the export again once they say it is done; a tick made on another
 device shows here once fzn on this machine has synced.
 
-To undo a tick, the author brings the note back in the app: Ctrl-V on it with archived notes
-shown unticks it.
+To undo a tick, `target/release/fzn untick ID [ID ...]` brings each back, `[ ]` and unarchived;
+the app's undo cannot, since the app did not make it.

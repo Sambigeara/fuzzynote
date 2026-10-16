@@ -31,18 +31,8 @@ pub fn key_for(space: &str, config_dir: &Path, dir: &Path) -> Result<Key> {
 
 /// [`key_for`], with what `$FZN_PASSPHRASE` says given to it.
 fn key_from(space: &str, config_dir: &Path, dir: &Path, given: Option<String>) -> Result<Key> {
-    let kept = path(space, config_dir);
-    match fs::read_to_string(&kept) {
-        Ok(text) => {
-            return Key::decode(&text).ok_or_else(|| {
-                anyhow!(
-                    "{} does not hold a key: run fzn key to make it again",
-                    kept.display()
-                )
-            });
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => {}
-        Err(e) => return Err(e).with_context(|| format!("read {}", kept.display())),
+    if let Some(key) = kept(space, config_dir)? {
+        return Ok(key);
     }
     let passphrase = match given.filter(|p| !p.is_empty()) {
         Some(passphrase) => passphrase,
@@ -50,8 +40,23 @@ fn key_from(space: &str, config_dir: &Path, dir: &Path, given: Option<String>) -
     };
     eprintln!("deriving the key…");
     let key = Key::from_passphrase(&passphrase, space);
-    keep(&kept, &key)?;
+    keep(&path(space, config_dir), &key)?;
     Ok(key)
+}
+
+/// The key kept for a space on this machine, if one is.
+pub fn kept(space: &str, config_dir: &Path) -> Result<Option<Key>> {
+    let kept = path(space, config_dir);
+    match fs::read_to_string(&kept) {
+        Ok(text) => Key::decode(&text).map(Some).ok_or_else(|| {
+            anyhow!(
+                "{} does not hold a key: run fzn key to make it again",
+                kept.display()
+            )
+        }),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("read {}", kept.display())),
+    }
 }
 
 /// Forgets the key kept for a space, so that the next open asks for the passphrase again.
@@ -182,15 +187,18 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
 
-        // Kept, it is what is used, whatever is given.
+        // Kept, it is what is used, whatever is given, and what a command that asks for nothing
+        // finds.
         let again = key_from("garden", &config, &space, Some("another".into())).unwrap();
         assert_eq!(again, key);
+        assert_eq!(super::kept("garden", &config).unwrap(), Some(key));
 
         // Forgotten, it is asked for again. With nothing given and no terminal to ask on, it
         // says how to give it.
         forget("garden", &config).unwrap();
         forget("garden", &config).unwrap();
         assert!(!kept.exists());
+        assert_eq!(super::kept("garden", &config).unwrap(), None);
         if !std::io::stdin().is_terminal() {
             let why = key_from("garden", &config, &space, Some(String::new()))
                 .unwrap_err()

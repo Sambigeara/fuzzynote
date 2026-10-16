@@ -7,8 +7,9 @@
 //! browser tab has no files, so they were joined in memory for it, and that join turned out to
 //! be the general thing: the same code serves the terminal, a tab and a test. A version the
 //! session wants kept is sealed and becomes a line of this writer's log, which the replica holds
-//! and sends on; a line the replica takes from a peer is opened and given to the session. The
-//! face is left with what only it can do: keeping lines for the next time, and the socket.
+//! and sends on; a line the replica takes from a peer is opened and given to the session, and so
+//! is one that another writer on the same machine has added where the face keeps them. The face
+//! is left with what only it can do: keeping lines for the next time, and the socket.
 //!
 //! What the face is to do comes back as a [`Todo`], and it does the keeping before the deleting.
 //! A compaction starts a new log whose header retires the old one, so one `Todo` can hold both
@@ -165,6 +166,18 @@ impl Device {
     /// Takes in lines the face kept from before, a log at a time, before anything else is asked
     /// of the device. Trailing newlines are tolerated.
     pub fn load(&mut self, log: &str, lines: Vec<String>) -> Todo {
+        let todo = self.added(log, lines);
+        // A device opened with its own notes says nothing of them having changed, unless what
+        // it was given is sealed under some other key.
+        self.session
+            .say(if self.key_verified() { "" } else { WRONG_KEY });
+        todo
+    }
+
+    /// Takes in lines that another writer on this machine has added to the end of a log where
+    /// the face keeps it, as lines from the relay are taken in, but for keeping them, since they
+    /// are kept already. The relay is sent them as it would be a peer's.
+    pub fn added(&mut self, log: &str, lines: Vec<String>) -> Todo {
         let lines: Vec<String> = lines
             .into_iter()
             .map(|mut line| {
@@ -184,10 +197,6 @@ impl Device {
             let versions = self.read(&lines);
             self.session.absorb(versions);
         }
-        // A device opened with its own notes says nothing of them having changed, unless what
-        // it was given is sealed under some other key.
-        self.session
-            .say(if self.key_verified() { "" } else { WRONG_KEY });
         todo
     }
 
@@ -225,7 +234,6 @@ impl Device {
     /// Does what was asked. Nothing that writes is done until the key is known to be the
     /// space's.
     pub fn act(&mut self, action: Action) -> Todo {
-        let mut todo = Todo::default();
         // A head is written as it is typed, but a body typed into, or a date word not yet
         // written out, waits for the cursor to leave. When the key turns out to be wrong that
         // cannot be written, and so cannot be left either, since leaving writes; it can only be
@@ -239,9 +247,35 @@ impl Device {
         };
         if gated && !self.key_verified() {
             self.session.say(WRONG_KEY);
-            return todo;
+            return Todo::default();
         }
-        for effect in self.session.act(action) {
+        let effects = self.session.act(action);
+        self.todo(effects)
+    }
+
+    /// Ticks these tasks, or unticks them, as archiving each would, as [`Session::tick`] says,
+    /// and gives back each note as it now stands, with what the face is to do. Nothing is
+    /// written until the key is known to be the space's.
+    pub fn tick(&mut self, ids: &[String], done: bool) -> Result<(Todo, Vec<Record>), String> {
+        if !self.key_verified() {
+            return Err(WRONG_KEY.to_owned());
+        }
+        let effects = self.session.tick(ids, done)?;
+        let ticked = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Keep(version) => Some(version.clone()),
+                _ => None,
+            })
+            .collect();
+        Ok((self.todo(effects), ticked))
+    }
+
+    /// What the face is to do about what the session asks for: each version it wants kept
+    /// sealed as a line of this writer's log, and the rest handed on.
+    fn todo(&mut self, effects: Vec<Effect>) -> Todo {
+        let mut todo = Todo::default();
+        for effect in effects {
             match effect {
                 Effect::Keep(version) => {
                     let Ok(line) = version.sealed(&self.seal, &*self.host) else {
@@ -851,6 +885,36 @@ mod tests {
     }
 
     #[test]
+    fn what_another_writer_here_added_is_taken_in_and_sent_on_but_not_kept_again() {
+        let mut net = pair(&["[ ] Order oil #house"]);
+        // A second writer on the first device's machine, which reads what is kept there and
+        // writes a log of its own, with no relay.
+        let mut beside = device("dev-c");
+        beside.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        let (todo, ticked) = beside.tick(&["dev-a-0001".to_owned()], true).unwrap();
+        assert_eq!(
+            (ticked[0].text.as_str(), ticked[0].archived),
+            ("[x] Order oil #house", true)
+        );
+        let [kept] = &todo.keep[..] else {
+            panic!("{todo:?}");
+        };
+        assert_eq!((kept.log.as_str(), kept.from), ("dev-c", 0));
+        assert_eq!(opened(&kept.lines[0]), ticked[0]);
+        assert!(todo.send.is_empty());
+
+        let added = net.devices[0].added("dev-c", kept.lines.clone());
+        assert!(added.keep.is_empty(), "it is kept already");
+        assert_eq!(status(&net.devices[0]), "1 changed elsewhere");
+        net.relay_hears(0, added);
+        assert_eq!(net.relay.lines("dev-c"), kept.lines);
+        assert!(
+            net.agreed().is_empty(),
+            "ticked, and so archived, everywhere"
+        );
+    }
+
+    #[test]
     fn a_todo_is_json_with_every_field_named() {
         let json = serde_json::to_string(&Todo::default()).unwrap();
         assert_eq!(
@@ -1021,6 +1085,10 @@ mod tests {
         assert_eq!(b.opened(), Todo::default(), "nor compacts");
         assert_eq!(write(&mut b, "a garden"), Todo::default());
         assert!(status(&b).contains("passphrase"), "{}", status(&b));
+        assert_eq!(
+            b.tick(&["dev-a-0001".to_owned()], true),
+            Err(WRONG_KEY.to_owned())
+        );
         assert!(b.replica.lines("dev-b").is_empty());
 
         // The same when the sealed lines arrive from the relay: said before any write is tried.
