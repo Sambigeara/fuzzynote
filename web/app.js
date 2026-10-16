@@ -137,7 +137,16 @@ async function openStore() {
     request.onblocked = () => resolve(null);
   });
   if (!db) return null;
-  return {
+  // A change is a transaction, and it is done once the browser says it has completed, which is
+  // when what it wrote would outlast the page.
+  const write = (change) =>
+    new Promise((done, failed) => {
+      const tx = db.transaction('lines', 'readwrite');
+      change(tx.objectStore('lines'));
+      tx.oncomplete = () => done();
+      tx.onabort = tx.onerror = () => failed(tx.error);
+    });
+  const made = {
     // Every log, each as far as it runs without a gap. What lies past a gap is asked for again.
     load: () =>
       new Promise((resolve) => {
@@ -152,17 +161,22 @@ async function openStore() {
           resolve(logs);
         };
       }),
-    keep: ({ log, from, lines }) => {
-      const store = db.transaction('lines', 'readwrite').objectStore('lines');
-      lines.forEach((line, i) => store.put({ log, n: from + i, line }));
-    },
+    keep: ({ log, from, lines }) => write((kept) => lines.forEach((line, i) => kept.put({ log, n: from + i, line }))),
     // Every line of a log. Transactions on one store run in the order they were made, so this
     // comes after whatever was kept before it was asked for.
-    forget: (log) => {
-      const store = db.transaction('lines', 'readwrite').objectStore('lines');
-      store.delete(IDBKeyRange.bound([log, 0], [log, Infinity]));
-    },
+    forget: (log) => write((kept) => kept.delete(IDBKeyRange.bound([log, 0], [log, Infinity]))),
   };
+  // A later version of the page asking for the database is let have it; this page then keeps
+  // nothing more, and asks the relay for it next time. What it goes on writing is then in no store,
+  // so its log is not one a later page may go on with (see couldNotKeep), nor is a new id a
+  // compaction gives it later kept.
+  db.onversionchange = () => {
+    db.close();
+    if (store === made) store = null;
+    unkept = true;
+    forgetWriter();
+  };
+  return made;
 }
 
 let fzn;
@@ -211,30 +225,52 @@ function trouble(text) {
   status.classList.add('trouble');
 }
 
+// A line this browser could not keep is said once, not at every keystroke after it, and is not
+// sent. The writer id is forgotten, so that no later page goes on with this log from a store that
+// lacks the line: one that did would write its own line where this one is, against the relay's,
+// which is a fork. This page goes on writing the log, which its memory and the relay agree on,
+// and the next page starts another, which costs one log.
+let unkept = false;
+function couldNotKeep(cause) {
+  console.error(cause);
+  if (!unkept && fzn) {
+    unkept = true;
+    forgetWriter();
+    fzn.say('could not keep that in this browser; it will be asked of the relay again');
+    look();
+  }
+  return false;
+}
+const forgetWriter = () => keep(WRITER, null);
+
+// Everything kept so far, settled: what a page about to be reloaded waits for.
+let stored = Promise.resolve();
+// The messages for peers, in the order the engine gave them, each sent once what came before it
+// has been kept.
+let sending = Promise.resolve();
+
 // Does what the engine wants done, in its order: lines to keep, then logs to delete, which a
 // compaction has retired, then a new writer id to keep, then messages for the relay, and the
 // things it leaves to whoever is showing the notes. Keeping comes before deleting so that a page
-// closed between the two still has the notes somewhere.
+// closed between the two still has the notes somewhere. A line is sent only once the browser has
+// kept it: a page closed before then would leave the relay holding a line of this writer's log
+// that the page does not, and the next page to write that log would write over it, a fork. The
+// view is painted at once; only the wire waits, a few milliseconds.
 function carryOut(json) {
   const todo = JSON.parse(json);
-  for (const lines of todo.keep) {
-    try {
-      store?.keep(lines);
-    } catch {
-      fzn.say('could not keep that in this browser; it will be asked of the relay again');
-    }
-  }
-  for (const log of todo.delete) {
-    try {
-      store?.forget(log);
-    } catch {
-      // Left where it is, it is deleted the next time the page opens.
-    }
-  }
-  if (todo.device) keep(WRITER, todo.device);
-  // The relay is peer 0, and for now the page's only one.
-  for (const said of todo.send) {
-    if (said.to === 0 && socket?.readyState === WebSocket.OPEN) socket.send(said.text);
+  const kept = store ? todo.keep.map((lines) => store.keep(lines).then(() => true, couldNotKeep)) : [];
+  // A log not deleted is deleted the next time the page opens.
+  for (const log of todo.delete) store?.forget(log).catch(() => {});
+  if (todo.device && !unkept) keep(WRITER, todo.device);
+  if (kept.length) stored = Promise.all([stored, ...kept]);
+  if (todo.send.length) {
+    const ready = stored;
+    const all = Promise.all(kept);
+    sending = sending
+      .then(() => ready)
+      .then(() => all)
+      .then((done) => done.every(Boolean) && todo.send.forEach(send))
+      .catch((cause) => console.error(cause));
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
@@ -326,6 +362,11 @@ window.addEventListener('popstate', () => {
   follow();
 });
 document.addEventListener('visibilitychange', () => keepHistory());
+
+// Says something to a peer. The relay is peer 0, and for now the page's only one.
+function send({ to, text }) {
+  if (to === 0 && socket?.readyState === WebSocket.OPEN) socket.send(text);
+}
 
 function connect() {
   if (!standing || socket) return;

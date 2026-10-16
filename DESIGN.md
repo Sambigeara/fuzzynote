@@ -698,7 +698,9 @@ text: an action goes in as JSON and what to do and what to show come back as JSO
 action being exactly what to send back to ask for it. A tab is one more device. It has a writer
 id and a log of its own for each space, keeps every log of the space in IndexedDB between
 visits, asks for the passphrase once and keeps the key, and syncs with the relay it was loaded
-from, so there is one address to open and nothing to set up. The word `passphrase` in the foot
+from, so there is one address to open and nothing to set up. A line is sent only once IndexedDB
+has kept it, so that the relay never holds a line of a tab's log that the tab lost by closing,
+which the next tab to write that log would write over: a fork. The word `passphrase` in the foot
 types it again, and is there only while nothing has proved the key: in a space with no notes yet. A
 key that opens nothing says so, with its own way to type it again. The relay carries the page, built
 into fzn from the `web` directory; `--web web` points it at the directory instead while the page is
@@ -1958,6 +1960,11 @@ repeats it only where the reason needs it.
   mean that the one-liners set, so a long document earns almost nothing for its own words. Its
   name now finds it; part of its name, or what it says, may not. Left until use shows it
   matters. `bm25_b` is the knob, and no setting of it was right on its own.
+- A line kept as a page closes, the date words of a head or an open body, can finish being kept
+  after the next page on the same log has read the store, since a browser lets a closing page's
+  writes finish. That page then writes its own line in the same place, and the closing page never
+  sent its line, so one edit is lost. The window is milliseconds, on a reload in one tab, and
+  nothing cheap closes it; it waits for the first edit it loses.
 - A fork is put right the moment it is seen, by compacting. Whether that is too eager, as when
   a file was corrupted rather than copied, is for the first fork to say; the cost of a needless
   compaction is one log replaced by a shorter one.
