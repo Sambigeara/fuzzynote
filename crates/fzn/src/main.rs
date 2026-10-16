@@ -27,6 +27,7 @@ fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Si
 fzn [--space NAME] key                  type the space's passphrase again
 fzn relay [--listen ADDRESS] [--web DIR]  pass notes between your devices
 fzn --help
+fzn --version                           say the version, and the commit and day it was built from
 
 Notes live in spaces: separate sets of notes, one directory each under the root. Plain fzn opens
 the space named in ~/.config/fzn/config.toml, which is main to begin with. --space NAME (or -s)
@@ -155,6 +156,10 @@ fn parse_args() -> Result<Args> {
             "key" => cmd = Cmd::Key,
             "-h" | "--help" => {
                 println!("{USAGE}");
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("{}", version());
                 std::process::exit(0);
             }
             "export" => cmd = Cmd::Export(args.next_if(|arg| !arg.starts_with('-'))),
@@ -337,6 +342,19 @@ fn main() -> Result<()> {
     app.run()
 }
 
+/// What this fzn is: the version, then the commit and the day it was built from, which the
+/// build takes from git or from `FZN_BUILD`, so that a machine can be asked what it runs.
+fn version() -> String {
+    said_version(env!("CARGO_PKG_VERSION"), option_env!("FZN_BUILD"))
+}
+
+fn said_version(version: &str, build: Option<&str>) -> String {
+    match build {
+        Some(build) if !build.is_empty() => format!("fzn {version} ({build})"),
+        _ => format!("fzn {version}"),
+    }
+}
+
 /// Takes the lock on a space's directory, or stops: another fzn has it open, or a relay holds it.
 fn hold(dir: &Path, space: &str) -> Result<store::Lock> {
     match store::Lock::take(dir)? {
@@ -361,4 +379,20 @@ fn importing(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store>
         );
     }
     Ok(store)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_version_says_the_commit_and_the_day_when_the_build_knows_them() {
+        assert_eq!(
+            said_version("0.26.0", Some("d115e1815 2026-10-16")),
+            "fzn 0.26.0 (d115e1815 2026-10-16)"
+        );
+        assert_eq!(said_version("0.26.0", Some("")), "fzn 0.26.0");
+        assert_eq!(said_version("0.26.0", None), "fzn 0.26.0");
+        assert!(version().starts_with(&format!("fzn {}", env!("CARGO_PKG_VERSION"))));
+    }
 }

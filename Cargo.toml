@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/fzn-engine", "crates/fzn", "crates/fzn-web"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.26.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/Sambigeara/fuzzynote"
@@ -26,3 +26,13 @@ opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
+
+# One profile for the binary and the wasm: whole-program optimisation and no symbols. A release
+# build takes twice as long as a plain one, and nothing of the dev profile changes. Not
+# panic = "abort", which would make a panic in one of the relay's connections the end of the
+# relay, and not opt-level = "z", which halves the wasm but is slower on the hot loops a
+# keystroke runs.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
