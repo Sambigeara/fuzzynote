@@ -215,7 +215,7 @@ function carryOut(json) {
   // there, if it is on the list.
   if (todo.editor) {
     const at = view.rows.findIndex((row) => row.id === todo.editor.id);
-    if (at >= 0 && !view.field?.whole) queueMicrotask(() => (act({ select: at }), act('edit')));
+    if (at >= 0 && !view.field?.whole) queueMicrotask(() => (act({ select: at }), act('open')));
   }
 }
 
@@ -346,10 +346,10 @@ function keyFor(action) {
   // Inside the body box Ctrl-D is the browser's, so the word does not claim it there.
   if (name === 'delete' && view?.field?.whole) return '';
   // With vim's keys Escape is vim's, and the body closes as vim's quits do.
-  if (name === 'done' && view?.field?.whole && editor?.vimOn) return ':q';
+  if (name === 'close' && view?.field?.whole && editor?.vimOn) return ':q';
   if (name === 'shift') return action.shift < 0 ? 'Ctrl ↑' : 'Ctrl ↓';
   return (
-    { write: 'Enter', edit: 'Ctrl O', done: 'Esc', go_in: '→', back: 'Esc', select: 'Esc', delete: 'Ctrl D' }[name] ??
+    { write: 'Enter', open: 'Ctrl O', close: 'Esc', go_in: '→', back: 'Esc', select: 'Esc', delete: 'Ctrl D' }[name] ??
     ''
   );
 }
@@ -448,7 +448,7 @@ function leftFor(event) {
   if (!(to ? document.body.contains(to) : document.hasFocus())) return;
   leaving = true;
   try {
-    act('done');
+    act('close');
   } finally {
     leaving = false;
   }
@@ -462,7 +462,7 @@ box.addEventListener('keydown', (event) => {
   if (view.field.whole) {
     if (ctrlOnly(event) && (event.key === 'o' || event.key === 'O')) return event.preventDefault();
     if (event.key !== 'Escape') return;
-    act('done');
+    act('close');
     event.preventDefault();
     return;
   }
@@ -506,7 +506,7 @@ box.addEventListener('keydown', (event) => {
     case 'o':
     case 'O':
       if (!ctrlOnly(event)) return;
-      act('edit');
+      act('open');
       break;
     default:
       return;
@@ -553,7 +553,7 @@ function loadEditor() {
         if (event.isComposing || editor.composing || !view?.field?.whole) return;
         if (ctrlOnly(event) && (event.key === 'o' || event.key === 'O')) return event.preventDefault();
         if (event.key !== 'Escape' || event.defaultPrevented || editor.vimOn) return;
-        act('done');
+        act('close');
         event.preventDefault();
       });
       paintSoon();
@@ -591,8 +591,8 @@ const editorHooks = {
       const scrolled = sheet.scrollTop;
       keeping = true;
       try {
-        act('done');
-        if (view.cursor != null && view.rows[view.cursor]?.id === was) act('edit');
+        act('close');
+        if (view.cursor != null && view.rows[view.cursor]?.id === was) act('open');
       } finally {
         keeping = false;
       }
@@ -602,7 +602,7 @@ const editorHooks = {
       // changed undo would take back the last version written instead, which may be another
       // note's.
       if (what === 'discard' && view.hints.some((hint) => named(hint.action) === 'undo')) act('undo');
-      act('done');
+      act('close');
     }
     follow();
   },
@@ -624,12 +624,13 @@ function rowKey(row, selected, apart) {
 }
 
 // Sets the date at the end of the selected row's head in place, making it or taking it away.
-function dateRow(li, row) {
+function dateRow(li) {
   const main = li.querySelector(':scope > .main');
   if (!main) return;
   let time = main.querySelector(':scope > time');
-  if (!row.updated) return time?.remove();
-  const text = day(row.updated);
+  const updated = view.field?.updated;
+  if (!updated) return time?.remove();
+  const text = day(updated);
   if (!time) {
     time = el('time', null, text);
     main.insertBefore(time, main.querySelector(':scope > .chev'));
@@ -717,7 +718,7 @@ function paintRows() {
       li.dataset.k = k;
       fill(li, row, selected);
     }
-    if (selected) dateRow(li, row);
+    if (selected) dateRow(li);
     return li;
   });
 
@@ -1137,7 +1138,7 @@ document.addEventListener('keydown', (event) => {
   // Ctrl-O on a row opens its body, and on the line does nothing; the browser's file dialog is not
   // asked for either way.
   if (ctrlOnly(event) && (event.key === 'o' || event.key === 'O')) {
-    if (!onLine) act('edit');
+    if (!onLine) act('open');
     event.preventDefault();
     follow();
     return;
@@ -1181,7 +1182,7 @@ document.addEventListener('keydown', (event) => {
       break;
     // Off the row, then off the text on the line, then out of the place.
     case 'Escape':
-      if (!onLine) act(view.field?.whole ? 'done' : { select: null });
+      if (!onLine) act(view.field?.whole ? 'close' : { select: null });
       else if (view.line !== '') act({ type: '' });
       else if (view.path.length) act('back');
       else return;
@@ -1225,7 +1226,7 @@ list.addEventListener('click', (event) => {
   if (at < 0) return;
   if (event.target.closest('.chev')) act('go_in');
   else if (at !== view.cursor) act({ select: at });
-  else if (!view.field?.whole) act('edit');
+  else if (!view.field?.whole) act('open');
   follow();
 });
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));
@@ -1258,7 +1259,7 @@ $('hints').addEventListener('mousedown', (event) => {
 // coming back would otherwise be typed into the head as it was and take the tag away again.
 function putAway() {
   if (!view?.field) return;
-  act('done');
+  act('close');
   safely();
 }
 window.addEventListener('pagehide', putAway);

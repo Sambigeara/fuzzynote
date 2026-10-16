@@ -194,9 +194,9 @@ fn a_new_row_inside_a_tag_with_only_the_tag_in_it_is_empty() {
 
     // Nor does a body that pushes the label under an empty head, as Enter at its start does.
     s.act(Action::Write);
-    s.act(Action::Edit);
+    s.act(Action::Open);
     edited(&mut s, "\n #house");
-    assert!(s.act(Action::Done).is_empty());
+    assert!(s.act(Action::Close).is_empty());
     assert!(s.act(Action::Select(None)).is_empty());
     assert_eq!(heads(&s).len(), listed);
 }
@@ -218,10 +218,10 @@ fn a_new_row_inside_a_tag_put_back_or_cleared_is_as_it_opened() {
 
     // Written out, then cleared back to its label and written out, it is as it opened.
     edited(&mut s, "order oil #house");
-    s.act(Action::Done);
+    s.act(Action::Close);
     assert_eq!(s.notes.get(&id).unwrap().text, "order oil #house");
     edited(&mut s, " #house");
-    s.act(Action::Done);
+    s.act(Action::Close);
     assert!(s.notes.get(&id).is_none());
     edited(&mut s, "order logs #house");
     s.act(Action::Move(1));
@@ -647,6 +647,11 @@ fn typing_in_a_place_lists_the_facts_that_match_before_what_it_finds() {
     put(&mut s, "cake", "cake recipe", &[], 4_000);
     go_to(&mut s, "Boiler");
     assert_eq!(heads(&s), ["Engineer visit"]);
+    assert_eq!(
+        s.view().finds_from,
+        None,
+        "a place with nothing typed lists only its facts"
+    );
 
     type_in(&mut s, "pressure");
     assert_eq!(
@@ -655,6 +660,19 @@ fn typing_in_a_place_lists_the_facts_that_match_before_what_it_finds() {
         "the fact first, though the find has the word in its head"
     );
     assert_eq!(linked(&s), [true, false]);
+    assert_eq!(
+        s.view().finds_from,
+        Some(1),
+        "where the faces set the finds apart"
+    );
+
+    // A fact that does not match leaves only finds, and nothing to set apart.
+    clear(&mut s);
+    type_in(&mut s, "gauge");
+    assert_eq!(heads(&s), ["Boiler pressure gauge"]);
+    assert_eq!(s.view().finds_from, None);
+    clear(&mut s);
+    type_in(&mut s, "pressure");
     assert!(
         s.rows
             .iter()
@@ -865,4 +883,25 @@ fn going_into_a_note_the_line_holds_was_a_search_and_a_draft_carrying_a_tag_is_n
         s.line, "boiler needs bleeding #house",
         "a draft, carried in to be written"
     );
+}
+
+#[test]
+fn the_finds_begin_after_every_fact_however_the_named_rows_mix() {
+    let mut s = session();
+    put(&mut s, "hub", "Boiler #house", &[], 1_000);
+    put(&mut s, "a", "Oil", &["hub"], 2_000);
+    put(&mut s, "b", "Oil", &[], 3_000);
+    put(&mut s, "c", "oil tank check", &["hub"], 4_000);
+    put(&mut s, "d", "oil boiler service #house", &[], 5_000);
+    go_to(&mut s, "boiler");
+    type_in(&mut s, "oil");
+    let rows: Vec<_> = s.rows.iter().map(|r| (r.id.as_str(), r.linked)).collect();
+    // Both notes named come first, the fact before the other, and then the place's facts.
+    assert_eq!(rows, [("a", true), ("b", false), ("c", true), ("d", false)]);
+    assert_eq!(s.view().finds_from, Some(3));
+
+    // A new row opened above the finds does not move where they begin.
+    s.act(Action::Move(1));
+    s.act(Action::Write);
+    assert_eq!(s.rows[s.view().finds_from.unwrap()].id, "d");
 }

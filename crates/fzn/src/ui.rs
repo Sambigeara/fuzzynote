@@ -54,7 +54,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use fzn_engine::{Action, Device, Editing, Hint, Key, Row, Todo, View, Weights, time};
+use fzn_engine::{Action, Device, Editing, Hint, Key, Moment, Row, Todo, View, Weights, time};
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers,
@@ -191,7 +191,7 @@ fn key_for(action: &Action) -> &'static str {
         Action::Move(_) => "↓",
         Action::Shift(by) if *by < 0 => "^↑",
         Action::Shift(_) => "^↓",
-        Action::Select(_) | Action::Back | Action::Done => "Esc",
+        Action::Select(_) | Action::Back | Action::Close => "Esc",
         // Clearing the line is the rung Escape takes while it has text; Ctrl-D is its second key.
         Action::Type(text) if text.is_empty() => "Esc",
         Action::ShowArchived | Action::Archive => "^V",
@@ -206,7 +206,7 @@ fn key_for(action: &Action) -> &'static str {
         // so opening one in place has no key either. Backspace on an empty row asks for Erase,
         // and the footer does not name it, since taking an empty line away is what Backspace
         // does everywhere.
-        Action::Edit
+        Action::Open
         | Action::Type(_)
         | Action::Edited(_)
         | Action::Save { .. }
@@ -686,8 +686,8 @@ fn score_of(row: &Row, shown: bool) -> String {
     }
 }
 
-/// A row of the list as it is when the cursor is not on it: the head as the row shows it, then as much of the tail
-/// as there is room for. The head is cut only when it alone does not fit.
+/// A row of the list as it is when the cursor is not on it: the head as the row shows it, then as
+/// much of the tail as there is room for. The head is cut only when it alone does not fit.
 fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     let score = score_of(row, scores);
     let room = width.saturating_sub(2 + score.width());
@@ -702,22 +702,21 @@ fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     if row.archived { line.dim() } else { line }
 }
 
-/// The row the cursor is on, `head` being its head as it is now typed: the head bold and its date
-/// at the right, and its tail after the head or, when it does not fit there, on a row of its own
-/// under it, since this is the row being asked about. A head too long for the room scrolls so
-/// that the caret, `caret` letters in, stays in sight; the column it is then drawn at comes
-/// back with the rows.
+/// The row the cursor is on, `head` being its head as it is now typed: the head bold and the day
+/// it was `updated` at the right, and its tail after the head or, when it does not fit there, on a
+/// row of its own under it, since this is the row being asked about. A head too long for the room
+/// scrolls so that the caret, `caret` letters in, stays in sight; the column it is then drawn at
+/// comes back with the rows.
 fn selected_rows(
     row: &Row,
     head: &str,
+    updated: Option<Moment>,
     caret: usize,
     scores: bool,
     width: usize,
 ) -> (Vec<Line<'static>>, usize) {
     let score = score_of(row, scores);
-    let date = row
-        .updated
-        .map_or_else(String::new, |m| time::format_day(m.day()));
+    let date = updated.map_or_else(String::new, |m| time::format_day(m.day()));
     let dated = if date.is_empty() { 0 } else { date.width() + 2 };
     let room = width.saturating_sub(2 + score.width() + dated).max(1);
     let (head, at) = scrolled(head, caret, room);
@@ -887,7 +886,7 @@ impl App {
         self.device.say("");
         if (key.code, ctrl) == (KeyCode::Char('q'), true) {
             if place == Place::Row {
-                self.act_from(before, Action::Done)?;
+                self.act_from(before, Action::Close)?;
             }
             return Ok(Flow::Quit);
         }
@@ -1161,7 +1160,7 @@ impl App {
         } else {
             ""
         };
-        let right = [dates_shown(&view.dates), archived.to_owned()]
+        let right = [dates_shown(view.dates), archived.to_owned()]
             .into_iter()
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
@@ -1185,7 +1184,7 @@ impl App {
         // it does not move the list either by coming or by going.
         let read = match &view.field {
             Some(field) => Some(field.text),
-            None if zoomed => Some(view.here.map_or("", |here| here.text.as_str())),
+            None if zoomed => Some(view.here.map_or("", |here| here.text)),
             None => None,
         };
         let status_row = usize::from(status.is_some());
@@ -1218,7 +1217,15 @@ impl App {
                     .field
                     .as_ref()
                     .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
-                let painted = selected_rows(row, head, self.row_cursor, view.scores_shown, width);
+                let updated = view.field.as_ref().and_then(|f| f.updated);
+                let painted = selected_rows(
+                    row,
+                    head,
+                    updated,
+                    self.row_cursor,
+                    view.scores_shown,
+                    width,
+                );
                 (i, painted)
             });
         let tall = |i: usize| {
@@ -1299,7 +1306,7 @@ impl App {
             frame,
             foot,
             1,
-            Line::from(fit(&footer(&view.hints, keys_room), keys_room)).dim(),
+            Line::from(fit(&footer(view.hints, keys_room), keys_room)).dim(),
         );
         paint_right(frame, foot, &syncing);
 
@@ -2015,7 +2022,7 @@ mod tests {
         let view = app.device.view();
         let zoomed = !view.path.is_empty();
         let (place, empty) = app.caret(&view);
-        for hint in keyed(&view.hints) {
+        for hint in keyed(view.hints) {
             let (code, ctrl) = named(key_for(&hint.action));
             assert_eq!(
                 bound(code, ctrl, place, zoomed, empty).as_ref(),
@@ -2025,7 +2032,7 @@ mod tests {
                 hint.label
             );
         }
-        footer(&view.hints, usize::MAX)
+        footer(view.hints, usize::MAX)
     }
 
     #[test]
@@ -2601,7 +2608,7 @@ mod tests {
         write(&mut app, long);
         press(&mut app, KeyCode::Down, false);
         let shot = screen(&mut app, 40, 8);
-        let date = time::format_day(app.device.view().rows[0].updated.unwrap().day());
+        let date = time::format_day(app.device.view().field.unwrap().updated.unwrap().day());
         assert!(shot.rows[1].ends_with(&date), "{:?}", shot.rows[1]);
         assert!(shot.rows[1].contains("are bled"), "{:?}", shot.rows[1]);
         assert!(shot.cursor.0 < 40 - 12, "{:?}", shot.cursor);
@@ -2805,7 +2812,7 @@ mod tests {
         // Written last, the note with a body is first on the list, and the other under it.
         assert_eq!(heads(&app)[0], picked);
         let other = heads(&app)[1].clone();
-        let updated = app.device.view().rows[0].updated.unwrap();
+        let updated = app.device.view().field.unwrap().updated.unwrap();
         let date = format!(" {}", time::format_day(updated.day()));
         let shot = screen(&mut app, 60, 10);
         assert!(
@@ -3261,8 +3268,16 @@ mod tests {
     #[test]
     fn a_wide_head_under_the_cursor_has_its_date_at_the_edge_and_the_caret_at_its_end() {
         let row = a_row("浴室的瓷砖要换 #house");
-        let date = time::format_day(row.updated.unwrap().day());
-        let (rows, x) = selected_rows(&row, &row.head, letters(&row.head), false, 40);
+        let updated = Moment::utc(0);
+        let date = time::format_day(updated.day());
+        let (rows, x) = selected_rows(
+            &row,
+            &row.head,
+            Some(updated),
+            letters(&row.head),
+            false,
+            40,
+        );
         let painted = rows[0].to_string();
         assert!(painted.ends_with(&date), "{painted:?}");
         assert_eq!(
@@ -3276,7 +3291,7 @@ mod tests {
     #[test]
     fn a_combining_mark_is_part_of_its_letter() {
         let row = a_row("e\u{301} combi");
-        let (_, x) = selected_rows(&row, &row.head, letters(&row.head), false, 40);
+        let (_, x) = selected_rows(&row, &row.head, None, letters(&row.head), false, 40);
         assert_eq!(x, 1 + 7);
         assert_eq!(
             edited("e\u{301}", 1, KeyCode::Backspace, false),

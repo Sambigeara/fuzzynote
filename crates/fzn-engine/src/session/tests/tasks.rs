@@ -247,3 +247,27 @@ fn ticking_by_id_writes_what_ctrl_v_writes_and_nothing_unless_every_id_can_be() 
     );
     assert!(heads(&s).contains(&"[ ] Bleed the radiators #house"));
 }
+
+#[test]
+fn a_row_says_whether_its_note_is_a_task_and_whether_it_is_ticked() {
+    let mut s = session();
+    put(&mut s, "oil", "[ ] Order oil", &[], 1_000);
+    put(&mut s, "bled", "[x] Bleed the radiators", &[], 2_000);
+    put(
+        &mut s,
+        "boiler",
+        "Boiler\n[ ] a box in a body is not a task",
+        &[],
+        3_000,
+    );
+    let task = |s: &Session, id: &str| s.rows.iter().find(|r| r.id == id).unwrap().task;
+    assert_eq!(task(&s, "oil"), Some(false));
+    assert_eq!(task(&s, "bled"), Some(true));
+    assert_eq!(task(&s, "boiler"), None);
+
+    // Ticked under the cursor, the row says so at once.
+    select(&mut s, "[ ] Order oil");
+    s.act(Action::Archive);
+    s.act(Action::ShowArchived);
+    assert_eq!(task(&s, "oil"), Some(true));
+}

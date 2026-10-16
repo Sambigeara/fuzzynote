@@ -306,6 +306,7 @@ impl Session {
             self.write(version);
         }
         self.refresh(false);
+        self.derive();
         Ok(std::mem::take(&mut self.out))
     }
 

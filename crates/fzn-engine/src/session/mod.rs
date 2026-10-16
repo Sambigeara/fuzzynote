@@ -147,14 +147,14 @@ pub enum Action {
     /// Step back out of the place being looked around, onto the line.
     Back,
     /// Open the body of the note under the cursor, so that the field holds the whole note.
-    Edit,
+    Open,
     /// The note under the cursor now reads this. The cursor stays on it. A head is written at
     /// once, as typed, unless it is empty; an open body is written when it closes.
     Edited(String),
     /// Write the note under the cursor as it is to be kept, with its date words written out,
     /// and close its body. The cursor stays: a note emptied is deleted, and a new note with
     /// nothing in it stays as an empty row, what was kept of it as it was typed taken back.
-    Done,
+    Close,
     /// Write the note under the cursor as it stands, with its date words written out and its
     /// body, if it is open, kept as a version, and stay: the body stays open and the cursor
     /// where it is. What a face asks before it is hidden or reloaded, and vim's `:w`.
@@ -221,10 +221,10 @@ impl Action {
     pub fn writes(&self) -> bool {
         match self {
             Action::Write
-            | Action::Edit
+            | Action::Open
             | Action::Edited(_)
             | Action::Editor
-            | Action::Done
+            | Action::Close
             | Action::Keep
             | Action::Save { .. }
             | Action::Archive
@@ -281,6 +281,8 @@ pub struct Row {
     /// and they end it. None when it reads as it is. The row under the cursor shows its text as
     /// it is, whatever this says.
     pub shown: Option<String>,
+    /// Whether the note is a task, and if it is, whether its box is ticked.
+    pub task: Option<bool>,
     pub archived: bool,
     /// Whether there is more to read than the head.
     pub has_body: bool,
@@ -294,7 +296,6 @@ pub struct Row {
     /// Why the note is listed.
     pub reasons: Vec<String>,
     pub score: Option<f32>,
-    pub updated: Option<Moment>,
 }
 
 /// The note under the cursor as it now reads. There is one whenever the cursor is on a row.
@@ -307,6 +308,15 @@ pub struct Field<'a> {
     pub fresh: Option<usize>,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
+    /// When the note was last changed, as it is held. None for a new note not yet written.
+    pub updated: Option<Moment>,
+}
+
+/// The note being looked around, as a face shows what it says.
+#[derive(Debug, Serialize)]
+pub struct Here<'a> {
+    pub id: &'a str,
+    pub text: &'a str,
 }
 
 /// What to show.
@@ -317,11 +327,15 @@ pub struct View<'a> {
     pub path: Vec<&'a str>,
     pub line: &'a str,
     /// What the date words and spans on the line stand for, in the order they were typed:
-    /// `Fri 2026-10-16`, `Mon 2026-10-12 18:00 – now`.
-    pub dates: Vec<String>,
+    /// `Fri 2026-10-16`, `Mon 2026-10-12 18:00 – now`. They are read for the day the line was
+    /// last read on, as the list is.
+    pub dates: &'a [String],
     /// The list: what is in the place on the path, or what the line finds there or at the top,
     /// or the top of the space when there is neither.
     pub rows: &'a [Row],
+    /// Where what the line only finds in a place begins, after the place's facts that it
+    /// matches: the row before which a face sets the two apart. None where nothing is set apart.
+    pub finds_from: Option<usize>,
     /// The row the cursor is on. With none, it is on the line.
     pub cursor: Option<usize>,
     /// What just happened.
@@ -329,12 +343,12 @@ pub struct View<'a> {
     /// How many notes there are.
     pub notes: usize,
     /// What can be asked for where the cursor is. The way back is last.
-    pub hints: Vec<Hint>,
+    pub hints: &'a [Hint],
     pub archived_shown: bool,
     pub scores_shown: bool,
     /// The note being looked around, the last note on the path, so that a face can show what it
     /// says. None when there is no note on the path: labels alone have nothing to say.
-    pub here: Option<&'a Record>,
+    pub here: Option<Here<'a>>,
     /// The note under the cursor as it is being written, if the cursor is on a row.
     pub field: Option<Field<'a>>,
 }
@@ -366,6 +380,20 @@ pub struct Session {
     stale: bool,
     /// What the action being carried out asks of the face.
     out: Vec<Effect>,
+    /// The line as it was read when the list was last made, which is whenever the line changes.
+    parsed: Query,
+    /// What the view says that is worked out from the rest, made once an action or an arrival
+    /// is done with, so that a face may ask for the view as often as it likes: the dates the
+    /// line stands for, what can be asked for, and how many notes there are.
+    dates: Vec<String>,
+    hints: Vec<Hint>,
+    count: usize,
+    /// The first row that only the line finds in a place, after a fact, by its note: held by
+    /// id, so that a new row opened above it cannot move it.
+    finds_from: Option<String>,
+    /// The session held no notes when it opened and nothing has been asked of it yet, so what
+    /// arrives is the space filling it, from as many logs as it has, and not news.
+    filling: bool,
 }
 
 impl Session {
@@ -381,6 +409,7 @@ impl Session {
         for record in notes.records() {
             engine.upsert(record.note());
         }
+        let filling = notes.is_empty();
         let mut session = Self {
             host,
             device: device.into(),
@@ -398,8 +427,15 @@ impl Session {
             field: None,
             stale: false,
             out: Vec::new(),
+            parsed: Query::default(),
+            dates: Vec::new(),
+            hints: Vec::new(),
+            count: 0,
+            finds_from: None,
+            filling,
         };
         session.refresh(true);
+        session.derive();
         session
     }
 
@@ -415,11 +451,21 @@ impl Session {
 
     /// Does what was asked, and returns what the face has to do about it.
     pub fn act(&mut self, action: Action) -> Vec<Effect> {
+        self.filling = false;
         if let Some(action) = self.on_field(action) {
             self.carry_out(action);
         }
         self.land();
+        self.derive();
         std::mem::take(&mut self.out)
+    }
+
+    /// Works out what the view says that follows from the rest. Called whenever an action or an
+    /// arrival is done with, since nothing else changes what a session shows but its status.
+    pub(super) fn derive(&mut self) {
+        self.dates = self.parsed.shown();
+        self.hints = self.hints();
+        self.count = self.notes.len();
     }
 
     fn carry_out(&mut self, action: Action) {
@@ -440,9 +486,9 @@ impl Session {
             Action::Back => self.back_to(self.path.len().saturating_sub(1)),
             // On the line there is no note to open, change, write, hand to the editor or take
             // away.
-            Action::Edit
+            Action::Open
             | Action::Edited(_)
-            | Action::Done
+            | Action::Close
             | Action::Keep
             | Action::Editor
             | Action::Erase => {}
@@ -497,7 +543,11 @@ impl Session {
         } else {
             self.refresh(false);
         }
-        self.status = format!("{} changed elsewhere", changed.len());
+        // What fills a session that held nothing is the space arriving, not a change to it.
+        if !self.filling {
+            self.status = format!("{} changed elsewhere", changed.len());
+        }
+        self.derive();
         true
     }
 
@@ -514,22 +564,45 @@ impl Session {
     }
 
     pub fn view(&self) -> View<'_> {
+        // What is held for the view is made again whenever anything it follows from changes.
+        debug_assert_eq!(self.hints, self.hints(), "hints made after the last change");
+        debug_assert_eq!(
+            self.count,
+            self.notes.len(),
+            "notes counted after the last change"
+        );
+        debug_assert_eq!(
+            self.dates,
+            Query::read(&self.line, self.today()).shown(),
+            "the line read after it last changed"
+        );
         View {
             path: self.path.iter().map(Step::name).collect(),
             line: &self.line,
-            dates: Query::read(&self.line, self.today()).shown(),
+            dates: &self.dates,
             rows: &self.rows,
+            finds_from: self
+                .finds_from
+                .as_ref()
+                .and_then(|id| self.rows.iter().position(|r| &r.id == id)),
             cursor: self.cursor,
             status: &self.status,
-            notes: self.notes.len(),
-            hints: self.hints(),
+            notes: self.count,
+            hints: &self.hints,
             archived_shown: self.show_archived,
             scores_shown: self.show_scores,
-            here: self.place_note().and_then(|id| self.notes.get(id)),
+            here: self
+                .place_note()
+                .and_then(|id| self.notes.get(id))
+                .map(|record| Here {
+                    id: &record.id,
+                    text: &record.text,
+                }),
             field: self.field.as_ref().map(|field| Field {
                 text: &field.text,
                 fresh: field.blank().then(|| field.start()),
                 whole: field.whole,
+                updated: self.notes.get(&field.id).and_then(|r| r.updated),
             }),
         }
     }
@@ -555,7 +628,7 @@ impl Session {
             if !blank {
                 offer(Action::Delete, "delete");
             }
-            offer(Action::Done, "done");
+            offer(Action::Close, "done");
             return hints;
         }
         match (self.selected(), field) {
@@ -567,7 +640,7 @@ impl Session {
                         if zoomed { "new note here" } else { "new note" },
                     );
                 }
-                offer(Action::Edit, "body");
+                offer(Action::Open, "body");
                 offer(Action::Editor, "editor");
                 // A new note with nothing in it has nowhere to go in to and nothing to act on.
                 if !blank {

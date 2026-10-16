@@ -181,7 +181,7 @@ impl Session {
                 .notes
                 .get(&id)
                 .is_some_and(|r| r.text.to_lowercase().contains(&typed.to_lowercase()))
-            || self.engine.searched(&id, &Query::read(&self.line, today));
+            || self.engine.searched(&id, &self.parsed);
         let head = self.step_name(&id).unwrap_or_else(|| row.head.clone());
         let step = Step::Note {
             id,
@@ -227,13 +227,13 @@ impl Session {
     /// you are, so that one on the path is gone back to; of several labels, those the place has
     /// already are passed over, so that the rest are added to it.
     pub(super) fn places_named(&self) -> Vec<Step> {
-        let query = Query::read(&self.line, self.today());
+        let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
         if query.only_labels() {
-            for typed in query.labels {
+            for typed in &query.labels {
                 let place = Step::Label {
-                    label: typed.label,
-                    written: typed.written,
+                    label: typed.label.clone(),
+                    written: typed.written.clone(),
                     search: None,
                 };
                 if !places.iter().any(|p| p.is(&place)) {
@@ -248,7 +248,7 @@ impl Session {
                 return places;
             }
         } else {
-            let (mut named, called) = self.engine.notes_named(&query, self.show_archived);
+            let (mut named, called) = self.engine.notes_named(query, self.show_archived);
             // A note named only without the labels that end it is named here if its row reads
             // so here: if it carries the place's labels.
             if called {

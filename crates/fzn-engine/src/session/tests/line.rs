@@ -672,14 +672,14 @@ fn only_what_applies_is_offered() {
 
     // An open body offers what is about the note, and closing it is the way back. Putting
     // back is offered only once there is something to put back.
-    s.act(Action::Edit);
+    s.act(Action::Open);
     assert_eq!(labels(&s), ["delete", "done"]);
-    assert_eq!(s.view().hints.last().unwrap().action, Action::Done);
+    assert_eq!(s.view().hints.last().unwrap().action, Action::Close);
     s.act(Action::Edited("Squat form video\nslowed down".into()));
     assert_eq!(labels(&s), ["put back", "delete", "done"]);
     s.act(Action::Undo);
     assert_eq!(labels(&s), ["delete", "done"]);
-    s.act(Action::Done);
+    s.act(Action::Close);
     s.act(Action::Select(None));
     s.act(Action::Write);
     assert_eq!(labels(&s), ["body", "editor", "up"], "a new note");
@@ -886,8 +886,8 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         (Action::Write, r#""write""#),
         (Action::GoIn, r#""go_in""#),
         (Action::ShowArchived, r#""show_archived""#),
-        (Action::Edit, r#""edit""#),
-        (Action::Done, r#""done""#),
+        (Action::Open, r#""open""#),
+        (Action::Close, r#""close""#),
         (Action::Editor, r#""editor""#),
         (Action::Erase, r#""erase""#),
         (Action::Keep, r#""keep""#),
@@ -930,27 +930,37 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     assert_eq!(view["rows"][0]["head"], "Boiler");
     assert_eq!(view["rows"][0]["has_body"], true);
     assert_eq!(view["rows"][0]["shown"], serde_json::Value::Null);
-    assert_eq!(view["rows"][0]["updated"], "1970-01-01T00:50:00.000Z");
+    assert!(view["rows"][0].get("updated").is_none());
+    assert_eq!(view["rows"][0]["task"], serde_json::Value::Null);
+    assert_eq!(view["finds_from"], serde_json::Value::Null);
     assert_eq!(view["notes"], 1);
     assert_eq!(view["here"], serde_json::Value::Null);
     assert_eq!(
         view["field"],
-        serde_json::json!({"text": "Boiler\nthe plan", "fresh": null, "whole": false})
+        serde_json::json!({
+            "text": "Boiler\nthe plan",
+            "fresh": null,
+            "whole": false,
+            "updated": "1970-01-01T00:50:00.000Z"
+        })
     );
     assert!(view.get("open").is_none());
     // A hint's action is what to send back to ask for it.
     assert_eq!(view["hints"][0]["label"], "new note");
     assert_eq!(view["hints"][0]["action"], "write");
-    assert_eq!(view["hints"][1]["action"], "edit");
+    assert_eq!(view["hints"][1]["action"], "open");
     let last = view["hints"].as_array().unwrap().last().unwrap();
     assert_eq!(last["action"], serde_json::json!({"select": null}));
 
-    s.act(Action::Edit);
+    s.act(Action::Open);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(view["field"]["whole"], true);
     s.act(Action::GoIn);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
-    assert_eq!(view["here"]["text"], "Boiler\nthe plan");
+    assert_eq!(
+        view["here"],
+        serde_json::json!({"id": "hub", "text": "Boiler\nthe plan"})
+    );
     assert_eq!(view["field"], serde_json::Value::Null);
 
     let effect = Effect::Editor {
@@ -967,10 +977,10 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
 fn only_the_actions_that_can_change_a_note_write() {
     let writes = [
         Action::Write,
-        Action::Edit,
+        Action::Open,
         Action::Edited("Boiler: bleed the radiators".into()),
         Action::Editor,
-        Action::Done,
+        Action::Close,
         Action::Keep,
         Action::Save {
             id: "n1".into(),
@@ -1019,4 +1029,33 @@ fn a_new_writer_names_the_versions_written_after_it() {
     s.writes_as("3f9a01c2");
     assert_eq!(s.device(), "3f9a01c2");
     assert_eq!(devices(add(&mut s, "net the brassicas")), ["3f9a01c2"]);
+}
+
+#[test]
+fn a_space_filled_from_nothing_says_nothing_and_what_changes_after_is_said() {
+    let mut s = session();
+    s.absorb([theirs("boiler", "Boiler", 60), theirs("house", "House", 61)]);
+    assert_eq!(s.status, "");
+    assert_eq!(heads(&s), ["House", "Boiler"]);
+    // A space arrives a log at a time, and every log of it is the space arriving.
+    s.absorb([theirs("pump", "Pump", 62)]);
+    assert_eq!(s.status, "");
+
+    // Once something has been asked of it, what arrives is news.
+    s.act(Action::Move(1));
+    s.act(Action::Select(None));
+    s.absorb([theirs("garden", "a garden", 63)]);
+    assert_eq!(s.status, "1 changed elsewhere");
+
+    // A session that opens with notes is not being filled.
+    let mut notes = Notes::new();
+    notes.apply(theirs("boiler", "Boiler", 60));
+    let mut s = Session::new(
+        Box::new(Stopped::default()),
+        "dev",
+        Weights::default(),
+        notes,
+    );
+    s.absorb([theirs("house", "House", 61)]);
+    assert_eq!(s.status, "1 changed elsewhere");
 }

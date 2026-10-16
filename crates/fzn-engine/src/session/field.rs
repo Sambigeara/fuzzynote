@@ -122,7 +122,7 @@ impl Session {
             // Typing clears what there was to redo, so on a row typed into there is nothing, and
             // leaving the row to say so would split its visit into two entries to undo.
             Action::Redo if self.redo.is_empty() => self.status = "nothing to redo".into(),
-            Action::Edit => field.whole = true,
+            Action::Open => field.whole = true,
             // The editor is handed the note as it now reads, and what it leaves is written with
             // what was typed here and what was written there.
             Action::Editor => {
@@ -142,11 +142,11 @@ impl Session {
             // A new note cleared with its body open is an empty row again, and what was kept of
             // it as it was typed is taken off every device, as leaving it would; the row stays,
             // with the cursor in it, to be written in or left.
-            Action::Done if field.blank() => {
+            Action::Close if field.blank() => {
                 field.whole = false;
                 self.unwrite_new();
             }
-            Action::Done => {
+            Action::Close => {
                 self.flush();
                 if let Some(field) = self.field.as_mut() {
                     field.whole = false;
@@ -440,6 +440,7 @@ impl Session {
                 id: id.clone(),
                 head: String::new(),
                 shown: None,
+                task: None,
                 archived: false,
                 has_body: false,
                 // Written here, it will be linked to the note being looked around, or carry the
@@ -448,7 +449,6 @@ impl Session {
                 links: Vec::new(),
                 reasons: Vec::new(),
                 score: None,
-                updated: None,
             },
         );
         self.cursor = Some(at);
@@ -610,9 +610,9 @@ impl Session {
         if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
             row.head = String::new();
             row.shown = None;
+            row.task = None;
             row.has_body = false;
             row.links = Vec::new();
-            row.updated = None;
         }
     }
 
@@ -627,13 +627,13 @@ impl Session {
             self.shown(record.head(), body),
             self.link_heads(record),
         );
-        let updated = record.updated;
+        let task = text::task(&record.text);
         if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {
             row.head = head;
             row.shown = shown;
+            row.task = task;
             row.has_body = body;
             row.links = links;
-            row.updated = updated;
         }
     }
 }

@@ -29,7 +29,7 @@ fn enter_on_an_empty_line_opens_a_note_to_write_in_place_linked_to_where_you_are
     );
     assert_eq!(new.links, ["boiler"]);
     assert_eq!((new.created, new.updated), (Some(NOON), Some(NOON)));
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     let [new] = kept(&done)[..] else {
         panic!("{done:?}");
     };
@@ -135,7 +135,7 @@ fn a_note_edited_in_place_is_written_at_each_change_and_done_writes_out_its_date
         "as it was typed"
     );
 
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     let [held] = kept(&done)[..] else {
         panic!("{done:?}");
     };
@@ -254,7 +254,7 @@ fn a_note_emptied_in_place_is_deleted_and_undo_brings_it_back() {
     put(&mut s, "boiler", "Boiler", &[], 3_000);
     select(&mut s, "House");
     edited(&mut s, "");
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     assert!(matches!(&kept(&done)[..], [r] if r.deleted && r.text == "House\nthe deeds"));
     assert_eq!(s.status, "deleted · undo brings it back");
     assert_eq!(heads(&s), ["Boiler"]);
@@ -322,7 +322,7 @@ fn undo_and_redo_on_an_empty_new_note_do_nothing_and_undo_on_one_typed_into_empt
     assert!(matches!(&kept(&undone)[..], [r] if r.deleted));
     assert_eq!(field(&s), Some((String::new(), true, false)));
     assert_eq!(heads(&s), ["", "House"]);
-    assert_eq!(s.rows[0].updated, None);
+    assert_eq!(s.view().field.unwrap().updated, None);
     assert_eq!(s.notes.len(), 1);
     assert_eq!(s.undo.len(), undo);
 }
@@ -448,7 +448,7 @@ fn the_head_emptied_under_a_body_gives_the_bodys_first_line_as_the_head() {
         &mut s,
         "\n  \nthe combi under the stairs\nserviced in spring\n",
     );
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     assert_eq!(
         kept(&done)[0].text,
         "the combi under the stairs\nserviced in spring"
@@ -544,7 +544,7 @@ fn undo_on_a_changed_head_puts_it_back_and_on_an_unchanged_one_takes_back_the_la
     assert_eq!(field(&s), Some(("Boiler".into(), false, false)));
 
     edited(&mut s, "Boiler serviced");
-    s.act(Action::Done);
+    s.act(Action::Close);
     let undone = s.act(Action::Undo);
     assert_eq!(kept(&undone)[0].text, "Boiler");
     assert_eq!(s.status, "undid: Boiler serviced");
@@ -575,17 +575,17 @@ fn the_body_opens_on_the_row_and_closes_onto_its_head() {
     let mut s = session();
     put(&mut s, "boiler", "Boiler\nthe combi", &[], 1_000);
     s.act(Action::Move(1));
-    assert!(s.act(Action::Edit).is_empty());
+    assert!(s.act(Action::Open).is_empty());
     assert_eq!(field(&s), Some(("Boiler\nthe combi".into(), false, true)));
     assert!(edited(&mut s, "Boiler\nthe combi under the stairs").is_empty());
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     assert_eq!(kept(&done).len(), 1);
     assert_eq!(
         field(&s),
         Some(("Boiler\nthe combi under the stairs".into(), false, false))
     );
     assert_eq!(s.cursor, Some(0), "the cursor stays on the row");
-    assert!(s.act(Action::Done).is_empty(), "written once");
+    assert!(s.act(Action::Close).is_empty(), "written once");
 }
 
 #[test]
@@ -896,7 +896,7 @@ fn backspace_with_the_body_open_is_not_the_engines() {
     let mut s = session();
     three(&mut s);
     select(&mut s, "House");
-    s.act(Action::Edit);
+    s.act(Action::Open);
     edited(&mut s, "");
     assert!(s.act(Action::Erase).is_empty());
     assert_eq!(field(&s), Some((String::new(), false, true)));
@@ -987,7 +987,11 @@ fn typing_into_a_new_row_writes_the_note_at_its_first_letter_and_each_letter_aft
     let undo = s.undo.len();
     s.act(Action::Write);
     let id = s.rows[0].id.clone();
-    assert_eq!(s.rows[0].updated, None, "no date until it is written");
+    assert_eq!(
+        s.view().field.unwrap().updated,
+        None,
+        "no date until it is written"
+    );
 
     let mut versions = Vec::new();
     for text in ["B", "Bo"] {
@@ -999,7 +1003,11 @@ fn typing_into_a_new_row_writes_the_note_at_its_first_letter_and_each_letter_aft
     assert_eq!(held.text, "Bo");
     assert_eq!(held.created, Some(NOON), "when Enter was pressed");
     assert_eq!(s.rows[0].head, "Bo");
-    assert_eq!(s.rows[0].updated, Some(NOON), "the row has its date");
+    assert_eq!(
+        s.view().field.unwrap().updated,
+        Some(NOON),
+        "the field has its date"
+    );
     assert_eq!(
         s.status, "",
         "the date is the sign; the status says nothing"
@@ -1116,13 +1124,13 @@ fn a_new_row_cleared_with_its_body_open_is_taken_off_every_device_when_the_body_
     s.act(Action::Write);
     let id = s.rows[2].id.clone();
     assert_eq!(kept(&edited(&mut s, "a gar")).len(), 1);
-    s.act(Action::Edit);
+    s.act(Action::Open);
     assert!(
         edited(&mut s, "").is_empty(),
         "a body is written when it closes"
     );
 
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     assert!(
         matches!(&kept(&done)[..], [r] if r.id == id && r.deleted),
         "it was on every device, so it is taken off them: {done:?}"
@@ -1133,13 +1141,14 @@ fn a_new_row_cleared_with_its_body_open_is_taken_off_every_device_when_the_body_
         "an empty row again"
     );
     let row = s.selected().unwrap();
-    assert_eq!((row.head.as_str(), row.updated), ("", None));
+    assert_eq!(row.head, "");
+    assert_eq!(s.view().field.unwrap().updated, None);
     assert_eq!(s.undo.len(), undo, "nothing to undo");
 
     // A letter typed there writes it again, and leaving it empty writes nothing more.
     assert_eq!(kept(&edited(&mut s, "B")).len(), 1);
     edited(&mut s, "");
-    s.act(Action::Done);
+    s.act(Action::Close);
     assert!(s.notes.get(&id).is_none());
     assert!(s.act(Action::Move(1)).is_empty());
     assert_eq!(heads(&s), ["Boiler", "House", "a garden"]);
@@ -1151,9 +1160,9 @@ fn undo_on_a_new_note_after_its_body_closes_takes_the_note_away() {
     s.act(Action::Write);
     let id = s.rows[0].id.clone();
     edited(&mut s, "Boiler");
-    s.act(Action::Edit);
+    s.act(Action::Open);
     edited(&mut s, "Boiler\nthe combi under the stairs");
-    s.act(Action::Done);
+    s.act(Action::Close);
     assert!(
         !s.hints().iter().any(|h| h.label == "put back"),
         "nothing to put back once the body is written"
@@ -1191,13 +1200,13 @@ fn the_body_is_not_written_as_it_is_typed_but_when_it_closes() {
     let mut s = session();
     put(&mut s, "boiler", "Boiler\nthe combi", &[], 1_000);
     s.act(Action::Move(1));
-    s.act(Action::Edit);
+    s.act(Action::Open);
     for text in ["Boiler\nthe combi u", "Boiler\nthe combi under the stairs"] {
         assert!(edited(&mut s, text).is_empty());
     }
     assert_eq!(s.notes.get("boiler").unwrap().text, "Boiler\nthe combi");
     assert!(s.unwritten());
-    let done = s.act(Action::Done);
+    let done = s.act(Action::Close);
     assert_eq!(kept(&done)[0].text, "Boiler\nthe combi under the stairs");
     assert_eq!(s.status, "saved");
     assert!(!s.unwritten());
@@ -1274,7 +1283,7 @@ fn keep_writes_the_field_as_it_stands_and_stays_where_it_is() {
 
     // An open body is kept as a version and stays open.
     select(&mut s, "Boiler");
-    s.act(Action::Edit);
+    s.act(Action::Open);
     edited(&mut s, "Boiler\nthe combi under the stairs");
     let now = s.act(Action::Keep);
     assert_eq!(kept(&now)[0].text, "Boiler\nthe combi under the stairs");
@@ -1285,7 +1294,7 @@ fn keep_writes_the_field_as_it_stands_and_stays_where_it_is() {
     assert!(!s.unwritten());
 
     // A new note with nothing in it has nothing to keep, and stays a row to write in.
-    s.act(Action::Done);
+    s.act(Action::Close);
     s.act(Action::Write);
     assert!(s.act(Action::Keep).is_empty());
     assert!(field(&s).unwrap().1);
@@ -1317,4 +1326,19 @@ fn keep_leaves_a_head_emptied_or_cleared_to_be_typed_again_as_it_is_held() {
         "Order oil\nfrom the depot"
     );
     assert_eq!(s.selected().unwrap().id, "oil");
+}
+
+#[test]
+fn keep_leaves_an_open_body_emptied_as_it_is_held_and_open() {
+    let mut s = session();
+    put(&mut s, "oil", "Order oil\nfrom the depot", &[], 1_000);
+    select(&mut s, "Order oil");
+    s.act(Action::Open);
+    edited(&mut s, "");
+    assert!(s.act(Action::Keep).is_empty());
+    assert_eq!(
+        s.notes.get("oil").unwrap().text,
+        "Order oil\nfrom the depot"
+    );
+    assert_eq!(field(&s), Some((String::new(), false, true)));
 }

@@ -778,6 +778,23 @@ mod tests {
     }
 
     #[test]
+    fn a_device_filled_from_several_logs_says_nothing_of_it() {
+        let mut net = Net {
+            relay: Replica::new(),
+            devices: vec![device("dev-a"), device("dev-b"), device("dev-c")],
+        };
+        net.connect(0);
+        net.connect(1);
+        net.act(0, Action::Type("bleed the radiators".into()));
+        net.act(0, Action::Write);
+        net.act(1, Action::Type("order oil".into()));
+        net.act(1, Action::Write);
+        net.connect(2);
+        assert_eq!(heads(&net.devices[2]).len(), 2);
+        assert_eq!(status(&net.devices[2]), "");
+    }
+
+    #[test]
     fn two_devices_and_a_relay_show_each_other_what_they_write() {
         let mut net = Net {
             relay: Replica::new(),
@@ -790,10 +807,12 @@ mod tests {
             heads(&net.devices[1]),
             ["written before anyone was connected"]
         );
-        assert_eq!(status(&net.devices[1]), "1 changed elsewhere");
+        // A device that held nothing is filled, which is not news.
+        assert_eq!(status(&net.devices[1]), "");
 
         net.act(1, Action::Type("engineer quoted 240".into()));
         net.act(1, Action::Write);
+        assert_eq!(status(&net.devices[0]), "1 changed elsewhere");
         net.act(0, Action::Type("quoted".into()));
         assert_eq!(heads(&net.devices[0]), ["engineer quoted 240"]);
 
@@ -951,9 +970,9 @@ mod tests {
             Todo::default()
         );
         assert_eq!(b.view().field.map(|f| f.text), Some("a garden"));
-        assert_eq!(b.act(Action::Edit), Todo::default());
+        assert_eq!(b.act(Action::Open), Todo::default());
         assert!(b.view().field.is_some_and(|f| !f.whole));
-        assert_eq!(b.act(Action::Done), Todo::default());
+        assert_eq!(b.act(Action::Close), Todo::default());
 
         // With the right key a new note is opened, and is written as one sealed line at its
         // first letter.
@@ -963,7 +982,7 @@ mod tests {
         let typed = a.act(Action::Edited("House".into()));
         assert_eq!(typed.keep.len(), 1);
         assert_eq!(opened(&typed.keep[0].lines[0]).text, "House");
-        assert_eq!(a.act(Action::Done).keep.len(), 0, "nothing more to write");
+        assert_eq!(a.act(Action::Close).keep.len(), 0, "nothing more to write");
     }
 
     #[test]
@@ -980,7 +999,7 @@ mod tests {
         // head would be written as it was typed; a body waits for it to close.
         b.load("dev-x", vec![plain("x-1", "a garden", 100)]);
         b.act(Action::Move(1));
-        b.act(Action::Edit);
+        b.act(Action::Open);
         b.act(Action::Edited("a garden\ngate".into()));
         assert!(b.key_verified());
         assert!(b.session.unwritten());
@@ -993,7 +1012,7 @@ mod tests {
         assert_eq!(b.act(Action::Move(1)), Todo::default());
         assert_eq!(status(&b), WRONG_KEY);
         assert_eq!(b.act(Action::Type("house".into())), Todo::default());
-        assert_eq!(b.act(Action::Done), Todo::default());
+        assert_eq!(b.act(Action::Close), Todo::default());
         assert_eq!(
             b.act(Action::Edited("a garden\ngate, painted".into())),
             Todo::default()

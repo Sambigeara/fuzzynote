@@ -122,10 +122,12 @@ out.
   this note in front of the person to edit, copy this, open this URL. The session has already
   done its own part, so an effect that fails costs a message and nothing else.
 - Out: the *view*, which is everything there is to paint: the path, the line and what its date
-  words and spans stand for, the rows with their reasons, where the cursor is, the note under it
-  as it is being written, the note you are in, what just happened, and what can be asked for
-  where the cursor is, each with what to call it there. A face puts its own key or button beside
-  each.
+  words and spans stand for, the rows with their reasons, each with the head it shows off the
+  cursor and whether it is a task and ticked, where what a place only finds begins, where the
+  cursor is, the note under it as it is being written and when it last changed, the note you are
+  in, what just happened, and what can be asked for where the cursor is, each with what to call
+  it there. A face puts its own key or button beside each. What the view says is worked out once
+  an action or an arrival is done with, so a face may ask for it as often as it paints.
 - Out, when a face asks: the path as *steps*, each note by its id and each label as it was typed,
   with the search each was found with, for a face that is about to be reloaded under the person
   to keep and give back. A face that never reloads pays nothing for it.
@@ -513,7 +515,8 @@ however many, and nothing the engine suggests; a row says how it is linked, `lin
 `linked from here` or `linked both ways`, and nothing scored. Typing words finds: the note the
 line names first, then the place's facts that match, then what the engine finds in its
 neighbourhood that matches, each best first with its reasons and each holding what the line
-holds, and a row of nothing between the last fact and the first find. Around a note the
+holds, and a row of nothing between the last fact and the first find, where the view says the
+finds begin. Around a note the
 neighbourhood is what shares its tags and people, words and dates, or links to the same things,
 with only the notes carrying the labels counted as facts; around labels alone it is what their
 words find.
@@ -1602,14 +1605,27 @@ repeats it only where the reason needs it.
   an open body and the undo stack are not kept: the list may differ under a new build, the body
   is written before the reload, and a reload is a restart. Steps are asked for, not put in every
   view, so the terminal, which is not reloaded, pays nothing.
-- **Keep writes and stays.** Decided 2026-10-16. A face sometimes needs the note under the
-  cursor written without the cursor moving: vim's `:w`, a tab being hidden, a page about to be
-  reloaded. Until now the page closed the body and opened it again, which had to put back where
-  it was scrolled and wrote through two actions. `Keep` writes the field as it stands, date words written
-  out and an open body as a version, and leaves the body open and the cursor where it is; a new
-  row with nothing in it has nothing to keep. A head emptied, or cleared to be typed again, is
-  not kept, since only leaving the row writes that: a tab hidden mid-retype must not delete the
-  note or make its body's first line its head.
+- **Keep writes and stays.** Decided 2026-10-16. A face sometimes needs the note under the cursor
+  written without the cursor moving: vim's `:w`, a tab being hidden, a page about to be reloaded.
+  Until now the page closed the body and opened it again, which had to put back where it was
+  scrolled and wrote through two actions. `Keep` writes the field as it stands, date words written
+  out and an open body as a version, and leaves the body open and the cursor where it is; a new row
+  with nothing in it has nothing to keep. A head emptied, or cleared to be typed again, is not kept,
+  since only leaving the row writes that: a tab hidden mid-retype must not delete the note or make
+  its body's first line its head.
+- **The view says what both faces worked out.** Decided 2026-10-16, in the checkpoint's review of
+  the engine. Both faces drew the row of nothing between a place's facts and its finds by the same
+  rule written twice, and the page was about to carry the rule for a task's box; each was one rule
+  in two places, which is how faces drift. The view now says where the finds begin and whether a row
+  is a task and ticked. It also says no more than a face reads: the date of the cursor's row is the
+  field's, not on every row, which was a seventh of a long view's JSON; the note you are in is its
+  id and text, not the record with its stamps; and opening and closing a body are `open` and
+  `close`, since `edit`, `edited` and `editor` were three words from one stem for different things,
+  and `done` did not say what it did. The line is read, and the hints and dates made, once an
+  action, where a terminal that asked for the view four times a key read the line four times. A
+  session filled from nothing, as a new device is by its first sync, says nothing of it, however
+  many logs the space arrives in, until something is first asked of it: the space arriving is not
+  news, and `N changed elsewhere` is kept for what changes after.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

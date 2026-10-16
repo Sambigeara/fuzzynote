@@ -20,11 +20,12 @@ impl Session {
     /// line.
     pub(super) fn refresh(&mut self, reset: bool) {
         let query = Query::read(&self.line, self.today());
-        self.rows = match (self.path.is_empty(), query.ranks()) {
+        (self.rows, self.finds_from) = match (self.path.is_empty(), query.ranks()) {
             (false, _) => self.in_place(&query),
-            (true, true) => self.found(&query, self.show_archived, FOUND_LIMIT),
-            (true, false) => self.found(&query, self.show_archived, TOP_LIMIT),
+            (true, true) => (self.found(&query, self.show_archived, FOUND_LIMIT), None),
+            (true, false) => (self.found(&query, self.show_archived, TOP_LIMIT), None),
         };
+        self.parsed = query;
         self.stale = false;
         let cursor = if reset { None } else { self.cursor };
         self.cursor = cursor
@@ -47,13 +48,13 @@ impl Session {
             id: r.id.clone(),
             head: r.head().to_owned(),
             shown: self.shown(r.head(), has_body),
+            task: text::task(&r.text),
             archived: r.archived,
             has_body,
             linked: false,
             links: self.link_heads(r),
             reasons: Vec::new(),
             score: None,
-            updated: r.updated,
         }
     }
 
@@ -130,8 +131,10 @@ impl Session {
     /// the engine suggests, as the top of the space is: what is linked to or from its note and
     /// carries all of its labels. With something to rank by it is what the line finds in its
     /// neighbourhood: the note the line names, then the facts that match, then what else the
-    /// engine finds there that matches, all of them holding what the line holds.
-    fn in_place(&self, query: &Query) -> Vec<Row> {
+    /// engine finds there that matches, all of them holding what the line holds. With it comes
+    /// the first of what is only found there, if a fact comes before it, where a face sets the
+    /// two apart.
+    fn in_place(&self, query: &Query) -> (Vec<Row>, Option<String>) {
         let note = self.place_note().map(String::as_str);
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
@@ -150,7 +153,7 @@ impl Session {
                 .into_iter()
                 .map(|(note, link)| (note.id.as_str(), link))
                 .collect();
-            return self
+            let rows = self
                 .kept(self.show_archived)
                 .filter_map(|r| {
                     // How it is linked is a fact too, and the one thing said about it.
@@ -162,6 +165,7 @@ impl Session {
                     })
                 })
                 .collect();
+            return (rows, None);
         }
         let opts = SearchOptions {
             limit: PLACE_LIMIT,
@@ -198,13 +202,18 @@ impl Session {
         // Right goes nowhere. Then what is in the place, and then what is only found there, each
         // in the order it was found in.
         found.sort_by_key(|&hit| (!hit.named, !fact(hit)));
-        found
+        let first = found.iter().position(|&hit| !hit.named && !fact(hit));
+        let finds_from = first
+            .filter(|&at| found[..at].iter().any(|&hit| fact(hit)))
+            .map(|at| found[at].note.id.clone());
+        let rows = found
             .into_iter()
             .map(|hit| Row {
                 linked: fact(hit),
                 ..self.row(hit)
             })
-            .collect()
+            .collect();
+        (rows, finds_from)
     }
 
     /// The heads, as they are now, of the notes a record is linked to by id. The note being
@@ -227,6 +236,7 @@ impl Session {
             id: hit.note.id.clone(),
             head: hit.note.head().to_owned(),
             shown: self.shown(hit.note.head(), has_body),
+            task: text::task(&hit.note.text),
             archived: hit.note.archived,
             has_body,
             linked: hit.linked,
@@ -241,7 +251,6 @@ impl Session {
                 })
                 .collect(),
             score: Some(hit.score),
-            updated: record.and_then(|r| r.updated),
         }
     }
 
@@ -294,7 +303,7 @@ impl Session {
     /// so can be moved among: all of them with nothing on the line to rank by, at the top as in
     /// a place, and none of what the line finds, which is in the order of its scores.
     pub(super) fn in_order(&self) -> usize {
-        if Query::read(&self.line, self.today()).ranks() {
+        if self.parsed.ranks() {
             0
         } else {
             self.rows.len()

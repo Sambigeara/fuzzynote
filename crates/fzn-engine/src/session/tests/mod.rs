@@ -72,6 +72,7 @@ fn put(s: &mut Session, id: &str, text: &str, links: &[&str], updated: i64) {
     });
     s.refresh(true);
     s.land();
+    s.derive();
 }
 
 fn heads(s: &Session) -> Vec<&str> {

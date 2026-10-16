@@ -76,6 +76,22 @@ fn a_step_whose_note_has_gone_or_whose_label_is_not_one_is_passed_over_and_none_
 }
 
 #[test]
+fn restoring_writes_and_closes_an_open_body_first() {
+    let mut s = session();
+    boiler(&mut s);
+    select(&mut s, "Water the plants");
+    s.act(Action::Open);
+    edited(&mut s, "Water the plants\nthe ones by the door");
+    let effects = s.act(Action::Restore(vec![label("#house", None)]));
+    assert_eq!(
+        kept(&effects)[0].text,
+        "Water the plants\nthe ones by the door"
+    );
+    assert_eq!(path(&s), ["#house"]);
+    assert!(s.view().field.is_none());
+}
+
+#[test]
 fn restoring_writes_out_the_field_first() {
     let mut s = session();
     boiler(&mut s);
