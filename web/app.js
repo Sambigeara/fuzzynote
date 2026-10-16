@@ -1124,27 +1124,39 @@ function placeCaret() {
     caretWas = '';
     return;
   }
+  // The mirror is written first and the layout read after, once: the field's width and place and
+  // the span's come from the same layout. The mirror's width follows the field's, and is written
+  // between the two reads only when it has changed, which a keystroke seldom does. Its face is
+  // copied only when the field, its class or the window's width has changed.
   const style = getComputedStyle(field);
-  for (const name of COPIED) mirror.style[name] = style[name];
-  mirror.style.whiteSpace = field === box ? 'pre-wrap' : 'pre';
-  mirror.style.overflowWrap = field === box ? 'anywhere' : 'normal';
+  const face = `${field.id} ${field.className} ${innerWidth}`;
+  if (mirror.dataset.face !== face) {
+    mirror.dataset.face = face;
+    for (const name of COPIED) mirror.style[name] = style[name];
+    mirror.style.whiteSpace = field === box ? 'pre-wrap' : 'pre';
+    mirror.style.overflowWrap = field === box ? 'anywhere' : 'normal';
+  }
   const size = parseFloat(style.fontSize);
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
   const at = field.selectionStart;
   const text = field.value;
   // At the end of the text, or of a line in it, there is no letter, so the block is a little over
-  // half a letter wide.
+  // half a letter wide, measured on a no-break space, which wraps with the line's last word rather
+  // than hanging past the end of a full line as a space does.
   const end = at >= text.length || text[at] === '\n';
-  const span = el('span', null, end ? ' ' : text[at]);
+  const span = el('span', null, end ? '\u00a0' : text[at]);
   mirror.replaceChildren(text.slice(0, at), span, end ? text.slice(at) : text.slice(at + 1));
-  mirror.style.width = `${field.clientWidth - padding}px`;
+  const width = `${field.clientWidth - padding}px`;
+  const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
+  if (mirror.style.width !== width) mirror.style.width = width;
 
   // The read. The block is the height of the line, centred on the letter as the line's own leading
   // is, and never narrower than a third of a letter, so that it is still a block over an i.
-  const tall = parseFloat(style.lineHeight) || span.offsetHeight;
-  const wide = end ? 0.55 * size : Math.max(span.offsetWidth, 0.35 * size);
-  const left = field.offsetLeft + span.offsetLeft - field.scrollLeft - (wide - (end ? wide : span.offsetWidth)) / 2;
-  const top = field.offsetTop + span.offsetTop - field.scrollTop - (tall - span.offsetHeight) / 2;
+  const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = span;
+  const tall = parseFloat(style.lineHeight) || offsetHeight;
+  const wide = end ? 0.55 * size : Math.max(offsetWidth, 0.35 * size);
+  const left = fieldLeft + offsetLeft - (wide - (end ? wide : offsetWidth)) / 2;
+  const top = fieldTop + offsetTop - (tall - offsetHeight) / 2;
 
   const parent = field.parentElement;
   if (caret.parentElement !== parent) parent.append(caret);
