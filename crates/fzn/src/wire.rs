@@ -77,17 +77,21 @@ impl Wire {
         }
     }
 
-    /// Sends what is waiting to go, then closes, giving the peer a greeting's time to hear it.
-    pub fn close(mut self) {
+    /// Sends what is waiting to go, then closes, giving the peer a greeting's time to hear it,
+    /// and says whether the peer closed in that time. Any end of the connection counts, since a
+    /// relay, this one and those before it, drops the socket once it reads the close rather than
+    /// answering it, and has read everything sent before the close by then all the same.
+    pub fn close(mut self) -> bool {
         let deadline = Instant::now() + GREETING;
         let _ = self.socket.close(None);
         // Reading drives the close: it sends what is queued and ends when the peer closes too.
         while Instant::now() < deadline {
             match self.socket.read() {
-                Err(e) if !would_wait(&e) => break,
+                Err(e) if !would_wait(&e) => return true,
                 _ => {}
             }
         }
+        false
     }
 
     /// Sends on what is waiting to go, pings a quiet peer, and gives up on a silent one.

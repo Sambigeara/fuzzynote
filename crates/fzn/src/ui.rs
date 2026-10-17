@@ -2340,17 +2340,10 @@ mod tests {
             .id
             .clone();
         let tick = |done| {
-            let mut said = Vec::new();
-            store::tick(
-                &space,
-                "main",
-                &space.with_file_name("config"),
-                key(),
-                std::slice::from_ref(&oil),
-                done,
-                &mut said,
-            )
-            .unwrap();
+            let config = space.with_file_name("config");
+            let (beside, _) = store::Beside::open(&space, "main", &config, key(), None).unwrap();
+            let ids = std::slice::from_ref(&oil);
+            beside.tick(ids, done, &mut Vec::new()).unwrap();
         };
         assert!(!app.look().unwrap(), "nothing yet");
 

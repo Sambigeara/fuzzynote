@@ -47,7 +47,10 @@ The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~
 writes a space's directory. Several windows may have a space open at once on one machine, each
 in its own place, and what one writes the others list within a moment; query, export, apply,
 tick, untick and the importers work beside them. A relay, not copying files, is how a space gets
-from one machine to another.
+from one machine to another. With a relay named and no window open on the space, query, export,
+apply, tick and untick sync with it once before they read or write, and send what they wrote
+before they end; a relay out of reach is said on one line, not synced with HOST, and they go on
+with this machine's copy.
 
 Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
 twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
@@ -316,6 +319,17 @@ fn run() -> Result<()> {
     }
     let space = config::resolve_space(space_flag.as_deref(), &cfg)?;
     let dir = root.join(&space);
+    // A relay's address is read before anything is asked for, so that one that is not an
+    // address is said first. The app syncs with it, and so do the commands that read and write
+    // notes; the importers and key leave it be.
+    let syncs = matches!(
+        cmd,
+        Cmd::Open | Cmd::Query(_) | Cmd::Export | Cmd::Apply(_) | Cmd::Tick { .. }
+    );
+    let env_relay = std::env::var("FZN_RELAY").ok();
+    let named =
+        config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg).filter(|_| syncs);
+    let dial = named.as_deref().map(sync::dial_of).transpose()?;
 
     match cmd {
         Cmd::Key => {
@@ -324,12 +338,11 @@ fn run() -> Result<()> {
             println!("the key for {space} was replaced");
         }
         Cmd::Query(line) => {
-            // Reading takes no lock, and leaves a torn line for whoever appends to its log to cut.
-            let store = reading(&dir, &space, &config_dir)?;
+            let store = reading(&dir, &space, &config_dir, dial.as_ref())?;
             store.query(&line, cfg.weights.clone(), &mut std::io::stdout().lock())?;
         }
         Cmd::Export => {
-            let store = reading(&dir, &space, &config_dir)?;
+            let store = reading(&dir, &space, &config_dir, dial.as_ref())?;
             store.export(&mut std::io::stdout().lock())?;
         }
         Cmd::Apply(from) => {
@@ -347,18 +360,24 @@ fn run() -> Result<()> {
                     input
                 }
             };
-            // Nothing given is nothing to do, and needs no key.
-            if input.trim().is_empty() {
+            // Nothing given is nothing to do, and needs no key, and what is not a note is said
+            // before the relay is asked for anything.
+            let given = store::given(&input)?;
+            if given.is_empty() {
                 return Ok(());
             }
             let key = kept_key(&space, &config_dir)?;
-            let out = &mut std::io::stdout().lock();
-            store::apply(&dir, &space, &config_dir, key, &input, out)?;
+            let (beside, not_synced) =
+                store::Beside::open(&dir, &space, &config_dir, key, dial.as_ref())?;
+            say(not_synced);
+            say(beside.apply(given, &mut std::io::stdout().lock())?);
         }
         Cmd::Tick { ids, done } => {
             let key = kept_key(&space, &config_dir)?;
-            let out = &mut std::io::stdout().lock();
-            store::tick(&dir, &space, &config_dir, key, &ids, done, out)?;
+            let (beside, not_synced) =
+                store::Beside::open(&dir, &space, &config_dir, key, dial.as_ref())?;
+            say(not_synced);
+            say(beside.tick(&ids, done, &mut std::io::stdout().lock())?);
         }
         Cmd::ImportJsonl(path) => {
             let mut into = importing(&dir, &space, &config_dir)?;
@@ -387,11 +406,6 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Open => {
-            // A relay's address is read before anything is asked for, so that one that is not
-            // an address is said first.
-            let env_relay = std::env::var("FZN_RELAY").ok();
-            let named = config::resolve_relay(relay_flag.as_deref(), env_relay.as_deref(), &cfg);
-            let dial = named.as_deref().map(sync::dial_of).transpose()?;
             // A window is a writer of its own, in a slot it holds for as long as it is open.
             let _in_use = store::Lock::share(&dir, &space)?;
             let slot = store::Slot::take(&dir, &config_dir)?;
@@ -483,10 +497,45 @@ fn kept_key(space: &str, config_dir: &Path) -> Result<fzn_engine::Key> {
     })
 }
 
-/// A space opened to be read, as `query` and `export` read it.
-fn reading(dir: &Path, space: &str, config_dir: &Path) -> Result<store::Store> {
+/// A space opened to be read, as `query` and `export` read it, once it is synced with the relay
+/// named.
+fn reading(
+    dir: &Path,
+    space: &str,
+    config_dir: &Path,
+    relay: Option<&sync::Dial>,
+) -> Result<store::Store> {
     let key = key::key_for(space, config_dir, dir)?;
-    store::Store::open(dir, String::new(), Seal::new(key))
+    let (store, not_synced) = synced(dir, space, config_dir, key, relay)?;
+    say(not_synced);
+    Ok(store)
+}
+
+/// Syncs a space with the relay named, if one is, and then reads it, which takes no lock and
+/// leaves a torn line for whoever appends to its log to cut. What goes wrong in the directory
+/// while syncing, a relay here holding it or no slot free, is one more reason it is not synced,
+/// and the read goes on without, so that what is written out is what it would have been.
+fn synced(
+    dir: &Path,
+    space: &str,
+    config_dir: &Path,
+    key: fzn_engine::Key,
+    relay: Option<&sync::Dial>,
+) -> Result<(store::Store, Option<String>)> {
+    let not_synced = relay.and_then(|relay| {
+        store::sync(dir, space, config_dir, key.clone(), relay)
+            .unwrap_or_else(|why| Some(format!("not synced with {}: {why:#}", relay.shown)))
+    });
+    let store = store::Store::open(dir, String::new(), Seal::new(key))?;
+    Ok((store, not_synced))
+}
+
+/// Says why a command is not synced with the relay, when it is not, on a line of its own; the
+/// command goes on with this machine's copy.
+fn say(not_synced: Option<String>) {
+    if let Some(why) = not_synced {
+        eprintln!("fzn: {why}");
+    }
 }
 
 /// A space opened for an importer to write, in a slot of its own, beside any window open on it,
@@ -610,5 +659,39 @@ mod tests {
                 done: false
             }
         );
+    }
+
+    #[test]
+    fn query_and_export_with_no_relay_read_while_the_directory_is_held_alone() {
+        let dir = store::tests::temp_dir();
+        let (space, config) = (dir.join("main"), dir.join("config"));
+        let key = fzn_engine::Key::from_bytes([7; 32]);
+        let mut writer =
+            store::Store::open(&space, "3f9a01c2".into(), Seal::new(key.clone())).unwrap();
+        writer
+            .put(fzn_engine::Record::new("oil", "Order oil #house"))
+            .unwrap();
+        let held = std::fs::File::create(space.join(".lock")).unwrap();
+        held.try_lock().unwrap();
+
+        let (store, not_synced) = synced(&space, "main", &config, key.clone(), None).unwrap();
+        assert_eq!(not_synced, None);
+        let mut out = Vec::new();
+        assert_eq!(store.export(&mut out).unwrap(), 1);
+        let (store, _) = synced(&space, "main", &config, key.clone(), None).unwrap();
+        let n = store
+            .query("#house", Default::default(), &mut Vec::new())
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // With a relay named, the directory's trouble is one more reason it is not synced, and
+        // the read goes on all the same.
+        let relay = sync::dial_of("ws://nas.local").unwrap();
+        let (store, not_synced) = synced(&space, "main", &config, key, Some(&relay)).unwrap();
+        let why = not_synced.unwrap();
+        assert!(why.starts_with("not synced with nas.local: "), "{why}");
+        assert!(why.contains("holds main"), "{why}");
+        assert_eq!(store.export(&mut Vec::new()).unwrap(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

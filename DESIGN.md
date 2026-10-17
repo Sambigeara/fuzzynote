@@ -277,20 +277,27 @@ added to the engine until daily use asks for it.
   write, and takes that in as it takes in the relay's lines, which is how windows on one space see
   each other, each in its own place, and how one lists what an importer or a command beside it
   wrote, saying `1 changed elsewhere`. A command asks for nothing: it takes the key kept for the
-  space, says so when none is kept, writes nothing when that key opens nothing there, and connects
-  to no relay; with no window open it takes slot 0. Since a log may be read while another process
-  appends to it, every log is read only as far as its last whole line, and an unfinished last line
-  is cut only by the process about to append to that log. A log is a file, not a link to one, so a
-  file gone between listing the directory and reading it is a log a compaction retired, and the
-  directory is listed again for its successor. No client deletes a log another slot writes, though a
-  header from elsewhere retires it, since a copy of the directory that wrote under the same id
-  elsewhere may have left it holding lines nobody else has: its own writer carries them into a new
-  log, and keeps the new id, before it goes, as the replica keeps a device's own log from a peer's
-  header. Clients share a lock on `.lock`; a relay holds it alone, so a relay asked to serve a space
-  a client has open is refused, and so is a client opening a space a relay holds. `fzn query` and
-  `fzn export` take neither a lock nor a slot. Nothing else writes there: Syncthing and the like are
-  not supported and not needed; the relay is the way between machines. What arrives from the relay
-  comes through the engine, which asks the face to keep it.
+  space, says so when none is kept, and writes nothing when that key opens nothing there; with no
+  window open it takes slot 0. With a relay named and no window holding the keeper's lease, it
+  holds the lease for its run and syncs once (see "A device syncs by having a relay named");
+  commands take turns at that by a lock of their own, `.relay.command`, which windows never take,
+  so that a command finding the lease held knows a window holds it. Beside a window a command
+  connects to nothing, and what it writes reaches the relay through the keeper. Since a
+  log may be read while another process appends to it, every log is read only as far as its last
+  whole line, and an unfinished last line is cut only by the process about to append to that log. A
+  log is a file, not a link to one, so a file gone between listing the directory and reading it is a
+  log a compaction retired, and the directory is listed again for its successor. No client deletes a
+  log another slot writes, though a header from elsewhere retires it, since a copy of the directory
+  that wrote under the same id elsewhere may have left it holding lines nobody else has: its own
+  writer carries them into a new log, and keeps the new id, before it goes, as the replica keeps a
+  device's own log from a peer's header. Clients share a lock on `.lock`; a relay holds it alone, so
+  a relay asked to serve a space a client has open is refused, and so is a client opening a space a
+  relay holds. `fzn query` and `fzn export` take neither a lock nor a slot to read; with a relay
+  named and no window keeping the space in step, they first share the lock and take the lease and a
+  slot for the exchange, which keeps the relay's lines here, and let them go before they read.
+  Nothing else writes there: Syncthing and the like are not supported and not needed; the relay is
+  the way between machines. What arrives from the relay comes through the engine, which asks the
+  face to keep it.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
   sealed CRDT updates instead of sealed snapshots. The replica and the relay do not change, since
   they never read a line; the session and `Notes` do, since the session reads and makes `Record`s
@@ -444,16 +451,24 @@ relay all run the same code.
   address to open (see "Where the page comes from" under Browser).
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with `--relay`.
   There is no command for it. While the app is open a thread keeps the space's logs in step with the
-  relay, and the foot says only when that is not going. With several windows open on a space, one
-  holds the socket and keeps the relay's lines, the keeper, by a lease on `.relay`; the others reach
-  the relay through it, by way of the directory. The next window takes the lease within a look of
-  the keeper's going and reads what the last keeper kept before it appends, with nothing handed
-  over, since the directory is the state. A keeper that hands the terminal to an editor lets the
-  lease go first, since it hears and looks at nothing until the editor is done, and tries to take it
-  back at its next look after. The address may carry a token, `ws://joe:TOKEN@nas.local`, which is
-  what lets a device make a space on the relay: it is read with a URI parser, goes no further than
-  the greeting (see "A connection"), and is never said, the status row naming the relay by its host
-  alone. With no relay named, nothing leaves the machine.
+  relay, and the foot says only when that is not going. With no window holding the keeper's lease,
+  the commands that read and write notes, `query`, `export`, `apply`, `tick` and `untick`, sync once
+  each: they take the commands' turn, `.relay.command`, waiting while another command has it (at
+  most four greetings, past which the turn is said as the reason they are not synced), then the
+  lease, connect, carry messages until the device holds every line the relay said it holds (a log
+  forked with the relay apart), do their work, send what they wrote, and close once the relay has
+  closed too, letting the lease go after their last append. A relay out of reach, one that refuses,
+  and one silent for a greeting are said on one line, `fzn: not synced with nas.local: …`, and the
+  command goes on with this machine's copy; one that works says nothing. With several windows open
+  on a space, one holds the socket and keeps the relay's lines, the keeper, by a lease on `.relay`;
+  the others reach the relay through it, by way of the directory. The next window takes the lease
+  within a look of the keeper's going and reads what the last keeper kept before it appends, with
+  nothing handed over, since the directory is the state. A keeper that hands the terminal to an
+  editor lets the lease go first, since it hears and looks at nothing until the editor is done, and
+  tries to take it back at its next look after. The address may carry a token,
+  `ws://joe:TOKEN@nas.local`, which is what lets a device make a space on the relay: it is read with
+  a URI parser, goes no further than the greeting (see "A connection"), and is never said, the
+  status row naming the relay by its host alone. With no relay named, nothing leaves the machine.
 - **The engine is where sync and the app meet.** A *device* is a session and a replica joined in
   memory, with the space's key, and it is in the engine as `Device`: the same code in the terminal,
   in a tab and in a test. A version the session wants kept is sealed, becomes a line of this
@@ -465,9 +480,10 @@ relay all run the same code.
   from the relay it passes on; the relay's clock is the only one taken, since a sibling's is this
   machine's own. The face is left with what only it can do: the connections, and keeping lines for
   the next time. In the terminal that is one thread holding the websocket and passing text both ways
-  over channels, in the window that holds the keeper's lease, and a directory of files, which is the
-  wire between windows; in a tab it is a socket of its own and a broadcast channel to the other tabs
-  (see "Several tabs" under Browser). Nothing is locked per write and nothing can go stale under the
+  over channels, in the window that holds the keeper's lease, or with no window open a command's
+  one exchange, carried on the command's own thread, and a directory of files, which is the wire
+  between windows; in a tab it is a socket of its own and a broadcast channel to the other tabs (see
+  "Several tabs" under Browser). Nothing is locked per write and nothing can go stale under the
   replica: each line of another writer's log is read once, as a peer's line is.
 - **A fork is how a mistake shows.** The one that will happen is a writer's id copied to a second
   machine along with the rest of a directory, so that two machines write different logs under one
@@ -1067,7 +1083,9 @@ the app now does is described above; an entry repeats it only where the reason n
   sync, and a device syncs only while the app is open, which is when it is read and written anyway.
   The relay is one command for the same reason, and the same binary. Revised 2026-10-16 by "A client
   is a writer of its own, leased from a pool": which of the open windows syncs is settled by the
-  keeper's lease, taken by the first and by the next when it goes.
+  keeper's lease, taken by the first and by the next when it goes. Revised 2026-10-17 by "A command
+  syncs when no window does": a device is read and written by commands too while the app is shut,
+  and a command with no window here to keep the space in step syncs once for its run.
 
 - **The page crosses to the engine as text.** Decided 2026-10-13. An action goes in as JSON and the
   view comes back as JSON, with a hint's action being exactly what to send back to ask for it, so
@@ -1715,7 +1733,10 @@ the app now does is described above; an entry repeats it only where the reason n
   writes a space's directory"). Undo in the app takes back only what the app did, so it cannot take
   back a tick, as it cannot an edit from another device; `fzn untick` is the undo. Revised the same
   day by "A client is a writer of its own, leased from a pool": `.commands` was the pool's second
-  slot named by hand, and is slot 1; a command takes the first free slot and never waits.
+  slot named by hand, and is slot 1; a command takes the first free slot and never waits. Revised
+  2026-10-17 by "A command syncs when no window does": with a relay named and no window here holding
+  the keeper's lease, a command takes the lease for its run and has one exchange with the relay; it
+  still writes to this machine first, and beside a window it still connects to nothing.
 
 - **The relay carries the page; a directory stands in for it while the page is worked on.** Decided
   2026-10-16, revising "The relay hands out the page" where it says the page is "not something built
@@ -2225,6 +2246,31 @@ the app now does is described above; an entry repeats it only where the reason n
   writing survives on 7% of them: a date there would be a guess. When a note was last changed is
   still kept, and still what orders a ranked list's recency; it is only not said on the row.
 
+- **A command syncs when no window does.** Decided 2026-10-17, at Sam's direction, revising "Sync is
+  part of opening the app", where a device syncs only while the app is open, and "A command writes
+  beside the app, as a writer of its own", where a command connects to no relay. A note written in
+  the browser could not be found by `fzn query` on a machine whose app was shut, nor ticked by `fzn
+  tick`, until the app had been opened there, and a tick made with the app shut reached the relay
+  only when it next was: the triage skill read a copy of the space that was behind, and could not
+  tick what it could not see. Sync waited for the app because a device was read and written only
+  while the app was open, and that stopped being so once commands read and wrote without it. So
+  `query`, `export`, `tick`, `untick` and `apply`, with a relay named and no window here holding the
+  keeper's lease, take the lease for their run, connect, take in what the relay has that this
+  machine lacks, do what they were asked, send what they wrote and whatever else the relay lacks,
+  and close once the relay has heard it. A window holding the lease keeps the space in step already,
+  and what a command writes beside it reaches the relay through it within a look, as before; the
+  command never waits on a window and asks for nothing. Commands take turns at the lease, by a lock
+  of their own that windows never take, since a command that found it held by another command would
+  leave what it wrote unsent: the other has had its one exchange and does not look again. A relay
+  that cannot be reached, refuses, or says nothing for a greeting's five seconds is said in one line
+  on standard error, `not synced with nas.local: …`, and the command goes on with this machine's
+  copy, since a copy a little behind is still an answer and what is written here goes at the next
+  sync; one that works says nothing. Writing still goes to this machine first, so the reasons the
+  earlier decision gave against writing through the relay hold. The cost is one exchange with the
+  relay per command, a fraction of a second at home and a greeting's wait at most when the relay is
+  away. The importers are left as they were: they write a space's start, once, and the app sends it
+  when it opens.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2295,14 +2341,14 @@ the app now does is described above; an entry repeats it only where the reason n
 - A fork in a slot's log. A space's directory copied to a second machine takes its slot files with
   it, and once both machines write in the same slot, two logs have one name. The relay finds it and
   the keeper says so, as for any log not its own, but only the slot's holder starts a new log for
-  it, and a holder hears the relay only while it is also the keeper: a slot that only commands take,
-  and the windows that do not hold the socket, leave what the second machine wrote there on it until
-  a header retires the shared name. Copying a directory is not supported, so this waits until it is
-  seen; the keeper compacting a sibling's forked log for it is one way to close it. A keeper holding
-  the relay's lines of a sibling slot's log that are ahead of the disk, as after a power cut lost a
-  tail that had reached the relay, appends them under that slot's lock when nobody holds it; when a
-  sibling does, it leaves them, and the sibling appends at the gap and forks its own log, which is
-  then put right as any fork is.
+  it, and a holder hears the relay only while it is also the keeper: a slot that only commands take
+  beside a window, and the windows that do not hold the socket, leave what the second machine wrote
+  there on it until a header retires the shared name. Copying a directory is not supported, so this
+  waits until it is seen; the keeper compacting a sibling's forked log for it is one way to close
+  it. A keeper holding the relay's lines of a sibling slot's log that are ahead of the disk, as
+  after a power cut lost a tail that had reached the relay, appends them under that slot's lock when
+  nobody holds it; when a sibling does, it leaves them, and the sibling appends at the gap and forks
+  its own log, which is then put right as any fork is.
 - A slot used once keeps a log for good: a log of a few lines a slot, on this machine and on the
   relay, as many as the most clients ever open at once on a space. Bytes, and so left.
 - The clock is compared once a connection, when the relay's `now` is heard, so a clock set right

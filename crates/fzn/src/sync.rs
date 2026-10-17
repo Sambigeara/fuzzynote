@@ -1,11 +1,17 @@
-//! The terminal's one socket: a websocket to a relay, held by a thread of its own, with text
-//! passed to and from the app over channels. The relay is in `relay`, and the websocket both
+//! The terminal's socket: a websocket to a relay, held for a window by a thread of its own, with
+//! text passed to and from the app over channels. The relay is in `relay`, and the websocket both
 //! ends hold is in `wire`.
 //!
 //! The app's device decides what to say and what to make of what is heard; this thread only
 //! carries it, and dials again when the connection is lost. Nothing said while there is no
 //! connection is kept for the next one. A device says what it holds whenever it connects, and
 //! the relay sends it the rest, so whatever was dropped is worked out again then.
+//!
+//! A command that reads or writes a space while no window here keeps it in step has one
+//! exchange of its own instead, [`Once`], carried on the command's own thread, which starts no
+//! other, since the command does nothing else meanwhile: dialled once, carried until the device
+//! holds what the relay holds, and closed once what the command wrote has gone. It is never
+//! dialled again; a relay away is said, and the command goes on with this machine's copy.
 //!
 //! A relay's address may carry a token, `ws://NAME:TOKEN@host`, which is what lets this device
 //! make a space there. It is read by a URI parser rather than by hand, so that an address that
@@ -20,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::names_a_log;
+use fzn_engine::{Device, RELAY, Todo};
 use tungstenite::ClientRequestBuilder;
 use tungstenite::http::Uri;
 use tungstenite::protocol::WebSocketConfig;
@@ -152,16 +159,37 @@ fn unnamed(relay: &str) -> String {
 
 /// Connects to a relay and asks it for a space: at `/1/NAME/space` when the address names whose
 /// spaces, else at `/1/space`, offering the token, when there is one, beside fzn's own
-/// subprotocol.
-fn dial(to: &Dial, space: &str) -> Result<Wire> {
+/// subprotocol. The whole of it, the name looked up, each of its addresses tried and the
+/// handshake, has one [`GREETING`], so that a relay away costs a command no more than that. The
+/// system's lookup cannot be told how long it has, so it is asked on a thread, which is left to
+/// finish on its own when it takes too long.
+pub fn dial(to: &Dial, space: &str) -> Result<Wire> {
     let authority = &to.authority;
+    let deadline = Instant::now() + GREETING;
+    let late = || anyhow!("no answer within {} seconds", GREETING.as_secs());
+    let left = || {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+    };
+    let (found, addresses) = mpsc::channel();
+    let asked = authority.clone();
+    thread::spawn(move || {
+        let _ = found.send(asked.to_socket_addrs().map(Vec::from_iter));
+    });
+    let addresses = addresses
+        .recv_timeout(left().unwrap_or_default())
+        .map_err(|_| late())
+        .and_then(|found| found.map_err(anyhow::Error::from))
+        .with_context(|| format!("look up {authority}"))?;
     let mut failure = anyhow!("{authority} has no address");
     let mut stream = None;
-    for address in authority
-        .to_socket_addrs()
-        .with_context(|| format!("look up {authority}"))?
-    {
-        match TcpStream::connect_timeout(&address, GREETING) {
+    for address in addresses {
+        let Some(left) = left() else {
+            failure = late();
+            break;
+        };
+        match TcpStream::connect_timeout(&address, left) {
             Ok(connected) => {
                 stream = Some(connected);
                 break;
@@ -172,9 +200,10 @@ fn dial(to: &Dial, space: &str) -> Result<Wire> {
     let Some(stream) = stream else {
         return Err(failure);
     };
+    let left = left().ok_or_else(late)?;
     stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(GREETING))?;
-    stream.set_write_timeout(Some(GREETING))?;
+    stream.set_read_timeout(Some(left))?;
+    stream.set_write_timeout(Some(left))?;
     let path = match &to.name {
         Some(name) => format!("/{VERSION}/{name}/{space}"),
         None => format!("/{VERSION}/{space}"),
@@ -298,6 +327,106 @@ fn carry(wire: &mut Wire, said: &Receiver<String>, heard: &Sender<Event>) -> End
         }
     }
 }
+
+/// One exchange with a relay, as a command has it when no window here keeps the space in step:
+/// dialled, carried until this device holds what the relay holds, and closed once what the
+/// command then wrote has gone.
+pub struct Once {
+    wire: Wire,
+    shown: String,
+}
+
+impl Once {
+    /// Dials the relay and carries messages both ways until the device is in step with it,
+    /// keeping each [`Todo`] with `keep` and sending what it has for the relay. What could not be
+    /// done with the relay is the inner error, said as `not synced with HOST: why`, and leaves
+    /// the device as it was or further on, never further back; the outer is what `keep` failed
+    /// with, which is the directory's trouble and not the relay's.
+    pub fn start(
+        to: &Dial,
+        space: &str,
+        device: &mut Device,
+        mut keep: impl FnMut(&Todo) -> Result<()>,
+    ) -> Result<Result<Once, String>> {
+        let not = |why: &str| Err(format!("not synced with {}: {why}", to.shown));
+        // A space is a directory on the relay and part of the address it is asked for by.
+        if !names_a_log(space) {
+            return Ok(not(&format!(
+                "a space has to be plainly named to sync, and {space:?} is not"
+            )));
+        }
+        let wire = match dial(to, space) {
+            Ok(wire) => wire,
+            Err(why) => return Ok(not(&format!("{why:#}"))),
+        };
+        let mut once = Once {
+            wire,
+            shown: to.shown.clone(),
+        };
+        let todo = device.connected(RELAY);
+        keep(&todo)?;
+        if once.send(&todo).is_err() {
+            return Ok(not(LOST));
+        }
+        let mut heard = Instant::now();
+        loop {
+            if let Some(why) = device.refused() {
+                return Ok(not(why));
+            }
+            if device.in_step() {
+                return Ok(Ok(once));
+            }
+            if heard.elapsed() > GREETING {
+                return Ok(not(&format!(
+                    "nothing was heard from it for {} seconds",
+                    GREETING.as_secs()
+                )));
+            }
+            if once.wire.keep_up().is_err() {
+                return Ok(not(LOST));
+            }
+            match once.wire.hear() {
+                Ok(Some(text)) => {
+                    heard = Instant::now();
+                    let todo = device.received(RELAY, &text);
+                    keep(&todo)?;
+                    if once.send(&todo).is_err() {
+                        return Ok(not(LOST));
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => return Ok(not(LOST)),
+            }
+        }
+    }
+
+    /// Puts what a [`Todo`] has for the relay in line to go.
+    fn send(&mut self, todo: &Todo) -> Result<()> {
+        for said in todo.send.iter().filter(|said| said.to == RELAY) {
+            self.wire.say(said.text.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Sends what the command wrote, and whatever else is in line, and closes, giving the relay a
+    /// greeting to hear it all. Says why not, when the connection went first or the relay did not
+    /// close in that time: what was written is kept here all the same, and goes at the next sync.
+    pub fn close(mut self, todo: &Todo) -> Option<String> {
+        let sent = self.send(todo).and_then(|()| self.wire.keep_up()).is_ok();
+        let why = match (sent, self.wire.close()) {
+            (true, true) => return None,
+            (false, _) => LOST.to_owned(),
+            (true, false) => format!("it did not close within {} seconds", GREETING.as_secs()),
+        };
+        Some(format!(
+            "not synced with {}: {why}, so what was written here goes at the next sync",
+            self.shown
+        ))
+    }
+}
+
+/// Why a command's exchange with a relay ended, when the connection went before it was done.
+const LOST: &str = "the connection was lost";
 
 #[cfg(test)]
 mod tests {

@@ -10,17 +10,21 @@
 //! under, which the next holder of the slot goes on with, so the pool grows to the most clients
 //! ever open at once and no further. Nobody waits for a slot, and nothing is locked per write.
 //!
-//! So a log may be read while another process appends to it, and what is read of it is only as
-//! far as its last whole line; an unfinished line is cut only by the process about to append to
-//! that log, since only it could have left one there. A window reads every log when it opens the
-//! space and, four times a second after that, what has been added since, and gives the lines to
-//! its device, which knows what they say: that is how windows see each other. A command does the
-//! same once. One window at a time holds the keeper's lease, `.relay`, and with it the socket to
-//! the relay and the appending of the relay's lines, since those are logs too and want one
-//! appender; another window takes the lease within a look of its going, and needs nothing handed
-//! over, since what the keeper kept is in the directory. Clients share the space's lock, `.lock`,
-//! and a relay holds it alone, so a relay and a client never share a directory. The exporter and
-//! the importers read the logs here as a [`Store`].
+//! So a log may be read while another process appends to it, and what is read of it is only as far
+//! as its last whole line; an unfinished line is cut only by the process about to append to that
+//! log, since only it could have left one there. A window reads every log when it opens the space
+//! and, four times a second after that, what has been added since, and gives the lines to its
+//! device, which knows what they say: that is how windows see each other. A command does the same
+//! once. One client at a time holds the keeper's lease, `.relay`, and with it the socket to the
+//! relay and the appending of the relay's lines, since those are logs too and want one appender;
+//! another window takes the lease within a look of its going, and needs nothing handed over, since
+//! what the keeper kept is in the directory. The keeper is a window, or while no window holds the
+//! lease a command, which holds it for its run and syncs once, so that what it reads and writes is
+//! the relay's too; commands take turns at it by `.relay.command`, which windows never take, so
+//! that a command that finds the lease held knows a window holds it. Beside a window, a command
+//! leaves the relay to it, and the lease is let go only after the command's last append. Clients
+//! share the space's lock, `.lock`, and a relay holds it alone, so a relay and a client never share
+//! a directory. The exporter and the importers read the logs here as a [`Store`].
 //!
 //! A writer's id lives in the directory, not in the config, because it names the log this
 //! machine writes in this space, and a compaction changes it.
@@ -31,6 +35,7 @@ use std::io::{ErrorKind, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::PoisonError;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Header, names_a_log};
@@ -38,14 +43,18 @@ use fzn_engine::seal::is_sealed;
 use fzn_engine::{Device, Given, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Weights};
 
 use crate::config::DEVICE_FILE;
+use crate::sync::{Dial, Once};
 use crate::system::{self, System};
+use crate::wire::{GREETING, TICK};
 
 /// The file whose lock says the directory is in use: shared by clients, held alone by a relay.
 const LOCK_FILE: &str = ".lock";
 /// Slot 0's file, and the start of every other slot's, `.writer.1` and on.
 const SLOT_FILE: &str = ".writer";
-/// The keeper's lease: which window holds the socket to the relay.
+/// The keeper's lease: which client holds the socket to the relay.
 const KEEPER_FILE: &str = ".relay";
+/// The commands' turn at the keeper's lease, which windows never take.
+const TURN_FILE: &str = ".relay.command";
 /// Where the commands kept their id before they took slots, and slot 1's file since.
 const COMMANDS_FILE: &str = ".commands";
 /// More slots than this would be clients without end, which is a bug and not a use.
@@ -246,69 +255,206 @@ pub fn open(dir: &Path, space: &str, slot: &mut Slot, device: &mut Device) -> Re
     Ok(logs)
 }
 
-/// Ticks these tasks, or unticks them, as Ctrl-V does, while windows may have the space open.
-/// Writes each note as it now stands, as `fzn query` writes it. All or none: if one cannot be,
-/// nothing is written.
-pub fn tick(
-    dir: &Path,
-    space: &str,
-    config_dir: &Path,
-    key: Key,
-    ids: &[String],
-    done: bool,
-    out: &mut impl Write,
-) -> Result<()> {
-    beside(dir, space, config_dir, key, out, |device| {
-        device.tick(ids, done)
-    })
+/// What a command holds of a space while it writes beside whatever windows have it open: a
+/// device of its own, in a slot of its own, which it never waits for. With a relay named and no
+/// window here holding the keeper's lease, it holds the lease too, for its run, and with it one
+/// exchange with the relay, so that it acts on what the relay has and what it writes goes there
+/// before it ends. A window holding the lease keeps the space in step already, and what the
+/// command writes reaches the relay through it within a look. Commands with a relay named take
+/// turns at the lease, by [`Lease`], since a command that held it would not look again.
+pub struct Beside {
+    device: Device,
+    logs: Logs,
+    slot: Slot,
+    relay: Option<Once>,
+    // The lease is let go only when the command is done, after its last append, so that a
+    // window or a command that takes it next reads what this kept before it appends.
+    _lease: Option<Lease>,
+    _in_use: Lock,
 }
 
-/// Writes notes given as the lines `fzn query` writes, one a line, as [`Device::apply`] says,
-/// while windows may have the space open. Writes each note it was given as it now stands, in
-/// the order given. All or none: a line that is not a note, or one the device refuses, is said
-/// and nothing is written.
-pub fn apply(
-    dir: &Path,
-    space: &str,
-    config_dir: &Path,
-    key: Key,
-    input: &str,
-    out: &mut impl Write,
-) -> Result<()> {
-    let given = given(input)?;
-    if given.is_empty() {
-        return Ok(());
+/// The keeper's lease as a command holds it, with the commands' turn, `.relay.command`, taken
+/// first. A command that finds the lease held has to know that a window holds it, which keeps the
+/// space in step and sends what the command writes; another command would do neither, having had
+/// its one exchange. So commands take turns at the lease by a lock of their own, which windows
+/// never touch: a window waits for the lease as it waits for another window's, and a command
+/// beside a window never waits at all, since it finds the turn free and the lease held.
+struct Lease {
+    // The lease goes before the turn, so that the next command to take the turn finds the lease
+    // free unless a window has taken it.
+    _keeper: Keeper,
+    _turn: File,
+}
+
+/// How long a command waits for another command to finish syncing a space before it goes on
+/// without: a few exchanges' worth, each bounded by a greeting.
+const TURN_MOST: Duration = Duration::from_secs(4 * GREETING.as_secs());
+
+impl Lease {
+    /// Takes the commands' turn, trying again each tick while another command has it, and then
+    /// the keeper's lease. Gives nothing when a window holds the lease, and why it is not synced
+    /// when another command kept the turn too long.
+    fn take(dir: &Path, relay: &Dial) -> Result<Result<Option<Lease>, String>> {
+        let path = dir.join(TURN_FILE);
+        let turn = lock_file(&path)?;
+        let began = Instant::now();
+        loop {
+            match try_lock(&turn, false) {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) if began.elapsed() < TURN_MOST => {
+                    std::thread::sleep(TICK);
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Ok(Err(format!(
+                        "not synced with {}: another fzn command is syncing it",
+                        relay.shown
+                    )));
+                }
+                Err(TryLockError::Error(e)) => {
+                    return Err(e).with_context(|| format!("lock {}", path.display()));
+                }
+            }
+        }
+        Ok(Ok(Keeper::take(dir)?.map(|keeper| Lease {
+            _keeper: keeper,
+            _turn: turn,
+        })))
     }
-    beside(dir, space, config_dir, key, out, |device| {
-        device.apply(given)
-    })
 }
 
-/// Does what a command asks of a device of its own, as a client of the space beside whatever
-/// windows have it open: in a slot of its own, which it never waits for, and hearing no relay.
-/// Writes out the notes the device gives back.
-fn beside(
+impl Beside {
+    /// Opens a space for a command, and syncs it with the relay named if no window here keeps it
+    /// in step. Gives back why it is not synced, when that could not be done, for the command to
+    /// say before it goes on with this machine's copy.
+    pub fn open(
+        dir: &Path,
+        space: &str,
+        config_dir: &Path,
+        key: Key,
+        relay: Option<&Dial>,
+    ) -> Result<(Beside, Option<String>)> {
+        let in_use = Lock::share(dir, space)?;
+        let (lease, busy) = match relay {
+            Some(to) => match Lease::take(dir, to)? {
+                Ok(lease) => (lease, None),
+                Err(why) => (None, Some(why)),
+            },
+            None => (None, None),
+        };
+        let (beside, not_synced) = Self::opened(dir, space, config_dir, key, relay, lease, in_use)?;
+        Ok((beside, busy.or(not_synced)))
+    }
+
+    /// Opens the device in a slot of its own, and holding the lease, has its exchange with the
+    /// relay, which keeps the relay's lines here as a window keeps them.
+    fn opened(
+        dir: &Path,
+        space: &str,
+        config_dir: &Path,
+        key: Key,
+        relay: Option<&Dial>,
+        lease: Option<Lease>,
+        in_use: Lock,
+    ) -> Result<(Beside, Option<String>)> {
+        let mut slot = Slot::take(dir, config_dir)?;
+        let mut device = Device::new(Box::new(System), slot.id(), Weights::default(), key);
+        let mut logs = open(dir, space, &mut slot, &mut device)?;
+        let (relay, not_synced) = match relay.filter(|_| lease.is_some()) {
+            None => (None, None),
+            Some(to) => {
+                let keep = |todo: &Todo| logs.keep(todo, &mut slot);
+                match Once::start(to, space, &mut device, keep)? {
+                    Ok(once) => (Some(once), None),
+                    Err(why) => (None, Some(why)),
+                }
+            }
+        };
+        let beside = Beside {
+            device,
+            logs,
+            slot,
+            relay,
+            _lease: lease,
+            _in_use: in_use,
+        };
+        Ok((beside, not_synced))
+    }
+
+    /// Ticks these tasks, or unticks them, as Ctrl-V does. Writes each note as it now stands, as
+    /// `fzn query` writes it. All or none: if one cannot be, nothing is written.
+    pub fn tick(self, ids: &[String], done: bool, out: &mut impl Write) -> Result<Option<String>> {
+        self.act(out, |device| device.tick(ids, done))
+    }
+
+    /// Writes notes given as the lines `fzn query` writes, as [`Device::apply`] says, and then
+    /// each note it was given as it now stands, in the order given. All or none: one the device
+    /// refuses is said and nothing is written.
+    pub fn apply(self, given: Vec<Given>, out: &mut impl Write) -> Result<Option<String>> {
+        self.act(out, |device| device.apply(given))
+    }
+
+    /// Does what the command asks of the device, keeps what it wrote, sends it to the relay when
+    /// there is an exchange, and writes out the notes the device gives back. Gives back why what
+    /// was written did not reach the relay, when the connection went first.
+    fn act(
+        mut self,
+        out: &mut impl Write,
+        act: impl FnOnce(&mut Device) -> Result<(Todo, Vec<Record>), String>,
+    ) -> Result<Option<String>> {
+        let (todo, notes) = match act(&mut self.device) {
+            Ok(done) => done,
+            Err(why) => {
+                // What the exchange put in line for the relay goes all the same.
+                if let Some(relay) = self.relay.take() {
+                    relay.close(&Todo::default());
+                }
+                bail!("{why}, so nothing was written");
+            }
+        };
+        self.logs.keep(&todo, &mut self.slot)?;
+        let lost = self.relay.take().and_then(|relay| relay.close(&todo));
+        write_lines(&notes.iter().collect::<Vec<_>>(), out)?;
+        Ok(lost)
+    }
+}
+
+/// Syncs a space with the relay named, once, for a command that then reads it, `fzn query` or
+/// `fzn export`: unless a window here holds the keeper's lease, and keeps the space in step
+/// already, the relay's lines are kept in the directory by a device made for the exchange. Gives
+/// back why it is not synced, when that could not be done.
+pub fn sync(
     dir: &Path,
     space: &str,
     config_dir: &Path,
     key: Key,
-    out: &mut impl Write,
-    act: impl FnOnce(&mut Device) -> Result<(Todo, Vec<Record>), String>,
-) -> Result<()> {
-    let _in_use = Lock::share(dir, space)?;
-    let mut slot = Slot::take(dir, config_dir)?;
-    let mut device = Device::new(Box::new(System), slot.id(), Weights::default(), key);
-    let mut logs = open(dir, space, &mut slot, &mut device)?;
-    let (todo, notes) = act(&mut device).map_err(|why| anyhow!("{why}, so nothing was written"))?;
-    logs.keep(&todo, &mut slot)?;
-    write_lines(&notes.iter().collect::<Vec<_>>(), out)?;
-    Ok(())
+    relay: &Dial,
+) -> Result<Option<String>> {
+    let in_use = Lock::share(dir, space)?;
+    let lease = match Lease::take(dir, relay)? {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return Ok(None),
+        Err(busy) => return Ok(Some(busy)),
+    };
+    let (mut beside, not_synced) = Beside::opened(
+        dir,
+        space,
+        config_dir,
+        key,
+        Some(relay),
+        Some(lease),
+        in_use,
+    )?;
+    let lost = beside
+        .relay
+        .take()
+        .and_then(|relay| relay.close(&Todo::default()));
+    Ok(not_synced.or(lost))
 }
 
 /// The notes in what `fzn apply` was given, one a line. Blank lines at the end are how a file
 /// ends; one anywhere else is a line that is not a note, so that a line's number is the one the
 /// device names it by.
-fn given(input: &str) -> Result<Vec<Given>> {
+pub fn given(input: &str) -> Result<Vec<Given>> {
     // A file an editor saved with a byte-order mark is a file of notes all the same.
     let input = input.trim_start_matches('\u{feff}').trim_end();
     if input.is_empty() {
@@ -449,14 +595,14 @@ fn commands_to_slot_one(dir: &Path) -> Result<()> {
     }
 }
 
-/// The keeper's lease: the one window that holds the socket to the relay and keeps the relay's
-/// lines in the directory, so that each of those logs has one appender too.
+/// The keeper's lease: the one client, a window or a command, that holds the socket to the relay
+/// and keeps the relay's lines in the directory, so that each of those logs has one appender too.
 pub struct Keeper {
     _file: File,
 }
 
 impl Keeper {
-    /// Takes the lease, or gives nothing while another window holds it.
+    /// Takes the lease, or gives nothing while another client holds it.
     pub fn take(dir: &Path) -> Result<Option<Keeper>> {
         let path = dir.join(KEEPER_FILE);
         let file = lock_file(&path)?;
@@ -1060,6 +1206,39 @@ pub(crate) mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// `fzn tick`, or `fzn untick`, with no relay named.
+    fn tick(
+        dir: &Path,
+        space: &str,
+        config_dir: &Path,
+        key: Key,
+        ids: &[String],
+        done: bool,
+        out: &mut impl Write,
+    ) -> Result<()> {
+        let (beside, _) = Beside::open(dir, space, config_dir, key, None)?;
+        beside.tick(ids, done, out)?;
+        Ok(())
+    }
+
+    /// `fzn apply` with no relay named.
+    fn apply(
+        dir: &Path,
+        space: &str,
+        config_dir: &Path,
+        key: Key,
+        input: &str,
+        out: &mut impl Write,
+    ) -> Result<()> {
+        let given = given(input)?;
+        if given.is_empty() {
+            return Ok(());
+        }
+        let (beside, _) = Beside::open(dir, space, config_dir, key, None)?;
+        beside.apply(given, out)?;
+        Ok(())
+    }
+
     /// Runs `fzn tick`, or `fzn untick`, on a space, and gives back what it wrote out.
     fn ticked(dir: &Path, ids: &[&str], done: bool) -> Result<String> {
         let ids: Vec<String> = ids.iter().map(|&id| id.to_owned()).collect();
@@ -1443,5 +1622,276 @@ pub(crate) mod tests {
         assert_eq!(held(&log[1]), ("[ ] Fix the gate #house".into(), false));
         assert_eq!(held(&log[2]), ("[x] Fix the gate #house".into(), true));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A machine of its own: a root with the space in it, and a config beside it.
+    struct Machine {
+        dir: PathBuf,
+        config: PathBuf,
+        key: Key,
+    }
+
+    impl Machine {
+        fn at(root: &Path, name: &str) -> Machine {
+            Machine {
+                dir: root.join(name).join("main"),
+                config: root.join(name).join("config"),
+                key: Key::from_bytes([7; 32]),
+            }
+        }
+
+        /// `fzn apply` with a relay named, and the reason it gave for not syncing, if it did.
+        fn apply(
+            &self,
+            relay: &Dial,
+            lines: &[serde_json::Value],
+        ) -> (Vec<Record>, Option<String>) {
+            let input: String = lines.iter().map(|line| format!("{line}\n")).collect();
+            let key = self.key.clone();
+            let (beside, not_synced) =
+                Beside::open(&self.dir, "main", &self.config, key, Some(relay)).unwrap();
+            let mut out = Vec::new();
+            let lost = beside.apply(given(&input).unwrap(), &mut out).unwrap();
+            (records(&out), not_synced.or(lost))
+        }
+
+        /// `fzn tick` with a relay named: what it wrote out, or why it failed, and the reason it
+        /// gave for not syncing, if it did.
+        fn tick(&self, relay: &Dial, ids: &[&str]) -> (Result<Vec<Record>>, Option<String>) {
+            let ids: Vec<String> = ids.iter().map(|&id| id.to_owned()).collect();
+            let key = self.key.clone();
+            let (beside, not_synced) =
+                Beside::open(&self.dir, "main", &self.config, key, Some(relay)).unwrap();
+            let mut out = Vec::new();
+            match beside.tick(&ids, true, &mut out) {
+                Ok(lost) => (Ok(records(&out)), not_synced.or(lost)),
+                Err(why) => (Err(why), not_synced),
+            }
+        }
+
+        /// `fzn query` with a relay named, and the reason it gave for not syncing, if it did.
+        fn query(&self, relay: &Dial, line: &str) -> (Vec<serde_json::Value>, Option<String>) {
+            let key = self.key.clone();
+            let not_synced = sync(&self.dir, "main", &self.config, key, relay).unwrap();
+            (queried(&self.dir, line), not_synced)
+        }
+    }
+
+    fn records(out: &[u8]) -> Vec<Record> {
+        String::from_utf8_lossy(out)
+            .lines()
+            .map(|line| Record::read(line.as_bytes()).unwrap())
+            .collect()
+    }
+
+    /// A listener that takes connections and says each one, as a relay that is there would be
+    /// dialled, and where it is.
+    fn counting() -> (String, std::sync::mpsc::Receiver<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let (dialled, heard) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for _ in listener.incoming() {
+                if dialled.send(()).is_err() {
+                    return;
+                }
+            }
+        });
+        (address, heard)
+    }
+
+    #[test]
+    fn a_note_applied_on_one_machine_with_no_window_open_is_found_by_query_on_the_other() {
+        let root = temp_dir();
+        let relay = crate::sync::dial_of(&crate::relay::tests::relay(&root.join("relay"))).unwrap();
+        let (a, b) = (Machine::at(&root, "a"), Machine::at(&root, "b"));
+        let new = serde_json::json!({"text": "Boiler service #house"});
+        let (said, not_synced) = a.apply(&relay, &[new]);
+        assert_eq!(not_synced, None);
+        let (found, not_synced) = b.query(&relay, "#house");
+        assert_eq!(not_synced, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0]["id"], said[0].id.as_str());
+        assert_eq!(found[0]["text"], "Boiler service #house");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_tick_made_on_the_second_machine_reaches_the_firsts_query() {
+        let root = temp_dir();
+        let relay = crate::sync::dial_of(&crate::relay::tests::relay(&root.join("relay"))).unwrap();
+        let (a, b) = (Machine::at(&root, "a"), Machine::at(&root, "b"));
+        let new = serde_json::json!({"text": "[ ] Bleed the radiators #house"});
+        let (said, _) = a.apply(&relay, &[new]);
+        let id = said[0].id.clone();
+
+        // The second machine has never seen the note, and ticks it all the same.
+        let (ticked, not_synced) = b.tick(&relay, &[&id]);
+        assert_eq!(not_synced, None);
+        let ticked = ticked.unwrap();
+        assert_eq!(ticked[0].text, "[x] Bleed the radiators #house");
+
+        let (found, not_synced) = a.query(&relay, "[x]");
+        assert_eq!(not_synced, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0]["id"], id.as_str());
+        assert_eq!(found[0]["archived"], true);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_command_beside_a_window_holding_the_keepers_lease_does_not_dial() {
+        let root = temp_dir();
+        let (address, dialled) = counting();
+        let relay = crate::sync::dial_of(&address).unwrap();
+        let a = Machine::at(&root, "a");
+        fs::create_dir_all(&a.dir).unwrap();
+        let _window = Keeper::take(&a.dir).unwrap().unwrap();
+
+        let new = serde_json::json!({"text": "[ ] Mow the lawn #garden"});
+        let (said, not_synced) = a.apply(&relay, &[new]);
+        assert_eq!(not_synced, None, "nothing is said of sync");
+        let (ticked, not_synced) = a.tick(&relay, &[&said[0].id]);
+        assert!(ticked.unwrap()[0].archived);
+        assert_eq!(not_synced, None);
+        let (found, not_synced) = a.query(&relay, "#garden");
+        assert_eq!((found.len(), not_synced), (1, None));
+        assert!(
+            dialled
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "the window keeps the space in step, and the commands left the relay to it"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_that_cannot_be_reached_is_said_without_its_token_and_the_work_is_done_here() {
+        let root = temp_dir();
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = free.local_addr().unwrap().to_string();
+        drop(free);
+        let token = "3f9a01c23f9a01c23f9a01c23f9a01c2";
+        let relay = crate::sync::dial_of(&format!("ws://joe:{token}@{address}")).unwrap();
+        let a = Machine::at(&root, "a");
+
+        let new = serde_json::json!({"text": "[ ] Fix the gate #garden"});
+        let (said, not_synced) = a.apply(&relay, &[new]);
+        let why = not_synced.unwrap();
+        assert!(
+            why.starts_with(&format!("not synced with {address}: ")),
+            "{why}"
+        );
+        assert!(!why.contains(token) && !why.contains("joe"), "{why}");
+        assert_eq!(
+            said[0].text, "[ ] Fix the gate #garden",
+            "written here all the same"
+        );
+
+        let (ticked, not_synced) = a.tick(&relay, &[&said[0].id]);
+        assert!(ticked.unwrap()[0].archived);
+        assert!(not_synced.is_some());
+        let (ticked, not_synced) = a.tick(&relay, &["gutter"]);
+        assert_eq!(
+            ticked.unwrap_err().to_string(),
+            "no note has the id gutter, so nothing was written"
+        );
+        assert!(not_synced.is_some(), "and the line before it says why");
+        let (found, not_synced) = a.query(&relay, "#garden");
+        assert_eq!(found.len(), 1);
+        assert!(not_synced.unwrap().starts_with("not synced with "));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn two_commands_at_once_take_turns_and_both_reach_the_relay() {
+        let root = temp_dir();
+        let relay = crate::sync::dial_of(&crate::relay::tests::relay(&root.join("relay"))).unwrap();
+        let (a, b) = (Machine::at(&root, "a"), Machine::at(&root, "b"));
+        let new = |text: &str| serde_json::json!({ "text": text });
+        let (said, _) = a.apply(
+            &relay,
+            &[
+                new("[ ] Bleed the radiators #house"),
+                new("[ ] Clear the gutter #house"),
+            ],
+        );
+        let ids: Vec<String> = said.iter().map(|note| note.id.clone()).collect();
+
+        // A command already syncing holds the turn and the lease while both ticks start, so that
+        // each has to wait for the turn rather than happening to go after the other.
+        let syncing = Lease::take(&a.dir, &relay).unwrap().unwrap();
+        assert!(syncing.is_some(), "no window holds the lease");
+        let a = std::sync::Arc::new(a);
+        let ticks: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let (a, relay, id) = (a.clone(), relay.clone(), id.clone());
+                std::thread::spawn(move || {
+                    let (ticked, not_synced) = a.tick(&relay, &[&id]);
+                    ticked.unwrap();
+                    not_synced
+                })
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(300));
+        drop(syncing);
+        for tick in ticks {
+            assert_eq!(tick.join().unwrap(), None);
+        }
+        let (found, not_synced) = b.query(&relay, "[x]");
+        assert_eq!(not_synced, None);
+        let mut done: Vec<String> = found
+            .iter()
+            .map(|line| line["id"].as_str().unwrap().to_owned())
+            .collect();
+        done.sort();
+        let mut ids = ids;
+        ids.sort();
+        assert_eq!(
+            done, ids,
+            "each tick reached the relay, whichever went second"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_that_refuses_the_key_is_said_without_the_token_and_the_work_is_done_here() {
+        let root = temp_dir();
+        let address = crate::relay::tests::relay(&root.join("relay"));
+        let token = "3f9a01c23f9a01c23f9a01c23f9a01c2";
+        let relay = crate::sync::dial_of(&format!("ws://{token}@{address}")).unwrap();
+        let a = Machine::at(&root, "a");
+        let (_, not_synced) = a.apply(&relay, &[serde_json::json!({"text": "Boiler #house"})]);
+        assert_eq!(not_synced, None, "the first key claims the space");
+
+        let other = Machine {
+            key: Key::from_bytes([9; 32]),
+            ..Machine::at(&root, "b")
+        };
+        let new = serde_json::json!({"text": "Prune the roses #garden"});
+        let (said, not_synced) = other.apply(&relay, &[new]);
+        let why = not_synced.unwrap();
+        assert!(
+            why.starts_with(&format!("not synced with {address}: ")),
+            "{why}"
+        );
+        assert!(!why.contains(token), "{why}");
+        assert_eq!(said[0].text, "Prune the roses #garden");
+        let found = queried_with(&other.dir, &other.key, "#garden");
+        assert_eq!(found.len(), 1, "written here all the same");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Runs `fzn query` on a space under a key of its own, with no relay named.
+    fn queried_with(dir: &Path, key: &Key, line: &str) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        let store = Store::open(dir, String::new(), Seal::new(key.clone())).unwrap();
+        store.query(line, Weights::default(), &mut out).unwrap();
+        String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
     }
 }

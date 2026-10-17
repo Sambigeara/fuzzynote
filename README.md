@@ -92,8 +92,8 @@ relay = "ws://nas.local:3960"
 ```
 
 (or `--relay`, or `$FZN_RELAY`). While fzn is open it keeps the space in step with the relay,
-and works as before when the relay is out of reach. With no relay named, nothing leaves the
-machine.
+and works as before when the relay is out of reach; with it shut, the commands below sync once
+each. With no relay named, nothing leaves the machine.
 
 The relay holds sealed lines it cannot read. The first time a space is opened on a machine,
 fzn asks for its passphrase (twice if the space is new) and keeps the key it derives; the same
@@ -164,8 +164,12 @@ written out, `[[brackets]]` made links, a task's box and its archived flag kept 
 writes all of them or none, refuses a note that changed after it was read, and writes out each
 note as it now stands. `tick` does what Ctrl-V does to a task, `[ ]` to `[x]` and archived, to
 every note it names or to none. `query`, `apply`, `tick` and `untick` work with fzn open on the
-space, which shows what they wrote within a second. Each says what went wrong on one line and
-exits 1, or 2 when the arguments made no sense.
+space, which shows what they wrote within a second. With a relay named and fzn not open on the
+space, each of them and `export` syncs with the relay first, so `query` finds a note written in
+the browser and `tick` can tick it, and what they write goes to the relay before they end; with
+fzn open, the open window does that. A relay out of reach is said on one line, `fzn: not synced
+with nas.local: …`, and the command goes on with this machine's copy. Each says what went wrong
+on one line and exits 1, or 2 when the arguments made no sense.
 
 ## Design
 
