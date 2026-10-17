@@ -55,6 +55,30 @@ tag, person, day or note the line names; Esc clears the line, or comes back.
 Every other key is shown in the footer, and only when it applies where the cursor is. To edit a
 note at length, Ctrl-O opens it in `$EDITOR`.
 
+Shift-Enter ticks the task you are on, or archives a note that is not a task, as Ctrl-V does.
+fzn asks the terminal to tell Shift-Enter from Enter where it can: the kitty keyboard protocol,
+which Ghostty, foot, kitty, Alacritty, iTerm2 and others have. A terminal that cannot takes it as
+Enter, and the footer then says `^V tick`, since Ctrl-V works in every terminal. Ctrl-/ opens the
+first URL in the note you are on.
+
+With `vim = true` in the config file the list takes vim's keys. A row you walk to is in normal
+mode, with a block cursor: `j` and `k` walk, `l` goes in and `h` comes back out, `i`, `a`, `A` and
+`I` type, `o` and `O` open a row under or above, `x` ticks, `D` deletes, `y` copies, `u` undoes,
+Ctrl-D and Ctrl-U page by ten, `/` goes to the line, and Esc does nothing. A row you write in types,
+with a bar, until Esc. The line always types, and the footer shows vim's letters.
+
+Inside tmux, Shift-Enter reaches fzn when tmux is set to pass it on in the form fzn reads:
+
+```
+set -s extended-keys on
+set -s extended-keys-format csi-u
+```
+
+and the terminal outside sends it to tmux (kitty and Alacritty do not); fzn checks both settings
+and asks only then. A tmux plugin that binds Ctrl-L to move between panes, such as
+vim-tmux-navigator, keeps Ctrl-L (link) from fzn unless fzn is in its pattern
+(`@vim_navigator_pattern`).
+
 A note is plain text: its first line is its head, and `#tag`, `@person`, dates written
 `2026-10-16` and URLs mean what they look like. For example:
 

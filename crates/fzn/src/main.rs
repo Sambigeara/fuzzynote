@@ -420,6 +420,9 @@ fn run() -> Result<()> {
                 cfg.weights.clone(),
                 config::editor(&cfg),
             )?;
+            if cfg.vim {
+                app.use_vim();
+            }
             // With a relay named, the window that keeps the space's lines from it holds a socket
             // to it, on a thread of its own, for as long as it is open. The status row names it
             // by its host alone, never by the token its address may carry.

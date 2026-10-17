@@ -28,7 +28,9 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   opens the body; Tab goes in, from a head into its note and from the line into what the line names;
   Esc clears the line, or comes back; and where you are is what you are talking about. Every other
   key is maintenance, and the footer shows only the ones that apply right now. A key is justified by
-  the flow it sits in, never inherited.
+  the flow it sits in, never inherited. No key means something by the key before it. A mode the
+  person turned on, vim's, squares with that as where the cursor is does: it is a state, shown by
+  the cursor's shape, and every key in it is one key.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
   in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
   a little heavier, with no caret drawn. Nothing else is highlighted and almost nothing else is
@@ -705,23 +707,37 @@ own OSC 52 sequence) and the system's way of opening a URL.
 
 The keys. A chord acts on the line when the cursor is there and on the note under the cursor
 otherwise. Ctrl-D clears or deletes; Ctrl-V shows archived or archives, which ticks a task and is
-named `tick` there; the line's right-hand end says `archived shown` while they are. Ctrl-O opens the
+named `tick` there; the line's right-hand end says `archived shown` while they are. Shift-Enter on a
+row ticks or archives as Ctrl-V does wherever the terminal can be asked to tell it from Enter (see
+"Shift-Enter ticks, where it can be told from Enter"), and the footer then names it, `⇧Enter tick`,
+where otherwise it names Ctrl-V; on the line Shift-Enter is Enter. Ctrl-O opens the
 note in your editor, which is how a body is written here: in a file made new and readable only by
 its owner, in `$XDG_RUNTIME_DIR` or else in a directory of its own in the temporary directory that
 only its owner can open, and removed, with that directory, whatever the editor did, so that only a
 killed process leaves it; what the editor left is kept before the terminal is taken back. An editor
 that cannot be run is said on the status row and the app stays, and `fzn` with no terminal to draw
 on says so in one sentence. Tab goes in wherever the caret is, and Right at the end of the text does
-nothing. Shift-Tab is not bound, and Ctrl-I, which a terminal sends as Tab, carries no chord. Up and
+nothing. Shift-Tab is not bound. Ctrl-I is Tab, Ctrl-M Enter and Ctrl-[ Escape, as a terminal
+sends them unless asked to tell them apart, and where it is asked they are bound so. Up and
 Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and Ctrl-Down move the note under the
 cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and redo, Ctrl-L links or unlinks the note
-under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-_ opens the URL, Ctrl-B shows
-scores. The line and the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E,
-Delete, Ctrl-W. A paste goes into the line or the head at the caret as one change, its tabs and line
+under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/ opens the URL, Ctrl-B shows
+scores. Ctrl-_ and Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which
+crossterm reads as Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the
+kitty flags Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and
+the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
+Ctrl-Backspace as Ctrl-W where the terminal tells it from Backspace. A paste goes into the line or
+the head at the caret as one change, its tabs and line
 breaks made spaces and the breaks at its ends dropped. Escape comes back a rung at a time: off the
 row, writing out its date words, off the text on the line, out of the place, and twice on an empty
 line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing
 out the head first.
+
+With `vim = true` in the config the list takes vim's keys (see "Vim's keys walk the list"). A row
+walked to is in normal mode, with the terminal's cursor a steady block, and a row written in is in
+insert, with a steady bar, as the line always has. fzn sets the cursor's shape only then, and puts
+the person's own back, `CSI 0 SP q`, before the editor runs, on the way out and on a panic. The body
+is the person's own editor, so the setting is the list's alone.
 
 The screen is flat: no borders, no boxes, the terminal's own colours. Everything is measured in the
 columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
@@ -742,8 +758,10 @@ list never changes how much of it is shown; on the line outside a place the list
 height. On a short screen they shrink, keeping the list at least half its room, and go when fewer
 than two would be left. One dim footer row names the chords that apply where the cursor is,
 `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or
-`Esc Esc quits` where there is none; a narrow terminal loses chords from the middle, never the first
-or the way back. A status row above it exists only while there is something to say, each key
+`Esc Esc quits` where there is none; with vim's keys, a row in normal mode writes vim's letters,
+`x tick`, and ends with `h back`, in a place, and `/ up`, and a row written in ends `Esc done`. A
+narrow terminal loses chords from the middle, never the first or the way back. A status row above it
+exists only while there is something to say, each key
 clearing what the one before said, and where the body has its rows it takes the last of them, so
 that the list keeps its height. Nothing says how many notes there are or that sync is working;
 `not syncing` is said in the corner of the foot when it is not, and in its place, while syncing, how
@@ -1190,7 +1208,9 @@ the app now does is described above; an entry repeats it only where the reason n
   each visible, each named in the footer, and nothing about it depends on the key before it. Esc
   comes back a step, as before; Left does nothing on a row, so that there is one back key. Revised
   the same day, twice: see the next two entries. Reversed in part 2026-10-16 by "Tab goes in", which
-  made Tab the key that goes in and answers the case against it here.
+  made Tab the key that goes in and answers the case against it here. Revised 2026-10-17 by
+  "Shift-Enter ticks, where it can be told from Enter": Shift-Enter is now told from Enter wherever
+  a terminal can be asked to, and ticks.
 
 - **Enter opens the body; Right goes in from the end of the head.** Decided 2026-10-14, at Sam's
   direction, after a day's use, revising the entry above. Enter opens the body, since the head needs
@@ -1243,7 +1263,9 @@ the app now does is described above; an entry repeats it only where the reason n
   (Enter was then the editor's key, and a second binding for one action is inherited, not earned),
   and the gutter mark, since the caret itself is in the head. Undo while on a row puts a changed
   head back and otherwise is undo, one key for the last change written or not. The list holds still
-  while the cursor walks it, so that the arrow that writes a head lands where it was aimed.
+  while the cursor walks it, so that the arrow that writes a head lands where it was aimed. Revised
+  2026-10-17 by "Vim's keys walk the list": with vim's keys turned on, a row walked to takes vim's
+  letters as commands and is written in only once asked to.
 
 - **A new row opens under any row.** Decided 2026-10-14, with "Enter opens a row under; the body is
   Ctrl-O": not only at the top of the list, and an empty one goes from wherever it is when the
@@ -1329,13 +1351,15 @@ the app now does is described above; an entry repeats it only where the reason n
   is pointed at, the line and the head as ordinary text fields, and the four keys. Revised
   2026-10-16: `:w` writes by `Keep` and does not reopen the body ("Keep writes and stays"), and the
   page is built into the relay ("The relay carries the page; a directory stands in for it while the
-  page is worked on").
+  page is worked on"). Revised 2026-10-17 by "Vim's keys walk the list": the browser's vim mode
+  covers the list as well as the body.
 
 - **In vim mode Esc is vim's alone.** Decided 2026-10-14, at Sam's direction, revising the entry
   above: Esc never closes the body in vim mode. Hands that press Esc twice to be sure of normal mode
   closed the note under themselves. The body closes with `:q`, `:wq`, `:x` or `ZZ`, with `:q!` or
   `ZQ` putting the text back first, with the word in the foot, or by leaving it for somewhere else
-  on the page.
+  on the page. Revised 2026-10-17 by "Vim's keys walk the list", which makes Esc vim's alone on a
+  row too, in both faces.
 
 - **A tag is a place you can go into.** Decided 2026-10-14, at Sam's direction. A tag, a person or a
   day typed on the line is gone into with the arrow at the end of the line, as a note is gone into
@@ -1893,7 +1917,8 @@ the app now does is described above; an entry repeats it only where the reason n
   takes a paste whole ("A paste is one change"). The footer says `Tab go in`, keeping the engine's
   label, which the page's word shares. Alt-Z is no longer a fallback, since Tab is everywhere. The
   Tab-to-link that "Position is the link" dropped stays dropped: this Tab links nothing. The open
-  question is closed.
+  question is closed. Revised 2026-10-17 by "Shift-Enter ticks, where it can be told from Enter":
+  the kitty protocol is now turned on where a terminal has it, and Ctrl-I is bound as Tab.
 
 - **The path starts with the space.** Decided 2026-10-16, at Sam's direction. The path read
   `fzn › #house`, or `fzn · garden › #house` in a space that was not the usual one. The app's name
@@ -2388,6 +2413,83 @@ the app now does is described above; an entry repeats it only where the reason n
   off the cursor but for a place's labels, and is kept as it was. The head of an open body, in the
   sheet, and the line are unchanged.
 
+- **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
+  revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
+  Enter in most terminals, and "Tab goes in" (2026-10-16) where it said Ctrl-I would have to be
+  bound were the kitty keyboard protocol ever turned on. On a row Shift-Enter does what Ctrl-V does,
+  one action with two keys: it ticks a task, or archives a note that is not one, and the foot's word
+  says which. On the line it is Enter. It is the one key for ticking that a page can have, so the
+  two faces share it, and ticking down a list wants a key beside Enter. The case against it was a
+  key that works on one machine and not the next; Ctrl-V stays the key that works in every terminal,
+  and the footer names whichever works in this one, `⇧Enter tick` or `^V tick`. To tell it from
+  Enter the terminal is now asked. Where it answers that it has the kitty protocol, fzn pushes the
+  protocol's first flag, which tells keys apart, and nothing more: the flag that reports releases
+  would stop a held arrow repeating, since only presses are read, and the one that reports the base
+  layout's key loses a non-Latin layout's own letters in crossterm. Inside tmux, which answers that
+  query for the terminal and has no such protocol before 4.0, fzn asks tmux once, for at most a
+  fifth of a second, its `extended-keys` and `extended-keys-format`, and only when keys are on and
+  the format is `csi-u` asks for xterm's modifyOtherKeys in mode 1, as Codex does. crossterm 0.29
+  reads CSI u but not xterm's own `CSI 27;…~`, which it drops without a word, so in tmux's default
+  `xterm` form asking would turn Shift-Enter from Enter into nothing; and never mode 2, under which
+  every Ctrl chord was lost. That same limit is why Shift-Enter did nothing at all in Ghostty, foot
+  and Konsole, which send `CSI 27;2;13~` unasked, until the flag was pushed. A terminal keeps a
+  pushed flag past the alternate screen, and the next full-screen program inherits it, so it is
+  taken back before the editor runs, on the way out and in the panic hook, while the alternate
+  screen is still up, and asked for again from the answer kept when the editor gives the terminal
+  back. The query is made once, after the alternate screen, since on a terminal that answers nothing
+  it waits two seconds and then reads as no. Under the flag Ctrl-I, Ctrl-M and Ctrl-[ arrive as
+  themselves, so they are bound as Tab, Enter and Escape, keeping what the hands knew;
+  Ctrl-Backspace arrives as Backspace with Control where it was Ctrl-H, and deletes a word as Ctrl-W
+  does, as the page's fields do. Ctrl-H is left alone, since a few terminals send it for Backspace.
+  Where Shift-Enter cannot be told apart it is Enter, which on a row opens a new empty row that goes
+  when it is left: harmless, and seen at once. The footer says `⇧Enter tick` wherever the flag or
+  mode 1 was turned on. Inside tmux that is a guess about the terminal outside it, which tmux passes
+  Shift-Enter on from only if it sends one (kitty and Alacritty outside a `csi-u` tmux do not), and
+  Ctrl-V works in every case.
+
+- **Vim's keys walk the list.** Decided 2026-10-17, at Sam's direction, as one design for both
+  faces: the terminal's `vim = true` in its config, and the page's `vim` word, kept per browser,
+  which now covers the list as well as the body. It brings back, for those who ask for it, the
+  select-then-edit state that "The head is a field whenever the cursor is on it" (2026-10-14)
+  removed, because Sam reaches for `j` and `k`, and no product lets them move while typing edits
+  without a mode; Jupyter's command mode is the nearest, and fzn's row already shows the state
+  through its caret. The line is always typing, as without vim. A row walked to, by an arrow, `j`,
+  `k`, going in or out, or a body closing, is in normal mode: a block caret, letters as commands,
+  nothing typed, not even a paste. A row written in, by Enter, `o` or `O`, Enter on the line, `i`,
+  `a`, `A` or `I`, or on the page a press on its words, is in insert, with a bar, and typing changes
+  the head as without vim. Normal mode's keys are each one key. `j` and `k` go to the next and
+  previous row and stop at the ends, so that a stray `k` never lands on the line to be typed there;
+  the arrows are as ever. Ctrl-D and Ctrl-U go ten rows down and up, as vim's do, so that a vim hand
+  paging never deletes; `D` deletes and `u` undoes, and Ctrl-R redoes. `l` or Tab goes in and lands
+  on the first row inside; `h`, in a place, steps out and lands on the note come out of. `i`, `a`
+  and `A` type at the end of the head, and `I` at its start, after a task's box. `o` or Enter opens
+  a new row under, and `O` one above, which on the first row is a new note at the top only while the
+  line is empty, since Enter there would write the line. `x`, Shift-Enter or Ctrl-V ticks or
+  archives; `x` because it is the mark the box reads as, and undo is `u`. `y` copies. `/` goes to
+  the line with its caret at the end of its text, the list as it is; Enter there writes a note,
+  since Enter on the line always writes, and Down is the way into what it found. The other chords
+  are as ever. Escape in normal mode does nothing, and in insert keeps the row, writing out its date
+  words, and goes to normal: "In vim mode Esc is vim's alone" now holds on a row too, so hands that
+  press it twice to be sure never leave the row and never arm the quit, and Escape on the line is
+  the ladder it was. From insert the arrows land in normal mode on the next row, and Tab on the
+  first row inside; on the page, where Vimium takes Escape, they and a press are the way out of
+  insert. Ctrl-D in insert still deletes, since only normal mode pages. Backspace on an empty row
+  takes it away as ever and keeps the mode: from insert it lands in insert on the row above, as
+  vim's Backspace at the start of a line in insert stays in insert. Left out, because a key may not
+  mean something by the key before it: `gg`, `dd`, `yy`, counts and leaders; `d`, `g`, `c` and `z`
+  are unbound, so `dd` and `gg` from vim's hands do nothing. Also left out: `G`, half a pair without
+  `gg`; the caret's motions, since normal mode has no caret inside a head and `I` and `A` cover its
+  ends; `v`, `p` and `P`, for multi-select and pasting notes, which are not built; `n` and `N`,
+  since the list is the matches; `.`, `:` and `q`, since there is no command line; and vim's `x` as
+  deleting a letter. The foot writes vim's letters in normal mode, `i type`, `l go in`, `x tick`, `D
+  delete`, `u undo`, `h back`, `/ up` in the terminal and the same pairs word first on the page,
+  `type` and `back` being the face's own words and the second only in a place; in insert it is as
+  without vim, ending `Esc done`. The engine is unchanged: the modes and these keys are each face's
+  key table. Not on touch, where a soft keyboard has no Escape. It revises "The body is a CodeMirror
+  editor, loaded when a body first opens": vim mode was the browser's choice for the body, and the
+  one switch now covers the list. In the terminal the body is the person's own editor, so the
+  terminal's setting is the list's alone.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2445,8 +2547,11 @@ the app now does is described above; an entry repeats it only where the reason n
   when it is written, which the editor already risked. The text CRDT is the answer.
 - A summon key. Starting should feel like switching a window, so the terminal build wants a
   keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
-- Vim mode: whether the caret's shape is enough to say the mode, and whether the word in the foot is
-  where the switch belongs; daily use with it on decides. Marking the rest of the engine's syntax
+- Vim mode: whether the caret's shape is enough to say the mode, in the body and now on a row of the
+  list, where a block for normal mode and a bar for insert are the only sign; whether one switch for
+  the body and the list is right, the page's word in the foot of an open body and the terminal's
+  line in its config; and whether `/` then Enter writing a note, where vim's hands expect Enter to
+  accept the search, is felt. Daily use with it on decides. Marking the rest of the engine's syntax
   (tags, people, dates) in place in the body, in the two greys, is a small decoration left until use
   asks; URLs and bracketed names are marked as markdown since 2026-10-15.
 - Whether the body should be kept as it is typed too. A version is the whole note, so a keystroke in
