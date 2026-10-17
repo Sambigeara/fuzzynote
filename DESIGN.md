@@ -885,17 +885,18 @@ keys once the page has painted, or when a body opens if that is sooner: the mark
 stands with every mark in sight, the marks in the faint grey and the text in ink, headings and
 strong text heavier, emphasis slanted, code in the monospace, soft wrap, step undo, a grey
 selection, and vim mode for the browser that asked for it with the word `vim` in the foot, which a
-touch screen, whose keyboard has no Escape, is not offered. In vim mode Esc is vim's alone; `:q`,
-`:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back first,
-and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the editor's
-coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt for a command
-is at the foot of the sheet, under the text and a hairline. The head stays an ordinary field. Until
-the editor has loaded, and if it never does, the sheet holds a plain text area. The `editor` the
-engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and
-the bar the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from
-the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
-the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
-closes it.
+touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the
+lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection,
+which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot
+closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where
+it was. The page's caret is drawn from the editor's coordinates, a block in normal and visual mode
+and a bar in insert mode. Vim's prompt for a command is at the foot of the sheet, under the text and
+a hairline. The head stays an ordinary field. Until the editor has loaded, and if it never does, the
+sheet holds a plain text area. The `editor` the engine offers is not shown here. At a phone's width
+the sheet is the whole frame above the bar, and the bar the sheet's colour while it is open; a wider
+touch screen keeps it in the column, sized from the frame. On a touch screen it opens without the
+keyboard, which a tap in the text raises; putting the keyboard away leaves it open, and `done`, the
+back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -2271,6 +2272,17 @@ the app now does is described above; an entry repeats it only where the reason n
   relay per command, a fraction of a second at home and a greeting's wait at most when the relay is
   away. The importers are left as they were: they write a space's start, once, and the app sends it
   when it opens.
+
+- **In vim mode j and k go by the lines as shown.** Decided 2026-10-17, at Sam's direction. A body
+  soft-wraps, and a paragraph is one line to vim, so `j` jumped a whole paragraph where the eye
+  expected the next line. `gj` and `gk` are vim's own motions for the lines as shown, and what many
+  editors' vim modes offer as an option, so `j` and `k` step as they do in normal and visual mode,
+  and a count goes with them: `3j` is three lines down as they are laid out. A line-wise selection
+  still goes by vim's lines, since it is made of them: with `gj` there the selection took in the
+  whole paragraph at the first press and the next presses showed nothing, and `V3jd` took fewer
+  lines than vim would. After an operator they keep the line-wise motion too, since `dj` taking
+  part of a wrapped line would surprise; it still takes two whole lines. The cost is the line-wise
+  `j` for whoever wants it, who has the arrows, or `+` and `-`.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

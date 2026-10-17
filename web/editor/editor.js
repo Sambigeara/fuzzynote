@@ -25,7 +25,7 @@ import {
   Language, ParseContext, StreamLanguage, defineLanguageFacet, syntaxHighlighting, syntaxTree,
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
-import { Vim, getCM, vim } from '@replit/codemirror-vim';
+import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { highlighter, language, markdown } from './render.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
@@ -85,6 +85,38 @@ Vim.defineAction('fznQuit', () => current?.onEx('quit'));
 Vim.defineAction('fznDiscard', () => current?.onEx('discard'));
 Vim.mapCommand('ZZ', 'action', 'fznQuit', {}, { context: 'normal' });
 Vim.mapCommand('ZQ', 'action', 'fznDiscard', {}, { context: 'normal' });
+// j and k go by the lines as shown, since a body wraps and a paragraph is one line to vim. They
+// are a motion of the page's own rather than gj and gk, because a line-wise selection is made of
+// vim's lines: there they step by those, keeping the column as vim's j does, and V3jd takes four
+// whole lines. Otherwise they step as gj does, by the lines as laid out, held to the column on
+// screen where the steps began, and stop at the first or last. The motion is mapped in normal and
+// visual mode only, so that after an operator j and k keep their own line-wise motion and dj still
+// takes two whole lines. A count typed before them is the motion's repeat.
+const shown = (cm, head, args, state) => {
+  const steady = state.lastMotion === shown;
+  if (state.visualLine) {
+    const ch = steady ? state.lastHPos : head.ch;
+    state.lastHPos = ch;
+    const line = head.line + (args.forward ? args.repeat : -args.repeat);
+    const at = new CodeMirror.Pos(Math.max(cm.firstLine(), Math.min(cm.lastLine(), line)), ch);
+    state.lastHSPos = cm.charCoords(at, 'div').left;
+    return at;
+  }
+  if (!steady) state.lastHSPos = cm.charCoords(head, 'div').left;
+  let at = head;
+  for (let i = 0; i < args.repeat; i++) {
+    const next = cm.findPosV(at, args.forward ? 1 : -1, 'line', state.lastHSPos);
+    if (next.hitSide) break;
+    at = next;
+  }
+  if (at !== head) state.lastHPos = at.ch;
+  return at;
+};
+Vim.defineMotion('fznShown', shown);
+for (const context of ['normal', 'visual']) {
+  Vim.mapCommand('j', 'motion', 'fznShown', { forward: true }, { context });
+  Vim.mapCommand('k', 'motion', 'fznShown', { forward: false }, { context });
+}
 
 // A change the page makes is not one to tell the page about.
 const fromPage = Annotation.define();
