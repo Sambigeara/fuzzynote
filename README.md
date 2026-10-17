@@ -157,6 +157,21 @@ The relay carries the page. Open its address, `http://nas.local:3960`. A tab is 
 it keeps the space in the browser between visits, asks for the passphrase once, and syncs with
 the relay it was loaded from.
 
+The page takes the terminal's keys where a browser lets them go: Shift-Enter ticks, Ctrl-D deletes,
+Ctrl-O opens the body, Ctrl-U undoes, Ctrl-C copies the note when nothing is selected, Ctrl-/ opens
+its URL, and Ctrl-[ is Esc. Redo, link and showing what is archived are words in the foot, since
+Ctrl-R, Ctrl-L and Ctrl-V are the browser's. With a mouse a word in the foot that a chord also asks
+for has the chord written after it, `tick ⇧↵`, `delete ^D`; Enter, Tab, Esc and the arrows are not
+written, nor Control with an arrow on a Mac, where it is the system's. The word `vim`, in the foot
+of an open body, turns vim's keys on in this browser, for the body and for the list as the
+terminal's `vim = true` does, and the list's normal mode then has vim's letters written after the
+words; a touch screen does without.
+
+Vimium takes Esc and Ctrl-[ from the page before it sees them, and both are needed: Esc comes
+back a rung at a time, and with vim's keys it is how a row being written goes back to normal mode.
+In Vimium's options, add an exclusion rule for the relay's address, `http://nas.local:3960/*`, with
+the keys left empty, which turns Vimium off there.
+
 To work on the page, build its engine and point a relay at the directory, which it reads again
 for every request:
 

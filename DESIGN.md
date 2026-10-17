@@ -898,27 +898,37 @@ idle. A head is parsed only if it holds a character that can begin a mark, ``* _
 or `mailto:`; nested past what the stack holds, a body is read as typed.
 
 *Keys.* The four that are the app are the same, type, Enter, Escape and the arrows, and Tab goes in,
-as in the terminal. The terminal's chords are not here, because a browser keeps most of them for
-itself, but two it lets go: Ctrl-D clears the line or deletes the note under the cursor, and inside
-the sheet it is the browser's, and vim's in vim mode; Ctrl-O opens the body of the note under the
-cursor, and does nothing on the line. Ctrl with an arrow moves the note under the cursor a row,
-PageUp and PageDown move the cursor by ten, and Backspace on an empty head takes the row away, all
-as in the terminal. Shift-Tab does nothing, so no key takes the focus off the page's text. The page
-is not marked as an application for assistive technology, which would stop a screen reader reading
-the body beside the list as a document; the line and the head are text fields, and that says enough.
-Every other thing that can be asked for is a word at the foot of the page, pressed or tapped, the
-footer of the terminal made pressable. Only what applies where the cursor is gets one, and no key is
-written beside a word; a word says its key when the pointer rests on it. Undo has no key: it is the
-word `undo`, or `put back` on a row whose head has changed. The foot is one line at every width,
-3.25rem tall, and holds still (see "The foot holds still"): the words never wrap; the way back
-(`back`, `up` or `done`) follows them and stays in sight when they do not fit; the rest scroll
-sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad, and go back
-to their start whenever they change or the cursor moves to another row. Wider than a phone the foot
-reaches from the column's left to the window's right margin, so that on a wide page the busiest
-rows' words run on under the pane rather than scroll. At a phone's width the words are a bar at the
-foot, each as tall as a thumb, with the way back pinned at its right; `move up` and `move down`
-there move the note. What was said floats above the words, at the column's right, taking no room,
-and nothing is drawn there when nothing is said.
+as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page
+takes the terminal's chords where a browser lets it"): Ctrl-D clears the line or deletes the note
+under the cursor, and inside the sheet it is the browser's, and vim's in vim mode; Ctrl-O opens the
+body of the note under the cursor, and does nothing on the line; Shift-Enter on a row ticks a task
+or archives a note that is not one, as Ctrl-V does in the terminal, and leaves the row read, and on
+the line it is Enter; Ctrl-U undoes, on the line and on a row, and in the sheet it is the editor's
+and never the browser's page source; Ctrl-C on a row copies its first URL or its head while nothing
+is selected, and with a selection is the browser's copy; Ctrl-/ on a row opens its URL; and Ctrl-[
+is Escape everywhere Escape is. Redo, link and showing what is archived stay words, since Ctrl-R,
+Ctrl-L and Ctrl-V are the browser's reload, address bar and paste. Ctrl with an arrow moves the note
+under the cursor a row, PageUp and PageDown move the cursor by ten, and Backspace on an empty head
+takes the row away, all as in the terminal. Shift-Tab does nothing, so no key takes the focus off
+the page's text. The page is not marked as an application for assistive technology, which would stop
+a screen reader reading the body beside the list as a document; the line and the head are text
+fields, and that says enough. Every other thing that can be asked for is a word at the foot of the
+page, pressed or tapped, the footer of the terminal made pressable. Only what applies where the
+cursor is gets one, and a word a chord also asks for has the chord written after it, `tick ⇧↵`,
+`delete ^D`, `undo ^U`, in the word's own faint grey, a third of a letter off it, staying faint when
+the word goes ink under the pointer (see "A word shows its chord"). Only chords are written, never
+Enter, Tab, Escape or the arrows, nor Control with an arrow on a Mac, where it is the system's, and
+only where the pointer is fine and hovers: a touch screen's keyboard has no chords, so the phone's
+bar has none. No word has a tooltip. In an open body the chords are the editor's, so none is written
+there. The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds
+still"): the words never wrap; the way back (`back`, `up` or `done`) follows them and stays in sight
+when they do not fit; the rest scroll sideways, under a fade at each edge that hides words, by a
+wheel, a swipe or a trackpad, and go back to their start whenever they change or the cursor moves to
+another row. Wider than a phone the foot reaches from the column's left to the window's right
+margin, so that on a wide page the busiest rows' words run on under the pane rather than scroll. At
+a phone's width the words are a bar at the foot, each as tall as a thumb, with the way back pinned
+at its right; `move up` and `move down` there move the note. What was said floats above the words,
+at the column's right, taking no room, and nothing is drawn there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A cross after it clears it when it has text, and a `›` after the cross, in the column of the
@@ -972,12 +982,38 @@ in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `
 the word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and
 stays, scrolled where it was. The page's caret is drawn from the editor's coordinates, a block in
 normal and visual mode and a bar in insert mode. Vim's prompt for a command is at the foot of the
-sheet, under the text and a hairline. The head stays an ordinary field. Until the editor has loaded,
-and if it never does, the sheet holds a plain text area. The `editor` the engine offers is not shown
-here. At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour
-while it is open; a wider touch screen keeps it in the column, sized from the frame. On a touch
-screen it opens without the keyboard, which a tap in the text raises; putting the keyboard away
-leaves it open, and `done`, the back gesture, or a tap on the page beside it closes it.
+sheet, under the text and a hairline. The head stays an ordinary field, but that the same word gives
+the list vim's keys too (see *Vim's keys on the list*). Until the editor has loaded, and if it never
+does, the sheet holds a plain text area. The `editor` the engine offers is not shown here. At a
+phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while it is
+open; a wider touch screen keeps it in the column, sized from the frame. On a touch screen it opens
+without the keyboard, which a tap in the text raises; putting the keyboard away leaves it open, and
+`done`, the back gesture, or a tap on the page beside it closes it.
+
+*Vim's keys on the list.* The word `vim`, kept per browser, covers the list as well as the body, as
+"Vim's keys walk the list" has it for both faces. It is taken only where the pointer is fine and
+hovers, the query that writes the chords after the words, so that wherever normal mode is its
+letters are written; a touch screen does without. Its two modes are the reveal's two states, so the
+page keeps one state and not two: a row walked to, by an arrow, `j`, `k`, going in or out, a press
+beside its words or a body closing, is read, unrevealed, and is in normal mode, with the block caret
+at the end of its reading, or on its `…` where the row cuts it; a row written in is revealed, and is
+in insert, with a bar. What the reveal does without vim's keys, a letter revealing the row and
+typing, is the one thing normal mode changes: its keys act, the rest are swallowed, and the box is
+read-only meanwhile, so that a paste, a composition, dictation or the browser's own undo writes
+nothing either, while the box keeps the focus, as Vimium needs to leave its keys to the page. `i`,
+`a` and `A` reveal the row with the caret at the end of the head, `I` at its start after a task's
+box, the field scrolling to it as for Home and End; `o`, `O`, Enter, Enter on the line and a press
+on the words reveal it as they do without vim's keys; and Escape in insert keeps the row, writing
+out its date words, and reads it again. Shift-Enter does not reveal. In normal mode Ctrl-D and
+Ctrl-U page by ten, as vim's do, and `D` deletes and `u` undoes; in insert and without vim's keys
+Ctrl-D deletes and Ctrl-U undoes, as in *Keys*. A head changed in place, from elsewhere, while a row
+is in normal mode stays read, as it now is, since no key lands against its text there. On the page
+`x` and Shift-Enter tick; Ctrl-V stays the browser's paste, which writes nothing in normal mode, and
+Ctrl-R redoes only there. The line has a bar too, being always typing; without vim's keys every
+caret is the block it was. The foot writes vim's letters in normal mode, word first, `type i`, `new
+note o`, `body ^O`, `go in l`, `tick x`, `delete D`, `copy y`, `undo u`, `redo ^R`, then `back h` in
+a place and `up /`; `type` and `back` are the page's own words and do what their keys do, and in
+insert the way back is `done`, which does what Escape does there.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -1339,7 +1375,8 @@ the app now does is described above; an entry repeats it only where the reason n
   reason line under every row makes a table; a panel is a second copy of the text and a second place
   to look; a sync light is the only thing on the page that is not text, and silence while it works
   says more. Revised 2026-10-15: the column sits left of centre ("A body is read apart from its
-  row").
+  row"). Revised 2026-10-17 by "A word shows its chord": the page's foot writes a word's chord after
+  it again, as plain grey text and never a badge.
 
 - **A head is kept as it is typed.** Decided 2026-10-14, at Sam's direction, replacing the call in
   "A note is written in place" that a version is written when the row closes, and with it that a new
@@ -2446,7 +2483,10 @@ the app now does is described above; an entry repeats it only where the reason n
   caret that moves as marks open and close round it; and keeping it as it was, which leaves the
   flicker. The terminal reads no markdown, so its row under the cursor shows the same text on and
   off the cursor but for a place's labels, and is kept as it was. The head of an open body, in the
-  sheet, and the line are unchanged.
+  sheet, and the line are unchanged. Revised 2026-10-17 by "Vim's keys walk the list": with vim's
+  keys a row read is in normal mode, and stays read when its head is changed in place from elsewhere
+  or an undo puts text back in it, since no key lands against its text there; it is revealed only by
+  the keys that write in it.
 
 - **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
   revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
@@ -2499,9 +2539,10 @@ the app now does is described above; an entry repeats it only where the reason n
   on the first row inside; `h`, in a place, steps out and lands on the note come out of. `i`, `a`
   and `A` type at the end of the head, and `I` at its start, after a task's box. `o` or Enter opens
   a new row under, and `O` one above, which on the first row is a new note at the top only while the
-  line is empty, since Enter there would write the line. `x`, Shift-Enter or Ctrl-V ticks or
-  archives; `x` because it is the mark the box reads as, and undo is `u`. `y` copies. `/` goes to
-  the line with its caret at the end of its text, the list as it is; Enter there writes a note,
+  line is empty, since Enter there would write the line. `x`, Shift-Enter or, in the terminal,
+  Ctrl-V ticks or archives; `x` because it is the mark the box reads as, and undo is `u`. `y`
+  copies. `/` goes to the line with its caret at the end of its text, the list as it is; Enter there
+  writes a note,
   since Enter on the line always writes, and Down is the way into what it found. The other chords
   are as ever. Escape in normal mode does nothing, and in insert keeps the row, writing out its date
   words, and goes to normal: "In vim mode Esc is vim's alone" now holds on a row too, so hands that
@@ -2608,6 +2649,60 @@ the app now does is described above; an entry repeats it only where the reason n
   hang below the baseline. A browser without the `cap` unit raises it a tenth of an em. WebKitGTK is
   not iOS, so the phone is the last check.
 
+- **The page takes the terminal's chords where a browser lets it.** Decided 2026-10-17, at Sam's
+  direction (keys alike in both faces where they can be), revising Browser *Keys*, where the
+  terminal's chords were not on the page but for Ctrl-D and Ctrl-O, and undo had no key at all. A
+  page is sent every key first but a short list each browser keeps, Ctrl-N, Ctrl-T, Ctrl-W and
+  their Shift forms, Ctrl-Tab and Ctrl-PageUp and PageDown, and quitting, and may keep the rest from
+  the browser; so the question for each chord is what the browser would have done with it. Ctrl-U
+  undoes, as in the terminal, on the line and on a row; it costs the browser's page source, and in
+  the sheet it is the editor's, vim's half page in vim mode, and never the page source. Ctrl-C on a
+  row copies the note's first URL or its head, but only while nothing is selected, as VS Code's
+  copy of the line does with an empty selection, so that a selection is still copied as anywhere
+  else. Ctrl-/ on a row opens the note's URL; no browser binds it, and it replaces the terminal's
+  Ctrl-_, which never arrived there, since a terminal sends both as one byte that crossterm reads as
+  Ctrl-7 (see Terminal), so the key is Ctrl-/ in both faces. Shift-Enter ticks on a row and is Enter
+  on the line (see "Shift-Enter ticks, where it can be told from Enter"); a text area would take it
+  as a line break, which the box already refuses for Enter. Ctrl-[ is Escape, for vim's hands. Left
+  to the browser: Ctrl-R, which reloads, and Ctrl-L, the address bar, which people expect of every
+  page, and Safari keeps their Command forms whatever a page asks; and Ctrl-V, which is paste and
+  which a text field needs. So redo, link and showing what is archived stay words, and on a Mac,
+  where Control with an arrow is the system's, so do `move up` and `move down`. Alt is avoided: on a
+  Mac Option types a letter, and Firefox's menus take it elsewhere. Thirteen of the eighteen things
+  asked for now have the same key in both faces, against nine before. It closes the open question
+  of the browser's keys past the four down to redo and link. Vimium, which runs before the page,
+  takes Escape and Ctrl-[ from a focused field and nothing else, so the page cannot see either while
+  it is on; nothing the page can do changes that, and the README says to exclude the relay's address
+  from it.
+
+- **A word shows its chord.** Decided 2026-10-17, at Sam's direction (a key visible at a glance
+  where there is one, keeping the design minimal), revising Browser *Keys*, where no key was written
+  beside a word and a word said its key when the pointer rested on it, and "One cursor, no chrome",
+  whose foot of key badges went. A tooltip is found only by someone already looking for the key, and
+  the terminal's footer had always written its chords. Now a word in the foot that a chord also asks
+  for has it written after it, `body ^O`, `tick ⇧↵`, `delete ^D`, `undo ^U`, `move up ^↑`, as the
+  terminal writes them, `⇧↵` because the page writes no word "Enter" and both marks are printed on
+  most keycaps. The key comes after the word because the word is what is pressed. It is plain text
+  in the word's own faint grey, at its size and in its face, a third of a letter off it, and stays
+  faint when the word goes ink under the pointer: two greys, and no border or chip, which is what
+  the badges were and what calm products keep for tooltips and palettes. Only chords are written,
+  never Enter, Tab, Escape or the arrows: they are the one sentence, and written on every row they
+  would make the foot the dashboard it was. Only where the pointer is fine and hovers, since a touch
+  screen's keyboard has no chords, so the phone's bar is as it was, and that one query is also where
+  vim's keys are taken on the list, so that wherever normal mode is its letters are written; not
+  `^↑` and `^↓` on a Mac, where Control with an arrow is the system's; and nothing in an open body,
+  whose chords are the editor's. With vim's keys a row in normal mode writes vim's letters instead
+  (see "Vim's keys walk the list"). Tooltips go, the key being written. The foot holds still with
+  the chords written (see "The foot holds still"): measured in every state the cursor walks through,
+  with and without vim's keys, at 1400, 1000, 800, 700 and 390 pixels, it stays 52px tall with every
+  word and every chord on one line; at 800 and 700 the busiest rows scroll under the fade, with the
+  way back pinned, and from 1000 the busiest row without vim's keys fits. The proposal's tighter gap
+  between words, and its rows that wrapped to a second line, belonged to the foot before it held
+  still and were not taken. Weighed and not taken: the keys shown only while Control is held, as
+  iPadOS shows its sheet on a held Command, which keeps the resting foot as it was but which nobody
+  finds unless told; a `?` sheet, `?` being a letter in a field that always has the focus; and a
+  `keys` word, which would be in the foot on every row.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2650,10 +2745,10 @@ the app now does is described above; an entry repeats it only where the reason n
   answer once a name is someone the admin does not know.
 - `wss://` from the terminal, for a relay behind a proxy that has TLS. The page already takes `wss`
   when it was loaded over `https`. The first relay put behind such a proxy asks for it.
-- The browser's keys past the four, and Ctrl-D, Ctrl-O and Tab. Words at the foot, pressed or
-  tapped, are a start: nothing to remember, but slower than a chord for archiving ten notes in a
-  row. Undo has no key at all yet. On a phone every one of them is a word in the bar. Daily use of
-  the page says which want a key.
+- Redo and link on the page. Every other chord of the terminal's that a browser lets go is the
+  page's too (see "The page takes the terminal's chords where a browser lets it"); Ctrl-R and Ctrl-L
+  are the browser's reload and address bar, so redo and link are words, pressed or tapped. Daily
+  use of the page says whether either wants a key, and which.
 - The phone, which nobody has used the page on yet. Whether WebKit there sends a second tap beside a
   head where Chromium does: in Chromium's and WebKit's touch emulation that tap was taken into the
   head's text box as often as not until the page read the touch itself, and `body` in the bar is the

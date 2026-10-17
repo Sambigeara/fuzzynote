@@ -551,7 +551,8 @@ a:hover { text-decoration-color: currentColor; }
    box does, in the same face, size and leading, so that the text does not move by a pixel when it
    takes over; the rules are prefixed to outrank the stylesheet the editor brings. The page's caret
    is the only caret, so the editor's own cursors are hidden, and a selection is a grey. In vim's
-   insert mode the caret is a bar, as a terminal shows it, and a block otherwise. */
+   insert mode the caret is a bar, as a terminal shows it, and a block otherwise; with vim's keys
+   the line and a row written in have the bar too, and a row in normal mode the block. */
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
@@ -658,6 +659,13 @@ body.resting .row .tail { display: none; }
 #foot .word { flex: none; white-space: nowrap; }
 .word:hover { color: var(--ink); }
 .word:focus-visible { color: var(--ink); text-decoration: underline; outline: none; }
+/* A word's chord is written after it, in its own faint grey at its size and in its face, and stays
+   faint when the word goes ink under the pointer: two greys, no border and no chip. Only where a
+   pointer hovers, since a touch screen's keyboard has no chords. */
+.word .key { display: none; margin-left: 0.3em; color: var(--faint); }
+@media (hover: hover) and (pointer: fine) {
+  .word .key { display: inline; }
+}
 
 /* What is said floats above the words, its right edge on the column's, on the paper, and passes
    presses through but for its own words; with nothing said, nothing is drawn there. Over the page
