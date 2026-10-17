@@ -302,7 +302,8 @@ added to the engine until daily use asks for it.
   plain line, oldest first, by your own hand and to wherever you point it, so notes can always be
   read and taken away without the app; it takes no line, and given one it names `fzn query` and
   writes nothing. `fzn query LINE` writes what that line finds at the top of the space, archived
-  notes too, in the order the app lists them, which its `--help` says. `fzn apply` takes such lines
+  notes too, in the order the app lists them, which its `--help` says, and never cut at the app's
+  500 rows. `fzn apply` takes such lines
   back and writes each note as it then reads, by the session's rules for notes given from outside,
   all or none, beside the open app; its lines are numbered as given, so a blank one before the end
   is a line that is not a note. `fzn tick ID …` and `fzn untick ID …` do to the notes named, by the
@@ -560,15 +561,20 @@ all, and none of it changes how the words rank.
   mode without ranking.
 
 A line with nothing to rank by lists exactly what holds what it holds, in the space's order and with
-no reasons, as a place lists its facts on an empty line: at the top it is cut at the 500 rows the
-top of the space is cut at, and in a place it is not cut. A single letter is not a word, so
-`#house a` lists what `#house` lists. With words as well, they rank among the notes that hold. The
-note the line names has to hold it too. Inside a place, the line narrows the place's facts and its
-finds alike, and a line of labels in a place lists the facts that carry them. The rows of such a
-line are in the space's order, so they can be moved as the rows of an empty line can. Enter writes
-the line as it reads: quotes, `~` and spans stay as typed, and date words are written out, after a
-span's dots too. Archived notes are out of every list, typed results included, until they are asked
-for, or `[x]` asks for the done tasks.
+no reasons, as a place lists its facts on an empty line; a line that holds a span lists it in time
+order instead, oldest first, by the moment the span reads, when written or with `[x]` when done, so
+`..` lists every note in the order it was written and `[x] ..` every done task in the order it was
+done. At the top it is cut at the 500 rows the top of the space is cut at, a list of time keeping
+the newest 500 so that it still ends at now, and in a place it is not cut; `fzn query` is never
+cut. A single letter is not a word, so `#house a` lists what `#house`
+lists. With words as well, they rank among the notes that hold, by the scores, span or not. The note
+the line names has to hold it too. Inside a place, the line narrows the place's facts and its finds
+alike, and a line of labels in a place lists the facts that carry them. The rows of a line with
+nothing to rank by and no span are in the space's order, so they can be moved as the rows of an
+empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
+reads: quotes, `~` and spans stay as typed, and date words are written out, after a span's dots too.
+Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
+asks for the done tasks.
 
 The line comes with you into a place, under one rule: if the note you went into contains what you
 typed, or holds what the line holds and its head and the heads of the notes it links to have every
@@ -617,14 +623,15 @@ note carrying all the labels, which for a day is every note written on it or men
 is a fact and so is a label.
 
 The list works as the top of the space does. With nothing on the line to rank by it is what is in
-the place and holds what the line holds, its facts in the order the space keeps them in, however
-many, and nothing the engine suggests; a row says how it is linked, `links here`, `linked from here`
-or `linked both ways`, and nothing scored. Typing words finds: the note the line names first, then
-the place's facts that match, then what the engine finds in its neighbourhood that matches, each
-best first with its reasons and each holding what the line holds, and a row of nothing between the
-last fact and the first find, where the view says the finds begin. Around a note the neighbourhood
-is what shares its tags and people, words and dates, or links to the same things, with only the
-notes carrying the labels counted as facts; around labels alone it is what their words find.
+the place and holds what the line holds, its facts in the order the space keeps them in, or with a
+span in time order, however many, and nothing the engine suggests; a row says how it is linked,
+`links here`, `linked from here` or `linked both ways`, and nothing scored. Typing words finds: the
+note the line names first, then the place's facts that match, then what the engine finds in its
+neighbourhood that matches, each best first with its reasons and each holding what the line holds,
+and a row of nothing between the last fact and the first find, where the view says the finds begin.
+Around a note the neighbourhood is what shares its tags and people, words and dates, or links to the
+same things, with only the notes carrying the labels counted as facts; around labels alone it is
+what their words find.
 
 Stepping back never throws away what you typed: a line written inside stays on the way out, and the
 search comes back only to an empty line. Esc with text on the line clears it, and only on an empty
@@ -1605,7 +1612,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the tag first is the way to write there; `a` alone at the top lists the top of the space, where it
   used to list nothing; and a date word now ends at two dots, so `../fri` in a note is written out
   as a date. The original's Tab-separated groups and its `!` inverse stay unbuilt; the groups were
-  given up for good on 2026-10-16 ("Tab goes in").
+  given up for good on 2026-10-16 ("Tab goes in"). Revised 2026-10-17 by "Time on the line is
+  time order": a line holding a span with nothing to rank by lists in time order, not the space's.
 
 - **A span is not a place.** Decided 2026-10-15, agreed with Sam. A span holds the notes written in
   it, Sam's choice over the notes written or edited in it, and a note written now was not written in
@@ -1613,6 +1621,9 @@ the app now does is described above; an entry repeats it only where the reason n
   holding a span, a phrase or `~` is not gone into as a line of labels is, whatever else is on it:
   Right goes only to the note the line names, if one is named and holds the line, as on any line
   that is not labels alone, and letters name none. The key is Tab since 2026-10-16 ("Tab goes in").
+  Since 2026-10-17 a span with `[x]` holds the tasks done in it ("When a note was done is kept, and
+  `[x]` holds the done tasks"); a note written among the done tasks is done now, and so is in a
+  span to now either way.
 
 - **The arrow at the end of a line of labels goes into each.** Decided 2026-10-15, at Sam's ask, so
   that opening the app in the morning is one keypress: `#house /today`, Right, and the path is
@@ -2021,7 +2032,9 @@ the app now does is described above; an entry repeats it only where the reason n
   the common case, shorter and safer than a `jq` expression for what is done daily. Every command
   says what went wrong on one line and exits with a code that says whether anything was done, which
   is what a script or an agent checks, and a usage mistake no longer prints the manual. An MCP
-  server, if one is wanted, is these commands as tools and nothing more.
+  server, if one is wanted, is these commands as tools and nothing more. Revised 2026-10-17 by
+  "Time on the line is time order": the order is time's on a line holding a span, so that a week
+  needs no `jq` to read in order.
 
 - **A client is a writer of its own, leased from a pool.** Decided 2026-10-16, at Sam's direction,
   reversing the rule that a space's directory is written by the app one window at a time and the
@@ -2172,6 +2185,27 @@ the app now does is described above; an entry repeats it only where the reason n
   archived and says nothing of when reads `done` as its `updated`, which is exact for a task ticked
   by a build from before, since the tick is in the text. What it costs: a build without `done` that
   edits a done note writes it without `done`, and it then reads as done at that edit's moment.
+
+- **Time on the line is time order.** Decided 2026-10-17, agreed with Sam, revising "Words find;
+  everything else holds" where a line with nothing to rank by lists what holds in the space's
+  order, for a line that holds a span. The weekly roundup is read as a week: what was done on
+  Monday, then Tuesday, `[x] /-mon.. #work` from the first thing ticked to the last, where the
+  space's order put the fence fixed on Wednesday wherever the fence note had been written three
+  weeks before. A span is a question about time, so a line that holds one and has nothing to rank
+  by lists in the order of the moment the span reads, when written or with `[x]` when done,
+  oldest first, as a diary and a log read; ties keep the space's order. `..` alone is a span of
+  all time, so `..` is every note in the order it was written and `[x] ..` every done task in the
+  order it was done, which is the way to read a space's history without the app's own order in
+  the way. Oldest first, because a roundup and a diary are read forwards and a week copied out of
+  the list should read Monday to Friday; newest first would put a span's last day above its
+  first. With words on the line the order is the scores', as for any search, since what is typed
+  is a question about what and not when. In a place the same rule orders the place's facts. These
+  rows are not in the space's order, so moving a note is not offered among them, as it is not
+  among ranked rows: a move there would land somewhere the list does not show. The top of the
+  space is still cut at 500 rows in the app, and a list of time is cut from its old end, still
+  listed oldest first, so that `..` in the app ends at now with the newest 500, where cutting the
+  newest would leave a span to now without the week it was typed for; `fzn query` is not cut,
+  which is where a whole history is read.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

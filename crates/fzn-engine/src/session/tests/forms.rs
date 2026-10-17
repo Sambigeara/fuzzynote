@@ -114,6 +114,126 @@ fn a_span_is_said_beside_the_line_and_is_not_a_place() {
 }
 
 #[test]
+fn two_dots_list_every_note_oldest_first_and_offer_no_move() {
+    let mut s = session();
+    // Put so that the space's order is not the order they were written in.
+    put(&mut s, "boiler", "Boiler #house", &[], 2_000);
+    put(&mut s, "garden", "a garden", &[], 1_000);
+    put(&mut s, "house", "House", &[], 3_000);
+    put(&mut s, "gutter", "clear the gutter #house", &[], 500);
+    let gutter = s.notes.get("gutter").unwrap().clone();
+    s.commit(Record {
+        archived: true,
+        ..gutter
+    });
+    clear(&mut s);
+    assert_eq!(heads(&s), ["House", "a garden", "Boiler #house"]);
+    type_in(&mut s, "..");
+    assert_eq!(s.view().dates, ["… – now"]);
+    assert_eq!(
+        heads(&s),
+        ["a garden", "Boiler #house", "House"],
+        "oldest first, and the archived still out"
+    );
+    s.act(Action::Move(1));
+    assert!(
+        !labels(&s).iter().any(|l| l.starts_with("move")),
+        "not the space's order, so nothing to move in it"
+    );
+    s.act(Action::Select(None));
+    clear(&mut s);
+    type_in(&mut s, "#house ..");
+    assert_eq!(heads(&s), ["Boiler #house"]);
+    let queried: Vec<&str> = s.query("..").iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        queried,
+        ["gutter", "garden", "boiler", "house"],
+        "archived too"
+    );
+}
+
+#[test]
+fn a_list_of_time_past_the_rows_the_top_shows_keeps_the_newest_and_ends_at_now() {
+    let mut s = session();
+    for n in 0..TOP_LIMIT + 2 {
+        put(
+            &mut s,
+            &format!("n{n:03}"),
+            &format!("note {n}"),
+            &[],
+            1_000 + n as i64,
+        );
+    }
+    clear(&mut s);
+    type_in(&mut s, "..");
+    assert_eq!(s.rows.len(), TOP_LIMIT);
+    assert_eq!(s.rows[0].head, "note 2", "the two oldest are past the cut");
+    assert_eq!(
+        s.rows[TOP_LIMIT - 1].head,
+        format!("note {}", TOP_LIMIT + 1)
+    );
+    assert_eq!(s.query("..").len(), TOP_LIMIT + 2, "a query is not cut");
+}
+
+#[test]
+fn the_done_box_and_two_dots_list_every_done_task_in_the_order_it_was_done() {
+    let mut s = session();
+    put(&mut s, "fence", "[ ] Fix the fence #work", &[], 1_000);
+    put(&mut s, "gate", "[ ] Paint the gate #work", &[], 2_000);
+    put(&mut s, "shed", "[ ] Tidy the shed", &[], 3_000);
+    for (id, at) in [("shed", 10_000), ("fence", 20_000), ("gate", 15_000)] {
+        let held = s.notes.get(id).unwrap().clone();
+        s.commit(Record {
+            text: text::tick(&held.text, true),
+            archived: true,
+            done: Some(Moment::utc(at)),
+            ..held
+        });
+    }
+    clear(&mut s);
+    type_in(&mut s, "[x] ..");
+    assert_eq!(
+        heads(&s),
+        [
+            "[x] Tidy the shed",
+            "[x] Paint the gate #work",
+            "[x] Fix the fence #work"
+        ]
+    );
+    // In a place the same rule orders its facts.
+    clear(&mut s);
+    type_in(&mut s, "#work");
+    s.act(Action::GoIn);
+    type_in(&mut s, "[x] ..");
+    assert_eq!(
+        heads(&s),
+        ["[x] Paint the gate #work", "[x] Fix the fence #work"]
+    );
+    clear(&mut s);
+    type_in(&mut s, "..");
+    assert!(
+        heads(&s).is_empty(),
+        "archived, and the line does not ask for them"
+    );
+}
+
+#[test]
+fn a_span_with_words_on_the_line_ranks_by_the_scores() {
+    let mut s = session();
+    put(&mut s, "old", "boiler noise", &[], NOON.secs() - 3_600);
+    put(&mut s, "new", "Boiler", &[], NOON.secs() - 60);
+    put(&mut s, "pump", "pump", &[], NOON.secs() - 30);
+    clear(&mut s);
+    type_in(&mut s, "/today.. boiler");
+    assert_eq!(
+        heads(&s),
+        ["Boiler", "boiler noise"],
+        "its name first, not its time"
+    );
+    assert!(s.rows.iter().all(|r| !r.reasons.is_empty()));
+}
+
+#[test]
 fn inside_a_place_what_the_line_holds_narrows_its_facts_and_its_finds_alike() {
     let mut s = session();
     boiler(&mut s);

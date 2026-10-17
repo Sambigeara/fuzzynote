@@ -77,10 +77,34 @@ impl Session {
         }
     }
 
+    /// The notes that hold what the line holds, at most `limit`, in the order the line lists them
+    /// when there is nothing on it to rank by: the space's order, or on a line holding a span the
+    /// order of the moment the span reads, oldest first, notes of the same moment in the space's
+    /// order. A list of time is cut from its old end, so that it still ends at the span's end.
+    fn ordered<'a>(
+        &'a self,
+        query: &Query,
+        archived: bool,
+        holds: impl Fn(&Record) -> bool,
+        limit: usize,
+    ) -> Vec<&'a Record> {
+        let held = self.kept(archived).filter(|r| holds(r));
+        let Some(done) = query.timed() else {
+            return held.take(limit).collect();
+        };
+        let mut held: Vec<&Record> = held.collect();
+        held.sort_by_cached_key(|r| match done {
+            true => r.finished().map(|at| at.ms),
+            false => r.created.map(|at| at.ms),
+        });
+        held.drain(..held.len().saturating_sub(limit));
+        held
+    }
+
     /// What the line lists at the top of the space, at most `limit`. With nothing to rank by it
-    /// is the notes that hold what the line holds, in the order the space keeps them in and with
-    /// nothing to say why, as a place lists what is in it: on an empty line, the top of the
-    /// space. Otherwise it is what the line finds among them.
+    /// is the notes that hold what the line holds, with nothing to say why, as a place lists what
+    /// is in it: in the order the space keeps them in, which on an empty line is the top of the
+    /// space, or on a line of time in time order. Otherwise it is what the line finds among them.
     fn found(&self, query: &Query, archived: bool, limit: usize) -> Vec<Row> {
         if !query.ranks() {
             let held: Option<HashSet<&str>> = (!query.is_empty()).then(|| {
@@ -90,13 +114,13 @@ impl Session {
                     .map(|note| note.id.as_str())
                     .collect()
             });
+            let holds = |r: &Record| {
+                held.as_ref()
+                    .is_none_or(|held| held.contains(r.id.as_str()))
+            };
             return self
-                .kept(archived)
-                .filter(|r| {
-                    held.as_ref()
-                        .is_none_or(|held| held.contains(r.id.as_str()))
-                })
-                .take(limit)
+                .ordered(query, archived, holds, limit)
+                .into_iter()
                 .map(|r| self.listed(r))
                 .collect();
         }
@@ -182,7 +206,13 @@ impl Session {
                 .map(|(note, link)| (note.id.as_str(), link))
                 .collect();
             let rows = self
-                .kept(archived)
+                .ordered(
+                    query,
+                    archived,
+                    |r| facts.contains_key(r.id.as_str()),
+                    usize::MAX,
+                )
+                .into_iter()
                 .filter_map(|r| {
                     // How it is linked is a fact too, and the one thing said about it.
                     let link = facts.get(r.id.as_str())?;
@@ -342,9 +372,10 @@ impl Session {
 
     /// How many rows at the top of the list are in the order the space keeps its notes in, and
     /// so can be moved among: all of them with nothing on the line to rank by, at the top as in
-    /// a place, and none of what the line finds, which is in the order of its scores.
+    /// a place, and none of what the line finds, which is in the order of its scores, nor of a
+    /// line of time, which is in time order.
     pub(super) fn in_order(&self) -> usize {
-        if self.parsed.ranks() {
+        if self.parsed.ranks() || self.parsed.timed().is_some() {
             0
         } else {
             self.rows.len()

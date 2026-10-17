@@ -3,12 +3,12 @@
 //! The words on the line rank, as they always have, each note with its reasons. Every other form
 //! on the line is something a note has to hold to be listed at all: a phrase in quotes, a tag, a
 //! person, a day, the box of an open task or of a done one, and a span of when notes were
-//! written, or with the done box on the line of when they were done. A form never
-//! changes how the words rank, so a new kind of filter is one more form here and one more way for
-//! a note to hold it, and the words are left alone. A line of nothing but forms has nothing to
-//! rank by, and lists exactly what holds them in the space's order, as a place lists what is in
-//! it. `~` at the start of the line makes its words letters, found in order in heads, as the
-//! original fzn's fuzzy found them.
+//! written, or with the done box on the line of when they were done. A form never changes how
+//! the words rank, so a new kind of filter is one more form here and one more way for a note to
+//! hold it, and the words are left alone. A line of nothing but forms has nothing to rank by,
+//! and lists exactly what holds them in the space's order, as a place lists what is in it, or
+//! with a span in time order, since a span is a question about time. `~` at the start of the
+//! line makes its words letters, found in order in heads, as the original fzn's fuzzy found them.
 //!
 //! Labels are what the index lists, so the engine looks them up; a span and a phrase are asked
 //! of each note, and only of the notes that are left once the rest has narrowed them.
@@ -277,6 +277,15 @@ impl Query {
             query.measure_done();
         }
         query
+    }
+
+    /// Whether the line holds a span, and if it does, whether it measures when notes were done:
+    /// a line of time is listed in the order of the moment its span reads.
+    pub(crate) fn timed(&self) -> Option<bool> {
+        self.holds.iter().find_map(|hold| match hold {
+            Hold::Span(span) => Some(span.done),
+            Hold::Phrase(_) => None,
+        })
     }
 
     /// Whether the line asks for the done tasks, with `[x]`.

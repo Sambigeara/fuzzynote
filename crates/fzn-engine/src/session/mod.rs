@@ -4,11 +4,11 @@
 //! in the order its notes are kept in, and what the engine finds as it is typed, each with its
 //! reasons. On the line words find and everything else holds (see `query`): a phrase, a tag, a
 //! person, a day and a span narrow what is listed and never how it ranks, and a line of nothing
-//! but those lists exactly what holds them, in the order the top of the space is in. A note is
-//! found by its own words and by the head of a note it links to, so the name of a note brings
-//! what was written in it, as going into the note does. The cursor is on the line or on a note of
-//! the list, and what is typed goes where the cursor is. Archived notes stay out of every list
-//! until they are asked for.
+//! but those lists exactly what holds them, in the order the top of the space is in, or with a
+//! span oldest first by the moment the span reads. A note is found by its own words and by the
+//! head of a note it links to, so the name of a note brings what was written in it, as going
+//! into the note does. The cursor is on the line or on a note of the list, and what is typed goes
+//! where the cursor is. Archived notes stay out of every list until they are asked for.
 //!
 //! Going into a note makes it the place, and the path grows by one step. A place is a set and is
 //! listed as the top of the space is: with nothing on the line, what is in it, which for a note is
