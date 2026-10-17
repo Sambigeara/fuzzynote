@@ -354,6 +354,21 @@ impl Replica {
         self.peers.remove(&peer);
     }
 
+    /// Whether this replica holds everything a connected peer has said it holds: the peer has
+    /// said so on this connection, and of every log it named, but one forked with it, as many
+    /// lines are held here. What this replica holds that the peer lacks is the peer's to wait
+    /// for, and is sent to it as soon as it says what it holds, so a face that has carried out
+    /// everything up to now and finds this true has nothing more to take in from that peer.
+    pub fn in_step(&self, peer: Peer) -> bool {
+        let Some(known) = self.peers.get(&peer) else {
+            return false;
+        };
+        known.told
+            && known.has.iter().all(|(log, &lines)| {
+                known.forked.contains(log) || self.logs.get(log).map_or(0, Log::len) >= lines
+            })
+    }
+
     /// Takes a message from a connected peer.
     pub fn receive(&mut self, peer: Peer, message: Message) -> Vec<Out> {
         let mut out = Vec::new();
@@ -1111,6 +1126,81 @@ mod tests {
         assert!(a.append("dev-a", lines(&["a3"])).is_empty());
         assert!(a.receive(1, Message::Have(BTreeMap::new())).is_empty());
         assert_eq!(a.connect(1).len(), 1);
+    }
+
+    #[test]
+    fn a_peer_is_in_step_once_it_has_said_what_it_holds_and_all_of_it_is_held_here() {
+        let relay = replica(&[("dev-b", &["b1", "b2"])]);
+        let device = replica(&[("dev-b", &["b1", "b2"]), ("dev-a", &["a1"])]);
+        let mut net = Net::of(vec![relay, device]);
+        net.connect(0, 1);
+        assert!(!net.replicas[1].in_step(0), "not before it has said");
+        assert!(net.deliver(0, 1));
+        assert!(
+            net.replicas[1].in_step(0),
+            "what is held here and not there is the peer's to wait for"
+        );
+    }
+
+    #[test]
+    fn lines_still_to_come_keep_a_peer_out_of_step_until_they_come() {
+        let relay = replica(&[("dev-b", &["b1", "b2"]), ("dev-c", &["c1"])]);
+        let device = replica(&[("dev-b", &["b1"])]);
+        let mut net = Net::of(vec![relay, device]);
+        net.connect(0, 1);
+        assert!(net.deliver(0, 1));
+        assert!(!net.replicas[1].in_step(0));
+        // The relay hears what the device holds, and sends the rest, a log at a time.
+        assert!(net.deliver(1, 0));
+        assert!(net.deliver(0, 1));
+        assert!(!net.replicas[1].in_step(0), "one log of two has come");
+        assert!(net.deliver(0, 1));
+        assert!(net.replicas[1].in_step(0));
+        assert_eq!(net.replicas[1].lines("dev-b"), ["b1", "b2"]);
+        assert_eq!(net.replicas[1].lines("dev-c"), ["c1"]);
+    }
+
+    #[test]
+    fn a_log_forked_with_a_peer_does_not_hold_it_out_of_step() {
+        let relay = replica(&[("dev-a", &["a1", "a2", "a3"]), ("dev-b", &["b1"])]);
+        let device = replica(&[("dev-a", &["a1", "x2"])]);
+        let mut net = Net::of(vec![relay, device]);
+        net.connect(0, 1);
+        assert!(net.deliver(0, 1));
+        assert!(!net.replicas[1].in_step(0));
+        net.settle();
+        assert_eq!(net.forked.len(), 2, "both ends are told of the fork");
+        assert!(net.replicas[1].in_step(0));
+        assert_eq!(net.replicas[1].lines("dev-a"), ["a1", "x2"]);
+        assert_eq!(net.replicas[1].lines("dev-b"), ["b1"]);
+    }
+
+    #[test]
+    fn a_log_retired_by_a_header_in_the_middle_of_an_exchange_leaves_the_peer_in_step() {
+        let relay = replica(&[("dev-a", &["a1", "a2", "a3"])]);
+        let device = replica(&[("dev-a", &["a1"])]);
+        let mut net = Net::of(vec![relay, device]);
+        net.connect(0, 1);
+        assert!(net.deliver(0, 1));
+        assert!(!net.replicas[1].in_step(0), "two lines of dev-a to come");
+        // Before the relay hears what the device holds, dev-a's writer compacts, and the relay
+        // has the new log, which retires dev-a there, so dev-a's last lines are never sent.
+        let compacted = net.compact(0, &["dev-a"], "dev-c");
+        net.settle();
+        assert_eq!(net.replicas[1].lines("dev-c"), compacted);
+        assert!(net.replicas[1].lines("dev-a").is_empty());
+        assert!(net.replicas[1].in_step(0));
+    }
+
+    #[test]
+    fn a_peer_not_connected_is_not_in_step() {
+        assert!(!Replica::new().in_step(0));
+        let mut net = Net::of(vec![Replica::new(), Replica::new()]);
+        net.connect(0, 1);
+        net.settle();
+        assert!(net.replicas[1].in_step(0));
+        net.disconnect(0, 1);
+        assert!(!net.replicas[1].in_step(0));
     }
 
     #[test]

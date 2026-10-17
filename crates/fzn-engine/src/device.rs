@@ -518,6 +518,12 @@ impl Device {
         self.refused.as_deref()
     }
 
+    /// Whether this device holds everything the relay said it holds on this connection, as
+    /// [`Replica::in_step`] says, which is when a face that syncs once may stop listening.
+    pub fn in_step(&self) -> bool {
+        self.replica.in_step(RELAY)
+    }
+
     /// Whether the passphrase is in doubt: the key opened no sealed line here though there are
     /// some, or opened none of the lines of the space a relay offered, whatever it opens here, or
     /// the relay refused this device after it answered the challenge, which is a refusal of its
