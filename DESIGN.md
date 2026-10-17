@@ -748,27 +748,36 @@ row, after a dim `>` in the column the rows leave empty, so that its text lines 
 its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or
 `→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then, dimmed, a
 `¶` if it has a body, the names of what it links to after an arrow, and its reasons joined by `·`;
-the row the cursor is on has the terminal's cursor at the end of its head, the head in bold, and the
-day its note was written at the right, the day a day label and a span read too, or none for a note
-that never said. The foot of the list is kept for the body of what the cursor is on: the note on
-its row, and on the line in a place the note you are in. It is a row of nothing, then up to five
-rows of the body, dimmed, set in two columns from the rows' text and cut with a `…` when it goes on.
-The rows are kept whatever the note holds, on a row and on the line in a place alike, so walking the
-list never changes how much of it is shown; on the line outside a place the list has the whole
-height. On a short screen they shrink, keeping the list at least half its room, and go when fewer
-than two would be left. One dim footer row names the chords that apply where the cursor is,
-`^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or
-`Esc Esc quits` where there is none; with vim's keys, a row in normal mode writes vim's letters,
-`x tick`, and ends with `h back`, in a place, and `/ up`, and a row written in ends `Esc done`. A
-narrow terminal loses chords from the middle, never the first or the way back. A status row above it
-exists only while there is something to say, each key
-clearing what the one before said, and where the body has its rows it takes the last of them, so
-that the list keeps its height. Nothing says how many notes there are or that sync is working;
-`not syncing` is said in the corner of the foot when it is not, and in its place, while syncing, how
-far this machine's clock is from the relay's when that is more than two minutes,
-`this device's clock is 5 min ahead`. A window that does not hold the socket says neither, since
-what it writes reaches the relay through the one that does. Why a relay refused this device is said
-on the status row, after the relay's host, until a relay takes it in.
+the row the cursor is on has the terminal's cursor at the end of its head, or on the `…` of a head
+it cuts, the head in bold, and the day its note was written at the right, the day a day label and a
+span read too, or none for a note that never said, with a dim `¶` just before it when the note has a
+body. That row is one row, however long its head or its tail (see "A row is one line, and a long
+head is read beside it"). A head too long for it reads from its start, cut with `…`, with the
+terminal's cursor on the `…`, which is where the rest is, until a key writes in it or moves its
+caret; then it scrolls sideways under the caret as a one-line field does, moving only when the caret
+comes within five columns of an edge, as vim's `sidescrolloff` keeps them, and each edge that hides
+text shows `…`. Once the cursor leaves it, it reads from its start again. With vim's keys a row in
+normal mode is read so, and one in insert is written in. The tail follows the head as far as it
+fits, cut with `…` as off the cursor, and the line scrolls as the head does once written in. The
+foot of the list is kept for the body of what the cursor is on: the note on its row, and a head its
+row cuts, whole, above the body; and on the line in a place the note you are in. It is a row of
+nothing, then up to five rows of the body, dimmed, set in two columns from the rows' text and cut
+with a `…` when it goes on. The rows are kept whatever the note holds, on a row and on the line in a
+place alike, so walking the list never changes how much of it is shown; on the line outside a place
+the list has the whole height. On a short screen they shrink, keeping the list at least half its
+room, and go when fewer than two would be left. One dim footer row names the chords that apply where
+the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or
+`Esc up`, or `Esc Esc quits` where there is none; with vim's keys, a row in normal mode writes vim's
+letters, `x tick`, and ends with `h back`, in a place, and `/ up`, and a row written in ends
+`Esc done`. A narrow terminal loses chords from the middle, never the first or the way back. A
+status row above it exists only while there is something to say, each key clearing what the one
+before said, and where the body has its rows it takes the last of them, so that the list keeps its
+height. Nothing says how many notes there are or that sync is working; `not syncing` is said in the
+corner of the foot when it is not, and in its place, while syncing, how far this machine's clock is
+from the relay's when that is more than two minutes, `this device's clock is 5 min ahead`. A window
+that does not hold the socket says neither, since what it writes reaches the relay through the one
+that does. Why a relay refused this device is said on the status row, after the relay's host, until
+a relay takes it in.
 
 Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
 inverse, Ctrl-^ export.

@@ -51,7 +51,10 @@
 //! and move every row below. The body read is that of what the cursor is on, the note under it or,
 //! on the line in a place, the place's note, in rows kept at the foot of the list, the same rows
 //! whatever the note holds. A status row is there only while there is something to say, and each
-//! key clears what the one before it said.
+//! key clears what the one before it said. The row under the cursor is one row for the same
+//! reason, however long its head: a head too long for it reads from its start, cut, until a key
+//! writes in it or moves its caret, and then scrolls sideways under the caret as any one-line
+//! field does, so that text moves only in answer to the caret; and the foot reads it whole.
 //!
 //! Several windows may have a space open, each a writer of its own in a slot of the directory's
 //! (see `store`). Between keys, four times a second, a window looks in the space's directory for
@@ -92,7 +95,7 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::{DefaultTerminal, Frame};
 use unicode_segmentation::UnicodeSegmentation as _;
-use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::store::{self, Keeper, Logs, Slot};
 use crate::sync::{self, Link};
@@ -134,6 +137,11 @@ pub struct App {
     cursor: usize,
     /// Cursor position in the head of the row the cursor is on, in letters as drawn.
     row_cursor: usize,
+    /// The first letter of that head drawn, once a key has written in it or moved its caret; until
+    /// then, from landing on the row, `None`, and the head reads from its start.
+    row_left: Option<usize>,
+    /// The first letter of the line drawn, which moves only as far as keeps its caret in sight.
+    line_left: usize,
     /// The first row painted, kept so that the list moves only when the cursor would leave it.
     top: usize,
     /// Whether the previous key was Escape, which makes a second one quit.
@@ -555,29 +563,95 @@ fn fit(s: &str, max: usize) -> String {
     out
 }
 
-/// A line of text in `room` columns with its caret, `caret` letters in, kept in sight: what is
-/// shown of it, and the column the caret is then at. The text moves only once the caret would
-/// reach the last column, and then by as little as keeps it there.
-fn scrolled(text: &str, caret: usize, room: usize) -> (String, usize) {
-    let room = room.max(1);
+/// The columns kept in sight beside the caret in a line of text scrolled sideways, as vim's
+/// `sidescrolloff` keeps them, so that what is being written is read in its words.
+const BESIDE: usize = 5;
+
+/// A line of text in `room` columns with its caret, `caret` letters in, as a one-line field
+/// shows it: what is drawn, the column the caret is then at, and the first letter drawn, kept by
+/// the caller for the next frame. `left` is that letter as the last frame had it, or `None` for
+/// a row landed on whose caret no key has moved yet: then the text reads from its start, cut with
+/// `…` when it does not fit, and the caret stands on the `…`, which is where the rest is. Once a
+/// key has written in it or moved its caret the text moves only when the caret would come
+/// within `margin` columns of an edge, and then by as little as keeps it there, so that moving
+/// the caret within what is shown moves no text; each edge that hides text shows `…` in its
+/// column. A text that fits is drawn whole, the caret at its end standing in the column after
+/// `room`, which the caller leaves for it. Widths are as drawn, so a letter two columns wide is
+/// never split at an edge.
+fn sidescrolled(
+    text: &str,
+    caret: usize,
+    room: usize,
+    left: Option<usize>,
+    margin: usize,
+) -> (String, usize, Option<usize>) {
     let letters: Vec<&str> = text.graphemes(true).collect();
-    let caret = caret.min(letters.len());
-    let mut from = 0;
-    let mut before: usize = letters[..caret].iter().map(|g| g.width()).sum();
-    while from < caret && before > room - 1 {
-        before -= letters[from].width();
-        from += 1;
+    let widths: Vec<usize> = letters.iter().map(|g| g.width()).collect();
+    let across = |from: usize, to: usize| -> usize { widths[from..to].iter().sum() };
+    let room = room.max(3);
+    let end = letters.len();
+    let caret = caret.min(end);
+    if across(0, end) <= room {
+        return (text.to_owned(), across(0, caret), left.map(|_| 0));
     }
-    let mut shown = String::new();
-    let mut used = 0;
-    for g in &letters[from..] {
-        if used + g.width() > room {
+    let Some(left) = left else {
+        let (shown, cut_at) = cut(&letters, 0, room);
+        return (shown, across(0, caret).min(cut_at), None);
+    };
+    // The caret keeps `margin` columns before it when text is hidden there, and its letter and
+    // `margin` more after it, or a column of its own at the end, before an edge that hides text;
+    // the `…` at each such edge takes a column of its own.
+    let margin = margin.min((room - 3) / 2);
+    let mut from = left.min(caret);
+    while from > 0 && across(from, caret) < margin {
+        from -= 1;
+    }
+    let mut beyond = (caret + 1).min(end);
+    while beyond < end && across(caret + 1, beyond) < margin {
+        beyond += 1;
+    }
+    let after = if caret == end {
+        1
+    } else {
+        across(caret, beyond)
+    };
+    while from < caret {
+        let lead = usize::from(from > 0);
+        let hidden = lead + across(from, end) > room;
+        if lead + across(from, caret) + after + usize::from(hidden) <= room {
             break;
         }
-        shown.push_str(g);
-        used += g.width();
+        from += 1;
     }
-    (shown, before)
+    // A field never shows blank columns at its end while text is hidden at its start: what is
+    // taken off its end, by a delete, an undo or another device, brings back what was before,
+    // leaving a column after the end for the caret.
+    while from > 0 && usize::from(from > 1) + across(from - 1, end) < room {
+        from -= 1;
+    }
+    let lead = usize::from(from > 0);
+    let (cut, _) = cut(&letters, from, room - lead);
+    let shown = if lead > 0 { format!("…{cut}") } else { cut };
+    (shown, lead + across(from, caret), Some(from))
+}
+
+/// The letters from `from` in `room` columns, ending in `…` when they do not all fit, with no
+/// blank left before it, and the column the `…` is in, or the end.
+fn cut(letters: &[&str], from: usize, room: usize) -> (String, usize) {
+    let all: usize = letters[from..].iter().map(|g| g.width()).sum();
+    if all <= room {
+        return (letters[from..].concat(), all);
+    }
+    let (mut kept, mut used) = (from, 0);
+    while kept < letters.len() && used + letters[kept].width() < room {
+        used += letters[kept].width();
+        kept += 1;
+    }
+    while kept > from && letters[kept - 1].trim().is_empty() {
+        kept -= 1;
+        used -= letters[kept].width();
+    }
+    (format!("{}…", letters[from..kept].concat()), used)
 }
 
 /// What fzn says when it is run with no terminal to draw on, as from a script.
@@ -949,11 +1023,11 @@ fn under_cursor(view: &View) -> Option<String> {
         .map(|row| row.id.clone())
 }
 
-/// What follows a row's head, to be dimmed: a mark if there is more to read, the notes it links
-/// to, and why it is listed.
-fn tail(row: &Row) -> String {
+/// What follows a row's head, to be dimmed: a mark if there is more to read, when `mark` asks
+/// for it, the notes it links to, and why it is listed.
+fn tail(row: &Row, mark: bool) -> String {
     let mut tail = String::new();
-    if row.has_body {
+    if mark && row.has_body {
         tail.push_str(" ¶");
     }
     if !row.links.is_empty() {
@@ -968,9 +1042,10 @@ fn tail(row: &Row) -> String {
 }
 
 /// Text broken between words into rows at most `width` columns wide, a word longer than a row
-/// across as many as it takes. Each line of the text starts a row of its own. A letter is as wide
-/// as the terminal draws it, so that a row of wide letters, Chinese say, is broken where it meets
-/// the edge rather than cut off there.
+/// across as many as it takes. Each line of the text starts a row of its own. A letter is one as
+/// drawn, so that an accent or a joined emoji is never parted from itself, and as wide as the
+/// terminal draws it, so that a row of wide letters, Chinese say, is broken where it meets the
+/// edge rather than cut off there.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut rows = Vec::new();
@@ -985,13 +1060,13 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
                 row.push(' ');
                 len += 1;
             }
-            for c in word.chars() {
-                let n = c.width().unwrap_or(0);
+            for g in word.graphemes(true) {
+                let n = g.width();
                 if len > 0 && len + n > width {
                     rows.push(std::mem::take(&mut row));
                     len = 0;
                 }
-                row.push(c);
+                row.push_str(g);
                 len += n;
             }
         }
@@ -1042,7 +1117,7 @@ fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     let room = width.saturating_sub(2 + score.width());
     let head = fit(row.shown.as_deref().unwrap_or(&row.head), room);
     let rest = room - head.width();
-    let tail = tail(row);
+    let tail = tail(row, true);
     let mut spans = vec![Span::raw(" "), Span::raw(score).dim(), Span::raw(head)];
     if !tail.is_empty() && rest > 3 {
         spans.push(Span::raw(fit(&tail, rest)).dim());
@@ -1051,51 +1126,76 @@ fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
     if row.archived { line.dim() } else { line }
 }
 
-/// The row the cursor is on, `head` being its head as it is now typed: the head bold and the day
-/// it was `created` at the right, the day it belongs to, and its tail after the head or, when it
-/// does not fit there, on a row of its own under it, since this is the row being asked about. A
-/// head too long for the room scrolls so that the caret, `caret` letters in, stays in sight; the
-/// column it is then drawn at comes back with the rows.
-fn selected_rows(
+/// The row the cursor is on as it is painted: its one line, the column the terminal's cursor is
+/// at in it, the first letter of the head drawn, to be kept for the next frame, and whether the
+/// head is cut, so that the foot of the list reads it whole.
+struct Selected {
+    line: Line<'static>,
+    x: usize,
+    left: Option<usize>,
+    cut: bool,
+}
+
+/// The row the cursor is on, `head` being its head as it is now typed: one row, however long its
+/// head or its tail, the head bold, and at the right a `¶` when the note has a body and the day
+/// it was `created` at, the day it belongs to. The head is a one-line field, `caret` letters in,
+/// read from its start while `left` is `None` and scrolled sideways under the caret once a key
+/// has moved it (see [`sidescrolled`]); the tail follows it as far as there is room, as off the
+/// cursor.
+fn selected_row(
     row: &Row,
     head: &str,
     created: Option<Moment>,
-    caret: usize,
+    (caret, left): (usize, Option<usize>),
     scores: bool,
     width: usize,
-) -> (Vec<Line<'static>>, usize) {
+) -> Selected {
     let score = score_of(row, scores);
     let date = created.map_or_else(String::new, |m| time::format_day(m.day()));
-    let dated = if date.is_empty() { 0 } else { date.width() + 2 };
-    let room = width.saturating_sub(2 + score.width() + dated).max(1);
-    let (head, at) = scrolled(head, caret, room);
+    let right = [if row.has_body { "¶" } else { "" }, &date]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let righted = if right.is_empty() {
+        0
+    } else {
+        right.width() + 2
+    };
+    // On a screen too narrow to leave the head three columns beside them, the mark and the date
+    // go, as the tail goes from a row off the cursor.
+    let narrow = width.saturating_sub(2 + score.width() + righted) < 3;
+    let right = if narrow { String::new() } else { right };
+    let righted = if narrow { 0 } else { righted };
+    let room = width.saturating_sub(2 + score.width() + righted).max(1);
+    let (shown, at, left) = sidescrolled(head, caret, room, left, BESIDE);
+    let cut = shown != head;
     let x = 1 + score.width() + at;
-    let tail = tail(row);
-    let fits = tail.width() <= room.saturating_sub(head.width());
-    let mut used = 1 + score.width() + head.width();
+    let rest = room.saturating_sub(shown.width());
+    let mut used = 1 + score.width() + shown.width();
     let mut spans = vec![
         Span::raw(" "),
         Span::raw(score).dim(),
-        Span::raw(head).bold(),
+        Span::raw(shown).bold(),
     ];
-    if fits {
+    let tail = tail(row, false);
+    if !tail.is_empty() && rest > 3 {
+        let tail = fit(&tail, rest);
         used += tail.width();
-        spans.push(Span::raw(tail.clone()).dim());
+        spans.push(Span::raw(tail).dim());
     }
-    if !date.is_empty() {
-        let pad = width.saturating_sub(used + date.width() + 1);
+    if !right.is_empty() {
+        let pad = width.saturating_sub(used + right.width() + 1);
         spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::raw(date).dim());
+        spans.push(Span::raw(right).dim());
     }
-    let mut rows = vec![Line::from(spans)];
-    if !fits {
-        let tail = fit(tail.trim_start(), width.saturating_sub(4));
-        rows.push(Line::from(format!("   {tail}")).dim());
+    let line = Line::from(spans);
+    Selected {
+        line: if row.archived { line.dim() } else { line },
+        x,
+        left,
+        cut,
     }
-    if row.archived {
-        rows = rows.into_iter().map(Stylize::dim).collect();
-    }
-    (rows, x)
 }
 
 /// Paints one row of the screen, `y` rows down, if the screen reaches that far.
@@ -1145,6 +1245,8 @@ impl App {
             space: space.to_owned(),
             cursor: 0,
             row_cursor: 0,
+            row_left: None,
+            line_left: 0,
             top: 0,
             escaped: false,
             sync: None,
@@ -1368,7 +1470,11 @@ impl App {
                     Some((head, body)) => (head, Some(body)),
                     None => (text.as_str(), None),
                 };
-                match edited(head, self.row_cursor, code, ctrl) {
+                let moved = edited(head, self.row_cursor, code, ctrl);
+                if moved.is_some() {
+                    self.row_left = Some(self.row_left.unwrap_or(0));
+                }
+                match moved {
                     Some((to, cursor)) if to != head => {
                         self.row_cursor = cursor;
                         let text = match body {
@@ -1454,6 +1560,7 @@ impl App {
                     }
                     (None, true, false) => 0,
                 };
+                self.row_left = Some(0);
                 self.normal = false;
                 Ok(Flow::Continue)
             }
@@ -1513,6 +1620,7 @@ impl App {
                 None => to,
             };
             self.row_cursor = cursor;
+            self.row_left = Some(self.row_left.unwrap_or(0));
             self.act(Action::Edited(text))
         } else {
             let (to, cursor) = spliced(view.line, self.cursor, &text);
@@ -1571,6 +1679,12 @@ impl App {
                 _ if stayed => self.row_cursor.min(end),
                 _ => end,
             };
+            // A row landed on reads from its start until a key writes in it or moves its caret.
+            if !stayed {
+                self.row_left = None;
+            }
+        } else {
+            self.row_left = None;
         }
         // With vim's keys a row written in is in insert, and one landed on any other way is in
         // normal mode. Backspace taking an empty row away leaves the mode as it was on the row
@@ -1756,7 +1870,9 @@ impl App {
             .join("  ");
         let said = right.width();
         let room = width.saturating_sub(2 + if said > 0 { said + 2 } else { 0 });
-        let (shown, at) = scrolled(view.line, self.cursor, room);
+        let (shown, at, left) =
+            sidescrolled(view.line, self.cursor, room, Some(self.line_left), BESIDE);
+        self.line_left = left.unwrap_or(0);
         paint(frame, y, 0, Line::from(PROMPT).dim());
         paint(frame, y, 1, Line::from(shown));
         paint_right(frame, y, &right);
@@ -1765,32 +1881,10 @@ impl App {
         }
         y += 1;
 
-        // The foot of the list is kept for the body of what the cursor is on, under a row of
-        // nothing: on a row its note as it is being written, and on the line in a place the
-        // place's note, if there is one. It is kept whatever the note holds, and in a place on the
-        // line too, so that walking the list never changes how much of it there is; at the top
-        // the line has the whole height. The status row takes the last of the rows kept, so that
-        // it does not move the list either by coming or by going.
-        let read = match &view.field {
-            Some(field) => Some(field.text),
-            None if zoomed => Some(view.here.map_or("", |here| here.text)),
-            None => None,
-        };
-        let status_row = usize::from(status.is_some());
-        let preview = read.map_or(0, |_| preview_rows(height.saturating_sub(1 + y)));
-        let bottom = height.saturating_sub(1 + if preview > 0 { preview + 1 } else { status_row });
-        if let Some(text) = read.filter(|_| preview > 0) {
-            let rows = body_rows(head_and_body(text).1, width, preview - status_row);
-            for (k, row) in rows.into_iter().enumerate() {
-                paint(frame, bottom + 1 + k, 0, row.dim());
-            }
-        }
-
-        // In a place, what the line finds there is kept apart from what it only finds by a row
-        // of nothing, where the view says the finds begin, counted with the row it comes before.
-        let apart = |i: usize| view.finds_from == Some(i);
         // The row the cursor is on is drawn from the note as it is being typed, with the
-        // terminal's cursor in its head, and may take a second row for its tail.
+        // terminal's cursor in its head, on one row. In vim's normal mode, where nothing is
+        // written, it is read as a row landed on is.
+        let reading = self.vim && self.normal;
         let selected = view
             .cursor
             .and_then(|i| view.rows.get(i).map(|row| (i, row)))
@@ -1800,23 +1894,56 @@ impl App {
                     .as_ref()
                     .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
                 let created = view.field.as_ref().and_then(|f| f.created);
-                let painted = selected_rows(
+                let left = if reading { None } else { self.row_left };
+                let painted = selected_row(
                     row,
                     head,
                     created,
-                    self.row_cursor,
+                    (self.row_cursor, left),
                     view.scores_shown,
                     width,
                 );
                 (i, painted)
             });
-        let tall = |i: usize| {
-            usize::from(apart(i))
-                + match &selected {
-                    Some((focus, (rows, _))) if *focus == i => rows.len(),
-                    _ => 1,
-                }
+        if let Some((_, painted)) = &selected
+            && !reading
+        {
+            self.row_left = painted.left;
+        }
+
+        // The foot of the list is kept for the body of what the cursor is on, under a row of
+        // nothing: on a row its note as it is being written, and on the line in a place the
+        // place's note, if there is one. A head its row cuts is read there whole, above the
+        // body. It is kept whatever the note holds, and in a place on the line too, so that
+        // walking the list never changes how much of it there is; at the top the line has the
+        // whole height. The status row takes the last of the rows kept, so that it does not move
+        // the list either by coming or by going.
+        let read = match &view.field {
+            Some(field) => Some(field.text),
+            None if zoomed => Some(view.here.map_or("", |here| here.text)),
+            None => None,
         };
+        let cut = selected.as_ref().is_some_and(|(_, painted)| painted.cut);
+        let status_row = usize::from(status.is_some());
+        let preview = read.map_or(0, |_| preview_rows(height.saturating_sub(1 + y)));
+        let bottom = height.saturating_sub(1 + if preview > 0 { preview + 1 } else { status_row });
+        if let Some(text) = read.filter(|_| preview > 0) {
+            let (head, body) = head_and_body(text);
+            let shown = match (cut, body.is_empty()) {
+                (true, false) => format!("{head}\n{body}"),
+                (true, true) => head.to_owned(),
+                (false, _) => body.to_owned(),
+            };
+            let rows = body_rows(&shown, width, preview - status_row);
+            for (k, row) in rows.into_iter().enumerate() {
+                paint(frame, bottom + 1 + k, 0, row.dim());
+            }
+        }
+
+        // In a place, what the line finds there is kept apart from what it only finds by a row
+        // of nothing, where the view says the finds begin, counted with the row it comes before.
+        let apart = |i: usize| view.finds_from == Some(i);
+        let tall = |i: usize| usize::from(apart(i)) + 1;
 
         // The list moves only as far as it must to keep the cursor's row in sight, and only the
         // rows in sight are painted, however long the list is.
@@ -1842,18 +1969,12 @@ impl App {
                 y += 1;
             }
             match selected.take_if(|(focus, _)| *focus == i) {
-                Some((_, (rows, x))) => {
-                    for (k, line) in rows.into_iter().enumerate() {
-                        if y >= bottom {
-                            break;
-                        }
-                        if k == 0 {
-                            cursor = Some((x, y));
-                        }
-                        paint(frame, y, 0, line);
-                        y += 1;
-                    }
+                Some((_, painted)) if y < bottom => {
+                    cursor = Some((painted.x, y));
+                    paint(frame, y, 0, painted.line);
+                    y += 1;
                 }
+                Some(_) => {}
                 None if y < bottom => {
                     paint(frame, y, 0, row_line(row, view.scores_shown, width));
                     y += 1;
@@ -3995,27 +4116,438 @@ mod tests {
         done(&space);
     }
 
+    /// A head too long for a row forty columns wide, where the head has twenty-six beside the
+    /// date.
+    const LONG: &str = "the boiler pressure keeps dropping after the radiators are bled";
+
+    /// The head of a painted row, the columns from its second to the date, without the blank
+    /// column the cursor stands in after it.
+    fn head_of(row: &str) -> String {
+        let head: String = row.chars().skip(1).take(26).collect();
+        head.trim_end().to_owned()
+    }
+
     #[test]
-    fn a_head_too_long_for_its_row_scrolls_to_keep_the_caret_in_sight() {
+    fn a_long_head_landed_on_reads_from_its_start_with_the_cursor_on_its_cut() {
         let (mut app, space) = app();
-        let long = "the boiler pressure keeps dropping after the radiators are bled";
-        write(&mut app, long);
+        write(&mut app, LONG);
         press(&mut app, KeyCode::Down, false);
         let shot = screen(&mut app, 40, 8);
         let date = time::format_day(app.device.view().field.unwrap().created.unwrap().day());
         assert!(shot.rows[1].ends_with(&date), "{:?}", shot.rows[1]);
-        assert!(shot.rows[1].contains("are bled"), "{:?}", shot.rows[1]);
-        assert!(shot.cursor.0 < 40 - 12, "{:?}", shot.cursor);
-        assert_eq!(shot.cursor.1, 1);
-
-        chord(&mut app, 'a');
-        let shot = screen(&mut app, 40, 8);
-        assert!(
-            shot.rows[1].starts_with(" the boiler"),
-            "{:?}",
-            shot.rows[1]
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert_eq!(shot.cursor, (26, 1), "on the `…`, where the rest is");
+        assert_eq!(
+            app.row_cursor,
+            letters(LONG),
+            "the caret is at the end all the same"
         );
+
+        // A letter typed goes at the end, and the head scrolls to show it there.
+        type_in(&mut app, "!");
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "… the radiators are bled!");
+        assert_eq!(shot.cursor, (26, 1));
+        assert!(shot.rows[1].ends_with(&date), "{:?}", shot.rows[1]);
+        done(&space);
+    }
+
+    #[test]
+    fn a_key_in_a_long_head_scrolls_it_keeping_five_columns_and_marking_each_hidden_edge() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::End, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
+        assert_eq!(shot.cursor, (26, 1), "in the column after the head");
+
+        // Walking back, the text stays until the caret is five columns from the left edge's
+        // `…`, and then moves a column a key, both edges hiding text.
+        for _ in 0..19 {
+            press(&mut app, KeyCode::Left, false);
+            screen(&mut app, 40, 8);
+        }
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
+        assert_eq!(shot.cursor, (7, 1), "five columns after the `…`");
+        for _ in 0..11 {
+            press(&mut app, KeyCode::Left, false);
+            screen(&mut app, 40, 8);
+        }
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…opping after the radiato…");
+        assert_eq!(shot.cursor, (7, 1));
+
+        // Right walks the caret back across what is shown, and moves the text only as it comes
+        // within five columns of the right edge's `…`.
+        for _ in 0..13 {
+            press(&mut app, KeyCode::Right, false);
+            screen(&mut app, 40, 8);
+        }
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…opping after the radiato…");
+        assert_eq!(
+            shot.cursor,
+            (20, 1),
+            "five letters before the `…` after the caret's"
+        );
+        press(&mut app, KeyCode::Right, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…pping after the radiator…");
+        assert_eq!(shot.cursor, (20, 1));
+
+        // Home shows the start, the end hidden.
+        press(&mut app, KeyCode::Home, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
         assert_eq!(shot.cursor, (1, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn moving_the_caret_within_what_is_shown_moves_no_text() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Home, false);
+        let at_home = screen(&mut app, 40, 8).rows[1].clone();
+        for x in 2..20 {
+            press(&mut app, KeyCode::Right, false);
+            let shot = screen(&mut app, 40, 8);
+            assert_eq!(shot.rows[1], at_home);
+            assert_eq!(shot.cursor, (x, 1));
+        }
+        done(&space);
+    }
+
+    #[test]
+    fn the_line_moves_its_text_only_when_its_caret_nears_an_edge() {
+        let (mut app, space) = app();
+        let text = "the garden shed roof wants felting before the rain";
+        type_in(&mut app, text);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(shot.rows[0], ">…d roof wants felting before the rain");
+        assert_eq!(shot.cursor, (38, 0));
+        for x in (28..38).rev() {
+            press(&mut app, KeyCode::Left, false);
+            let shot = screen(&mut app, 40, 8);
+            assert_eq!(shot.rows[0], ">…d roof wants felting before the rain");
+            assert_eq!(shot.cursor, (x, 0));
+        }
+        // Five columns from the left edge's `…` it moves, a column a key, the caret staying.
+        for x in (7..28).rev() {
+            press(&mut app, KeyCode::Left, false);
+            assert_eq!(screen(&mut app, 40, 8).cursor, (x, 0));
+        }
+        press(&mut app, KeyCode::Left, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(shot.rows[0], ">…ed roof wants felting before the rain");
+        assert_eq!(shot.cursor, (7, 0));
+        done(&space);
+    }
+
+    #[test]
+    fn the_row_under_the_cursor_is_one_row_however_long_its_head_or_its_reasons() {
+        let mut row = a_row("Bleed the radiators");
+        row.links = vec!["Boiler".into(), "House".into()];
+        row.reasons = vec![
+            "#house".into(),
+            "linked to the boiler service in spring".into(),
+        ];
+        let created = Moment::utc(0);
+        let date = time::format_day(created.day());
+        let head = (letters(&row.head), Some(0));
+        let Selected { line, x, cut, .. } =
+            selected_row(&row, &row.head, Some(created), head, false, 40);
+        let painted = line.to_string();
+        assert_eq!(
+            painted,
+            format!(" Bleed the radiators  → Bo…  {date}"),
+            "the tail cut where the head leaves off, the date at the right"
+        );
+        assert_eq!((x, cut), (20, false));
+
+        let mut row = a_row(LONG);
+        row.reasons = vec!["#house".into()];
+        let head = (letters(&row.head), None);
+        let Selected { line, cut, .. } =
+            selected_row(&row, &row.head, Some(created), head, false, 40);
+        assert_eq!(
+            line.to_string(),
+            format!(" the boiler pressure keeps…  {date}"),
+            "no room is left for the reasons by a head that is cut"
+        );
+        assert!(cut);
+
+        // On the screen the row after it is the next row down.
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 40, 10);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert!(shot.rows[2].starts_with(" House"), "{:?}", shot.rows);
+        done(&space);
+    }
+
+    #[test]
+    fn a_note_with_a_body_shows_its_mark_before_the_date_on_the_cursor() {
+        let mut row = a_row(LONG);
+        row.has_body = true;
+        let created = Moment::utc(0);
+        let date = time::format_day(created.day());
+        let head = (letters(&row.head), None);
+        let Selected { line, x, .. } =
+            selected_row(&row, &row.head, Some(created), head, false, 40);
+        assert_eq!(
+            line.to_string(),
+            format!(" the boiler pressure kee…  ¶ {date}")
+        );
+        assert_eq!(x, 24, "the cut two columns earlier, for the mark");
+    }
+
+    #[test]
+    fn the_foot_reads_a_cut_head_whole_above_the_body() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, &format!("{LONG}\n\nThe combi under the stairs."));
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure kee…");
+        assert_eq!(
+            shot.rows[7..10],
+            [
+                "   the boiler pressure keeps dropping",
+                "   after the radiators are bled",
+                "   The combi under the stairs.",
+            ],
+            "the head, and the body without the blank line between"
+        );
+
+        // A head its row does not cut is not read twice.
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, "House\nThe shed key is on the hook.");
+        let shot = screen(&mut app, 40, 12);
+        assert!(shot.rows[2].starts_with(" House"), "{:?}", shot.rows);
+        assert_eq!(shot.rows[7], "   The shed key is on the hook.");
+        assert_eq!(shot.rows[8], "");
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_left_and_landed_on_again_reads_from_its_start() {
+        let (mut app, space) = app();
+        write(&mut app, "House");
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::End, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
+        press(&mut app, KeyCode::Down, false);
+        screen(&mut app, 40, 8);
+        press(&mut app, KeyCode::Up, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert_eq!(shot.cursor, (26, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn with_vim_a_long_head_reads_from_its_start_in_normal_mode_and_scrolls_in_insert() {
+        let (mut app, space) = vim_app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(mode(&app), Mode::Normal);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert_eq!(shot.cursor, (26, 1), "the block on the `…`");
+
+        type_in(&mut app, "A");
+        assert_eq!(mode(&app), Mode::Insert);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
+        assert_eq!(shot.cursor, (26, 1));
+
+        // Escape is normal mode, which reads the row again.
+        press(&mut app, KeyCode::Esc, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert_eq!(shot.cursor, (26, 1));
+
+        type_in(&mut app, "I");
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
+        assert_eq!(shot.cursor, (1, 1), "at the start, nothing moved");
+        done(&space);
+    }
+
+    /// Says whether the painted row under the cursor fills its room with the end of its head:
+    /// `…` and its last twenty-four letters, the caret in the column after them.
+    fn full(app: &App, shot: &Screen) -> bool {
+        let head = field(app).unwrap();
+        let end: String = head.chars().skip(head.chars().count() - 24).collect();
+        let painted: String = shot.rows[1].chars().skip(1).take(25).collect();
+        painted == format!("…{end}") && shot.cursor == (26, 1)
+    }
+
+    #[test]
+    fn deleting_at_the_end_of_a_long_head_keeps_the_field_full() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::End, false);
+        screen(&mut app, 40, 8);
+        for n in 1..=30 {
+            press(&mut app, KeyCode::Backspace, false);
+            let shot = screen(&mut app, 40, 8);
+            assert!(
+                full(&app, &shot),
+                "after {n}: {:?} {:?}",
+                shot.rows[1],
+                shot.cursor
+            );
+        }
+        assert_eq!(
+            head_of(&screen(&mut app, 40, 8).rows[1]),
+            "…r pressure keeps droppin"
+        );
+
+        // Backspace on to where the head fits brings it back whole, from its start.
+        for _ in 0..8 {
+            press(&mut app, KeyCode::Backspace, false);
+            screen(&mut app, 40, 8);
+        }
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps");
+        assert_eq!(shot.cursor, (26, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn ctrl_w_and_delete_in_a_scrolled_head_keep_the_field_full() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::End, false);
+        screen(&mut app, 40, 8);
+        for n in 1..=3 {
+            chord(&mut app, 'w');
+            let shot = screen(&mut app, 40, 8);
+            assert!(
+                full(&app, &shot),
+                "after {n}: {:?} {:?}",
+                shot.rows[1],
+                shot.cursor
+            );
+        }
+        assert_eq!(
+            head_of(&screen(&mut app, 40, 8).rows[1]),
+            "…eeps dropping after the"
+        );
+
+        // Delete takes what is after the caret, and what was hidden before comes back.
+        for _ in 0..6 {
+            press(&mut app, KeyCode::Left, false);
+            screen(&mut app, 40, 8);
+        }
+        for _ in 0..6 {
+            press(&mut app, KeyCode::Delete, false);
+            screen(&mut app, 40, 8);
+        }
+        let shot = screen(&mut app, 40, 8);
+        assert!(full(&app, &shot), "{:?} {:?}", shot.rows[1], shot.cursor);
+        assert_eq!(head_of(&shot.rows[1]), "…sure keeps dropping afte");
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_put_back_while_scrolled_reads_whole_again() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        type_in(&mut app, &format!(" {LONG}"));
+        let shot = screen(&mut app, 40, 8);
+        assert!(full(&app, &shot), "{:?} {:?}", shot.rows[1], shot.cursor);
+        chord(&mut app, 'u');
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "Boiler");
+        assert_eq!(
+            shot.cursor,
+            (7, 1),
+            "the caret kept as far as the head goes"
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn a_paste_into_a_head_landed_on_scrolls_it_to_the_caret() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        app.paste(&format!(" {LONG}")).unwrap();
+        let shot = screen(&mut app, 40, 8);
+        assert!(full(&app, &shot), "{:?} {:?}", shot.rows[1], shot.cursor);
+        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_exactly_as_wide_as_its_room_is_never_cut() {
+        let (mut app, space) = app();
+        let letters26 = "abcdefghijklmnopqrstuvwxyz";
+        write(&mut app, letters26);
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), letters26);
+        assert_eq!(shot.cursor, (27, 1), "in the gap after the head");
+        assert!(
+            shot.rows[3..7].iter().all(String::is_empty),
+            "nothing at the foot"
+        );
+        for (code, x) in [
+            (KeyCode::End, 27),
+            (KeyCode::Left, 26),
+            (KeyCode::Right, 27),
+        ] {
+            press(&mut app, code, false);
+            let shot = screen(&mut app, 40, 8);
+            assert_eq!(head_of(&shot.rows[1]), letters26, "{code:?}");
+            assert_eq!(shot.cursor, (x, 1), "{code:?}");
+            assert!(shot.rows[3..7].iter().all(String::is_empty), "{code:?}");
+        }
+        done(&space);
+    }
+
+    #[test]
+    fn on_a_screen_too_narrow_for_the_date_the_row_under_the_cursor_goes_without_it() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        let shot = screen(&mut app, 16, 8);
+        assert_eq!(shot.rows[1], " the boiler pr…");
+        assert_eq!(shot.cursor, (14, 1), "on the `…`");
+        press(&mut app, KeyCode::End, false);
+        let shot = screen(&mut app, 16, 8);
+        assert_eq!(shot.rows[1], " …ors are bled");
+        assert_eq!(shot.cursor, (14, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn with_a_status_row_the_foot_reads_a_cut_head_in_the_rows_left() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, &format!("{LONG}\nThe combi under the stairs."));
+        let shot = screen(&mut app, 40, 11);
+        assert_eq!(
+            shot.rows[7..10],
+            ["   the boiler pressure keeps dropping", "   …", " saved"],
+            "{:?}",
+            shot.rows
+        );
         done(&space);
     }
 
@@ -4210,7 +4742,8 @@ mod tests {
         let date = format!(" {}", time::format_day(created.day()));
         let shot = screen(&mut app, 60, 10);
         assert!(
-            shot.rows[1].starts_with(&format!(" {picked} ¶")) && shot.rows[1].ends_with(&date),
+            shot.rows[1].starts_with(&format!(" {picked}  "))
+                && shot.rows[1].ends_with(&format!(" ¶{date}")),
             "{:?}",
             shot.rows[1]
         );
@@ -4683,10 +5216,70 @@ mod tests {
 
     #[test]
     fn a_head_scrolls_by_the_columns_its_letters_take() {
-        assert_eq!(scrolled("浴室的瓷砖", 5, 20), ("浴室的瓷砖".into(), 10));
-        assert_eq!(scrolled("浴室的瓷砖", 5, 7), ("的瓷砖".into(), 6));
-        assert_eq!(scrolled("浴室的瓷砖", 0, 7), ("浴室的".into(), 0));
-        assert_eq!(scrolled("e\u{301}tude", 1, 20), ("e\u{301}tude".into(), 1));
+        let wide = "浴室的瓷砖";
+        assert_eq!(
+            sidescrolled(wide, 5, 20, Some(0), 1),
+            (wide.into(), 10, Some(0))
+        );
+        assert_eq!(
+            sidescrolled(wide, 5, 8, Some(0), 1),
+            ("…的瓷砖".into(), 7, Some(2))
+        );
+        assert_eq!(
+            sidescrolled(wide, 0, 8, Some(2), 1),
+            ("浴室的…".into(), 0, Some(0))
+        );
+        assert_eq!(
+            sidescrolled("e\u{301}tude", 1, 20, None, 5),
+            ("e\u{301}tude".into(), 1, None)
+        );
+    }
+
+    #[test]
+    fn a_cut_leaves_no_blank_before_its_mark() {
+        assert_eq!(
+            sidescrolled("the boiler pressure", 19, 12, None, BESIDE),
+            ("the boiler…".into(), 10, None),
+            "the cursor on the `…`"
+        );
+    }
+
+    #[test]
+    fn a_joined_emoji_is_never_parted_across_rows_of_the_foot() {
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let text = format!("{family}{family}{family}{family}");
+        for width in 2..9 {
+            let rows = wrap(&text, width);
+            let letters: Vec<&str> = rows.iter().flat_map(|r| r.graphemes(true)).collect();
+            assert_eq!(letters, [family; 4], "{width}: {rows:?}");
+        }
+    }
+
+    #[test]
+    fn a_wide_letter_at_an_edge_is_never_split_or_drawn_past_it() {
+        let wide = "浴室的瓷砖要换浴室的瓷砖要换浴室的瓷砖要换";
+        for room in 6..16 {
+            for caret in 0..=letters(wide) {
+                for left in [Some(0), Some(caret), Some(letters(wide))] {
+                    let (shown, x, _) = sidescrolled(wide, caret, room, left, BESIDE);
+                    assert!(shown.width() <= room, "{room} {caret} {left:?}: {shown}");
+                    assert!(x <= room, "{room} {caret} {left:?}: {x}");
+                    // The letter in the caret's column is the caret's.
+                    let mut column = 0;
+                    let under = shown.graphemes(true).find(|g| {
+                        column += g.width();
+                        column > x
+                    });
+                    let wanted = wide.graphemes(true).nth(caret);
+                    assert_eq!(under, wanted, "{room} {caret} {left:?}: {shown} at {x}");
+                }
+            }
+        }
+        // The `…` at the left takes one column, and the letter after it starts in the next,
+        // whole, though that leaves the row a column short at its right.
+        let (shown, x, _) = sidescrolled(wide, 9, 11, Some(4), 1);
+        assert_eq!(shown, "…浴室的瓷…");
+        assert_eq!((shown.width(), x), (10, 5));
     }
 
     #[test]
@@ -4694,15 +5287,15 @@ mod tests {
         let row = a_row("浴室的瓷砖要换 #house");
         let created = Moment::utc(0);
         let date = time::format_day(created.day());
-        let (rows, x) = selected_rows(
+        let Selected { line, x, .. } = selected_row(
             &row,
             &row.head,
             Some(created),
-            letters(&row.head),
+            (letters(&row.head), None),
             false,
             40,
         );
-        let painted = rows[0].to_string();
+        let painted = line.to_string();
         assert!(painted.ends_with(&date), "{painted:?}");
         assert_eq!(
             painted.width(),
@@ -4715,7 +5308,8 @@ mod tests {
     #[test]
     fn a_combining_mark_is_part_of_its_letter() {
         let row = a_row("e\u{301} combi");
-        let (_, x) = selected_rows(&row, &row.head, None, letters(&row.head), false, 40);
+        let head = (letters(&row.head), None);
+        let Selected { x, .. } = selected_row(&row, &row.head, None, head, false, 40);
         assert_eq!(x, 1 + 7);
         assert_eq!(
             edited("e\u{301}", 1, KeyCode::Backspace, false),
