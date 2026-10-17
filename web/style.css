@@ -293,11 +293,11 @@ button, input, textarea { font: inherit; color: inherit; }
 .tick {
   position: relative;
   display: inline-block;
-  width: 0.8em;
-  height: 0.8em;
+  width: 0.95em;
+  height: 0.95em;
   margin: 0 0.5em 0 0;
   padding: 0;
-  vertical-align: -0.05em;
+  vertical-align: -0.125em;
   border: 1px solid var(--faint);
   border-radius: 2px;
   background: none;
@@ -308,10 +308,10 @@ button, input, textarea { font: inherit; color: inherit; }
 .tick.done::after {
   content: "";
   position: absolute;
-  left: 0.23em;
-  top: 0.05em;
-  width: 0.2em;
-  height: 0.4em;
+  left: 0.27em;
+  top: 0.06em;
+  width: 0.24em;
+  height: 0.48em;
   border: solid var(--soft);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
@@ -401,21 +401,21 @@ button, input, textarea { font: inherit; color: inherit; }
 .task > .check {
   position: relative;
   display: inline-block;
-  width: 0.75em;
-  height: 0.75em;
+  width: 0.9em;
+  height: 0.9em;
   margin: 0 0.25em 0 -1.25em;
   border: 1px solid var(--faint);
   border-radius: 2px;
-  vertical-align: -0.05em;
+  vertical-align: -0.125em;
 }
 .task.done { color: var(--faint); }
 .task.done > .check::after {
   content: "";
   position: absolute;
-  left: 0.21em;
-  top: 0.04em;
-  width: 0.2em;
-  height: 0.4em;
+  left: 0.25em;
+  top: 0.05em;
+  width: 0.24em;
+  height: 0.48em;
   border: solid var(--soft);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
@@ -753,8 +753,11 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .box { -webkit-user-select: text; user-select: text; }
   /* A thumb's room round a task's box grows into the margin before it, and stops at the space
-     after it, short of the head's first letter, so that a tap meant to write never ticks. */
-  .tick::before { inset: calc((0.8em - 44px) / 2) -0.4em calc((0.8em - 44px) / 2) calc(1.2em - 44px); }
+     after it, short of the head's first letter, so that a tap meant to write never ticks. It is
+     measured from inside the box's border, so the border's two pixels are given back. */
+  .tick::before {
+    inset: calc((0.95em - 2px - 44px) / 2) -0.4em calc((0.95em - 2px - 44px) / 2) calc(1.35em - 2px - 44px);
+  }
   .word { min-height: 44px; }
   .word.vim { display: none; }
   #caret.still { animation: none; }

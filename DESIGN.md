@@ -910,18 +910,19 @@ opens the body, though while the head is being written a tap in it is the caret'
 start of a task is drawn in its row on every width, but for the row under the cursor, whose head is
 its text, and a tap or a click on it ticks the task where it reads, the cursor and the caret staying
 where they were; its room for a finger grows into the margin before it and stops short of the head's
-first letter. The `›` at the end of the selected row goes into the note and the one after the line
-into what the line names; a link in a row opens and leaves the cursor where it was; the path is the
-way back, and so is the phone's own back gesture. The keyboard is the person's: the page moves the
-focus between fields while one has it, and otherwise gives it only for something that asked to
-write, a finger on a head's words, a key pressed on a keyboard joined to the device, or the word
-`new note`; no control takes the focus, on any width, so the words, the cross, the arrows and the
-path's steps act on where the cursor is and leave the keyboard as it was. The caret is drawn where
-the cursor is whether or not the keyboard is up, still while it is down. There is no gesture of the
-app's own: tap, scroll and the system's back are the whole of it. A manifest and an icon let the
-page be added to a home screen as an app of its own, the browser's bars in the paper's colour,
-opening the space it was added from. The passphrase's field waits for a tap, with the resting caret
-at its start, the keyboard's key says `go`, and a word `open` under the sentence opens the space.
+first letter. It is drawn a little larger than a letter, so that it reads at a glance. The `›` at
+the end of the selected row goes into the note and the one after the line into what the line names;
+a link in a row opens and leaves the cursor where it was; the path is the way back, and so is the
+phone's own back gesture. The keyboard is the person's: the page moves the focus between fields
+while one has it, and otherwise gives it only for something that asked to write, a finger on a
+head's words, a key pressed on a keyboard joined to the device, or the word `new note`; no control
+takes the focus, on any width, so the words, the cross, the arrows and the path's steps act on where
+the cursor is and leave the keyboard as it was. The caret is drawn where the cursor is whether or
+not the keyboard is up, still while it is down. There is no gesture of the app's own: tap, scroll
+and the system's back are the whole of it. A manifest and an icon let the page be added to a home
+screen as an app of its own, the browser's bars in the paper's colour, opening the space it was
+added from. The passphrase's field waits for a tap, with the resting caret at its start, the
+keyboard's key says `go`, and a word `open` under the sentence opens the space.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own. Where the browser gives the page Web Locks, a tab holds the lowest slot no other tab
