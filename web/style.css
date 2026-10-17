@@ -336,10 +336,11 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .chev:hover { color: var(--ink); }
 
-/* The cursor on a row is the caret in its head, which is a text box and a little heavier. The
-   row keeps its whole head, on as many lines as it takes: a head that lost words at the moment
-   the cursor reached it would be the one thing cut when it matters. The box wraps as a read head
-   would, in the same face and measure, so that a head does not jump when it becomes one. */
+/* The cursor on a row is its head a little heavier: read, with no caret, until the row is
+   written in, and then the caret in the text box the head is. The row keeps its whole head, on as
+   many lines as it takes: a head that lost words at the moment the cursor reached it would be the
+   one thing cut when it matters. The box wraps as a read head would, in the same face and measure,
+   so that a head does not jump when it becomes one. */
 .row[aria-current="true"] .head,
 .box {
   font-weight: 500;
@@ -360,6 +361,25 @@ button, input, textarea { font: inherit; color: inherit; }
   overflow: hidden;
   line-height: 1.5;
   field-sizing: content;
+}
+/* The box of the row under the cursor is held in a frame of its own. Until the row is written in,
+   the head as read is laid over it in the frame and takes the room, and the box is under it, the
+   frame's size, showing nothing and taking no presses, but keeping the focus; revealed, the box is
+   the frame's alone. The two are in the same face and measure, so that a row whose text reads as
+   it is typed does not move by a pixel when it is revealed. */
+.edit {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.edit > .box { width: 100%; }
+.edit > .head { position: relative; z-index: 1; display: block; }
+.edit.veiled > .box {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
 }
 /* The head being written in has the row to itself; the tail comes back when the cursor leaves. */
 .row[aria-current="true"] .tail { display: none; }

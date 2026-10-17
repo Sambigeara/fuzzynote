@@ -30,7 +30,8 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   key is maintenance, and the footer shows only the ones that apply right now. A key is justified by
   the flow it sits in, never inherited.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
-  in the head of the row the cursor is on. Nothing else is highlighted and almost nothing else is
+  in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
+  a little heavier, with no caret drawn. Nothing else is highlighted and almost nothing else is
   drawn: no borders, no counts, no colour. The body read is that of what the cursor is on, in a
   place of its own apart from the list, never under a row or the line. What is not being asked for
   is not on the screen.
@@ -638,11 +639,13 @@ reads `Order oil`. The place's labels are those gone into since the last note on
 note written there would inherit; they come off in any order and any case, but only as whole words,
 `#House` for `#house` and not `#house,`. The box at the start stays; a head that would be left with
 nothing, or only its box, shows whole; a note with a body keeps its head whole, since that head is
-its name; and the row under the cursor shows its text as it is. A label only typed on the line hides
-nothing. The engine says the head each row shows, so neither face carries the rule. A head is named
-without the labels that end it too, in a second tier: only when no note's whole head is what was
-typed, and inside a place only for a note that carries the place's labels, both for the list and for
-Tab, so that typing what a row reads is typing its name.
+its name; and the row under the cursor shows its text as it is, in the terminal as the cursor lands
+and on the page once the row is written in or the caret is put in it (see "Writing in a row" under
+Browser). A label only typed on the line hides nothing. The engine says the head each row shows, so
+neither face carries the rule. A head is named without the labels that end it too, in a second tier:
+only when no note's whole head is what was typed, and inside a place only for a note that carries
+the place's labels, both for the list and for Tab, so that typing what a row reads is typing its
+name.
 
 The place is the last note on the path, if there is one, together with every label gone into after
 it; labels before the note are only how you got there, so `#house › Boiler › today` is the place
@@ -849,7 +852,8 @@ a link reading its alt text. A row's head reads as one line of the same markdown
 reads one way in the list and beside it: emphasis, strong text, code, strikethrough, links, bare and
 bracketed addresses, an image as a link reading its alt text, escapes read and a leading heading
 mark dropped, and a line that would be another kind of block, a list item or a quote, shown as
-typed; the row under the cursor is its text box and shows the source. Tags, people and dates are not
+typed; the row under the cursor reads the same until it is written in or the caret is put in it, and
+is then its text box showing the source until the cursor leaves it. Tags, people and dates are not
 marked. Highlighting is in paper, ink and the two greys: keywords and definitions heavier, strings,
 numbers and constants soft, comments faint and slanted, punctuation and a diff's removed lines
 faint; code read is set in ink. A link is in the colour of what it is in, underlined a pixel thin in
@@ -884,32 +888,45 @@ not there, so that neither moves the other, or the dates, by coming or going; an
 the line, clearing and going in are not also words in the foot.
 
 *Writing in a row.* The head of the row the cursor is on is a text box, with the day its note was
-written at the end of its row, or under the head at a phone's width, and typing changes it; Enter
-opens a new row under it; Ctrl-O, or `body` in the foot, opens the whole note in the sheet, a
-bounded overlay over the column with the page dimmed slightly behind it, which scrolls on its own,
-and in it Enter is a line break, Tab indents and Shift-Tab takes the indent back, the arrows move
-within it, and Esc closes it back onto the head. Leaving it for anywhere else on the page closes it,
-and a press on another row goes there; a press in its own margin, or on its row behind it, does not,
-and nor does leaving the window, though the tab going out of sight writes what it holds. The words
-in the foot stay above the dimming, since they are about the note. There is no second editor: the
-sheet is the body's editor, for a long document too, and with it shut the head is written in its
-row. While the body is open the sheet holds a CodeMirror editor, fetched after the first pause in
-keys once the page has painted, or when a body opens if that is sooner: the markdown styled where it
-stands with every mark in sight, the marks in the faint grey and the text in ink, headings and
-strong text heavier, emphasis slanted, code in the monospace, soft wrap, step undo, a grey
-selection, and vim mode for the browser that asked for it with the word `vim` in the foot, which a
-touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the
-lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection,
-which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot
-closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where
-it was. The page's caret is drawn from the editor's coordinates, a block in normal and visual mode
-and a bar in insert mode. Vim's prompt for a command is at the foot of the sheet, under the text and
-a hairline. The head stays an ordinary field. Until the editor has loaded, and if it never does, the
-sheet holds a plain text area. The `editor` the engine offers is not shown here. At a phone's width
-the sheet is the whole frame above the bar, and the bar the sheet's colour while it is open; a wider
-touch screen keeps it in the column, sized from the frame. On a touch screen it opens without the
-keyboard, which a tap in the text raises; putting the keyboard away leaves it open, and `done`, the
-back gesture, or a tap on the page beside it closes it.
+written at the end of its row, or under the head at a phone's width, and typing changes it. Until
+the row is written in it reads as it does off the cursor, its marks rendered, a task's box drawn and
+a place's labels hidden, heavier and with no caret drawn: the box is under the reading, holding the
+focus whenever it would, showing nothing. A key that would change the head (a letter, Backspace,
+Delete) or move the caret in it (Left, Right, Home, End, and their Shift and word forms), a paste, a
+cut, dictation, a composition starting, a selection made in it, or a press on its words reveals it:
+the reading goes, the box shows the text as typed, and what revealed it lands as it would have, a
+letter at the end and Left one before it. Up, Down, the pages, Tab, Enter, Escape and the chords do
+not, since they leave the row or act on the note as a whole. It stays revealed until the cursor
+leaves the row. A new row, from Enter or from the line, starts revealed, being written, as does the
+note Enter writes from the line, a row an undo put text back in other than a task's box alone, and a
+row whose head changed in place, from elsewhere, while it was read. A drag from the words, not from
+a task's box, reveals the row and selects, and the middle and right buttons anywhere on the head
+reveal it with the caret under the pointer and act on the box. Enter opens a new row under it;
+Ctrl-O, or `body` in the foot, opens the whole note in the sheet, a bounded overlay over the column
+with the page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break,
+Tab indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back
+onto the head. Leaving it for anywhere else on the page closes it, and a press on another row goes
+there; a press in its own margin, or on its row behind it, does not, and nor does leaving the
+window, though the tab going out of sight writes what it holds. The words in the foot stay above the
+dimming, since they are about the note. There is no second editor: the sheet is the body's editor,
+for a long document too, and with it shut the head is written in its row. While the body is open the
+sheet holds a CodeMirror editor, fetched after the first pause in keys once the page has painted, or
+when a body opens if that is sooner: the markdown styled where it stands with every mark in sight,
+the marks in the faint grey and the text in ink, headings and strong text heavier, emphasis slanted,
+code in the monospace, soft wrap, step undo, a grey selection, and vim mode for the browser that
+asked for it with the word `vim` in the foot, which a touch screen, whose keyboard has no Escape, is
+not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
+note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
+`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
+first, and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the editor's
+coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt for a command
+is at the foot of the sheet, under the text and a hairline. The head stays an ordinary field. Until
+the editor has loaded, and if it never does, the sheet holds a plain text area. The `editor` the
+engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and
+the bar the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from
+the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
+the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
+closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -917,26 +934,29 @@ keyboard. The frame follows `visualViewport` through two variables, trusted only
 the focus, since iOS has been seen to leave its offset where the keyboard put it; a browser that
 shrinks its layout for the keyboard gives the same numbers. Every target is 44px each way, drawn
 small and given its room. A tap on the words of a head puts the cursor on the note and the caret
-under the finger, and the keyboard comes; a tap beside them, off the lines of the head's words as
-they are laid out, a few pixels round them counting for a finger, puts the cursor there and nothing
-more; and a second tap beside them, on the row under the cursor, judged by where the finger landed,
-opens the body, though while the head is being written a tap in it is the caret's. The box at the
-start of a task is drawn in its row on every width, but for the row under the cursor, whose head is
-its text, and a tap or a click on it ticks the task where it reads, the cursor and the caret staying
-where they were; its room for a finger grows into the margin before it and stops short of the head's
-first letter. It is drawn a little larger than a letter, so that it reads at a glance. The `›` at
-the end of the selected row goes into the note and the one after the line into what the line names;
-a link in a row opens and leaves the cursor where it was; the path is the way back, and so is the
-phone's own back gesture. The keyboard is the person's: the page moves the focus between fields
-while one has it, and otherwise gives it only for something that asked to write, a finger on a
-head's words, a key pressed on a keyboard joined to the device, or the word `new note`; no control
-takes the focus, on any width, so the words, the cross, the arrows and the path's steps act on where
-the cursor is and leave the keyboard as it was. The caret is drawn where the cursor is whether or
-not the keyboard is up, still while it is down. There is no gesture of the app's own: tap, scroll
-and the system's back are the whole of it. A manifest and an icon let the page be added to a home
-screen as an app of its own, the browser's bars in the paper's colour, opening the space it was
-added from. The passphrase's field waits for a tap, with the resting caret at its start, the
-keyboard's key says `go`, and a word `open` under the sentence opens the space.
+under the finger, in the row revealed, and the keyboard comes; on the row under the cursor not yet
+revealed a tap on its words does the same, the caret counted through its marks, so that a tap on a
+link's word puts it in that word and does not follow the link; a tap beside them, off the lines of
+the head's words as they are laid out, a few pixels round them counting for a finger, puts the
+cursor there and nothing more; and a second tap beside them, on the row under the cursor, judged by
+where the finger landed, opens the body, though while the head is being written a tap in it is the
+caret's. The box at the start of a task is drawn in its row on every width, the row under the
+cursor's too until it is revealed and its head is its text, and a tap or a click on it ticks the
+task where it reads, without revealing the row, the cursor and the caret staying where they were;
+its room for a finger grows into the margin before it and stops short of the head's first letter. It
+is drawn a little larger than a letter, so that it reads at a glance. The `›` at the end of the
+selected row goes into the note and the one after the line into what the line names; a link in a row
+opens and leaves the cursor where it was; the path is the way back, and so is the phone's own back
+gesture. The keyboard is the person's: the page moves the focus between fields while one has it, and
+otherwise gives it only for something that asked to write, a finger on a head's words, a key pressed
+on a keyboard joined to the device, or the word `new note`; no control takes the focus, on any
+width, so the words, the cross, the arrows and the path's steps act on where the cursor is and leave
+the keyboard as it was. The caret is drawn where the cursor is whether or not the keyboard is up,
+still while it is down, though a row not yet revealed draws none. There is no gesture of the app's
+own: tap, scroll and the system's back are the whole of it. A manifest and an icon let the page be
+added to a home screen as an app of its own, the browser's bars in the paper's colour, opening the
+space it was added from. The passphrase's field waits for a tap, with the resting caret at its
+start, the keyboard's key says `go`, and a word `open` under the sentence opens the space.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own. Where the browser gives the page Web Locks, a tab holds the lowest slot no other tab
@@ -2330,6 +2350,43 @@ the app now does is described above; an entry repeats it only where the reason n
   `[ ]` typed another way, and the line says `→ [ ]` beside it; `/task` alone and Enter writes what
   `[ ]` alone does, a note that is only the box. It is still one trigger per job, each read where it
   is read, so there is still no general slash-command system.
+
+- **The row under the cursor reads until it is written in.** Decided 2026-10-17, at Sam's direction,
+  revising "A head reads every inline mark a body does" where it says the row under the cursor is
+  already the editor, and that the reveal Bear and Obsidian make span by span is fzn's cursor rule
+  made row by row. Made row by row, it flipped every row the cursor passed to its raw text as the
+  cursor arrived and back as it left: walking the list with the arrows, `Boiler manual here` became
+  `Boiler manual [here](https://example.com/boiler)`, a task's drawn box became `[ ] `, and a
+  place's hidden labels came back, so text moved under a cursor that was only moving, which is the
+  thing that decision meant to avoid. A link need not be expanded until the cursor sits over it, nor
+  any other mark. So the row under the cursor reads as it does off the cursor, heavier and with no
+  caret drawn, until it is written in or the caret is put in it, which is the moment the person
+  wants the marks; then it is the text box showing the source, as before, until the cursor leaves
+  the row. What reveals is what would change the head or move the caret within it: a letter,
+  Backspace, Delete, a paste, a cut, dictation, a composition starting, Left, Right, Home and End in
+  all their forms, a selection made in it, and a press or tap on its words, which puts the caret
+  where it landed, counted through the marks, so that a press on a link's word lands in that word
+  rather than following the link; a drag from its words, not from a task's box, which selects as a
+  drag in the box did; and the middle and right buttons anywhere on the head, which put the caret
+  under the pointer so that they paste and offer Paste in the box as they did. What does not is
+  everything that leaves the row or acts on the note as a whole: Up, Down, the pages, Tab, Enter,
+  Escape, Ctrl-D, Ctrl-O, Ctrl with Up or Down, an undo that only moves the cursor or puts back no
+  more than a task's box, and a press on a task's drawn box, which ticks it. The revealing keys are
+  named in one place in the page, so that a key given a meaning later is not a reveal by accident. A
+  new row starts revealed, being written, as does the note Enter writes from the line, whose head is
+  still being typed, and a row an undo put text back in. A head changed in place while it is read,
+  from elsewhere or by the engine, is revealed as it now is, since a key or a press would land
+  against the new text and not the reading. The focus does not move: the box is in the row all
+  along, under the reading and showing nothing, so typing, a composition and a phone's keyboard
+  behave as they did, and a screen reader reads the box as before. A row whose source reads as it is
+  typed looks the same either way; one whose source is longer, such as a link, may take another line
+  once revealed, which is the text being written and not the cursor moving. Weighed: a reveal span
+  by span, as Obsidian makes, showing a link's address only when the caret is inside it, which would
+  make the head a styled editor rather than a text box, at the cost of an editor in every row and a
+  caret that moves as marks open and close round it; and keeping it as it was, which leaves the
+  flicker. The terminal reads no markdown, so its row under the cursor shows the same text on and
+  off the cursor but for a place's labels, and is kept as it was. The head of an open body, in the
+  sheet, and the line are unchanged.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -6,11 +6,13 @@
 // on the space, and somewhere to keep lines between visits.
 //
 // There is one cursor on the page and it moves. On the line it is the caret, and typing finds. Down
-// puts it on a row, whose head becomes a text box with the caret at its end, so typing there
-// changes the head and nothing has to be pressed to begin or to keep it: the engine writes each
-// change as it is typed. Enter with text on the line writes it and puts the box in the note it
-// wrote. Enter on a row opens a new note under it, its empty head the box, so that Enter, type,
-// Enter, type writes notes in a run, as the original's Enter did. Ctrl-O opens the body, the
+// puts it on a row, whose head is a text box with the caret at its end, so typing there changes the
+// head and nothing has to be pressed to begin or to keep it: the engine writes each change as it is
+// typed. The row reads as it did, its marks rendered, until it is written in or the caret is put
+// in it, and only then shows the text as typed (see reveal), so that walking the list moves no
+// text. Enter with text on the line writes it and puts the box in the note it wrote. Enter on a
+// row opens a new note under it, its empty head the box, so that Enter, type, Enter, type writes
+// notes in a run, as the original's Enter did. Ctrl-O opens the body, the
 // original's chord for it, in the sheet: a bounded overlay over the dimmed page, scrolled on its
 // own, where the box holds the whole note, or an editor takes its place once one has been fetched
 // (see loadEditor). The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
@@ -748,6 +750,56 @@ let quiet = false;
 // take the focus back.
 let leaving = false;
 
+// The row under the cursor reads as it does off the cursor, its marks rendered and a place's
+// labels hidden, until it is written in or the caret is put in it: walking the list with the
+// arrows turned every row it passed to its raw text and back, so that text moved under a cursor
+// that was only moving. Until then the box is in the row all the same, with the focus whenever it
+// would have it, so that typing, a composition and a phone's keyboard behave as they always have,
+// but it is laid under the head as read and shows nothing, no text and no caret; the first thing
+// that writes in it or moves its caret takes the reading away and leaves the box, the event
+// landing in it as it would have. `revealed` says which it is for the row the box is in, and is
+// set again as the cursor lands on a row: a new row, being written, starts revealed. So does a row
+// whose landing `revealOnLanding` asks to be written in: one pressed on its words, whose caret goes
+// where the press landed, and the note Enter wrote from the line, whose head is still being typed.
+let revealed = false;
+let revealOnLanding = false;
+
+// The keys that reveal the row: those that would change its head and those that move the caret
+// within it. Everything else that can be pressed on a row leaves it, or acts on the note as a
+// whole, and reads it as it was: Up, Down, the pages, Tab, Enter in any of its forms, Escape and
+// the chords. A key is a reveal only by being named here, so that one given a meaning later is not
+// a reveal by accident. What the keys miss, a paste, a cut, dictation, a composition, a selection,
+// is caught where it lands (see reveal's listeners).
+const CARET_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
+const revealsOn = (event) =>
+  CARET_KEYS.has(event.key) ||
+  event.key === 'Backspace' ||
+  event.key === 'Delete' ||
+  (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
+
+// Takes the reading off the row under the cursor and shows the box under it, which is where it was
+// all along, so that nothing moves but the marks.
+function reveal() {
+  if (revealed || !boxIn) return;
+  revealed = true;
+  const edit = box.parentElement;
+  if (edit?.classList.contains('edit')) {
+    edit.classList.remove('veiled');
+    edit.querySelector(':scope > .head')?.remove();
+  }
+  placeCaret();
+}
+
+// Reveals the row with the caret at a place in its head, for a press on its words: the focus is
+// given here, inside the press, since that is the only focus for which iOS raises a keyboard.
+function revealAt(at) {
+  reveal();
+  box.focus({ preventScroll: true });
+  const to = Math.min(at, box.value.length);
+  box.setSelectionRange(to, to);
+  caretMoved();
+}
+
 const headOf = (text) => {
   const at = text.indexOf('\n');
   return at < 0 ? text : text.slice(0, at);
@@ -780,6 +832,18 @@ box.addEventListener('input', () => {
   act({ edited: at < 0 ? box.value : `${box.value}\n${field.text.slice(at + 1)}` });
 });
 
+// Whatever writes in the head reveals it before it lands, by a key or not: a paste, a cut, the
+// browser's own undo, dictation, and a composition as it starts. So does a selection made in it.
+// In the sheet the box is the body's, and writing there reveals nothing in the row.
+const revealHere = () => {
+  if (!view?.field?.whole) reveal();
+};
+box.addEventListener('beforeinput', revealHere);
+box.addEventListener('compositionstart', revealHere);
+document.addEventListener('selectionchange', () => {
+  if (!revealed && !quiet && held === box && box.selectionStart !== box.selectionEnd) revealHere();
+});
+
 // Leaving an open body for somewhere else on the page closes it, writing it if it changed.
 // Leaving the window does not: the body is there, still open, when the person comes back. Leaving
 // a head does nothing: the field stays the cursor's, and a click on the line or a row says where
@@ -806,6 +870,7 @@ function leftFor(event) {
 box.addEventListener('keydown', (event) => {
   if (event.isComposing || !view?.field) return;
   const plain = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
+  if (!view.field.whole && !revealed && revealsOn(event)) reveal();
   // The body is the box's own, but for Escape, which closes it, and Ctrl-O, which is swallowed so
   // that the browser's file dialog does not open in the middle of writing.
   // Tab is a tab character in it, as it is in the editor that takes its place.
@@ -995,13 +1060,44 @@ function dateRow(li) {
   } else if (time.textContent !== text) time.textContent = text;
 }
 
+// The head as read, laid over the box of the row under the cursor until the row is revealed, and
+// set in place, so that the box under it is not taken out of the row and put back: it would lose
+// the focus, and a composition the first letter began. It reads as the row would off the cursor.
+function veil(li, row) {
+  const edit = li.querySelector(':scope > .main > .edit');
+  if (!edit) return;
+  // The engine holds the cursor's row still, so a head changed in place, from elsewhere or by the
+  // engine, is the field's and not yet the row's. It is shown as it now is, revealed, since a key
+  // or a press would land against that text and not the reading's. The row's head is trimmed, as
+  // the engine reads a head, and the field's is the text as typed, spaces and all, so the two are
+  // compared trimmed.
+  const now = headOf(view.field.text);
+  if (now.trim() !== row.head) reveal();
+  edit.classList.toggle('veiled', !revealed);
+  const read = edit.querySelector(':scope > .head');
+  if (revealed) return read?.remove();
+  const key = JSON.stringify([now, row.shown ?? row.head, row.task, readings, !!render]);
+  if (read?.dataset.reads === key) return;
+  const head = readHead(row.shown ?? row.head, row.task);
+  head.dataset.reads = key;
+  // The box under it, which keeps its label, is what a screen reader reads.
+  head.setAttribute('aria-hidden', 'true');
+  if (read) read.replaceWith(head);
+  else edit.prepend(head);
+}
+
 function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  // Off the cursor a row reads as the engine shows it, without the place's labels at its end.
+  // Off the cursor a row reads as the engine shows it, without the place's labels at its end. Under
+  // it the box is held in a frame of its own, which the head as read is laid in over it (see veil).
   const head = field ? headOf(field.text) : row.shown ?? row.head;
-  main.append(field && !field.whole ? box : readHead(head, row.task));
+  if (field && !field.whole) {
+    const edit = el('div', 'edit');
+    edit.append(box);
+    main.append(edit);
+  } else main.append(readHead(head, row.task));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));
@@ -1077,6 +1173,7 @@ function paintRows() {
 
   // The cursor has left the row the box was in: that row goes back to being read.
   const landed = fieldId !== boxIn;
+  if (landed) revealed = field?.fresh != null || revealOnLanding;
   if (landed && boxIn) {
     const left = rows.get(boxIn);
     if (left) left.dataset.k = '';
@@ -1132,7 +1229,10 @@ function paintRows() {
       li.dataset.k = k;
       fill(li, row, selected);
     }
-    if (selected) dateRow(li);
+    if (selected) {
+      dateRow(li);
+      veil(li, row);
+    }
     return li;
   });
 
@@ -1246,15 +1346,39 @@ function paintHints() {
   } else if (changed) words.classList.remove('more');
 }
 
+// An undo that put text back in the head under the cursor leaves the row revealed, as it was being
+// written; one that only moved the cursor, or put back no more than a task's box, as undoing a
+// tick does, leaves it read. What each head was is taken before the undo: the field's for the row
+// under the cursor, which the engine holds still, and the row's for the others, which the engine
+// trims, so both are compared trimmed.
+const unboxed = (head) => head.replace(/^\[[ xX]\] ?/, '');
+function headsNow() {
+  const heads = new Map(view.rows.map((row) => [row.id, row.head]));
+  if (boxIn && view.field && !view.field.whole) heads.set(boxIn, headOf(view.field.text));
+  return heads;
+}
+function putBack(before) {
+  if (!boxIn || !view.field || view.field.whole || !before.has(boxIn)) return false;
+  return unboxed(before.get(boxIn).trim()) !== unboxed(headOf(view.field.text).trim());
+}
+
 function word(hint) {
   const button = el('button', 'word', hint.label);
   button.type = 'button';
   const key = keyFor(hint.action);
   if (key) button.title = key;
   button.onclick = () => {
-    // A new note is asked for to be written in, so the keyboard comes for it.
-    if (named(hint.action) === 'write') wantsText = true;
-    act(hint.action);
+    // A new note is asked for to be written in, so the keyboard comes for it, and it lands
+    // revealed.
+    const writes = named(hint.action) === 'write';
+    if (writes) wantsText = revealOnLanding = true;
+    const before = named(hint.action) === 'undo' ? headsNow() : null;
+    try {
+      act(hint.action);
+    } finally {
+      revealOnLanding = false;
+    }
+    if (before && putBack(before)) reveal();
     follow();
     wantsText = false;
   };
@@ -1455,7 +1579,7 @@ const asMeasured = () => {
   return (
     field &&
     [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, field.className,
-      $('dates').textContent, view?.cursor, composing, field === document.activeElement,
+      $('dates').textContent, view?.cursor, composing, field === document.activeElement, revealed,
       inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
         editor.composing, editor.dom.parentElement] : ''].join('\u0000')
   );
@@ -1528,7 +1652,9 @@ function placeCaret() {
     !composing &&
     !document.body.classList.contains('locked') &&
     field.selectionStart === field.selectionEnd &&
-    (field === box || view.cursor == null);
+    // A row not yet revealed shows no caret: the head as read is over the box. In the sheet the
+    // box is the body's, revealed or not.
+    (field === box ? revealed || !!view.field?.whole : view.cursor == null);
   measured = asMeasured();
   if (field && inEditor()) return placeEditorCaret();
   if (!shown) {
@@ -1711,8 +1837,14 @@ function pressed(event) {
     case 'PageUp':
       act({ move: -10 });
       break;
+    // The note Enter writes from the line is still being written, so it lands revealed.
     case 'Enter':
-      act('write');
+      revealOnLanding = onLine;
+      try {
+        act('write');
+      } finally {
+        revealOnLanding = false;
+      }
       break;
     // Off the row, then off the text on the line, then out of the place.
     case 'Escape':
@@ -1764,25 +1896,46 @@ document.addEventListener('mousedown', (event) => {
   if (event.target.closest('a')) event.preventDefault();
 });
 
-// Whether a point is on the words of a head, a few pixels round each line of them counting, since
-// a finger is not a point: false when it is not, and otherwise where in the head's text, or true,
-// for the end, when that cannot be counted, as in a head read with its marks.
+// Whether a point is on the words of a head as read, a few pixels round each line of them
+// counting, since a finger is not a point: false when it is not, and otherwise where in the head's
+// text as typed, its source, or true, for the end, when that cannot be counted. A head read has its
+// marks taken out, but every piece of text it shows is a piece of its source, in order: a link's
+// words, an escaped letter, an address without its scheme. So each piece is found in the source
+// after the last, from past a task's box, and the letter pressed is counted from where its piece
+// was found, which puts a press on a link's word in that word. The address of a link written
+// `[words](address)` is not shown, so a piece that follows the link is looked for past it, or a
+// full stop after the link would be found inside the address.
 const SLOP = 6;
 const near = (r, x, y) => x >= r.left - SLOP && x <= r.right + SLOP && y >= r.top - SLOP && y <= r.bottom + SLOP;
-function hitText(head, x, y) {
+function hitText(head, source, x, y) {
   if (!head) return false;
   const words = document.createRange();
   words.selectNodeContents(head);
   if (![...words.getClientRects()].some((r) => near(r, x, y))) return false;
-  const parts = [...head.childNodes].filter((node) => !node.classList?.contains('tick'));
-  if (!parts.every((node) => node.nodeType === Node.TEXT_NODE)) return true;
   const at = letterAt(x, y);
-  let before = Number(head.dataset.boxed ?? 0);
-  for (const node of parts) {
-    if (node === at?.offsetNode) return before + at.offset;
-    before += node.length;
+  let from = Number(head.dataset.boxed ?? 0);
+  let link = null;
+  const pieces = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+  for (let piece = pieces.nextNode(); piece; piece = pieces.nextNode()) {
+    const inLink = piece.parentElement?.closest('a') ?? null;
+    if (link && inLink !== link && source.startsWith('](', from)) from = pastAddress(source, from + 2);
+    link = inLink;
+    const found = source.indexOf(piece.data, from);
+    if (found < 0) return true;
+    if (piece === at?.offsetNode) return found + at.offset;
+    from = found + piece.data.length;
   }
   return true;
+}
+
+// Where the address of a link ends, from just inside its bracket: past the bracket that closes it,
+// counting those opened inside it.
+function pastAddress(source, at) {
+  for (let depth = 1; at < source.length; at++) {
+    if (source[at] === '(') depth++;
+    else if (source[at] === ')' && --depth === 0) return at + 1;
+  }
+  return at;
 }
 
 // A task's box ticks it where it reads, and the cursor stays where it was: on the line, so that
@@ -1837,28 +1990,99 @@ list.addEventListener(
   { passive: true },
 );
 
-// A tap beside a head's words puts the cursor on the note, and a second there, the head being the
-// box's by then, opens its body; a tap on the words puts the cursor there too and writes in it,
-// with the caret where it landed, which on a phone is what raises the keyboard. The arrow on the
-// selected row goes in, and a link in a row opens and does nothing else.
+// A tap beside a head's words puts the cursor on the note, and a second there opens its body; a
+// tap on the words puts the cursor there too and writes in it, revealed, with the caret where it
+// landed, which on a phone is what raises the keyboard. On the row under the cursor, not yet
+// revealed, a press on the words is the same, a link's word included, which is not followed there;
+// one beside them on a desktop does nothing, the note being picked already. The arrow on the
+// selected row goes in, and a link in any other row opens and does nothing else.
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
-  if (!item || event.target === box || event.target.closest('a')) return;
+  if (dragged || (fromTick && !event.target.closest('.tick'))) {
+    dragged = fromTick = false;
+    return;
+  }
+  if (!item || event.target === box) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
+  const veiled = at === view.cursor && !revealed && !view.field?.whole && event.target.closest('.edit');
+  if (event.target.closest('a') && !veiled) return;
   const fresh = touched && Date.now() - touched.at < 1000;
   const [x, y] = fresh ? [touched.x, touched.y] : [event.clientX, event.clientY];
   const ticker = event.target.closest('.tick');
   const reach = (node) => node.getBoundingClientRect().right + 0.4 * parseFloat(getComputedStyle(node).fontSize);
   if (ticker && (!fresh || x <= reach(ticker))) return tick(at);
+  if (veiled) {
+    event.preventDefault();
+    const hit = hitText(veiled.querySelector(':scope > .head'), box.value, x, y);
+    if (hit !== false) revealAt(hit === true ? box.value.length : hit);
+    return;
+  }
   if (event.target.closest('.chev')) act('go_in');
   else if (at !== view.cursor) {
-    wantsText = hitText(item.querySelector('.head'), x, y);
-    act({ select: at });
+    wantsText = hitText(item.querySelector('.head'), view.rows[at].head, x, y);
+    revealOnLanding = wantsText !== false;
+    try {
+      act({ select: at });
+    } finally {
+      revealOnLanding = false;
+    }
   } else if (!view.field?.whole) act('open');
   follow();
   wantsText = false;
 });
+// A press on the head as read over the box keeps the focus in the box and starts no selection in
+// the reading; the click says what it did. The middle and right buttons, anywhere in the head's
+// frame, reveal the row with the focus in the box and the caret under the pointer before their
+// default would run, so that they act on the box as they always did: the middle button's paste of
+// what is selected elsewhere, and the menu with Paste in it. Their own default is not let run,
+// since the element pressed is gone by then and it would give the focus to the page. A drag from
+// the words, not from a task's box, which only ticks, reveals the row once it has gone a few
+// pixels, from where it began, and selects in the box as far as the pointer goes, as a drag in the
+// box always did; the click that ends it does nothing more. A press on a task's box that is let go
+// off it does nothing, as a button let go off itself does, rather than landing on the words.
+let dragFrom = null;
+let dragged = false;
+let fromTick = false;
+list.addEventListener('mousedown', (event) => {
+  dragged = false;
+  dragFrom = null;
+  fromTick = !!event.target.closest('.tick');
+  const veiled = !revealed && event.target.closest('.edit.veiled');
+  if (!veiled) return;
+  event.preventDefault();
+  const at = hitText(veiled.querySelector(':scope > .head'), box.value, event.clientX, event.clientY);
+  if (event.button === 1 || event.button === 2) return revealAt(typeof at === 'number' ? at : box.value.length);
+  if (event.button !== 0 || (touched && Date.now() - touched.at < 1000)) return;
+  if (event.target.closest('.tick')) return;
+  if (at !== false) dragFrom = { x: event.clientX, y: event.clientY, at: at === true ? box.value.length : at };
+});
+document.addEventListener('mousemove', (event) => {
+  if (!dragFrom) return;
+  if (!(event.buttons & 1)) {
+    dragFrom = null;
+    return;
+  }
+  if (!dragged) {
+    if (Math.hypot(event.clientX - dragFrom.x, event.clientY - dragFrom.y) < 4) return;
+    dragged = true;
+    revealAt(dragFrom.at);
+  }
+  const to = offsetInBox(event.clientX, event.clientY);
+  const from = dragFrom.at;
+  box.setSelectionRange(Math.min(from, to), Math.max(from, to), to < from ? 'backward' : 'forward');
+  caretMoved();
+});
+document.addEventListener('mouseup', () => (dragFrom = null));
+
+// Where in the box's text a point is, by the browser where it says so for a text box, and
+// otherwise its start or its end, by which side of the box the point is on.
+function offsetInBox(x, y) {
+  const at = letterAt(x, y);
+  if (at?.offsetNode === box) return at.offset;
+  const r = box.getBoundingClientRect();
+  return y < r.top || (y <= r.bottom && x < r.left) ? 0 : box.value.length;
+}
 // A browser takes a tap near a text box into the box, and the head under the cursor is a box as
 // wide as the row, so a second tap beside its words, on its own line or on the date under it,
 // would only place the caret. So where the finger landed is read from the touch, which neither
@@ -1885,12 +2109,15 @@ list.addEventListener('touchend', (event) => {
 });
 
 function besideTheWords({ clientX: x, clientY: y }) {
-  if (!view?.field || view.field.whole || !boxIn || document.activeElement === box) return false;
+  if (!view?.field || view.field.whole || !boxIn || (revealed && document.activeElement === box)) return false;
   const row = rows.get(boxIn);
   const within = (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   if (!row || !within(row.getBoundingClientRect())) return false;
   const chev = row.querySelector('.chev');
   if (chev && within(chev.getBoundingClientRect())) return false;
+  // Not yet revealed, the words are those of the head as read, a task's box among them.
+  const read = !revealed && row.querySelector('.edit > .head');
+  if (read) return hitText(read, box.value, x, y) === false;
   if (!near(box.getBoundingClientRect(), x, y)) return true;
   return box.value !== '' && !wordsOf(box).some((r) => near(r, x, y));
 }
