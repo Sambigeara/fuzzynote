@@ -178,7 +178,7 @@ impl Session {
         };
         let id = row.id.clone();
         let today = self.today();
-        let typed = text::expand_date_words(self.line.trim(), today);
+        let typed = text::expand_words(self.line.trim(), today);
         let searched = typed.is_empty()
             || self.engine.contains(&id, &typed)
             || self.engine.searched(&id, &self.parsed);

@@ -1059,3 +1059,51 @@ fn a_space_filled_from_nothing_says_nothing_and_what_changes_after_is_said() {
     s.absorb([theirs("house", "House", 61)]);
     assert_eq!(s.status, "1 changed elsewhere");
 }
+
+#[test]
+fn the_task_word_on_the_line_holds_the_open_tasks_goes_in_as_the_box_and_writes_a_task() {
+    let mut s = session();
+    put(&mut s, "oil", "[ ] Order oil #house", &[], 1_000);
+    put(&mut s, "stamps", "[ ] Buy stamps", &[], 2_000);
+    put(&mut s, "boiler", "Boiler #house", &[], 3_000);
+    s.act(Action::Select(None));
+
+    for typed in ["/task #house", "/ta #house", "/tas #house "] {
+        clear(&mut s);
+        type_in(&mut s, typed);
+        assert_eq!(s.line, typed, "the word stays as typed");
+        assert_eq!(heads(&s), ["[ ] Order oil #house"], "{typed:?}");
+        assert_eq!(s.view().dates, ["[ ]"], "the line says what it stands for");
+    }
+
+    // Tab goes in as it does on `[ ] #house`, one label after the other.
+    clear(&mut s);
+    type_in(&mut s, "/task #house");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["[ ]", "#house"]);
+    assert_eq!(heads(&s), ["[ ] Order oil #house"]);
+    s.act(Action::Back);
+    s.act(Action::Back);
+
+    // Enter writes a note whose head is a task, as `[ ] Boiler` on the line does.
+    clear(&mut s);
+    add(&mut s, "Bleed the radiators /task");
+    let new = s.selected().unwrap().id.clone();
+    assert_eq!(s.notes.get(&new).unwrap().text, "[ ] Bleed the radiators");
+    assert!(!s.notes.get(&new).unwrap().archived);
+    s.act(Action::Select(None));
+    // Alone it writes what `[ ]` alone does: a note that is only the box.
+    add(&mut s, "/task");
+    let new = s.selected().unwrap().id.clone();
+    assert_eq!(s.notes.get(&new).unwrap().text, "[ ]");
+    s.act(Action::Select(None));
+    add(&mut s, "[ ]");
+    let new = s.selected().unwrap().id.clone();
+    assert_eq!(s.notes.get(&new).unwrap().text, "[ ]");
+
+    // `/t` is the start of date words too, and is neither.
+    s.act(Action::Select(None));
+    clear(&mut s);
+    type_in(&mut s, "/t");
+    assert!(s.view().dates.is_empty());
+}

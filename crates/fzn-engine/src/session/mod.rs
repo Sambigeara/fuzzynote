@@ -61,20 +61,23 @@
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, on the line it holds the notes of
 //! that day as the date written out does, and saving a note writes the date in its place.
+//! `/task` is a quicker way of typing the open box in the same way: the line reads it as `[ ]`,
+//! and saving a note takes it out of the head and starts the head with the box.
 //!
 //! The row the cursor is on is a field: its head is there to be typed into the moment the cursor
 //! lands, and its body is opened for the rest. The face says what the note now reads as it is
 //! typed, and every change to a head is written at once as a version, so that there is nothing
-//! to press to keep a thing and the note is on every device as it is typed. Date words are
-//! written out when the cursor leaves the row, so that a word on its way to being one is not
-//! made a date, and a head cleared to be typed again is not written while it is empty. The body
-//! is written when it closes, since a version is the whole note. The versions written in one
-//! visit of the cursor to a row are gathered into one entry, so that undo takes back a visit
-//! and not a keystroke. A new note, opened at the top from an empty line or under the row the
-//! cursor is on, is written at its first letter, and left with nothing in it but the label it
-//! opened with, its row goes. The list holds still while the cursor walks it, so that the arrow
-//! that leaves a head lands where it was aimed, and is put in order when the cursor comes back
-//! to the line.
+//! to press to keep a thing and the note is on every device as it is typed. Date words, and
+//! `/task` as the box at the head's start, are written out when the cursor leaves the row, so that
+//! a word on its way to being one is not made a date, and a head cleared to be typed again is not
+//! written while it is empty. The body is written when it closes, since a version is the whole
+//! note. The versions written in one visit of the cursor to a row are gathered into one entry, so
+//! that undo takes back a visit and not a keystroke. A new note, opened at the top from an empty
+//! line or under the row the cursor is on, is written at its first letter, and left with nothing in
+//! it but the label it opened with, its row goes. The list holds still while the cursor walks it,
+//! so that the arrow that leaves a head lands where it was aimed, and is put in order when the
+//! cursor comes back to the line. A delete is the cursor's own act and takes only its row, so that
+//! what was listed beside the note, found by its name, does not go with it.
 //!
 //! Where a note sits is kept, as it was in the original: a note opened under a row is placed
 //! after it, one opened or written from the line at the top, and it stays there on every device.
@@ -627,7 +630,7 @@ impl Session {
         let mut offer = |action, label| hints.push(Hint { action, label });
         let field = self.field.as_ref();
         let changed = field.is_some_and(Writing::differs);
-        let blank = field.is_some_and(Writing::blank);
+        let blank = field.is_some_and(Writing::empty);
         // An open body offers only what is about the note, and closing it is the way back.
         if field.is_some_and(|f| f.whole) {
             if changed {

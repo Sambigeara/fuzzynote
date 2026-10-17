@@ -3,7 +3,8 @@
 //! The words on the line rank, as they always have, each note with its reasons. Every other form
 //! on the line is something a note has to hold to be listed at all: a phrase in quotes, a tag, a
 //! person, a day, the box of an open task or of a done one, and a span of when notes were
-//! written, or with the done box on the line of when they were done. A form never changes how
+//! written, or with the done box on the line of when they were done. `/task` is the open box
+//! typed another way, as a date word is a day typed another way. A form never changes how
 //! the words rank, so a new kind of filter is one more form here and one more way for a note to
 //! hold it, and the words are left alone. A line of nothing but forms has nothing to rank by,
 //! and lists exactly what holds them in the space's order, as a place lists what is in it, or
@@ -39,7 +40,8 @@ pub(crate) struct Query {
     pub labels: Vec<Typed>,
     /// What else a note has to hold.
     pub holds: Vec<Hold>,
-    /// The days the date words stand for, and the spans, in the order they were typed.
+    /// The days the date words stand for, the spans, and the box the task word stands for, in
+    /// the order they were typed.
     shown: Vec<Shown>,
 }
 
@@ -167,10 +169,12 @@ impl End {
     }
 }
 
-/// Something on the line that stands for a time, to be said beside it.
+/// Something on the line that stands for something else, to be said beside it: a time, or the
+/// box the task word is a way of typing.
 enum Shown {
     Day(Day),
     Span(Span),
+    Task,
 }
 
 fn day_shown(day: Day) -> String {
@@ -229,6 +233,21 @@ impl Query {
                 });
                 query.blank();
                 i += 3;
+                continue;
+            }
+            // The task word is a way of typing the open box, and is read as the box is, said
+            // beside the line as a date word's date is.
+            if text::at_word_start(&chars, i)
+                && let Some(end) = text::take_task_word(&chars, i)
+            {
+                query.labels.push(Typed {
+                    label: Label::Open,
+                    written: text::OPEN.to_owned(),
+                    whole: true,
+                });
+                query.shown.push(Shown::Task);
+                query.blank();
+                i = end;
                 continue;
             }
             // A URL is words, and a `#` in it is not a tag.
@@ -406,8 +425,8 @@ impl Query {
             && !self.labels.is_empty()
     }
 
-    /// What the date words and spans on the line stand for, to be said beside it:
-    /// `Fri 2026-10-16`, `Mon 2026-10-12 18:00 – now`.
+    /// What the date words, spans and task word on the line stand for, to be said beside it:
+    /// `Fri 2026-10-16`, `Mon 2026-10-12 18:00 – now`, `[ ]`.
     pub(crate) fn shown(&self) -> Vec<String> {
         self.shown
             .iter()
@@ -418,6 +437,7 @@ impl Query {
                     span.from.map_or("…".to_owned(), End::shown),
                     span.to.map_or("now".to_owned(), End::shown)
                 ),
+                Shown::Task => text::OPEN.to_owned(),
             })
             .collect()
     }
@@ -619,6 +639,31 @@ mod tests {
         assert!(read("[ ] #house").only_labels());
         assert!(read("[").is_empty() && read("[ ").is_empty());
         for line in ["[x] oil", "oil[ ]", "[ oil", "[[ ]]", "\"[ ] oil\"", "[X]"] {
+            let query = read(line);
+            assert!(
+                query.labels.iter().all(|typed| typed.label != Label::Open),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_task_word_is_read_as_the_open_box_and_says_so() {
+        for (line, labels) in [
+            ("/task #house ", ["[ ]", "#house"]),
+            ("/ta #house ", ["[ ]", "#house"]),
+            ("#house /tas", ["#house", "[ ]"]),
+            ("/Task #house ", ["[ ]", "#house"]),
+        ] {
+            let query = read(line);
+            assert_eq!(held(&query), labels, "{line:?}");
+            assert!(query.only_labels(), "{line:?}");
+            assert_eq!(query.shown(), ["[ ]"], "{line:?}");
+        }
+        let query = read("/task oil /fri");
+        assert_eq!(text::tokens(&query.words), ["oil"]);
+        assert_eq!(query.shown(), ["[ ]", "Fri 2026-10-16"]);
+        for line in ["/t", "/tasks", "x/task", "\"/task\""] {
             let query = read(line);
             assert!(
                 query.labels.iter().all(|typed| typed.label != Label::Open),

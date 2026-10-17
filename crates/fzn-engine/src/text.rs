@@ -465,10 +465,10 @@ const DATE_NAMES: [&str; 10] = [
     "yesterday",
 ];
 
-/// Finds the words that stand for a date: a slash at the start of a word, then `today`,
-/// `tomorrow`, `yesterday`, a day of the week (the next one after today, or with a `-` the last
-/// one before it), or a number of days from today as `+3` or `-2`. Any beginning of a name that
-/// only one name has will do: `/tom`, `/f`, `/-tu`. Anything else after a slash is left alone, a
+/// Finds the words that stand for a date: a slash at the start of a word, then `today`, `tomorrow`,
+/// `yesterday`, a day of the week (the next one after today, or with a `-` the last one before it),
+/// or a number of days from today as `+3` or `-2`. Any beginning of a name that only one name has
+/// will do: `/tom`, `/f`, `/-tu`. Anything else after a slash but the task word is left alone, a
 /// path included. A word starts after whitespace, a bracket, or the `..` of a span.
 fn date_words(text: &str, today: Day) -> Vec<DateWord> {
     let chars: Vec<char> = text.chars().collect();
@@ -499,9 +499,9 @@ pub(crate) fn at_word_start(chars: &[char], i: usize) -> bool {
         || (i >= 2 && chars[i - 2..i] == ['.', '.'])
 }
 
-/// A date word at `start`, slash included, and where it ends: at whitespace, at the `..` of a
-/// span, and short of any punctuation that ends a sentence.
-pub(crate) fn take_date_word(chars: &[char], start: usize, today: Day) -> Option<(Day, usize)> {
+/// The word after a slash at `start`, and where it ends: at whitespace, at the `..` of a span,
+/// and short of any punctuation that ends a sentence.
+fn slash_word(chars: &[char], start: usize) -> Option<(String, usize)> {
     if chars.get(start) != Some(&'/') {
         return None;
     }
@@ -512,8 +512,83 @@ pub(crate) fn take_date_word(chars: &[char], start: usize, today: Day) -> Option
     while end > start + 1 && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')') {
         end -= 1;
     }
-    let word: String = chars[start + 1..end].iter().collect();
+    Some((chars[start + 1..end].iter().collect(), end))
+}
+
+/// A date word at `start`, slash included, and where it ends.
+pub(crate) fn take_date_word(chars: &[char], start: usize, today: Day) -> Option<(Day, usize)> {
+    let (word, end) = slash_word(chars, start)?;
     Some((date_named(&word, today)?, end))
+}
+
+/// The word that is a way of typing an open task's box. Any beginning of it that no date word
+/// has will do, `/ta` and on; `/t` is the start of `/today` too, and is neither.
+const TASK_WORD: &str = "task";
+
+/// Whether a word after a slash names the task's box and nothing else.
+fn task_named(word: &str) -> bool {
+    let word = word.to_ascii_lowercase();
+    !word.is_empty()
+        && word.bytes().all(|b| b.is_ascii_alphabetic())
+        && TASK_WORD.starts_with(&word)
+        && !DATE_NAMES.iter().any(|name| name.starts_with(&word))
+}
+
+/// The task word at `start`, slash included, and where it ends.
+pub(crate) fn take_task_word(chars: &[char], start: usize) -> Option<usize> {
+    let (word, end) = slash_word(chars, start)?;
+    task_named(&word).then_some(end)
+}
+
+/// Writes out the task word in a head: the word goes, with brackets it alone filled and the one
+/// space beside it that would otherwise be left over, and the head is made an open task by putting
+/// the box at its start, unless it starts with a box already. A task's box starts its head, so the
+/// word becomes the box wherever it was typed. Only the head is read, since a body's `- [ ]` is
+/// markdown's own.
+pub fn expand_task_word(text: &str) -> String {
+    let (head, body) = match text.split_once('\n') {
+        Some((head, body)) => (head, Some(body)),
+        None => (text, None),
+    };
+    let mut chars: Vec<char> = head.chars().collect();
+    let mut found = false;
+    while let Some((start, end)) = (0..chars.len())
+        .filter(|&i| at_word_start(&chars, i))
+        .find_map(|i| Some((i, take_task_word(&chars, i)?)))
+    {
+        found = true;
+        let (mut start, mut end) = (start, end);
+        // Brackets the word alone filled go with it.
+        if start > 0 && chars[start - 1] == '(' && chars.get(end) == Some(&')') {
+            start -= 1;
+            end += 1;
+        }
+        if start > 0 && chars[start - 1] == ' ' {
+            start -= 1;
+        } else if chars.get(end) == Some(&' ') {
+            end += 1;
+        }
+        chars.drain(start..end);
+    }
+    if !found {
+        return text.to_owned();
+    }
+    let head: String = chars.into_iter().collect();
+    let head = match task(&head) {
+        Some(_) => head,
+        None if head.is_empty() => OPEN.to_owned(),
+        None => tick(&head, false),
+    };
+    match body {
+        Some(body) => format!("{head}\n{body}"),
+        None => head,
+    }
+}
+
+/// Writes out the words that are ways of typing something else, as a note is saved: each date
+/// word as its date, and the task word in the head as the box.
+pub fn expand_words(text: &str, today: Day) -> String {
+    expand_task_word(&expand_date_words(text, today))
 }
 
 /// Whether the `..` of a span starts here.
@@ -657,6 +732,61 @@ mod tests {
                 end: 7,
                 day: today + 3
             }]
+        );
+    }
+
+    #[test]
+    fn the_task_word_is_its_own_beginnings_and_leaves_the_date_words_theirs() {
+        let today = time::day_from_civil(2026, 10, 13);
+        for word in ["/ta", "/tas", "/task", "/Task", "/task."] {
+            let chars: Vec<char> = word.chars().collect();
+            assert!(take_task_word(&chars, 0).is_some(), "{word}");
+            assert!(take_date_word(&chars, 0, today).is_none(), "{word}");
+        }
+        for word in [
+            "/t", "/tu", "/to", "/th", "/tasks", "/tasking", "/-ta", "/x",
+        ] {
+            let chars: Vec<char> = word.chars().collect();
+            assert!(take_task_word(&chars, 0).is_none(), "{word}");
+        }
+        assert_eq!(
+            expand_date_words("/t /tu /to /th", today),
+            "/t 2026-10-20 /to 2026-10-15",
+            "the date words are what they were"
+        );
+    }
+
+    #[test]
+    fn the_task_word_in_a_head_becomes_the_box_at_its_start() {
+        assert_eq!(expand_task_word("order oil /task"), "[ ] order oil");
+        assert_eq!(expand_task_word("order /task oil"), "[ ] order oil");
+        assert_eq!(expand_task_word("/task order oil"), "[ ] order oil");
+        assert_eq!(
+            expand_task_word("/ta order oil #house"),
+            "[ ] order oil #house"
+        );
+        assert_eq!(expand_task_word("[ ] order oil /task"), "[ ] order oil");
+        assert_eq!(expand_task_word("[x] order oil /tas"), "[x] order oil");
+        assert_eq!(expand_task_word("/task"), "[ ]");
+        assert_eq!(expand_task_word("Buy oil (/task)"), "[ ] Buy oil");
+        assert_eq!(expand_task_word("(/task) Buy oil"), "[ ] Buy oil");
+        assert_eq!(
+            expand_task_word("Boiler /task\n- /task bleed it\n/task"),
+            "[ ] Boiler\n- /task bleed it\n/task",
+            "a body is left as typed"
+        );
+        for untouched in [
+            "order oil",
+            "/t order oil",
+            "see /tasks and x/task",
+            "Boiler\n/task",
+        ] {
+            assert_eq!(expand_task_word(untouched), untouched);
+        }
+        let today = time::day_from_civil(2026, 10, 13);
+        assert_eq!(
+            expand_words("call the plumber /fri /task", today),
+            "[ ] call the plumber 2026-10-16"
         );
     }
 

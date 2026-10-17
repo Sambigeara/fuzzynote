@@ -125,7 +125,8 @@ impl Session {
     /// written since, and taking back an edit leaves where the note has been moved. The notes
     /// are written in the order the change wrote them, not the reverse, since what was placed
     /// after the same note is put in order by when it was placed: a run put back after its note
-    /// last to first would come out the wrong way round.
+    /// last to first would come out the wrong way round. A delete done again takes only its row
+    /// away, as the delete did, and a cursor on that row goes to the row that took its place.
     fn restore(&mut self, change: &Change, before: bool) {
         for (was, became) in change {
             let Some(held) = self.notes.version(&became.id).cloned() else {
@@ -158,6 +159,22 @@ impl Session {
             };
             self.write(record);
         }
+        // A delete done again leaves the list where it was, as it did the first time. The cursor
+        // moves only if it was on the row that goes, so that a redo asked from the line or from
+        // another row leaves it where it was.
+        if let [(Some(was), became)] = &change[..]
+            && !before
+            && became.deleted
+            && !was.deleted
+            && self.rows.iter().any(|r| r.id == became.id)
+        {
+            if self.selected().is_some_and(|r| r.id == became.id) {
+                self.take_row(&became.id);
+            } else if let Some(at) = self.drop_row(&became.id) {
+                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
+            }
+            return;
+        }
         self.refresh(false);
         if let Some((_, first)) = change.first() {
             self.reselect(&first.id);
@@ -186,14 +203,14 @@ impl Session {
 
     /// Turns the line into a note, linked to the note being looked around and to whatever it
     /// names in brackets, with each label being looked around that it does not carry already
-    /// written in, with its date words written out as dates, done now if it starts with a
-    /// ticked box, and puts the cursor on it: it is the
+    /// written in, with its date words written out as dates and the task word as the box, done
+    /// now if it starts with a ticked box, and puts the cursor on it: it is the
     /// note most likely to be gone on with, and Enter there opens a row under it. With nothing on
     /// the line, opens a new note at the top of the list to be written in place. A note's link is
     /// not in its text, and a new row has the labels in its head from the start.
     pub(super) fn write_line(&mut self) {
         let today = self.today();
-        let text = text::expand_date_words(self.line.trim(), today);
+        let text = text::expand_words(self.line.trim(), today);
         if text.is_empty() {
             self.draft_at(0);
             return;
@@ -330,16 +347,20 @@ impl Session {
         Ok(std::mem::take(&mut self.out))
     }
 
+    /// Deletes the note under the cursor. Its row goes and the rest of the list stays where it
+    /// was, so that the notes listed only for what the deleted note said, those found by its
+    /// name, stay listed until the list is made again.
     pub(super) fn delete(&mut self) {
         let Some(record) = self.selected_record().cloned() else {
             return;
         };
+        let id = record.id.clone();
         self.commit(Record {
             deleted: true,
             ..record
         });
         self.status = "deleted · undo brings it back".into();
-        self.refresh(false);
+        self.take_row(&id);
     }
 
     /// Moves the note under the cursor `by` rows of the list as it is shown, as the original's

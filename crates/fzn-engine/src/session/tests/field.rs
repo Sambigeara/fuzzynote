@@ -1370,3 +1370,316 @@ fn keep_leaves_an_open_body_emptied_as_it_is_held_and_open() {
     );
     assert_eq!(field(&s), Some((String::new(), false, true)));
 }
+
+/// A shed, two notes written in it, each found from the top only by its link to the shed, and
+/// a note that has nothing to do with it.
+fn shed(s: &mut Session) {
+    put(s, "garden", "a garden", &[], 1_000);
+    put(s, "shed", "Shed", &[], 2_000);
+    put(s, "mower", "Service the mower", &["shed"], 3_000);
+    put(s, "hinge", "Oil the hinge", &["shed"], 4_000);
+    s.act(Action::Select(None));
+}
+
+#[test]
+fn a_delete_leaves_the_rest_of_the_list_where_it_was() {
+    let mut s = session();
+    shed(&mut s);
+    type_in(&mut s, "shed");
+    assert_eq!(heads(&s), ["Shed", "Service the mower", "Oil the hinge"]);
+    select(&mut s, "Shed");
+    let deleted = s.act(Action::Delete);
+    assert!(matches!(&kept(&deleted)[..], [r] if r.id == "shed" && r.deleted));
+    assert_eq!(s.status, "deleted · undo brings it back");
+    assert_eq!(
+        heads(&s),
+        ["Service the mower", "Oil the hinge"],
+        "the notes found through the shed stay listed"
+    );
+    assert_eq!(s.selected().unwrap().head, "Service the mower");
+    assert_eq!(field(&s), Some(("Service the mower".into(), false, false)));
+
+    // The list is made again once the line is typed, and nothing names them now.
+    clear(&mut s);
+    type_in(&mut s, "shed");
+    assert!(heads(&s).is_empty(), "{:?}", heads(&s));
+}
+
+#[test]
+fn a_delete_lands_on_the_next_row_the_row_above_for_the_last_and_the_line_for_the_only_one() {
+    let mut s = session();
+    three(&mut s);
+    select(&mut s, "House");
+    s.act(Action::Delete);
+    assert_eq!((s.cursor, heads(&s)), (Some(1), vec!["Boiler", "a garden"]));
+    assert_eq!(field(&s), Some(("a garden".into(), false, false)));
+
+    s.act(Action::Delete);
+    assert_eq!((s.cursor, heads(&s)), (Some(0), vec!["Boiler"]));
+    assert_eq!(field(&s), Some(("Boiler".into(), false, false)));
+
+    s.act(Action::Delete);
+    assert_eq!((s.cursor, field(&s)), (None, None));
+    assert!(heads(&s).is_empty());
+    assert_eq!(s.status, "deleted · undo brings it back");
+}
+
+#[test]
+fn undo_after_a_delete_brings_the_note_back_where_it_was_and_redo_takes_only_its_row_again() {
+    let mut s = session();
+    shed(&mut s);
+    type_in(&mut s, "shed");
+    select(&mut s, "Shed");
+    s.act(Action::Delete);
+
+    s.act(Action::Undo);
+    assert_eq!(heads(&s), ["Shed", "Service the mower", "Oil the hinge"]);
+    assert_eq!(s.selected().unwrap().head, "Shed");
+    assert_eq!(s.status, "undid: Shed");
+
+    s.act(Action::Redo);
+    assert!(s.notes.get("shed").is_none());
+    assert_eq!(heads(&s), ["Service the mower", "Oil the hinge"]);
+    assert_eq!(s.selected().unwrap().head, "Service the mower");
+    assert_eq!(s.status, "redid: Shed");
+
+    // Back on the line, the list is made again.
+    s.act(Action::Select(None));
+    assert!(heads(&s).is_empty());
+}
+
+#[test]
+fn a_note_emptied_and_left_takes_only_its_row_and_the_arrow_lands_past_it() {
+    let mut s = session();
+    shed(&mut s);
+    type_in(&mut s, "shed");
+    select(&mut s, "Shed");
+    edited(&mut s, "");
+    let left = s.act(Action::Move(1));
+    assert!(matches!(&kept(&left)[..], [r] if r.id == "shed" && r.deleted));
+    assert_eq!(heads(&s), ["Service the mower", "Oil the hinge"]);
+    assert_eq!(s.selected().unwrap().head, "Service the mower");
+
+    // Under a row, up lands on the row above and down on the row that was under it.
+    let mut s = session();
+    put(&mut s, "fence", "Mend the fence", &[], 500);
+    three(&mut s);
+    assert_eq!(heads(&s), ["Boiler", "House", "a garden", "Mend the fence"]);
+    select(&mut s, "House");
+    edited(&mut s, "");
+    s.act(Action::Move(1));
+    assert_eq!(
+        (s.cursor, heads(&s)),
+        (Some(1), vec!["Boiler", "a garden", "Mend the fence"])
+    );
+    s.act(Action::Undo);
+    select(&mut s, "House");
+    edited(&mut s, "");
+    s.act(Action::Move(-1));
+    assert_eq!(s.selected().unwrap().head, "Boiler");
+}
+
+#[test]
+fn the_task_word_at_the_end_of_a_head_makes_it_a_task_when_the_cursor_leaves() {
+    let mut s = session();
+    three(&mut s);
+    select(&mut s, "House");
+    let typed = edited(&mut s, "Insure the house /task");
+    assert!(
+        matches!(&kept(&typed)[..], [r] if r.text == "Insure the house /task"),
+        "the word stays while it is typed"
+    );
+    assert!(s.unwritten());
+    let left = s.act(Action::Move(1));
+    assert!(matches!(&kept(&left)[..], [r] if r.text == "[ ] Insure the house"));
+    assert_eq!(s.rows[1].task, Some(false));
+    assert!(!s.notes.get("house").unwrap().archived);
+}
+
+#[test]
+fn the_task_word_in_the_middle_or_at_the_start_of_a_head_goes_and_the_box_starts_it() {
+    let mut s = session();
+    three(&mut s);
+    for (typed, kept) in [
+        ("Bleed /task the radiators", "[ ] Bleed the radiators"),
+        ("/task Bleed the radiators", "[ ] Bleed the radiators"),
+        (
+            "/ta Bleed the radiators #house",
+            "[ ] Bleed the radiators #house",
+        ),
+    ] {
+        select(&mut s, "Boiler");
+        edited(&mut s, typed);
+        s.act(Action::Close);
+        assert_eq!(s.notes.get("boiler").unwrap().text, kept, "{typed:?}");
+        s.act(Action::Undo);
+        s.act(Action::Select(None));
+    }
+}
+
+#[test]
+fn the_task_word_in_a_head_already_a_task_only_goes() {
+    let mut s = session();
+    put(&mut s, "oil", "[ ] Order oil", &[], 1_000);
+    put(&mut s, "chimney", "[x] Sweep the chimney", &[], 2_000);
+    select(&mut s, "[ ] Order oil");
+    edited(&mut s, "[ ] Order oil /task");
+    s.act(Action::Close);
+    assert_eq!(s.notes.get("oil").unwrap().text, "[ ] Order oil");
+    select(&mut s, "[x] Sweep the chimney");
+    edited(&mut s, "[x] Sweep /task the chimney");
+    s.act(Action::Close);
+    assert_eq!(
+        s.notes.get("chimney").unwrap().text,
+        "[x] Sweep the chimney"
+    );
+}
+
+#[test]
+fn the_task_word_in_a_body_is_left_as_typed() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler", &[], 1_000);
+    select(&mut s, "Boiler");
+    s.act(Action::Open);
+    edited(&mut s, "Boiler\n- /task get three quotes\n/task");
+    s.act(Action::Close);
+    assert_eq!(
+        s.notes.get("boiler").unwrap().text,
+        "Boiler\n- /task get three quotes\n/task"
+    );
+}
+
+#[test]
+fn a_new_note_written_with_the_task_word_is_an_open_task() {
+    let mut s = session();
+    three(&mut s);
+    s.act(Action::Write);
+    edited(&mut s, "plant the garlic /task");
+    s.act(Action::Select(None));
+    assert!(heads(&s).contains(&"[ ] plant the garlic"));
+}
+
+#[test]
+fn redo_of_a_delete_from_the_line_leaves_the_cursor_on_the_line() {
+    let mut s = session();
+    shed(&mut s);
+    type_in(&mut s, "shed");
+    select(&mut s, "Shed");
+    s.act(Action::Delete);
+    s.act(Action::Select(None));
+    s.act(Action::Undo);
+    s.act(Action::Select(None));
+    assert_eq!(heads(&s), ["Shed", "Service the mower", "Oil the hinge"]);
+    s.act(Action::Redo);
+    assert_eq!((s.cursor, field(&s)), (None, None));
+    assert!(s.notes.get("shed").is_none());
+    assert_eq!(heads(&s), ["Service the mower", "Oil the hinge"]);
+}
+
+#[test]
+fn redo_of_a_delete_leaves_the_cursor_on_the_row_it_was_on() {
+    let mut s = session();
+    put(&mut s, "fence", "Mend the fence", &[], 500);
+    three(&mut s);
+    select(&mut s, "Boiler");
+    s.act(Action::Delete);
+    s.act(Action::Undo);
+    assert_eq!(heads(&s), ["Boiler", "House", "a garden", "Mend the fence"]);
+    select(&mut s, "Mend the fence");
+    s.act(Action::Redo);
+    assert_eq!(heads(&s), ["House", "a garden", "Mend the fence"]);
+    assert_eq!(s.selected().unwrap().head, "Mend the fence");
+    assert_eq!(field(&s), Some(("Mend the fence".into(), false, false)));
+
+    // A row above the one deleted keeps the cursor where it is.
+    select(&mut s, "a garden");
+    s.act(Action::Delete);
+    s.act(Action::Undo);
+    select(&mut s, "House");
+    s.act(Action::Redo);
+    assert_eq!(heads(&s), ["House", "Mend the fence"]);
+    assert_eq!(s.selected().unwrap().head, "House");
+}
+
+#[test]
+fn a_delete_of_the_only_fact_before_the_finds_sets_nothing_apart() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler", &[], 1_000);
+    put(
+        &mut s,
+        "visit",
+        "Engineer visit\nthe pressure was low",
+        &["boiler"],
+        2_000,
+    );
+    put(&mut s, "gauge", "Boiler pressure gauge", &[], 3_000);
+    go_to(&mut s, "Boiler");
+    type_in(&mut s, "pressure");
+    assert_eq!(heads(&s), ["Engineer visit", "Boiler pressure gauge"]);
+    assert_eq!(s.view().finds_from, Some(1));
+    select(&mut s, "Engineer visit");
+    s.act(Action::Delete);
+    assert_eq!(heads(&s), ["Boiler pressure gauge"]);
+    assert_eq!(s.view().finds_from, None, "as a list made now has it");
+}
+
+#[test]
+fn a_delete_leaves_what_arrived_meanwhile_until_the_cursor_is_back_on_the_line() {
+    let mut s = session();
+    three(&mut s);
+    select(&mut s, "House");
+    assert!(s.absorb([theirs("theirs", "written elsewhere", 0)]));
+    s.act(Action::Delete);
+    assert_eq!(heads(&s), ["Boiler", "a garden"]);
+    assert_eq!(s.selected().unwrap().head, "a garden");
+    s.act(Action::Select(None));
+    assert!(heads(&s).contains(&"written elsewhere"));
+    assert!(!heads(&s).contains(&"House"));
+}
+
+#[test]
+fn a_new_row_left_with_only_the_task_word_goes_as_an_empty_one_does() {
+    let mut s = session();
+    three(&mut s);
+    let undo = s.undo.len();
+    s.act(Action::Write);
+    edited(&mut s, "/task");
+    s.act(Action::Select(None));
+    assert_eq!(s.notes.len(), 3, "no empty task is kept");
+    assert_eq!(heads(&s), ["Boiler", "House", "a garden"]);
+    assert_eq!(s.undo.len(), undo);
+
+    // In the open tasks, where a new row opens with the box, the word is the box again.
+    clear(&mut s);
+    type_in(&mut s, "[ ]");
+    s.act(Action::GoIn);
+    s.act(Action::Write);
+    edited(&mut s, "[ ] /task");
+    s.act(Action::Select(None));
+    assert_eq!(s.notes.len(), 3);
+
+    // A note with text of its own keeps it.
+    s.act(Action::Write);
+    edited(&mut s, "[ ] /task Prune the roses");
+    s.act(Action::Select(None));
+    assert_eq!(heads(&s), ["[ ] Prune the roses"]);
+
+    // In a tag's place, where a new row opens with the tag, the word and the tag are not the
+    // writer's either, and words typed with them are.
+    clear(&mut s);
+    type_in(&mut s, "#house");
+    s.act(Action::GoIn);
+    let notes = s.notes.len();
+    s.act(Action::Write);
+    edited(&mut s, "/task #house");
+    s.act(Action::Select(None));
+    assert_eq!(s.notes.len(), notes, "no empty task in #house");
+    s.act(Action::Write);
+    edited(&mut s, "/task Bleed the radiators #house");
+    s.act(Action::Select(None));
+    assert!(
+        heads(&s).contains(&"[ ] Bleed the radiators #house"),
+        "{:?}",
+        heads(&s)
+    );
+}

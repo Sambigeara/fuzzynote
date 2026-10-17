@@ -91,12 +91,15 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   date's name cannot, so it lives in the text. The day a note was written is not typed at all: it is
   the note's `created`. `/today`, `/tomorrow`, `/yesterday`, a day of the week (`/fri` is the next
   Friday and `/-mon` the last Monday, never today) and `/+3` or `/-2` are quicker ways of typing a
-  date, and any beginning that only one of them has will do (`/tom`, `/f`, `/-tu`). Any other slash
-  is left alone, and a date word ends at the `..` of a span. The line shows the date a word stands
-  for and holds with it. Saving a note, from the line or from the editor, writes the date in its
-  place, at the moment a `[[head]]` becomes a link. A date typed on the line holds the notes that
-  mention the day or were written on it, and counts as a date and not as the numbers in it. The old
-  `Mon, Jan 2, 2006` form is still read.
+  date, and any beginning that only one of them has will do (`/tom`, `/f`, `/-tu`). `/task` is a
+  way of typing a task's box, and `/ta` will do, `/t` being the start of `/today` too: when the note
+  is saved the word goes from its head, wherever it was typed, and the head starts with `[ ]` unless
+  it starts with a box already; in a body it is left as typed, since a body's `- [ ]` is markdown's
+  own. Any other slash is left alone, and a date word ends at the `..` of a span. The line shows the
+  date a word stands for and holds with it. Saving a note, from the line or from the editor, writes
+  the date in its place, at the moment a `[[head]]` becomes a link. A date typed on the line holds
+  the notes that mention the day or were written on it, and counts as a date and not as the numbers
+  in it. The old `Mon, Jan 2, 2006` form is still read.
 - **Context inheritance**: where you are is what you are talking about. A note created in a place
   inherits it, and nothing else does: it links to the place's note and carries the place's labels.
   This is what prefix prepending used to do, without a tree and without the typing: the old ` >> `
@@ -520,20 +523,26 @@ for both. A chord acts on the note as it reads.
 
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
-whatever it names in brackets. Date words are written out when the cursor leaves the row, a new row
-in a place has its labels from the start, and a body is kept when it closes. So Enter, type, Enter,
-type, Enter, type, Esc writes a list, from the line or from any row, each note on every device as it
-is typed. A new row left with nothing in its head but what it opened with goes when the cursor
-leaves it, the arrow landing past where it was; one never typed into reaches neither the log nor the
-relay, and one typed into and cleared has its deletion written and leaves nothing to undo. Enter on
-such a row does nothing: there is already an empty row to write in. A head cleared to be typed again
-is not written while it is empty, and a note emptied is deleted when the cursor leaves it, or when
-an empty file comes back from the editor; undo brings it back. Backspace on a row with nothing in
-its head takes the row away and goes up to the row above, or onto the line, as it takes an empty
-line away in any editor; a note with a body stays, since the body is not in the head to see. A note
-stays where it was written, and an edit never moves it. The list holds still while the cursor walks
-it, so that the arrow that leaves a head lands where it was aimed, and what arrived from elsewhere
-meanwhile is listed when the cursor comes back to the line.
+whatever it names in brackets. Date words and `/task` are written out when the cursor leaves the
+row, a new row in a place has its labels from the start, and a body is kept when it closes. So
+Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or from any row, each note
+on every device as it is typed. A new row left with nothing in its head but what it opened with goes
+when the cursor leaves it, the arrow landing past where it was; one never typed into reaches neither
+the log nor the relay, and one typed into and cleared has its deletion written and leaves nothing to
+undo. Enter on such a row does nothing: there is already an empty row to write in. A head cleared to
+be typed again is not written while it is empty, and a note emptied is deleted when the cursor
+leaves it, or when an empty file comes back from the editor; undo brings it back. Backspace on a row
+with nothing in its head takes the row away and goes up to the row above, or onto the line, as it
+takes an empty line away in any editor; a note with a body stays, since the body is not in the head
+to see. A note stays where it was written, and an edit never moves it. The list holds still while
+the cursor walks it, so that the arrow that leaves a head lands where it was aimed, and what arrived
+from elsewhere meanwhile is listed when the cursor comes back to the line. A delete holds it still
+too: Ctrl-D, or `delete` in the page's foot, takes away only the row deleted, and the rest of the
+list stays as it was, rows and order, until it is next made for another reason, so that the notes
+listed only for what the deleted note said, found by its name, stay listed until then. The cursor
+goes to the row that took the deleted row's place, or to the row above when it was the last, or onto
+the line when no row is left; undo brings the note back where it was with the cursor on it. A note
+emptied and left goes the same way, the arrow landing past its row.
 
 ### The line
 The line has one grammar, read in the engine so that both faces have it: words find and everything
@@ -556,7 +565,9 @@ all, and none of it changes how the words rank.
   they are listed though archived notes are otherwise hidden. Each is read only whole: `[` and
   `[ ` are not words either, so they hold nothing, and a `[[` on its way to a link lists no tasks
   on the way. `"[x]"` is still a phrase, held by any note with it in its text, archived notes
-  shown or not as they are.
+  shown or not as they are. `/task`, or `/ta` or `/tas`, is `[ ]` typed another way, read as `[ ]`
+  is everywhere the line reads it, `/task #house` holding the open tasks of the house and Tab going
+  into them, and the line says `→ [ ]` beside it, where it says a date word's date.
 - A span, `START..END`, `START..` or `..END` with no spaces round the dots, holds the notes written
   in it, and `..` as a word of its own is a span of all time. With `[x]` on the line, or in the
   place, it holds the done tasks done in it instead, by `done`, or for a box ticked by hand and
@@ -588,7 +599,9 @@ the line names has to hold it too. Inside a place, the line narrows the place's 
 alike, and a line of labels in a place lists the facts that carry them. The rows of a line with
 nothing to rank by and no span are in the space's order, so they can be moved as the rows of an
 empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
-reads: quotes, `~` and spans stay as typed, and date words are written out, after a span's dots too.
+reads: quotes, `~` and spans stay as typed, date words are written out, after a span's dots too,
+and `/task` is written as the box at the start of the head, so that `Bleed the radiators /task`
+writes `[ ] Bleed the radiators`.
 Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
 asks for the done tasks.
 
@@ -2284,6 +2297,40 @@ the app now does is described above; an entry repeats it only where the reason n
   part of a wrapped line would surprise; it still takes two whole lines. The cost is the line-wise
   `j` for whoever wants it, who has the arrows, or `+` and `-`.
 
+- **A delete leaves the list where it was.** Decided 2026-10-17, agreed with Sam. In a place
+  `Shed`, two notes were written, each linked to the shed. Out of it, `shed` on the line listed the
+  shed and the two notes, found only by their link to it, and Ctrl-D on the shed emptied the list:
+  the delete ran the line's search again, and with the shed gone nothing named them. Nothing had
+  happened to them, and it read as losing them. The list already holds still while the cursor walks
+  it, so that what arrives from elsewhere does not move a row from under it, and a delete is the
+  cursor's own act, so it holds still for that too: only the deleted row goes, the rest stays as it
+  was, rows and order, until the list is made again for another reason, the cursor coming back to
+  the line, a key on the line, stepping in or out. The cursor lands on the row that took the
+  deleted row's place, as a tick's lands on the next row, on the row above for the last, and on the
+  line when no row is left. Undo brings the note back where it was, with the cursor on it, and
+  redo takes only its row again. A note emptied and left by an arrow goes the same way, the arrow
+  landing past its row, where until now the list was made again first and an arrow down skipped
+  the row under it. Ticking is left as it was: a tick hides its row at once and the list is made
+  again. What it does not do: the notes that linked to the deleted note keep their links, now to a
+  deleted note, and from then on are found by their own words. What should become of them is an
+  open question.
+
+- **`/task` is a way of typing the box.** Decided 2026-10-17, at Sam's direction, revising "A date
+  is text, and `/fri` is a way of typing one" where it says there is no second expansion. The box is
+  two keys on a keyboard and layers deep on a phone's, and a task is a note headed by its box, so
+  the word becomes the box and is not text of its own. It is written out when a note is saved, at
+  the moments a date word is, and any beginning of it that no date word has will do, `/ta` and on,
+  `/t` being the start of `/today`, `/tomorrow`, `/tuesday` and `/thursday` too. A task's box starts
+  its head, so the word is taken out wherever it was typed, with the space beside it, and the box
+  put at the start, unless a box is there already, when the word only goes. Only in the head: a
+  body's `- [ ]` is markdown, and a `/task` there is left as typed. Brackets the word alone filled
+  go with it. A new row that would be left with nothing but its box, `/task` alone or typed among
+  the open tasks where the row opened with the box, goes as a new row left empty goes: the word is
+  the box and not the writer's text, and an empty task is nothing to keep. On the line the word is
+  `[ ]` typed another way, and the line says `→ [ ]` beside it; `/task` alone and Enter writes what
+  `[ ]` alone does, a note that is only the box. It is still one trigger per job, each read where it
+  is read, so there is still no general slash-command system.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2370,6 +2417,10 @@ the app now does is described above; an entry repeats it only where the reason n
   editor closes, and the wait reads as this clock running ahead, two minutes after a long edit. A
   `now` said again from time to time is the fix for the first, and the time a message was heard
   going with it to the device for the second, if either is felt.
+- What becomes of the notes that linked to a deleted note. They keep the link, to a note that is
+  gone, and are found by their own words from then on, so the notes written in a place whose note
+  is deleted are scattered back into the space. Whether they should be told, moved to what the
+  deleted note linked to, or offered for deletion with it, use decides.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

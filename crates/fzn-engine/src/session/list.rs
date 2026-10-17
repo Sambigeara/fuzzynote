@@ -355,6 +355,42 @@ impl Session {
         }
     }
 
+    /// Takes a note's row off the list where it stands and leaves every other row as it was,
+    /// for a note taken away under the cursor: the list is made again only when it would be for
+    /// another reason, so that what was listed beside the note does not go with it. Says where
+    /// the row was.
+    pub(super) fn drop_row(&mut self, id: &str) -> Option<usize> {
+        self.stale = true;
+        let at = self.rows.iter().position(|r| r.id == id)?;
+        self.rows.remove(at);
+        // What the line only finds begins where it did, at the row that took this one's place,
+        // and is set apart only after a fact, as when the list is made.
+        if self.finds_from.as_deref() == Some(id) {
+            self.finds_from = self.rows.get(at).map(|r| r.id.clone());
+        }
+        let from = self
+            .finds_from
+            .as_ref()
+            .and_then(|from| self.rows.iter().position(|r| &r.id == from));
+        if from.is_some_and(|from| !self.rows[..from].iter().any(|r| r.linked)) {
+            self.finds_from = None;
+        }
+        Some(at)
+    }
+
+    /// Takes the row of a note deleted under the cursor off the list, as a tick's row goes but
+    /// with the rest of the list left where it was, and puts the cursor on the row that took
+    /// its place: on the row above it if it was the last, and on the line if none is left.
+    pub(super) fn take_row(&mut self, id: &str) {
+        let Some(at) = self.drop_row(id) else {
+            return;
+        };
+        self.cursor = self.rows.len().checked_sub(1).map(|last| at.min(last));
+        if self.cursor.is_none() {
+            self.onto_line();
+        }
+    }
+
     pub(super) fn selected(&self) -> Option<&Row> {
         self.cursor.and_then(|i| self.rows.get(i))
     }

@@ -53,6 +53,21 @@ impl Writing {
         self.new && self.bare(&self.text)
     }
 
+    /// A new note that leaving would leave with nothing of the writer's: blank, or with nothing
+    /// but what it opened with, with or without a box before it, once its task word is written
+    /// out, as `/task` typed in a new row in `#house` leaves `[ ] #house`. The task word is a box
+    /// and not the writer's text, so such a row goes as a blank one does rather than keep an
+    /// empty task.
+    pub(super) fn empty(&self) -> bool {
+        self.blank()
+            || (self.new && {
+                let written = text::expand_task_word(&self.text);
+                written != self.text
+                    && (self.bare(&written)
+                        || self.bare(written.strip_prefix(text::OPEN).unwrap_or(&written)))
+            })
+    }
+
     /// Nothing in the head but the label a new note opened with. Such a head is not written
     /// while the cursor is on it.
     fn head_empty(&self) -> bool {
@@ -145,7 +160,7 @@ impl Session {
             }
             Action::Save { id, text } if id == field.id => {
                 field.text = text;
-                if field.blank() {
+                if field.empty() {
                     // An editor that leaves nothing, or only the label the row opened with,
                     // leaves no note.
                     self.leave();
@@ -156,8 +171,9 @@ impl Session {
             // A new note cleared with its body open is an empty row again, and what was kept of
             // it as it was typed is taken off every device, as leaving it would; the row stays,
             // with the cursor in it, to be written in or left.
-            Action::Close if field.blank() => {
+            Action::Close if field.empty() => {
                 field.whole = false;
+                field.text = field.label.clone();
                 self.unwrite_new();
             }
             Action::Close => {
@@ -170,13 +186,13 @@ impl Session {
             // nothing to keep, and a head emptied, or cleared to be typed again, is not kept,
             // since only leaving the row writes that: keeping it would delete the note, or make
             // its body's first line its head, under the hands.
-            Action::Keep if field.blank() || field.head_empty() => {}
+            Action::Keep if field.empty() || field.head_empty() => {}
             Action::Keep => {
                 self.flush();
             }
             Action::ShowScores => self.show_scores = !self.show_scores,
             // A new note with nothing in it deleted goes as if it was never anything.
-            Action::Delete if field.blank() => {
+            Action::Delete if field.empty() => {
                 self.abandon();
                 if self.cursor.is_none() {
                     self.onto_line();
@@ -200,7 +216,6 @@ impl Session {
                 if new {
                     self.abandon();
                 } else {
-                    let at = self.rows.iter().position(|r| r.id == id);
                     match self.revise(&id, String::new()) {
                         Some(record) => {
                             self.gather(record);
@@ -209,11 +224,7 @@ impl Session {
                         None => self.status = "that note is gone, so nothing was saved".into(),
                     }
                     self.field = None;
-                    self.cursor = at.and_then(|i| {
-                        self.rows.remove(i);
-                        i.checked_sub(1)
-                    });
-                    self.stale = true;
+                    self.cursor = self.drop_row(&id).and_then(|i| i.checked_sub(1));
                 }
                 if self.cursor.is_none() {
                     self.onto_line();
@@ -228,7 +239,7 @@ impl Session {
             | Action::Shift(_)
             | Action::Copy
             | Action::OpenUrl
-                if field.blank() => {}
+                if field.empty() => {}
             // The row is written out, and a new note opens under it, where the row now is. A
             // head emptied takes its note and row away, and the new note opens where it was.
             Action::Write => {
@@ -243,7 +254,13 @@ impl Session {
             }
             Action::Select(Some(row)) if self.cursor == Some(row) => {}
             action => {
-                let id = field.id.clone();
+                let (id, blank) = (field.id.clone(), field.empty());
+                // A note emptied is deleted when the cursor leaves it, and its row goes as a new
+                // note's left empty does.
+                let emptied = !field.new && self.notes.get(&id).is_some() && {
+                    let text = field.text.clone();
+                    self.normalise(&text).is_empty()
+                };
                 // A tap lands on the note it was aimed at, however the rows move when the field
                 // is left: a new note left empty takes its row with it, and a list put in order
                 // puts the rows elsewhere.
@@ -251,10 +268,11 @@ impl Session {
                     Action::Select(Some(row)) => self.rows.get(*row).map(|r| r.id.clone()),
                     _ => None,
                 };
-                // An arrow off a new note left empty steps from where its row was, which is gone
-                // by the time it lands: up to the row above it, down to the row that was under it.
+                // An arrow off a new note left empty, or a note emptied, steps from where its row
+                // was, which is gone by the time it lands: up to the row above it, down to the row
+                // that was under it.
                 let past = match action {
-                    Action::Move(by) if field.blank() => {
+                    Action::Move(by) if blank || emptied => {
                         self.rows.iter().position(|r| r.id == id).map(|i| {
                             let n = i as i64 + by;
                             let left = self.rows.len() as i64 - 1;
@@ -267,7 +285,12 @@ impl Session {
                 if let Some(at) = past {
                     // The row goes and the list is left as it is: it is put in order only if
                     // the cursor reaches the line, which the landing decides and not the row.
-                    self.abandon();
+                    if blank {
+                        self.abandon();
+                    } else {
+                        self.flush();
+                        self.field = None;
+                    }
                     return Some(Action::Select(at));
                 }
                 self.leave();
@@ -481,9 +504,9 @@ impl Session {
         });
     }
 
-    /// A note's text as it is to be kept: date words written as dates, no newline at the end and
-    /// no blank line at the start, since a note's head is its first line. Nothing but blank
-    /// lines is nothing.
+    /// A note's text as it is to be kept: date words written as dates, the task word in its head
+    /// as the box at its start, no newline at the end and no blank line at the start, since a
+    /// note's head is its first line. Nothing but blank lines is nothing.
     pub(super) fn normalise(&self, edited: &str) -> String {
         let mut rest = edited.trim_end_matches(['\n', '\r']);
         while let Some((first, after)) = rest.split_once('\n')
@@ -494,14 +517,15 @@ impl Session {
         if rest.trim().is_empty() {
             return String::new();
         }
-        text::expand_date_words(rest, self.today())
+        text::expand_words(rest, self.today())
     }
 
     /// Writes the note under the cursor as it is to be kept, with its date words written out, and
     /// leaves the cursor where it is. Says whether it wrote anything. What it is compared with is
     /// what the note holds, since the visit may have written it already as it was typed. A new
     /// note is written if it has text and was not written as typed, as when its body was typed
-    /// into. A note emptied is deleted, which takes its row away now; a new one emptied is left
+    /// into. A note emptied is deleted, which takes its row away now and leaves the rest of the
+    /// list where it was, the cursor on the row that took its place; a new one emptied is left
     /// for the caller to take away. Otherwise the row is put right where it stands and the list
     /// waits for the cursor to come back to the line, so that the arrow that left the head lands
     /// on the row it was aimed at.
@@ -524,7 +548,7 @@ impl Session {
                 self.gather(record);
                 if text.is_empty() {
                     self.status = "deleted · undo brings it back".into();
-                    self.refresh(false);
+                    self.take_row(&id);
                     return true;
                 }
                 self.status = "saved".into();
@@ -558,7 +582,7 @@ impl Session {
     /// Writes out the note under the cursor, because the cursor is about to move. A new note
     /// left with nothing in it goes, and its row with it.
     fn leave(&mut self) {
-        if self.field.as_ref().is_some_and(Writing::blank) {
+        if self.field.as_ref().is_some_and(Writing::empty) {
             self.abandon();
             if self.cursor.is_none() {
                 self.onto_line();
