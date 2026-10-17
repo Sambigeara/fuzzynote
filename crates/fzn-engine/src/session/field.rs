@@ -6,7 +6,7 @@
 
 use crate::record::Record;
 use crate::text;
-use crate::time::Moment;
+use crate::time::{Day, Moment};
 
 use super::{Action, Effect, Row, Session};
 
@@ -66,6 +66,13 @@ impl Writing {
                     && (self.bare(&written)
                         || self.bare(written.strip_prefix(text::OPEN).unwrap_or(&written)))
             })
+    }
+
+    /// Whether the head holds a word that saving it writes out as something else: `/task` as
+    /// the box, or a date word as its date.
+    pub(super) fn has_words(&self, today: Day) -> bool {
+        let head = self.text.lines().next().unwrap_or("");
+        text::expand_words(head, today) != head
     }
 
     /// Nothing in the head but the label a new note opened with. Such a head is not written
@@ -130,6 +137,7 @@ impl Session {
     /// back to be done as it would be. One that asks for the note under the cursor is dropped
     /// when leaving took that note away, so that it does not fall on a neighbour.
     pub(super) fn on_field(&mut self, action: Action) -> Option<Action> {
+        let today = self.today();
         let Some(field) = self.field.as_mut() else {
             return Some(action);
         };
@@ -240,6 +248,12 @@ impl Session {
             | Action::Copy
             | Action::OpenUrl
                 if field.empty() => {}
+            // A head with a word in it still to be written out, `/task` or a date word, has it
+            // written out, and the cursor stays on the row: Enter makes what was typed what it
+            // stands for, and the next Enter opens a row under.
+            Action::Write if !field.whole && field.has_words(today) => {
+                self.flush();
+            }
             // The row is written out, and a new note opens under it, where the row now is. A
             // head emptied takes its note and row away, and the new note opens where it was.
             Action::Write => {

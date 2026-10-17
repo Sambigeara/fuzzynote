@@ -84,9 +84,10 @@ Booked for /fri, ask about the pressure drop
 `/fri`, `/today`, `/+3`, `/-mon` and the like are written out as dates when the note is saved. A
 note whose head starts `[ ]` is a task: archiving it ticks it, `[x]`, and bringing it back unticks
 it. `/task`, or `/ta`, anywhere in a head is a way of typing the box: when the note is saved it
-goes, and the head starts with `[ ]`. On the line it is read as `[ ]` is. fzn keeps when each note
-was archived, which for a task is when it was ticked, and a new note written starting `[x]` is done
-as it is written.
+goes, and the head starts with `[ ]`. On the line it is read as `[ ]` is. Enter on a row with one
+of these words in its head writes it out there and stays, and the next Enter opens a new note
+under it. fzn keeps when each note was archived, which for a task is when it was ticked, and a new
+note written starting `[x]` is done as it is written.
 
 On the line, words find and everything else holds. `"oil tank"` must be in a note, `#house`,
 `@joe` and `/fri` must be on it, `[ ]` holds the open tasks and `[x]` the done ones, archived or

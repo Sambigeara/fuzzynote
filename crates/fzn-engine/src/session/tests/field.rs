@@ -1683,3 +1683,59 @@ fn a_new_row_left_with_only_the_task_word_goes_as_an_empty_one_does() {
         heads(&s)
     );
 }
+
+#[test]
+fn enter_on_a_row_with_the_task_word_writes_it_out_and_stays_on_the_row() {
+    let mut s = session();
+    three(&mut s);
+    select(&mut s, "Boiler");
+    edited(&mut s, "Boiler service /task");
+    assert_eq!(labels(&s)[0], "write out");
+    let done = s.act(Action::Write);
+    let [held] = kept(&done)[..] else {
+        panic!("{done:?}");
+    };
+    assert_eq!(held.text, "[ ] Boiler service");
+    assert_eq!(
+        field(&s),
+        Some(("[ ] Boiler service".into(), false, false)),
+        "written out, and the cursor stays"
+    );
+    assert_eq!(s.selected().unwrap().id, "boiler");
+    assert_eq!(heads(&s), ["[ ] Boiler service", "House", "a garden"]);
+
+    // With nothing left to write out, Enter opens the row under, as it always did.
+    assert_eq!(labels(&s)[0], "new note");
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some((String::new(), true, false)));
+    assert_eq!(s.cursor, Some(1));
+
+    // A new note is written out and stays the same way.
+    edited(&mut s, "/task Order oil");
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some(("[ ] Order oil".into(), false, false)));
+    assert_eq!(s.cursor, Some(1));
+    assert_eq!(
+        heads(&s),
+        ["[ ] Boiler service", "[ ] Order oil", "House", "a garden"]
+    );
+}
+
+#[test]
+fn enter_on_a_row_with_a_date_word_writes_the_date_and_stays_on_the_row() {
+    let mut s = session();
+    three(&mut s);
+    select(&mut s, "House");
+    edited(&mut s, "House viewing /fri");
+    assert_eq!(labels(&s)[0], "write out");
+    s.act(Action::Write);
+    assert_eq!(
+        field(&s),
+        Some(("House viewing 2026-10-16".into(), false, false))
+    );
+    assert_eq!(s.selected().unwrap().id, "house");
+    assert_eq!(
+        s.notes.get("house").unwrap().text,
+        "House viewing 2026-10-16"
+    );
+}

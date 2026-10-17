@@ -146,7 +146,8 @@ pub enum Action {
     Shift(i64),
     /// Turn the line into a note, linked to the note being looked around, and put the cursor on
     /// it. With nothing on the line, open a new note at the top of the list to write in place.
-    /// On a row, write out its date words and open a new note under it to write in place.
+    /// On a row, write out its date words and open a new note under it to write in place; or,
+    /// if its head has a date word or `/task` still to write out, write those out and stay.
     Write,
     /// Go into the note under the cursor. On the line, go into what the line names: each tag,
     /// person or day of a line of nothing else, one after another, or else the one note it is the
@@ -645,10 +646,15 @@ impl Session {
         match (self.selected(), field) {
             (Some(row), Some(field)) => {
                 // A new note with nothing in it is already an empty row to write in.
+                // A head with a word still to write out writes it out first.
                 if !blank {
                     offer(
                         Action::Write,
-                        if zoomed { "new note here" } else { "new note" },
+                        match (field.has_words(self.today()), zoomed) {
+                            (true, _) => "write out",
+                            (false, true) => "new note here",
+                            (false, false) => "new note",
+                        },
                     );
                 }
                 offer(Action::Open, "body");

@@ -10,14 +10,15 @@
 //! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or, in a
 //! new row that opens with the labels of the place, before them and after a task's box, and typing
 //! changes it and is written at once, as it was in fzn, with its date words written out when the
-//! arrows up and down, or Escape, leave it. Enter opens a new note under it, so that a run of
-//! notes is Enter and typing; a new note left empty goes. Ctrl-O hands the note to your editor,
-//! which is where a body is written. Tab goes in, wherever the caret is: on a row into its note,
-//! and on the line into the tag, person, day, box or note the line names. Right and Left are the
-//! caret's and nothing else. A paste is one change, made as if it were typed in one key, its
-//! tabs and line breaks made spaces, since the line and a head are one line each and a tab
-//! typed would go in. A chord acts on the note where on the line it acts on the line, as it did
-//! in fzn: Ctrl-D deletes or clears, Ctrl-V archives, which ticks a task, or shows archived notes,
+//! arrows up and down, or Escape, leave it, or Enter, which writes them out and stays. Otherwise
+//! Enter opens a new note under it, so that a run of notes is Enter and typing; a new note left
+//! empty goes. Ctrl-O hands the note to your editor, which is where a body is written. Tab goes
+//! in, wherever the caret is: on a row into its note, and on the line into the tag, person, day,
+//! box or note the line names. Right and Left are the caret's and nothing else. A paste is one
+//! change, made as if it were typed in one key, its tabs and line breaks made spaces, since the
+//! line and a head are one line each and a tab typed would go in. A chord acts on the note where
+//! on the line it acts on the line, as it did in fzn: Ctrl-D deletes or clears, Ctrl-V archives,
+//! which ticks a task, or shows archived notes,
 //! and Ctrl-U puts a changed head back before it undoes anything else. Control with an arrow moves
 //! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
 //! a time: off the row, off the text on the line, out of the place, and on an empty line outside
@@ -175,12 +176,13 @@ struct Relay {
     dial: Box<dyn FnMut() -> Link>,
 }
 
-/// What the act of a key is measured against: the line, the note under the cursor and whether
-/// it is a new one, as they were before it.
+/// What the act of a key is measured against: the line, the note under the cursor, whether it
+/// is a new one and what its head read, as they were before it.
 struct Before {
     line: String,
     on: Option<String>,
     fresh: bool,
+    head: Option<String>,
 }
 
 impl Before {
@@ -189,6 +191,7 @@ impl Before {
             line: view.line.to_owned(),
             on: under_cursor(view),
             fresh: view.field.as_ref().and_then(|field| field.fresh).is_some(),
+            head: (view.field.as_ref()).map(|field| head_and_body(field.text).0.to_owned()),
         }
     }
 }
@@ -1395,15 +1398,18 @@ impl App {
             line,
             on: was_on,
             fresh: was_fresh,
+            head: was_head,
         } = before;
+        let wrote = action == Action::Write;
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
         let view = self.device.view();
         // A line the device changed, as it does on the way into a note and out of one, has its
-        // cursor at the end, and so does the head of a row just landed on. A head put back or
-        // written in place keeps its caret where it was, if the head is still that long. A new
-        // row with only the labels it opened with, landed on or put back to them, has its caret
-        // where the device says, after a task's box and before the rest.
+        // cursor at the end, and so does the head of a row just landed on, and one whose words
+        // Enter wrote out, after what they became. A head put back or written in place keeps its
+        // caret where it was, if the head is still that long. A new row with only the labels it
+        // opened with, landed on or put back to them, has its caret where the device says, after
+        // a task's box and before the rest.
         if view.line != line {
             self.cursor = letters(view.line);
         }
@@ -1411,9 +1417,10 @@ impl App {
             let head = head_and_body(field.text).0;
             let end = letters(head);
             let stayed = under_cursor(&view) == was_on;
+            let written_out = wrote && was_head.as_deref() != Some(head);
             self.row_cursor = match field.fresh {
                 Some(start) if !(stayed && was_fresh) => letters_in(head, start),
-                _ if stayed => self.row_cursor.min(end),
+                _ if stayed && !written_out => self.row_cursor.min(end),
                 _ => end,
             };
             // A row landed on reads from its start until a key writes in it or moves its caret.
@@ -4443,5 +4450,28 @@ mod tests {
             edited("ab e\u{301}", 4, KeyCode::Char('w'), true),
             Some(("ab ".into(), 3))
         );
+    }
+
+    #[test]
+    fn enter_on_a_row_with_a_date_word_writes_it_out_with_the_caret_after_the_date() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        type_in(&mut app, " /today");
+        assert!(keys(&app).starts_with("Enter write out"), "{}", keys(&app));
+        press(&mut app, KeyCode::Enter, false);
+        let head = field(&app).unwrap();
+        assert!(
+            head.starts_with("Boiler 20") && !head.contains('/'),
+            "{head}"
+        );
+        assert!(on_note(&app), "the cursor stays on the row");
+        assert_eq!(heads(&app), std::slice::from_ref(&head));
+        assert_eq!(
+            app.row_cursor,
+            head.chars().count(),
+            "the caret after the date"
+        );
+        done(&space);
     }
 }

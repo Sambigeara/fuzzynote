@@ -12,7 +12,8 @@
 // reading, until it is written in or the caret is put in it, and only then shows the text as typed
 // (see reveal), so that walking the list moves no text. Enter with text on the line writes it and
 // puts the box in the note it wrote. Enter on a row opens a new note under it, its empty head the
-// box, so that Enter, type, Enter, type writes notes in a run, as the original's Enter did. Ctrl-O
+// box, so that Enter, type, Enter, type writes notes in a run, as the original's Enter did, unless
+// its head has `/task` or a date word still to write out, which Enter writes out first. Ctrl-O
 // opens the body, the original's chord for it, in the sheet: a bounded overlay over the dimmed
 // page, scrolled on its own, where the box holds the whole note, or an editor takes its place once
 // one has been fetched (see loadEditor). The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
@@ -340,6 +341,7 @@ const sheet = $('sheet');
 let failures = 0;
 function act(action) {
   if (!fzn || reloading) return;
+  if (named(action) === 'write') writeAsked = true;
   let todo;
   try {
     todo = fzn.act(JSON.stringify(action));
@@ -665,6 +667,9 @@ const typing = () => [line, box, $('secret')].includes(document.activeElement) |
 // nobody asked for, leaving the page typing into nothing, or raises one under the hands; and a
 // focus given inside the press's own event is the only kind for which iOS raises one.
 let wantsText = false;
+// Enter was asked for since the last painting, which, on a row whose head has a word still to
+// write out, writes it out and stays: the caret then goes to the end, after what it became.
+let writeAsked = false;
 const mayFocus = () => !coarse.matches || typing() || wantsText !== false;
 
 // On a touch screen the page is a frame the size of the visual viewport, the part of the screen
@@ -1354,9 +1359,12 @@ function paintRows() {
     if (landed) box.scrollLeft = 0;
     // A row read has its caret at the end, where its block is drawn (see placeReadingCaret), so a
     // head changed under it, by an undo, a redo or a version from elsewhere, puts the caret there
-    // too, and the first key types or moves from where the block was.
+    // too, and the first key types or moves from where the block was. A head whose words Enter
+    // wrote out has its caret at the end too, after what a date word became.
     const read = told && !revealed && !field.whole;
-    if (landed || (toggled && !field.whole) || (told && field.fresh != null) || read) box.setSelectionRange(at, at);
+    const writtenOut = told && writeAsked && !field.whole;
+    if (landed || (toggled && !field.whole) || (told && field.fresh != null) || read || writtenOut)
+      box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
     if (landed || told) edges();
     if (takesFocus(box)) box.focus({ preventScroll: true });
@@ -1364,6 +1372,7 @@ function paintRows() {
     line.focus({ preventScroll: true });
   }
   wantsText = false;
+  writeAsked = false;
   quiet = false;
 
   // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from

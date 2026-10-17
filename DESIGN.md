@@ -516,7 +516,9 @@ is, and Esc clears it, or on an empty line comes back (see "Zoom and places").
 On a row, the head is the field and typing changes it, with the caret landing at its end, and each
 change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typed, as an editor's
 hands expect. Enter opens a new row directly under it, its head the field, as the original's Enter
-added a line under the current one. Ctrl-O opens the body, which in the terminal is your editor and
+added a line under the current one, unless the head has a date word or `/task` still to be written
+out: then Enter writes it out and the cursor stays on the row, the caret at the end, and the next
+Enter opens the row under. Ctrl-O opens the body, which in the terminal is your editor and
 in the browser a sheet over the page that holds the whole note. Tab goes in. Right and Left are the
 caret's, on the line and in a head, and nothing else. Undo puts the head back as it was when the
 cursor landed, and otherwise takes back the last change, which for a row is the whole visit, one key
@@ -525,7 +527,7 @@ for both. A chord acts on the note as it reads.
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
 whatever it names in brackets. Date words and `/task` are written out when the cursor leaves the
-row, a new row in a place has its labels from the start, and a body is kept when it closes. So
+row or Enter is pressed on it, a new row in a place has its labels from the start, and a body is kept when it closes. So
 Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or from any row, each note
 on every device as it is typed. A new row left with nothing in its head but what it opened with goes
 when the cursor leaves it, the arrow landing past where it was; one never typed into reaches neither
@@ -1141,7 +1143,9 @@ the app now does is described above; an entry repeats it only where the reason n
   records the day it was written, so the mechanism is for the days that are not today. There is no
   `/d`, which would be a code to remember. The word becomes the date when the note is saved and not
   as it is typed, so no key does anything unusual and the editor works the same way. There is no
-  general slash-command system: one trigger, one job, until a second expansion is wanted.
+  general slash-command system: one trigger, one job, until a second expansion is wanted. Revised
+  2026-10-17 by "Enter on a row writes out its words first": Enter on a row is one of the moments
+  the word is written out, and the cursor then stays on the row.
 
 - **Imported pages become the notes they would have been.** A page named only for a date or a time,
   a journal page say, is not a note: each thing written on it becomes a note of that day. A page
@@ -1269,7 +1273,9 @@ the app now does is described above; an entry repeats it only where the reason n
   Ctrl-O was a second binding inherited rather than earned is answered: it is now the only binding
   for the body, and Enter has a better claim on the row. What stands: Right at the end of the head
   goes in (Tab since 2026-10-16, see "Tab goes in"), Esc comes back a step, Left does nothing on a
-  row.
+  row. Revised 2026-10-17 by "Enter on a row writes out its words first": a head with a date word or
+  `/task` still to write out has Enter write it out and stay, and the next Enter opens the row
+  under.
 
 - **A note is written in place.** Decided 2026-10-14, at Sam's direction, which is what the original
   did and the revival had put off. Three calls shaped it. *Select, then edit*, not the original's
@@ -2420,7 +2426,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the box and not the writer's text, and an empty task is nothing to keep. On the line the word is
   `[ ]` typed another way, and the line says `→ [ ]` beside it; `/task` alone and Enter writes what
   `[ ]` alone does, a note that is only the box. It is still one trigger per job, each read where it
-  is read, so there is still no general slash-command system.
+  is read, so there is still no general slash-command system. Revised 2026-10-17 by "Enter on a row
+  writes out its words first": on a row, Enter writes the word out as the box and stays.
 
 - **The row under the cursor reads until it is written in.** Decided 2026-10-17, at Sam's direction,
   revising "A head reads every inline mark a body does" where it says the row under the cursor is
@@ -2782,6 +2789,27 @@ the app now does is described above; an entry repeats it only where the reason n
   it does on the line. The reading is unchanged: the marks stay hidden until a key writes in the row
   or moves its caret. The terminal drew its cursor there already. It came with "The list's vim keys
   are taken out", whose normal mode had drawn this block on a row read, and only there.
+
+- **Enter on a row writes out its words first.** Decided 2026-10-17, at Sam's direction, revising
+  "Enter opens a row under; the body is Ctrl-O", where Enter on a row always wrote it and opened the
+  row under, and "A date is text, and `/fri` is a way of typing one" and "`/task` is a way of typing
+  the box", where the word was written out as the note was saved and Enter was only one way to save
+  it. Enter after `/task` made the task but also took the cursor onto a new row below it. A word
+  typed to become something else reads as a command, and Enter after it as the hand saying make it
+  so, as Enter ends a slash command in the editors that have them; the row it opened instead took
+  the person off the note they had just made a task. Now Enter on a row whose head has a date word
+  or `/task` still to write out writes it out there, the box at the start or the date in the word's
+  place, and the cursor stays on the row, the caret at the end of the head, after what the word
+  became. The next Enter, with nothing left to write out, opens the row under, as before. While
+  there is a word to write out, the footer, or the page's hint list, names Enter `write out` in
+  place of `new note`, so what Enter does depends on what the head shows and never on the key before
+  it. The date words go with `/task`, at Sam's word, since both are words written out as something
+  else, and one rule for both is less to remember than a rule for one. Leaving the row still writes
+  the words out, a body's when it closes, and a new row left with nothing but its box is still
+  nothing to keep, where Enter does nothing, as before. Weighed: writing a word out the moment it is
+  typed in full, which would change the text under the hands mid-word, `/t` on its way to `/task` or
+  `/thursday`, as "A date is text" ruled out; and staying only after `/task`, which would have made
+  the date words the exception.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
