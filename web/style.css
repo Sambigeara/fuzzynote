@@ -297,11 +297,12 @@ button, input, textarea { font: inherit; color: inherit; }
   height: 0.95em;
   margin: 0 0.5em 0 0;
   padding: 0;
-  vertical-align: -0.125em;
   border: 1px solid var(--faint);
   border-radius: 2px;
   background: none;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .tick::before { content: ""; position: absolute; inset: -0.5em -0.4em -0.5em -0.5em; }
 .tick:hover { border-color: var(--ink); }
@@ -337,20 +338,22 @@ button, input, textarea { font: inherit; color: inherit; }
 .chev:hover { color: var(--ink); }
 
 /* The cursor on a row is its head a little heavier: read, with no caret, until the row is
-   written in, and then the caret in the text box the head is. The row keeps its whole head, on as
-   many lines as it takes: a head that lost words at the moment the cursor reached it would be the
-   one thing cut when it matters. The box wraps as a read head would, in the same face and measure,
-   so that a head does not jump when it becomes one. */
+   written in, and then the caret in the text box the head is. A row is one line wherever the
+   cursor is, so that walking and writing move nothing under it: a head longer than its row is cut
+   with a `…` on the cursor as off it, and is read whole where the body is read. Written in, the
+   box is one line too, a field that scrolls sideways under the caret, keeping a few letters in
+   sight beyond it and fading at an edge that hides text. It keeps its spaces as typed, and so does
+   the head read over it, so that the two line up. */
 .row[aria-current="true"] .head,
 .box {
   font-weight: 500;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
 }
 .box {
   flex: 1 1 0;
   min-width: 0;
   display: block;
+  height: 1.5em;
   margin: 0;
   padding: 0;
   border: 0;
@@ -360,8 +363,38 @@ button, input, textarea { font: inherit; color: inherit; }
   resize: none;
   overflow: hidden;
   line-height: 1.5;
-  field-sizing: content;
+  scroll-padding-inline: 2.5em;
 }
+.box.before {
+  mask-image: linear-gradient(to right, transparent, #000 1.5em);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em);
+}
+.box.after {
+  mask-image: linear-gradient(to left, transparent, #000 1.5em);
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 1.5em);
+}
+.box.before.after {
+  mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em),
+    transparent);
+}
+/* The whole note, in the sheet, wraps and is as tall as its text. */
+.box.whole {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  height: auto;
+  field-sizing: content;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+/* Wider than a phone the row under the cursor's date stands a caret's width further off its head,
+   so that the caret at the end of a head that fills the row does not touch it. */
+@media (min-width: 641px) {
+  .row[aria-current="true"] .main > .tail + * { margin-left: calc(0.55 * var(--note-size)); }
+}
+/* A body behind the row under the cursor, whose tail, where the mark is off the cursor, is not
+   there. */
+.row .mark { flex: none; color: var(--faint); font-size: var(--meta-size); }
 /* The box of the row under the cursor is held in a frame of its own. Until the row is written in,
    the head as read is laid over it in the frame and takes the room, and the box is under it, the
    frame's size, showing nothing and taking no presses, but keeping the focus; revealed, the box is
@@ -405,6 +438,10 @@ button, input, textarea { font: inherit; color: inherit; }
     mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
   }
+  /* The whole of a head its row cuts, above the body and a paragraph apart from it, its task's box
+     drawn and never pressed. */
+  #pane-head:not([hidden]) + #pane-body:not(:empty) { margin-top: 0.625em; }
+  #pane-head .tick { cursor: default; border-color: var(--faint); }
 }
 
 /* A body read is rendered: blocks a little apart and none of them a box, headings set apart by
@@ -414,7 +451,7 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table, hr) { margin: 0.625em 0 0; }
 :is(#here, #pane) :is(h1, h2, h3, h4, h5, h6) { margin-top: 1em; }
 :is(#here, #pane) :is(:first-child, li > *) { margin-top: 0; }
-:is(#here, #pane) > * { white-space: pre-line; }
+:is(#here, #pane-body) > * { white-space: pre-line; }
 :is(#here, #pane) :is(ul, ol) { padding-left: 1.25em; }
 :is(#here, #pane) li::marker { color: var(--faint); }
 :is(#here, #pane) li:has(> .task) { list-style: none; }
@@ -426,7 +463,17 @@ button, input, textarea { font: inherit; color: inherit; }
   margin: 0 0.25em 0 -1.25em;
   border: 1px solid var(--faint);
   border-radius: 2px;
-  vertical-align: -0.125em;
+}
+/* A task's box sits on its head's first line, its middle on the middle of the capitals, as the
+   font measures them, in a row and in a body read alike. `middle` puts the box's middle half an
+   x-height over the baseline whatever an engine makes of an empty box's own baseline, which for a
+   button differs between engines, and the offset raises it to half the capitals' height. */
+.tick, .task > .check {
+  vertical-align: middle;
+  top: calc(0.5ex - 0.5cap);
+}
+@supports not (top: 1cap) {
+  .tick, .task > .check { top: -0.1em; }
 }
 .task.done { color: var(--faint); }
 .task.done > .check::after {
@@ -550,25 +597,54 @@ body.resting #list {
 body.resting .row, body.resting .row .head { color: var(--faint); }
 body.resting .row .tail { display: none; }
 
-/* The foot: words, not buttons with borders, and what just happened at the right. */
+/* The foot: words, not buttons with borders, and what just happened above them at the right. It
+   is one line at every width and never changes height: the words never wrap, the way back follows
+   them and stays in sight when they do not fit, the rest scrolling under a fade at each edge that
+   hides words, and what is said floats above them at the column's right, taking no room, so that
+   nothing in the foot moves when the cursor does. It reaches from the column's left to the
+   window's right margin, so that on a wide page the busiest rows' words run on under the pane
+   rather than scroll. */
 #foot {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 1.5rem;
-  width: min(var(--measure), 100% - 2 * var(--gutter));
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0 1.125em;
+  width: calc(100% - var(--left) - var(--gutter));
+  height: calc(3.25rem + env(safe-area-inset-bottom));
   margin-left: var(--left);
-  padding: 0.75rem 0 max(1rem, env(safe-area-inset-bottom));
+  padding: 0 0 env(safe-area-inset-bottom);
   font-size: var(--meta-size);
   color: var(--faint);
 }
 
 #hints {
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0 1.125em;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+#hints::-webkit-scrollbar { display: none; }
+#hints.before {
+  mask-image: linear-gradient(to right, transparent, #000 2.5rem);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem);
+}
+#hints.after {
+  mask-image: linear-gradient(to left, transparent, #000 2.5rem);
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 2.5rem);
+}
+#hints.before.after {
+  mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem),
+    transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem,
+    #000 calc(100% - 2.5rem), transparent);
+}
+#way { flex: none; }
+#way:empty { display: none; }
 
 .word {
   border: 0;
@@ -579,19 +655,30 @@ body.resting .row .tail { display: none; }
   cursor: pointer;
   transition: color 80ms;
 }
+#foot .word { flex: none; white-space: nowrap; }
 .word:hover { color: var(--ink); }
 .word:focus-visible { color: var(--ink); text-decoration: underline; outline: none; }
 
-/* What is said goes to the next line whole when the line is full, rather than each part
-   breaking where it stands. */
+/* What is said floats above the words, its right edge on the column's, on the paper, and passes
+   presses through but for its own words; with nothing said, nothing is drawn there. Over the page
+   dimmed behind an open body it has no paper of its own. */
 #said {
+  position: absolute;
+  bottom: 100%;
+  right: calc(100% - min(var(--measure), 100vw - 2 * var(--gutter)));
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: baseline;
   gap: 0 1.125em;
-  margin-left: auto;
+  margin: 0;
+  padding: 0.125rem 0 0.125rem 0.5rem;
+  background: var(--paper);
+  pointer-events: none;
 }
+#said .word { pointer-events: auto; }
+#said:not(:has(#status:not(.gone):not(:empty), #trouble:not([hidden]), #sync:not([hidden]),
+  #passphrase:not([hidden]))) { display: none; }
+body:has(#buffer:not([hidden])) #said { background: none; }
 #sync { white-space: nowrap; }
 #status { color: var(--soft); transition: opacity 600ms; }
 #status.faded { opacity: 0; }
@@ -654,16 +741,44 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
     mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
   }
-  .main { flex-wrap: wrap; row-gap: 0; }
-  .head { flex: 1 1 0; white-space: normal; overflow-wrap: anywhere; }
-  .tail { order: 1; flex-basis: 100%; }
-  /* The date of the row under the cursor goes under its head too, so the head keeps the width. */
-  .row time { order: 1; flex-basis: 100%; }
+  /* At a phone's width a head is read whole, on as many lines as it takes, on the cursor and off
+     it, and written so: there is no room beside the list to read the rest in, and cut at forty
+     letters most heads would be. Every row leaves the arrow's room at its end, whether or not it
+     has the arrow, so a head wraps the same on the cursor as off it; and the row under the cursor
+     keeps its tail, with its date at the tail's end, so that it is no taller than it was. A row
+     with no tail has no line for a date. A head being written grows its row as it wraps, as a
+     phone's composer does. */
+  .main { flex-wrap: wrap; row-gap: 0; padding-right: 1.25rem; }
+  .head, .edit { flex: 1 1 100%; }
+  .row .head { white-space: normal; overflow-wrap: anywhere; }
+  .row[aria-current="true"] .head,
+  .box:not(.whole) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    height: auto;
+    field-sizing: content;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+  .tail { order: 1; flex: 1 1 0; }
+  .row[aria-current="true"] .tail { display: block; }
+  .row time { order: 2; margin-left: auto; }
+  .row .mark { display: none; }
+  .row[aria-current="true"] .main:not(:has(> .tail > *)) > time { display: none; }
+  .row[aria-current="true"] .chev {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1.25rem;
+    padding: 0;
+    line-height: 1.5;
+    text-align: center;
+  }
   .row { padding-inline: var(--gutter); }
 
   #foot {
     width: 100%;
-    min-height: calc(var(--bar) + var(--below));
+    height: calc(var(--bar) + var(--below));
     margin: 0;
     padding: 0 var(--gutter) var(--below);
     flex-wrap: nowrap;
@@ -686,17 +801,8 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   }
   #hints {
     flex: 1 1 auto;
-    min-width: 0;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
     gap: 0;
     margin-left: -0.75rem;
-  }
-  #hints::-webkit-scrollbar { display: none; }
-  #hints.more {
-    mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
   }
   .word {
     flex: none;
@@ -708,20 +814,15 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   }
   #way { flex: none; margin-left: auto; padding-left: 0.5rem; }
   #way .word { margin-right: -0.75rem; color: var(--soft); }
-  /* What is said floats above the bar at the right, and goes as it does elsewhere; with nothing
-     said, nothing is drawn there. */
-  #said {
-    position: absolute;
+  /* What is said floats above the bar at the screen's right, on the bar's colour. */
+  #said,
+  body:has(#buffer:not([hidden])) #said {
     right: var(--gutter);
     bottom: calc(100% + 0.125rem);
-    margin: 0;
     padding: 0.125rem 0.5rem;
     border-radius: 3px;
     background: var(--behind, var(--paper));
-    pointer-events: none;
   }
-  #said:not(:has(#status:not(.faded):not(:empty), #trouble:not([hidden]), #sync:not([hidden]),
-    #passphrase:not([hidden]))) { display: none; }
   #said .word { position: relative; min-height: 0; min-width: 0; padding: 0; font-size: inherit; pointer-events: auto; }
   #said .word::before { content: ""; position: absolute; inset: -0.75rem -0.5rem; }
 
@@ -768,6 +869,16 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   }
   #top > button[hidden] { display: inline-flex !important; }
   .chev { margin-right: calc(-22px + 0.5rem); }
+  /* At a phone's width the arrow is centred in the room every row leaves for it, and its target
+     starts at the room's left edge and reaches into the gutter, never into the head. */
+  @media (max-width: 640px) {
+    .row[aria-current="true"] .chev {
+      right: calc(1.25rem - 44px);
+      width: 44px;
+      margin-right: 0;
+      padding-right: calc(44px - 1.25rem);
+    }
+  }
   /* A long press on a row is not a text selection: the row is a thing, and the head under the
      cursor is the one text in it to select in. */
   .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

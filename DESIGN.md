@@ -828,25 +828,32 @@ text left-aligned, and the line a little above a third of the way down, where it
 move when you type or when results arrive. A faint hairline under the line sets it apart from the
 rows. The blank page is the caret and, under it in faint grey, the heads at the top of the list
 fading out by the eighth. As you type, what is found takes their place; only a row that is new fades
-in, and nothing else moves. The document never scrolls, at any width: the list scrolls under the
-line. Only the rows that can be seen are made: those that fit and twenty more, at least twenty past
-the cursor, and fifty more whenever the list is scrolled to within two rows of its end; a new list
-starts again from what fits, and a row made because the list was scrolled or walked to it does not
-fade in. The path, in a place, is in the margin above the line, `main › Boiler`: the space's name
-and then each step, each a way back to it, the first to the top, a note's step read as its row is.
-The tab's title stays `fzn`, or `fzn · garden` in another space. No colour: paper, ink and two
-greys, light and dark by the system's preference. On a page at least 75rem wide the body of what the
-cursor is on is read beside the list: the note under the cursor, or with the cursor on the line in a
-place the note you are in. It is rendered as markdown, in the soft grey, from the top of the first
-row's text, with no border, scrolled on its own and faded at its foot as the list is. A narrower
-page has no room for it: a note's body is read there by opening it, and the note you are in is read
-above the line, rendered, under the path and in the path's smaller size, clamped to six lines, and
-opened with a tap, so that where you are is all above the line and what is found follows it
-directly; the margin grows downwards only for a body longer than it has room for. At a phone's
-width, 640px and under, the column is the screen's width with the line at the top, a long path gives
-up its middle, the note you are in is clamped to three lines and, on a touch screen, hidden while
-the keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in
-sight: it has the room, and a field there has the focus almost always.
+in, and nothing else moves. A row is one line, wider than a phone's, wherever the cursor is: a head
+longer than its row ends in `…`, on the cursor and off it (see "A row is one line, and a long head
+is read beside it"). The document never scrolls, at any width: the list scrolls under the line. Only
+the rows that can be seen are made: those that fit and twenty more, at least twenty past the cursor,
+and fifty more whenever the list is scrolled to within two rows of its end; a new list starts again
+from what fits, and a row made because the list was scrolled or walked to it does not fade in. The
+path, in a place, is in the margin above the line, `main › Boiler`: the space's name and then each
+step, each a way back to it, the first to the top, a note's step read as its row is. The tab's title
+stays `fzn`, or `fzn · garden` in another space. No colour: paper, ink and two greys, light and dark
+by the system's preference. On a page at least 75rem wide the body of what the cursor is on is read
+beside the list: the note under the cursor, and the whole of its head, above the body, when its row
+cuts it, or with the cursor on the line in a place the note you are in. It is rendered as markdown,
+in the soft grey, from the top of the first row's text, with no border, scrolled on its own and
+faded at its foot as the list is. A narrower page has no room for it: a note's body, and the whole
+of a head its row cuts, are read there by opening it, and the note you are in is read above the
+line, rendered, under the path and in the path's smaller size, clamped to six lines, and opened with
+a tap, so that where you are is all above the line and what is found follows it directly; the margin
+grows downwards only for a body longer than it has room for. At a phone's width, 640px and under,
+the column is the screen's width with the line at the top, a long path gives up its middle, the note
+you are in is clamped to three lines and, on a touch screen, hidden while the keyboard is up, and
+the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the room, and
+a field there has the focus almost always. A head there is read whole, on as many lines as it takes,
+since there is no room beside the list to read the rest in: every row leaves the arrow's room at its
+end, whether or not it has the arrow, so that a head wraps the same on the cursor as off it, and the
+row under the cursor keeps its tail with its date at the tail's end, so that walking the list moves
+nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
@@ -893,11 +900,16 @@ the body beside the list as a document; the line and the head are text fields, a
 Every other thing that can be asked for is a word at the foot of the page, pressed or tapped, the
 footer of the terminal made pressable. Only what applies where the cursor is gets one, and no key is
 written beside a word; a word says its key when the pointer rests on it. Undo has no key: it is the
-word `undo`, or `put back` on a row whose head has changed. At a phone's width the words are a bar
-at the foot, one row of them, each as tall as a thumb, the way back (`back`, `up` or `done`) pinned
-at its right and the rest scrolling under a fade when there are more than fit, going back to its
-start whenever the cursor moves to another row; `move up` and `move down` there move the note. What
-was said floats above the bar at the right, and nothing is drawn there when nothing is said.
+word `undo`, or `put back` on a row whose head has changed. The foot is one line at every width,
+3.25rem tall, and holds still (see "The foot holds still"): the words never wrap; the way back
+(`back`, `up` or `done`) follows them and stays in sight when they do not fit; the rest scroll
+sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad, and go back
+to their start whenever they change or the cursor moves to another row. Wider than a phone the foot
+reaches from the column's left to the window's right margin, so that on a wide page the busiest
+rows' words run on under the pane rather than scroll. At a phone's width the words are a bar at the
+foot, each as tall as a thumb, with the way back pinned at its right; `move up` and `move down`
+there move the note. What was said floats above the words, at the column's right, taking no room,
+and nothing is drawn there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A cross after it clears it when it has text, and a `›` after the cross, in the column of the
@@ -906,45 +918,57 @@ not there, so that neither moves the other, or the dates, by coming or going; an
 the line, clearing and going in are not also words in the foot.
 
 *Writing in a row.* The head of the row the cursor is on is a text box, with the day its note was
-written at the end of its row, or under the head at a phone's width, and typing changes it. Until
-the row is written in it reads as it does off the cursor, its marks rendered, a task's box drawn and
-a place's labels hidden, heavier and with no caret drawn: the box is under the reading, holding the
-focus whenever it would, showing nothing. A key that would change the head (a letter, Backspace,
-Delete) or move the caret in it (Left, Right, Home, End, and their Shift and word forms), a paste, a
-cut, dictation, a composition starting, a selection made in it, or a press on its words reveals it:
-the reading goes, the box shows the text as typed, and what revealed it lands as it would have, a
-letter at the end and Left one before it. Up, Down, the pages, Tab, Enter, Escape and the chords do
-not, since they leave the row or act on the note as a whole. It stays revealed until the cursor
-leaves the row. A new row, from Enter or from the line, starts revealed, being written, as does the
-note Enter writes from the line, a row an undo put text back in other than a task's box alone, and a
-row whose head changed in place, from elsewhere, while it was read. A drag from the words, not from
-a task's box, reveals the row and selects, and the middle and right buttons anywhere on the head
-reveal it with the caret under the pointer and act on the box. Enter opens a new row under it;
-Ctrl-O, or `body` in the foot, opens the whole note in the sheet, a bounded overlay over the column
-with the page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break,
-Tab indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back
-onto the head. Leaving it for anywhere else on the page closes it, and a press on another row goes
-there; a press in its own margin, or on its row behind it, does not, and nor does leaving the
-window, though the tab going out of sight writes what it holds. The words in the foot stay above the
-dimming, since they are about the note. There is no second editor: the sheet is the body's editor,
-for a long document too, and with it shut the head is written in its row. While the body is open the
-sheet holds a CodeMirror editor, fetched after the first pause in keys once the page has painted, or
-when a body opens if that is sooner: the markdown styled where it stands with every mark in sight,
-the marks in the faint grey and the text in ink, headings and strong text heavier, emphasis slanted,
-code in the monospace, soft wrap, step undo, a grey selection, and vim mode for the browser that
-asked for it with the word `vim` in the foot, which a touch screen, whose keyboard has no Escape, is
-not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
-note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
-`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
-first, and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the editor's
-coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt for a command
-is at the foot of the sheet, under the text and a hairline. The head stays an ordinary field. Until
-the editor has loaded, and if it never does, the sheet holds a plain text area. The `editor` the
-engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and
-the bar the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from
-the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
-the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
-closes it.
+written at the end of its row, a caret's width off the head, or at the end of its tail at a phone's
+width, and typing changes it; a note with a body has `¶` just before the date, since the tail, where
+the mark is off the cursor, is not there. Until the row is written in it reads as it does off the
+cursor, on one line, cut with `…`, its marks rendered, a task's box drawn and a place's labels
+hidden, heavier and with no caret drawn: the box is under the reading, holding the focus whenever it
+would, showing nothing. A key that would change the head (a letter, Backspace, Delete) or move the
+caret in it (Left, Right, Home, End, and their Shift and word forms), a paste, a cut, dictation, a
+composition starting, a selection made in it, or a press on its words reveals it: the reading goes,
+the box shows the text as typed, and what revealed it lands as it would have, a letter at the end
+and Left one before it. Up, Down, the pages, Tab, Enter, Escape and the chords do not, since they
+leave the row or act on the note as a whole. It stays revealed until the cursor leaves the row. A
+new row, from Enter or from the line, starts revealed, being written, as does the note Enter writes
+from the line, a row an undo put text back in other than a task's box alone, and a row whose head
+changed in place, from elsewhere, while it was read. Revealed, the box is one line too, wider than a
+phone's, a field that scrolls sideways under the caret: the text moves only when the caret would
+come within 2.5em, about five letters, of an edge, by the box's `scroll-padding-inline` where a
+browser honours it for the caret and by the page in every browser, and an edge that hides text
+fades. A letter, End or a paste at the end slides the text to show the end; Home moves nothing; a
+press on the words keeps the letter pressed under the pointer, the source scrolled so that a link's
+word stays where it was read, unless the letter is within five letters of an edge or past where the
+box ends, when it comes in that far; and the text stays put until the caret moves. On a wide page
+the pane shows the whole head as it is typed. Left, the row reads from its start again, its scroll
+forgotten, as an address bar's is. At a phone's width the box wraps as the head read does, and a
+head being written grows its row as it wraps. A drag from the words, not from a task's box, reveals
+the row and selects, and past an edge that hides text scrolls the box towards the pointer as it is
+held there; the middle and right buttons anywhere on the head reveal it with the caret under the
+pointer and act on the box. Enter opens a new row under it; Ctrl-O, or `body` in the foot, opens the
+whole note in the sheet, a bounded overlay over the column with the page dimmed slightly behind it,
+which scrolls on its own, and in it Enter is a line break, Tab indents and Shift-Tab takes the
+indent back, the arrows move within it, and Esc closes it back onto the head. Leaving it for
+anywhere else on the page closes it, and a press on another row goes there; a press in its own
+margin, or on its row behind it, does not, and nor does leaving the window, though the tab going out
+of sight writes what it holds. The words in the foot stay above the dimming, since they are about
+the note. There is no second editor: the sheet is the body's editor, for a long document too, and
+with it shut the head is written in its row. While the body is open the sheet holds a CodeMirror
+editor, fetched after the first pause in keys once the page has painted, or when a body opens if
+that is sooner: the markdown styled where it stands with every mark in sight, the marks in the faint
+grey and the text in ink, headings and strong text heavier, emphasis slanted, code in the monospace,
+soft wrap, step undo, a grey selection, and vim mode for the browser that asked for it with the word
+`vim` in the foot, which a touch screen, whose keyboard has no Escape, is not offered. In vim mode
+`j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but
+in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or
+the word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and
+stays, scrolled where it was. The page's caret is drawn from the editor's coordinates, a block in
+normal and visual mode and a bar in insert mode. Vim's prompt for a command is at the foot of the
+sheet, under the text and a hairline. The head stays an ordinary field. Until the editor has loaded,
+and if it never does, the sheet holds a plain text area. The `editor` the engine offers is not shown
+here. At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour
+while it is open; a wider touch screen keeps it in the column, sized from the frame. On a touch
+screen it opens without the keyboard, which a tap in the text raises; putting the keyboard away
+leaves it open, and `done`, the back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -962,9 +986,11 @@ caret's. The box at the start of a task is drawn in its row on every width, the 
 cursor's too until it is revealed and its head is its text, and a tap or a click on it ticks the
 task where it reads, without revealing the row, the cursor and the caret staying where they were;
 its room for a finger grows into the margin before it and stops short of the head's first letter. It
-is drawn a little larger than a letter, so that it reads at a glance. The `›` at the end of the
-selected row goes into the note and the one after the line into what the line names; a link in a row
-opens and leaves the cursor where it was; the path is the way back, and so is the phone's own back
+is drawn a little larger than a letter, so that it reads at a glance, and sits on its head's first
+line with its middle on the middle of the capitals, as the font measures them, in a row and in a
+body read alike (see "A task's box sits by the font's measures"). The `›` at the end of the selected
+row goes into the note and the one after the line into what the line names; a link in a row opens
+and leaves the cursor where it was; the path is the way back, and so is the phone's own back
 gesture. The keyboard is the person's: the page moves the focus between fields while one has it, and
 otherwise gives it only for something that asked to write, a finger on a head's words, a key pressed
 on a keyboard joined to the device, or the word `new note`; no control takes the focus, on any
@@ -2490,6 +2516,89 @@ the app now does is described above; an entry repeats it only where the reason n
   one switch now covers the list. In the terminal the body is the person's own editor, so the
   terminal's setting is the list's alone.
 
+- **A row is one line, and a long head is read beside it.** Decided 2026-10-17, at Sam's direction,
+  revising "The row under the cursor reads until it is written in" where a revealed head whose
+  source is longer "may take another line once revealed", wider than a phone's; "A body is read
+  apart from its row" and "The body read is that of what the cursor is on", whose reading place now
+  reads a cut head too; the Terminal's row under the cursor; and the stylesheet's reason for keeping
+  a head whole on the cursor. Sam, watching the page: the whole remaining list shifted down when a
+  head filled more than its row; say that there is more and offer the whole note; and let a line
+  being written scroll sideways where it is, in the idioms people know, smooth and predictable. The
+  row under the cursor had kept its whole head on as many lines as it took, so that a head did not
+  lose words as the cursor reached it. Walking onto a head of five lines then moved every row under
+  it down four and back, the fault "A body is read apart from its row" was for, and the reveal kept
+  it, since a row read wrapped as its box did. The terminal showed the end of a long head as the
+  cursor landed, unmarked, and put a tail that did not fit on a row of its own. Now a row is one
+  line wherever the cursor is, on every width wider than a phone's, and a head too long for it ends
+  in `…`, the mark both faces use for what is cut; on the cursor the date and the arrow keep their
+  places, so a head that just fits off the cursor is cut on it, and the `…` comes as the cursor
+  lands while no text moves. The whole of a cut head is read where the body is read, above the body
+  and only when it is cut, so that it is never a second copy of the row: beside the list on a page
+  75rem wide, at the foot of the list in the terminal, and elsewhere by opening the note. Written
+  in, the head is the one-line field the model says it is ("a newline pasted into it becomes a
+  space"), and does what one-line fields do everywhere, an address bar, a rename box in an editor's
+  file list, readline's horizontal mode, vim without wrap: it scrolls sideways under the caret,
+  keeping five letters beside it, as vim's `sidescrolloff` and helix do. An edge that hides text
+  fades on the page, which is how the page marks what scrolls, and shows `…` in the terminal, which
+  cannot fade, as readline marks one with `<` and `>`. A press on its words keeps the letter pressed
+  under the pointer, and once left it reads from its start, as an address bar does on blur. The
+  terminal's row under the cursor reads from its start with its cursor on the `…` until a key writes
+  in it or moves its caret, and its tail, the reasons among it, goes as far as it fits and is cut
+  with the row, as off the cursor, rather than read at the foot. The row under the cursor shows `¶`
+  before its date, since its tail, where the mark was, is not there. The two families of product
+  were weighed: where the list is the document, outliners, Notion's pages and task apps, items wrap
+  and edit in place and the reflow is accepted; where the list is a list, mail, notes lists, Linear,
+  Finder, an editor's file list and lazygit, a row is one line, cut, read whole beside the list and
+  edited as a field that scrolls. fzn's list holds still by decision and has its reading place, so
+  it is the second. Weighed and not taken: an editor laid over the rows below, as a spreadsheet's
+  cell and a Notion table's are, which wants a box with a shadow and is a second editor where the
+  sheet is the one; growing the row, as outliners do, which is what was there; and a pressable
+  "more", which the `…`, the reading place, `body` and the second press already are. At a phone's
+  width a head is still read whole, wrapped, since there is no room beside the list and cut at forty
+  letters most heads would be: every row leaves the arrow's room, and the row under the cursor keeps
+  its tail with its date at the tail's end, so walking moves nothing, where before the arrow took
+  width from the head and the date added a line. A row with no tail there has no date rather than a
+  date line that would grow it as it is tapped and move the next tap's target. A head being written
+  there grows as a phone's composer does: the one place the page does not keep "nothing below moves
+  while writing", where the rows below are mostly under the keyboard anyway, and the alternative,
+  the desktop's field on a phone, would edit a long head through a window forty letters wide.
+
+- **The foot holds still.** Decided 2026-10-17, at Sam's direction, revising Browser *Keys*, where
+  the bar was the phone's alone. The words at the foot moved as the cursor went between the line and
+  the rows. What was said sat in the words' wrapping row, pushed right, and a status faded by its
+  colour alone, keeping its width; on a row, with more words than on the line, it no longer fitted
+  beside them and went to a second line, raising every word by 23px, the foot growing from 52 to 75.
+  With nothing said the empty space still wrapped and moved them 4px, and the words themselves wrap
+  on the busiest rows, which the chords to be written beside them would make most rows. Now the foot
+  is one line at every width, 3.25rem tall. The words never wrap; the way back follows them and is
+  pinned at the end when they do not fit; the rest scroll under a fade at each edge that hides
+  words, the box's rule, which replaces a fade that knew only the right edge, and a wheel scrolls
+  them as a swipe or a trackpad does. Wider than a phone the foot reaches from the column's left to
+  the window's right margin, where from about 950px the busiest row, thirteen words with their
+  chords, fits on one line, running on under the pane on the busiest rows only; scrolling inside the
+  column instead would hide words on ordinary rows in a place once chords are written. What is said
+  floats above the words at the column's right, taking no room, and nothing is drawn there when
+  nothing is said. Measured in every state the cursor walks through and at every width from 390px to
+  1400px, with and without chords, the foot stays 52px tall with every word on the same line. "The
+  phone is a frame with a bar" rejected a bar of two rows because it would change height between
+  states and move the list; this is that, at every width. A word's chord, when it is written after
+  it, keeps to the one line.
+
+- **A task's box sits by the font's measures.** Decided 2026-10-17, from Sam's screenshot of a long
+  task on his iPhone, whose drawn box sat low, its middle near the first line's baseline. The box
+  was set an em offset below its own baseline, and an empty button's baseline is the engine's to
+  place: the rule written for an inline block does not bind a button, and iOS gives a button a style
+  of its own besides, so the row's box and the body's, an empty span, sat 0.1em apart in one engine
+  and the row's moved between engines. A fixed em is also right for one face only. Now both boxes
+  are set at the middle of the line's x-height, which no engine reads from the box's own baseline,
+  and raised by half an x-height less half the capitals, `top: calc(0.5ex - 0.5cap)`, so that the
+  box's middle is on the middle of the capitals of whatever face the head is in; the button has no
+  appearance of its own. Measured in WebKitGTK and Chromium in five faces, wrapped and on one line,
+  both boxes land on half the cap height within a thousandth of an em, and no line changes height.
+  It is the capitals and not the x-height because a box taller than the x-height centred on it would
+  hang below the baseline. A browser without the `cap` unit raises it a tenth of an em. WebKitGTK is
+  not iOS, so the phone is the last check.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2583,6 +2692,9 @@ the app now does is described above; an entry repeats it only where the reason n
   gone, and are found by their own words from then on, so the notes written in a place whose note
   is deleted are scattered back into the space. Whether they should be told, moved to what the
   deleted note linked to, or offered for deletion with it, use decides.
+- Whether a cut head on a page too narrow to read it beside the list wants more than `body` to read
+  it whole, and whether a head being written on a phone should stop growing its row (see "A row is
+  one line, and a long head is read beside it"); use decides.
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

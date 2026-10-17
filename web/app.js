@@ -356,7 +356,7 @@ function trouble(text) {
   clearTimeout(fading);
   const status = $('status');
   status.textContent = text;
-  status.classList.remove('faded');
+  status.classList.remove('faded', 'gone');
   status.classList.add('trouble');
 }
 
@@ -791,13 +791,17 @@ function reveal() {
 }
 
 // Reveals the row with the caret at a place in its head, for a press on its words: the focus is
-// given here, inside the press, since that is the only focus for which iOS raises a keyboard.
-function revealAt(at) {
+// given here, inside the press, since that is the only focus for which iOS raises a keyboard. The
+// letter pressed stays under the pointer, at `x`, as the marks open round it (see sidescroll).
+function revealAt(at, x = null) {
   reveal();
   box.focus({ preventScroll: true });
   const to = Math.min(at, box.value.length);
+  pressedAt = x;
   box.setSelectionRange(to, to);
+  measured = null;
   caretMoved();
+  pressedAt = null;
 }
 
 const headOf = (text) => {
@@ -808,8 +812,9 @@ const headOf = (text) => {
 // What the box should hold for the field as it now is.
 const boxText = (field) => (field.whole ? field.text : headOf(field.text));
 
-// Its size follows its text: by the browser where it can, and otherwise from the number of lines,
-// each counted 72 letters wide, since measuring would cost the keystroke.
+// Where it wraps, in the sheet and at a phone's width, its size follows its text: by the browser
+// where it can, and otherwise from the number of lines, each counted 72 letters wide, since
+// measuring would cost the keystroke. Elsewhere it is one line high whatever it holds.
 const sizes = CSS.supports?.('field-sizing', 'content');
 function fit() {
   if (!sizes) box.rows = box.value.split('\n').reduce((n, part) => n + 1 + Math.floor(part.length / 72), 0);
@@ -1104,6 +1109,9 @@ function fill(li, row, selected) {
   if (row.links.length) tail.append(el('span', null, `→ ${row.links.join(', ')}`));
   if (row.reasons.length) tail.append(el('span', null, row.reasons.join(' · ')));
   main.append(tail);
+  // The tail is not there on the cursor, so a body is said by its mark before the date, which is
+  // set before the arrow (see dateRow).
+  if (selected && row.has_body) main.append(el('span', 'mark', '¶'));
   if (selected) {
     const chev = el('button', 'chev', '›');
     chev.type = 'button';
@@ -1283,10 +1291,13 @@ function paintRows() {
       fit();
     }
     const end = box.value.length;
-    // A press on a head's words puts the caret where it landed.
+    // A press on a head's words puts the caret where it landed. A row landed on reads from its
+    // start, whatever the box was scrolled to in the row before.
     const at = field.fresh ?? (landed && typeof wantsText === 'number' ? Math.min(wantsText, end) : end);
+    if (landed) box.scrollLeft = 0;
     if (landed || (toggled && !field.whole) || (told && field.fresh != null)) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
+    if (landed || told) edges();
     if (takesFocus(box)) box.focus({ preventScroll: true });
   } else if (takesFocus(line)) {
     line.focus({ preventScroll: true });
@@ -1313,10 +1324,11 @@ function paintHints() {
   // Vim's keys are this browser's to ask for, and only where they apply: in an open body, once
   // the editor is there to have them.
   const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
-  // On a phone the way back, which the engine offers last, is pinned at the right of the bar,
-  // where a thumb finds it without reading; the rest scroll.
+  // The way back, which the engine offers last, follows the words and stays in sight when they do
+  // not fit, the rest scrolling; on a phone it is pinned at the right of the bar, where a thumb
+  // finds it without reading.
   const last = hints.length ? named(hints[hints.length - 1].action) : '';
-  const way = narrow.matches && ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
+  const way = ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
   set($('way'), JSON.stringify(way), () => (way ? [word(way)] : []));
   const words = $('hints');
   const changed = set(words, JSON.stringify([hints, vimWord]), () => {
@@ -1335,16 +1347,37 @@ function paintHints() {
     }
     return words;
   });
-  // New words, and the words of another row, start from the left, and a fade at the right says
-  // when there are more than fit.
+  // New words, and the words of another row, start from the left, and a fade at each edge says
+  // when there are more words past it.
   const under = view.cursor != null ? (view.rows[view.cursor]?.id ?? '') : '';
   const moved = words.dataset.under !== under;
   words.dataset.under = under;
-  if ((changed || moved) && narrow.matches) {
+  if (changed || moved) {
     words.scrollLeft = 0;
-    words.classList.toggle('more', words.scrollWidth > words.clientWidth + 1);
-  } else if (changed) words.classList.remove('more');
+    hintEdges();
+  }
 }
+
+const hintsNode = $('hints');
+// A few pixels past the edge, a word's own room, is not more words.
+function hintEdges() {
+  const over = hintsNode.scrollWidth - hintsNode.clientWidth;
+  hintsNode.classList.toggle('before', over > 4 && hintsNode.scrollLeft > 1);
+  hintsNode.classList.toggle('after', over > 4 && hintsNode.scrollLeft < over - 1);
+}
+hintsNode.addEventListener('scroll', hintEdges, { passive: true });
+// A wheel turned over words that do not fit scrolls them sideways, since a mouse has no other way
+// to; a wheel over words that fit is left to the page.
+hintsNode.addEventListener('wheel', (event) => {
+  const over = hintsNode.scrollWidth - hintsNode.clientWidth;
+  if (over <= 1 || event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  const by = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * over : event.deltaY;
+  const to = Math.max(0, Math.min(over, hintsNode.scrollLeft + by));
+  if (to === hintsNode.scrollLeft) return;
+  hintsNode.scrollLeft = to;
+  event.preventDefault();
+});
+window.addEventListener('resize', () => view && hintEdges());
 
 // An undo that put text back in the head under the cursor leaves the row revealed, as it was being
 // written; one that only moved the cursor, or put back no more than a task's box, as undoing a
@@ -1387,6 +1420,15 @@ function word(hint) {
 
 let status = '';
 let fading = 0;
+// A status fades, and once it has faded it is gone, so that what is said, floating above the words,
+// is drawn only while something can be read there. Without motion there is no fade to wait for.
+function fade(node) {
+  node.classList.add('faded');
+  if (still.matches) node.classList.add('gone');
+}
+$('status').addEventListener('transitionend', (event) => {
+  if (event.propertyName === 'opacity' && event.target.classList.contains('faded')) event.target.classList.add('gone');
+});
 function paintFoot() {
   // What just happened is said, and goes after five seconds. What is still true stays: that the
   // relay cannot be reached, or that this device's clock is far from the relay's, and that the
@@ -1398,10 +1440,10 @@ function paintFoot() {
     status = says;
     const node = $('status');
     node.textContent = status;
-    node.classList.remove('faded');
+    node.classList.remove('faded', 'gone');
     node.classList.toggle('trouble', !!refused && status === refused);
     clearTimeout(fading);
-    if (status && status !== refused) fading = setTimeout(() => node.classList.add('faded'), 5000);
+    if (status && status !== refused) fading = setTimeout(() => fade(node), 5000);
   }
   // A passphrase in doubt, as the engine judges it, says so with a way to type it again: a key
   // that opens nothing here, or one the relay refused that nothing here has proved. A key nothing
@@ -1472,17 +1514,52 @@ function paintBody(node, says) {
 // The body of what the cursor is on, beside the list, which the page shows only when it is wide
 // enough to have room for it: the note under the cursor as it is being written, and on the line
 // the note you are in, which is then not read above the line as well. A note landed on is read
-// from its top. With the body open the sheet has it, and the pane says nothing.
+// from its top. With the body open the sheet has it, and the pane says nothing. Above the body it
+// reads the whole of a head its row cuts, as the row would read it uncut, and as it is typed once
+// it is written in; a head the row shows whole is not read twice. The two are parts of their own,
+// so that a letter typed in a long head reads the head again and never the body.
+const paneHead = $('pane-head');
+const paneBody = $('pane-body');
 function paintPane() {
   const field = view.field;
   const says =
     !wide.matches || field?.whole ? '' : field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
-  paintBody(pane, says);
+  paintBody(paneBody, says);
+  paintPaneHead();
   const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
   if (pane.dataset.under !== under) {
     pane.dataset.under = under;
     pane.scrollTop = 0;
   }
+}
+
+function paintPaneHead() {
+  const field = view.field;
+  const row = wide.matches && field && !field.whole && boxIn ? rows.get(boxIn) : null;
+  const read = row && !revealed ? row.querySelector('.edit > .head') : null;
+  const cut = row && (read ? read.scrollWidth > read.clientWidth + 1 : box.scrollWidth > box.clientWidth + 1);
+  paneHead.hidden = !cut;
+  if (!cut) return set(paneHead, '', () => []);
+  const listed = view.rows[view.cursor];
+  // Read, it is the row's reading; written in, the head as typed, its box drawn while it still
+  // begins with one.
+  const text = revealed ? headOf(field.text) : (listed.shown ?? listed.head);
+  const boxed = /^\[[ xX]\](?: |$)/.test(text);
+  const task = revealed ? (listed.task != null && boxed ? /^\[[xX]\]/.test(text) : null) : listed.task;
+  set(paneHead, JSON.stringify([text, task, readings, !!render]), () => [readWhole(text, task)]);
+}
+
+// A head read whole, its marks rendered and a task's box drawn, which is never pressed.
+function readWhole(text, task) {
+  const head = el('div');
+  if (task != null) {
+    const drawn = el('span', task ? 'tick done' : 'tick');
+    drawn.setAttribute('aria-hidden', 'true');
+    head.append(drawn);
+    text = text.slice(text[3] === ' ' ? 4 : 3);
+  }
+  head.append(render ? render.head(text) : text);
+  return head;
 }
 
 function paint() {
@@ -1578,7 +1655,7 @@ const asMeasured = () => {
   const field = caretField();
   return (
     field &&
-    [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, field.className,
+    [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, faceOf(field),
       $('dates').textContent, view?.cursor, composing, field === document.activeElement, revealed,
       inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
         editor.composing, editor.dom.parentElement] : ''].join('\u0000')
@@ -1592,15 +1669,17 @@ const caretMoved = () => {
 // changed.
 function dress(field) {
   const style = getComputedStyle(field);
-  const face = `${field.id} ${field.className} ${innerWidth}`;
+  const face = `${field.id} ${faceOf(field)} ${innerWidth}`;
   if (mirror.dataset.face !== face) {
     mirror.dataset.face = face;
     for (const name of COPIED) mirror.style[name] = style[name];
-    mirror.style.whiteSpace = field === box ? 'pre-wrap' : 'pre';
-    mirror.style.overflowWrap = field === box ? 'anywhere' : 'normal';
+    mirror.style.whiteSpace = field === box ? style.whiteSpace : 'pre';
+    mirror.style.overflowWrap = field === box ? style.overflowWrap : 'normal';
   }
   return style;
 }
+// A field's class but for the fades at its edges, which change nothing that is measured.
+const faceOf = (field) => field.className.replace(/ (before|after)\b/g, '');
 
 // Where the lines of a field's words are on the screen, measured in the mirror, whose box lies
 // over the field's as the caret's measure has it.
@@ -1677,12 +1756,14 @@ function placeCaret() {
   const span = el('span', null, end ? '\u00a0' : text[at]);
   mirror.replaceChildren(text.slice(0, at), span, end ? text.slice(at) : text.slice(at + 1));
   const width = `${field.clientWidth - padding}px`;
-  const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
   if (mirror.style.width !== width) mirror.style.width = width;
 
   // The read. The block is the height of the line, centred on the letter as the line's own leading
-  // is, and never narrower than a third of a letter, so that it is still a block over an i.
+  // is, and never narrower than a third of a letter, so that it is still a block over an i. A head
+  // being written on one line is scrolled to the caret before the field's place is taken.
   const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = span;
+  if (field === box && style.whiteSpace === 'pre') sidescroll(offsetLeft, size);
+  const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
   const tall = parseFloat(style.lineHeight) || offsetHeight;
   const wide = end ? 0.55 * size : Math.max(offsetWidth, 0.35 * size);
   const left = fieldLeft + offsetLeft - (wide - (end ? wide : offsetWidth)) / 2;
@@ -1694,6 +1775,57 @@ function placeCaret() {
   caret.classList.toggle('still', field !== document.activeElement);
   showCaret(left, top, wide, tall);
 }
+
+// A head being written is one line, and scrolls sideways under the caret as any one-line field
+// does: the text moves only when the caret would come within five letters of an edge, as vim's
+// sidescrolloff keeps them, which a browser honouring the box's scroll-padding does for itself and
+// this does for every browser. A press on the words that revealed the row keeps the letter pressed
+// under the pointer, however much longer the source is than the reading was, as far as the five
+// letters allow: a letter pressed by an edge, on the `…` or past where the box ends on the cursor,
+// a row read off the cursor running further right than its box, is brought in by as much as it
+// takes to be clear of the fade. Each edge that hides text fades. What it writes is kept, so that
+// the scroll it causes is not taken for one the browser made.
+let pressedAt = null;
+let wrote = null;
+function sidescroll(x, size) {
+  const room = box.clientWidth;
+  const max = box.scrollWidth - room;
+  const context = Math.min(2.5 * size, room / 2);
+  let to = pressedAt != null ? x - (pressedAt - box.getBoundingClientRect().left) : box.scrollLeft;
+  to = Math.min(Math.max(to, x - room + context), x - context);
+  // A pixel or two from an end is the end: the reading and the box can differ by less than a
+  // pixel, and a head scrolled by one would fade its first letters.
+  to = Math.max(0, Math.min(max, Math.round(to)));
+  if (to <= 2) to = 0;
+  else if (to >= max - 2) to = max;
+  if (Math.abs(to - box.scrollLeft) > 1) {
+    box.scrollLeft = to;
+    wrote = box.scrollLeft;
+  }
+  edges();
+}
+function edges() {
+  const sideways = !box.classList.contains('whole') && getComputedStyle(box).whiteSpace === 'pre';
+  const over = box.scrollWidth - box.clientWidth;
+  box.classList.toggle('before', sideways && box.scrollLeft > 1);
+  box.classList.toggle('after', sideways && box.scrollLeft < over - 1);
+}
+// A scroll the browser makes itself, as a paste or a composition running past an edge does, moves
+// the fades and the caret with it; one sidescroll made has placed the caret already.
+box.addEventListener(
+  'scroll',
+  () => {
+    edges();
+    if (wrote != null && Math.abs(box.scrollLeft - wrote) <= 1) {
+      wrote = null;
+      return;
+    }
+    wrote = null;
+    measured = null;
+    placeCaret();
+  },
+  { passive: true },
+);
 
 function showCaret(left, top, wide, tall) {
   caret.style.cssText = `left:${left}px;top:${top}px;width:${wide}px;height:${tall}px`;
@@ -1762,6 +1894,8 @@ document.addEventListener('selectionchange', () => {
 window.addEventListener('resize', () => {
   placeCaret();
   clampHere();
+  // Whether the head under the cursor is cut, and so read beside the list, follows the width.
+  if (view && wide.matches) paintSoon();
 });
 
 const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey;
@@ -2015,17 +2149,19 @@ list.addEventListener('click', (event) => {
   if (veiled) {
     event.preventDefault();
     const hit = hitText(veiled.querySelector(':scope > .head'), box.value, x, y);
-    if (hit !== false) revealAt(hit === true ? box.value.length : hit);
+    if (hit !== false) revealAt(hit === true ? box.value.length : hit, x);
     return;
   }
   if (event.target.closest('.chev')) act('go_in');
   else if (at !== view.cursor) {
     wantsText = hitText(item.querySelector('.head'), view.rows[at].head, x, y);
     revealOnLanding = wantsText !== false;
+    if (typeof wantsText === 'number') pressedAt = x;
     try {
       act({ select: at });
     } finally {
       revealOnLanding = false;
+      pressedAt = null;
     }
   } else if (!view.field?.whole) act('open');
   follow();
@@ -2052,10 +2188,12 @@ list.addEventListener('mousedown', (event) => {
   if (!veiled) return;
   event.preventDefault();
   const at = hitText(veiled.querySelector(':scope > .head'), box.value, event.clientX, event.clientY);
-  if (event.button === 1 || event.button === 2) return revealAt(typeof at === 'number' ? at : box.value.length);
+  if (event.button === 1 || event.button === 2) {
+    return revealAt(typeof at === 'number' ? at : box.value.length, typeof at === 'number' ? event.clientX : null);
+  }
   if (event.button !== 0 || (touched && Date.now() - touched.at < 1000)) return;
   if (event.target.closest('.tick')) return;
-  if (at !== false) dragFrom = { x: event.clientX, y: event.clientY, at: at === true ? box.value.length : at };
+  if (at !== false) dragFrom = { x: event.clientX, y: event.clientY, at: at === true ? box.value.length : at, row: boxIn };
 });
 document.addEventListener('mousemove', (event) => {
   if (!dragFrom) return;
@@ -2066,14 +2204,44 @@ document.addEventListener('mousemove', (event) => {
   if (!dragged) {
     if (Math.hypot(event.clientX - dragFrom.x, event.clientY - dragFrom.y) < 4) return;
     dragged = true;
-    revealAt(dragFrom.at);
+    revealAt(dragFrom.at, dragFrom.x);
   }
-  const to = offsetInBox(event.clientX, event.clientY);
+  dragFrom.to = { x: event.clientX, y: event.clientY };
+  dragTo();
+});
+// A drag ends with its button, and with a key or the window lost, either of which may move the
+// cursor, and the box with it, to another row.
+function endDrag() {
+  dragFrom = null;
+  cancelAnimationFrame(dragging);
+}
+document.addEventListener('mouseup', endDrag);
+document.addEventListener('keydown', endDrag, true);
+window.addEventListener('blur', endDrag);
+
+// The drag began on the reading, whose press was not the box's, so the browser does not scroll the
+// box as a drag past its edge would: the page does. While the pointer is past an edge that hides
+// text the box scrolls towards it by as far as it is past, a frame at a time for as long as it is
+// held there, and the selection's moving end is the letter just inside that edge, so that it is
+// always in sight and nothing hidden is selected without being shown.
+let dragging = 0;
+function dragTo() {
+  if (!dragFrom?.to || !dragged) return;
+  // A drag belongs to the row it began in: one whose box has gone to another row is over.
+  if (boxIn !== dragFrom.row || !box.isConnected || box.classList.contains('whole')) return endDrag();
+  const { x, y } = dragFrom.to;
+  const r = box.getBoundingClientRect();
+  const sideways = getComputedStyle(box).whiteSpace === 'pre';
+  const over = sideways ? (x > r.right ? x - r.right : x < r.left ? x - r.left : 0) : 0;
+  if (over) box.scrollLeft = Math.max(0, Math.min(box.scrollWidth - box.clientWidth, box.scrollLeft + over));
+  const inside = sideways ? Math.max(r.left + 1, Math.min(r.right - 1, x)) : x;
+  const to = offsetInBox(inside, sideways ? (r.top + r.bottom) / 2 : y);
   const from = dragFrom.at;
   box.setSelectionRange(Math.min(from, to), Math.max(from, to), to < from ? 'backward' : 'forward');
   caretMoved();
-});
-document.addEventListener('mouseup', () => (dragFrom = null));
+  cancelAnimationFrame(dragging);
+  if (over) dragging = requestAnimationFrame(dragTo);
+}
 
 // Where in the box's text a point is, by the browser where it says so for a text box, and
 // otherwise its start or its end, by which side of the box the point is on.
