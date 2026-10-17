@@ -65,13 +65,17 @@ Booked for /fri, ask about the pressure drop
 
 `/fri`, `/today`, `/+3`, `/-mon` and the like are written out as dates when the note is saved.
 A note whose head starts `[ ]` is a task: archiving it ticks it, `[x]`, and bringing it back
-unticks it.
+unticks it. fzn keeps when each note was archived, which for a task is when it was ticked, and a
+new note written starting `[x]` is done as it is written.
 
 On the line, words find and everything else holds. `"oil tank"` must be in a note, `#house`,
-`@joe` and `/fri` must be on it, `[ ]` holds the open tasks, and a span holds what was written in
-it: `/-mon 18:00..` since six on Monday evening, `2026-10-01..2026-10-05` those five days. `~` at
-the start of the line finds heads by their letters in order, so `~bsv` finds Boiler service. A
-line of nothing but labels, such as `[ ] #house /today`, is gone into with one Tab.
+`@joe` and `/fri` must be on it, `[ ]` holds the open tasks and `[x]` the done ones, archived or
+not, and a span holds what was written in it: `/-mon 18:00..` since six on Monday evening,
+`2026-10-01..2026-10-05` those five days, `..` all time. With `[x]` a span holds the tasks done in
+it instead, so `[x] /-mon.. #work` is this week's done work, whenever it was written. A line with
+a span and no words lists oldest first. `~` at the start of the line finds heads by their letters
+in order, so `~bsv` finds Boiler service. A line of nothing but labels, such as
+`[ ] #house /today`, is gone into with one Tab.
 
 ## Sync
 
@@ -144,6 +148,7 @@ carries none, and says so.
 
 ```sh
 fzn query '#house /-mon..'       # what that line finds, archived notes too, in the app's order
+fzn query '[x] /-mon.. #work'    # the tasks in #work done this week, in the order they were done
 fzn export > notes.jsonl         # every live note, one plain JSON line each, oldest first
 fzn tick ID ...                  # tick these tasks, by the ids query gives them
 fzn untick ID ...                # and bring them back
