@@ -166,9 +166,11 @@ its URL, and Ctrl-[ is Esc. Redo, link and showing what is archived are words in
 Ctrl-R, Ctrl-L and Ctrl-V are the browser's. With a mouse a word in the foot that a chord also asks
 for has the chord written after it, `tick ⇧↵`, `delete ^D`; Enter, Tab, Esc and the arrows are not
 written, nor Control with an arrow on a Mac, where it is the system's. The word `vim`, in the foot
-of an open body, turns vim's keys on in this browser, for the body and for the list as the
-terminal's `vim = true` does, and the list's normal mode then has vim's letters written after the
-words; a touch screen does without.
+on the line and in an open body, turns vim's keys on in this browser, for the body and for the list
+as the terminal's `vim = true` does, and the list's normal mode then has vim's letters written after
+the words; a touch screen does without. In normal mode `h`, `l`, Left and Right move a caret along
+the head, `0`, `^` and `$` take it to the start, the first letter after a task's box and the end,
+`w`, `b` and `e` go by words, `i` and `a` type at it, Esc goes up to the line and Tab goes in.
 
 Vimium takes Esc and Ctrl-[ from the page before it sees them, and both are needed: Esc comes
 back a rung at a time, and with vim's keys it is how a row being written goes back to normal mode.

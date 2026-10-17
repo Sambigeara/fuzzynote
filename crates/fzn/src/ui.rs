@@ -1810,9 +1810,11 @@ impl App {
         let view = self.device.view();
         // A line the device changed, as it does on the way into a note and out of one, has its
         // cursor at the end, and so does the head of a row just landed on. A head put back or
-        // written in place keeps its caret where it was, if the head is still that long. A new
-        // row with only the labels it opened with, landed on or put back to them, has its caret
-        // where the device says, after a task's box and before the rest.
+        // written in place keeps its caret where it was, if the head is still that long, but on
+        // a row read in vim's normal mode, whose caret is drawn at the end, it goes to the end,
+        // so that `a`, `i` and the motions start from where the block is. A new row with only
+        // the labels it opened with, landed on or put back to them, has its caret where the
+        // device says, after a task's box and before the rest.
         if view.line != line {
             self.cursor = letters(view.line);
         }
@@ -1820,9 +1822,10 @@ impl App {
             let head = head_and_body(field.text).0;
             let end = letters(head);
             let stayed = under_cursor(&view) == was_on;
+            let read = self.vim && self.normal && self.row_left.is_none();
             self.row_cursor = match field.fresh {
-                Some(start) if !(stayed && was_fresh) => letters_in(head, start),
-                _ if stayed => self.row_cursor.min(end),
+                Some(start) if !(stayed && was_fresh) || read => letters_in(head, start),
+                _ if stayed && !read => self.row_cursor.min(end),
                 _ => end,
             };
             // A row landed on reads from its start until a key writes in it or moves its caret.
@@ -3788,6 +3791,28 @@ mod tests {
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(field(&app).as_deref(), Some("[ ] Boiler"));
         assert_eq!(app.row_cursor, 9);
+        done(&space);
+    }
+
+    #[test]
+    fn with_vim_undo_and_redo_on_a_row_read_in_normal_mode_leave_the_caret_at_the_end() {
+        let (mut app, space) = vim_app();
+        write(&mut app, "Sweep the patio");
+        write(&mut app, "Shed");
+        press(&mut app, KeyCode::Down, false);
+        type_in(&mut app, "A");
+        type_in(&mut app, " service");
+        press(&mut app, KeyCode::Esc, false);
+        type_in(&mut app, "jk");
+        assert_eq!(field(&app).as_deref(), Some("Shed service"));
+        type_in(&mut app, "u");
+        assert_eq!(field(&app).as_deref(), Some("Shed"));
+        assert_eq!(app.row_cursor, 4);
+        press(&mut app, KeyCode::Char('r'), true);
+        assert_eq!(field(&app).as_deref(), Some("Shed service"));
+        assert_eq!((mode(&app), app.row_cursor), (Mode::Normal, 12));
+        type_in(&mut app, "aX");
+        assert_eq!(field(&app).as_deref(), Some("Shed serviceX"));
         done(&space);
     }
 

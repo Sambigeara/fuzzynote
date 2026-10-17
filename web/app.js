@@ -29,7 +29,8 @@
 // gets one; a word a chord also asks for has the chord written after it, where there is a pointer
 // to read it with. The chords are the terminal's wherever a browser lets them go, so that the two
 // faces are one set of keys to learn. With vim's keys, which this browser asks for with the word
-// `vim`, the list has vim's two modes, and the reveal is the line between them (see normalKey).
+// `vim`, the list has vim's two modes, normal mode with a caret of its own in the head (see
+// normalKey).
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
 // are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
@@ -640,13 +641,13 @@ const named = (action) => (typeof action === 'string' ? action : Object.keys(act
 // its chords. The four keys that are the app, Enter, Tab, Escape and the arrows, are not written:
 // they are the one sentence, and written on every row they would make the foot a dashboard. In an
 // open body the chords are the editor's, so none is claimed there. In vim's normal mode a row's
-// words have vim's letters, and redo its chord, which only that mode takes from the browser.
+// words have vim's letters, and redo its chord, which only that mode takes from the browser; going
+// in and up are Tab and Escape there, as without vim's keys, and so have nothing written.
 function keyFor(action, mode) {
   const name = named(action);
   if (view?.field?.whole) return '';
   if (mode === 'normal') {
-    const letters = { write: 'o', go_in: 'l', archive: 'x', delete: 'D', copy: 'y', undo: 'u',
-      select: '/' };
+    const letters = { write: 'o', archive: 'x', delete: 'D', copy: 'y', undo: 'u' };
     if (letters[name]) return letters[name];
     if (name === 'redo') return '^R';
   }
@@ -776,7 +777,10 @@ let leaving = false;
 // set again as the cursor lands on a row: a new row, being written, starts revealed. So does a row
 // whose landing `revealOnLanding` asks to be written in: one pressed on its words, whose caret goes
 // where the press landed, and the note Enter wrote from the line, whose head is still being typed.
+// With vim's keys `inserting` says the row is in insert, which is set as the cursor lands with the
+// reveal and apart from it after: a row revealed by a motion is still in normal mode.
 let revealed = false;
+let inserting = false;
 let revealOnLanding = false;
 
 // The keys that reveal the row: those that would change its head and those that move the caret
@@ -797,47 +801,172 @@ const revealsOn = (event) =>
 function reveal() {
   if (revealed || !boxIn) return;
   revealed = true;
-  box.readOnly = false;
+  box.readOnly = normalMode();
   const edit = box.parentElement;
   if (edit?.classList.contains('edit')) {
     edit.classList.remove('veiled');
     edit.querySelector(':scope > .head')?.remove();
   }
   placeCaret();
-  // With vim's keys that is insert, whose foot is not normal mode's.
+  // With vim's keys a motion reveals and nothing is acted on after it, so the page is painted for
+  // the pane, whose whole head reads as typed once the row is revealed.
   if (vimList()) paintSoon();
 }
 
-// With vim's keys the list has vim's two modes, and they are the reveal's two states, so there is
-// one state and not two: a row walked to is read, unrevealed, and is in normal mode, where letters
-// are commands; a row written in is revealed, and is in insert, where they type. What the reveal
-// does without vim's keys, a letter revealing the row and typing, is the one thing normal mode
-// changes: the keys it binds act, the rest are swallowed, and the box is read-only meanwhile, so
-// that a paste, a composition or dictation writes nothing either, while it keeps the focus, as
-// Vimium needs to leave its keys to the page. Only where the pointer is fine and hovers, as where
-// the chords are written (see fine): not on a touch screen, whose keyboard has no Escape.
+// With vim's keys the list has vim's two modes. A row walked to is in normal mode, where letters
+// are commands, and is read, unrevealed, with its caret at the end of the head; a row written in is
+// in insert, where they type, and is revealed. Normal mode's caret moves through the head as vim's
+// does through a line, and the first motion reveals the row, its marks shown and the box scrolling
+// with the caret, while it stays in normal mode until something writes in it. What the reveal does
+// without vim's keys, a letter revealing the row and typing, is the one thing normal mode changes:
+// the keys it binds act, the rest are swallowed, and the box is read-only meanwhile, so that a
+// paste, a composition or dictation writes nothing either, while it keeps the focus, as Vimium
+// needs to leave its keys to the page. Only where the pointer is fine and hovers, as where the
+// chords are written (see fine): not on a touch screen, whose keyboard has no Escape.
 const vimList = () => vimOn && fine.matches;
 const normalMode = () =>
-  vimList() && view?.cursor != null && !!view.field && !view.field.whole && !!boxIn && !revealed;
+  vimList() && view?.cursor != null && !!view.field && !view.field.whole && !!boxIn && !inserting;
 const modeNow = () => {
   if (!vimList() || view?.cursor == null || !view.field || view.field.whole) return 'plain';
-  return revealed ? 'insert' : 'normal';
+  return inserting ? 'insert' : 'normal';
 };
 
-// Back to reading the row, for Escape in a row written in with vim's keys: the row has been kept,
-// its date words written out, and is read again as it now is, in normal mode. A selection made in
-// it ends, as vim's Escape ends one, so that Ctrl-C copies the note and not text no longer shown.
-function unreveal() {
-  revealed = false;
-  box.setSelectionRange(box.selectionEnd, box.selectionEnd);
+// Into insert, for whatever writes in a row with vim's keys: the box takes letters again.
+function insert() {
+  if (inserting) return;
+  inserting = true;
+  box.readOnly = false;
+  if (vimList()) paintSoon();
+}
+
+// Back to normal mode, for Escape in a row written in with vim's keys. The row is kept, its date
+// words written out, and stays revealed as it was written, with the caret a letter back as vim's
+// Escape moves it. The caret follows the text, as the terminal's does: where the head as kept ends
+// with what followed the caret, a date word before it having been written out, it goes a letter
+// back from the same place in that text; otherwise a letter back from where it was, onto the last
+// letter at most. Never before the start. A new row with only the labels it opened with keeps its
+// caret where it belongs. A selection made in it ends, as vim's Escape ends one, so that Ctrl-C
+// copies the note and not a part of it.
+function toNormal() {
+  const before = box.value;
+  const from = box.selectionDirection === 'backward' ? box.selectionStart : box.selectionEnd;
+  const after = before.slice(from);
+  const back = Math.max(0, letterIndex(lettersOf(before), from) - 1);
+  act('keep');
+  inserting = false;
+  // Painted at once, so that the box holds the head as kept before the caret is put in it.
   safely();
+  const head = box.value;
+  const starts = lettersOf(head);
+  const last = Math.max(0, starts.length - 2);
+  const p = head.endsWith(after)
+    ? Math.max(0, letterIndex(starts, head.length - after.length) - 1)
+    : Math.min(back, last);
+  const to = view.field?.fresh ?? starts[p];
+  box.setSelectionRange(to, to);
+  measured = null;
+  caretMoved();
+}
+
+// The letters of a head, where each starts in its text and then where the text ends, which is the
+// end a caret can be at: a letter is what Left and Right step over, a whole grapheme, an emoji or
+// a letter and its accent, and never half a surrogate pair.
+const graphemes = window.Intl?.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+function lettersOf(text) {
+  const starts = [];
+  if (graphemes) for (const { index } of graphemes.segment(text)) starts.push(index);
+  else for (let at = 0; at < text.length; at += text.codePointAt(at) > 0xffff ? 2 : 1) starts.push(at);
+  starts.push(text.length);
+  return starts;
+}
+// Which letter a place in the text is in, counted from the start.
+function letterIndex(starts, at) {
+  let i = 0;
+  while (i + 1 < starts.length && starts[i + 1] <= at) i++;
+  return i;
+}
+
+// Which of vim's small words a letter is in: a run of letters, digits and `_`, or a run of other
+// characters that are not blank, with blanks parting them.
+const kind = (letter) => (/^\s/.test(letter) ? 0 : /^[\p{L}\p{N}_]/u.test(letter) ? 1 : 2);
+
+// Where a motion of normal mode takes the caret, in letters, in a head of `n` letters whose kinds
+// are given: from the start to the end, the end being after the last letter, and never past
+// either. `first` is the first letter after a task's box and its spaces. `e` with no word after the
+// caret stays.
+function caretTo(kinds, p, key, first) {
+  const n = kinds.length;
+  const blank = (i) => kinds[i] === 0;
+  switch (key) {
+    case 'h':
+    case 'ArrowLeft':
+      return Math.max(0, p - 1);
+    case 'l':
+    case 'ArrowRight':
+      return Math.min(n, p + 1);
+    case '0':
+    case 'Home':
+      return 0;
+    case '^':
+      return Math.min(first, n);
+    case '$':
+    case 'End':
+      return n;
+    case 'w': {
+      let i = p;
+      if (i < n && !blank(i)) for (const was = kinds[i]; i < n && kinds[i] === was; ) i++;
+      while (i < n && blank(i)) i++;
+      return i;
+    }
+    case 'b': {
+      let i = p;
+      while (i > 0 && blank(i - 1)) i--;
+      if (i > 0) for (const was = kinds[i - 1]; i > 0 && kinds[i - 1] === was; ) i--;
+      return i;
+    }
+    case 'e': {
+      let i = p + 1;
+      while (i < n && blank(i)) i++;
+      if (i >= n) return p;
+      while (i + 1 < n && kinds[i + 1] === kinds[i]) i++;
+      return i;
+    }
+  }
+  return p;
+}
+const MOTIONS = new Set(['h', 'l', '0', '^', '$', 'w', 'b', 'e', ...CARET_KEYS]);
+
+// Moves normal mode's caret, and nothing else: the row is revealed, even where the caret cannot
+// move, as a caret key reveals it without vim's keys, and the box scrolls to keep five letters
+// beside the caret (see sidescroll), but it stays read-only and in normal mode.
+function motion(key) {
+  const text = box.value;
+  const starts = lettersOf(text);
+  const kinds = starts.slice(0, -1).map((at, i) => kind(text.slice(at, starts[i + 1])));
+  const p = letterIndex(starts, box.selectionEnd);
+  const to = starts[caretTo(kinds, p, key, letterIndex(starts, afterBox(text, Infinity)))];
+  reveal();
+  box.setSelectionRange(to, to);
+  measured = null;
+  caretMoved();
+}
+
+// Where a task's box and the spaces after it end in the head under the cursor, `I` counting one
+// space and `^` all of them; the start in a head that is not a task.
+function afterBox(head, spaces) {
+  if (view.rows[view.cursor]?.task == null || !/^\[[ xX]\]/.test(head)) return 0;
+  let at = 3;
+  while (at < head.length && at - 3 < spaces && head[at] === ' ') at++;
+  return at;
 }
 
 // Reveals the row with the caret at a place in its head, for a press on its words: the focus is
 // given here, inside the press, since that is the only focus for which iOS raises a keyboard. The
-// letter pressed stays under the pointer, at `x`, as the marks open round it (see sidescroll).
+// letter pressed stays under the pointer, at `x`, as the marks open round it (see sidescroll). With
+// vim's keys that is insert.
 function revealAt(at, x = null) {
   reveal();
+  insert();
   box.focus({ preventScroll: true });
   const to = Math.min(at, box.value.length);
   pressedAt = x;
@@ -901,6 +1030,12 @@ document.addEventListener('selectionchange', () => {
 // a head does nothing: the field stays the cursor's, and a click on the line or a row says where
 // the cursor goes.
 box.addEventListener('blur', (event) => leftFor(event));
+
+// A press on the words of a row a motion revealed in vim's normal mode writes in it, as a press on
+// the words of a row read does, the caret landing where the press put it.
+box.addEventListener('mousedown', () => {
+  if (revealed && normalMode()) insert();
+});
 
 function leftFor(event) {
   if (quiet || !view?.field?.whole) return;
@@ -978,13 +1113,11 @@ box.addEventListener('keydown', (event) => {
       if (!plain || !atEmpty()) return;
       erase();
       break;
-    // With vim's keys Escape is vim's alone: it keeps the row and goes to normal mode, so that
-    // hands pressing it twice to be sure never leave the row.
+    // With vim's keys Escape in insert keeps the row and goes to normal mode, and a second goes up
+    // to the line, as one does without them.
     case 'Escape':
-      if (vimList()) {
-        act('keep');
-        unreveal();
-      } else act({ select: null });
+      if (vimList()) toNormal();
+      else act({ select: null });
       break;
     default:
       if (!ctrlOnly(event) || !chord(event.key, true)) return;
@@ -1005,7 +1138,7 @@ function atEmpty() {
 // Takes the empty row away, landing on the row above in the mode the row was in, revealed or read,
 // with vim's keys; without them it lands read, as any row landed on does.
 function erase() {
-  revealOnLanding = vimList() && revealed;
+  revealOnLanding = vimList() && inserting;
   try {
     act('erase');
   } finally {
@@ -1065,27 +1198,37 @@ function goInAndLand() {
 
 // The keys of a row in vim's normal mode, which say whether they were the page's to take: vim's
 // single keys for what fzn does, and fzn's own as ever, but that Ctrl-D and Ctrl-U page by ten as
-// vim's do, `D` deleting and `u` undoing here, and Ctrl-R redoes, as in the body's vim. Escape does
-// nothing, as in vim's normal mode, so that hands pressing it twice never leave the row. Every key
-// is one key: `d`, `g`, `c` and `z` are not bound, so `dd` and `gg` from vim's hands do nothing.
-// Any other key that would type, move a caret or edit is swallowed, there being no caret in a head
-// in normal mode; the browser keeps its own chords, the address bar's and the tabs'.
+// vim's do, `D` deleting and `u` undoing here, and Ctrl-R redoes, as in the body's vim. The caret's
+// motions move it in the head (see motion), and only without Shift, Control or Meta, which are
+// swallowed so that no selection is made in normal mode; Alt with them is the browser's Back and
+// Forward, as without vim's keys, but on a Mac, where Option moves the hidden caret by a word and
+// is swallowed too. Escape, or Ctrl-[, goes up to the line, as Escape on a row does
+// without vim's keys. Every key is one key: `d`, `g`, `c` and `z` are not bound, so `dd` and `gg`
+// from vim's hands do nothing. Any other key that would type or edit is swallowed; the browser
+// keeps its own chords, the address bar's and the tabs'.
 const EDITS = ['a', 'x', 'z', 'y', 'v', 'w', 'backspace', 'delete'];
 const STEPS = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 };
 function normalKey(event) {
   const shift = event.shiftKey;
+  const modified = shift || event.ctrlKey || event.metaKey || (event.altKey && mac);
+  if (CARET_KEYS.has(event.key) && modified) return true;
   if (ctrlOnly(event)) {
     const key = event.key.toLowerCase();
     if (key === 'd' || key === 'u') walk(key === 'd' ? 10 : -10);
     else if (key === 'r') act('redo');
+    else if (key === '[') toLine();
     else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       act({ shift: event.key === 'ArrowUp' ? -1 : 1 });
-    } else if (!chord(event.key, true)) return EDITS.includes(key) || key === '[';
+    } else if (!chord(event.key, true)) return EDITS.includes(key);
     return true;
   }
   if (event.ctrlKey || event.altKey) return false;
   // On a Mac Command edits and selects in a field as Control does elsewhere.
   if (event.metaKey) return EDITS.includes(event.key.toLowerCase());
+  if (MOTIONS.has(event.key)) {
+    motion(event.key);
+    return true;
+  }
   switch (event.key) {
     case 'j':
       walk(1);
@@ -1099,22 +1242,17 @@ function normalKey(event) {
     case 'PageUp':
       if (!shift) act({ move: STEPS[event.key] });
       break;
-    case 'l':
-      goInAndLand();
-      break;
     case 'Tab':
       if (!shift) goInAndLand();
       break;
-    case 'h':
-      if (view.path.length) out();
+    case 'Escape':
+      toLine();
       break;
     case 'i':
     case 'a':
-    case 'A':
-      typeIn(false);
-      break;
     case 'I':
-      typeIn(true);
+    case 'A':
+      typeIn(event.key);
       break;
     case 'o':
       act('write');
@@ -1154,24 +1292,16 @@ function walk(by) {
   if (to !== view.cursor) act({ move: to - view.cursor });
 }
 
-// Back out of the place, the cursor landing on the note come out of, or else the first row.
-function out() {
-  const came = view.here?.id;
-  act('back');
-  const to = view.rows.findIndex((row) => row.id === came);
-  if (to >= 0) act({ select: to });
-  else if (view.rows.length) act({ select: 0 });
-}
-
-// Writing in the head, with the caret at its end, or at its start after a task's box; a new row
-// with only the labels it opened with is written in where its caret belongs, before the labels.
-function typeIn(start) {
+// Writing in the head, for `i`, `a`, `I` and `A`: before the letter under normal mode's caret,
+// after it, at the start after a task's box, or at the end. At the end `i` and `a` both type at the
+// end, so on a row just walked to all but `I` do. A new row with only the labels it opened with is
+// written in where its caret belongs, before the labels.
+function typeIn(key) {
   const head = box.value;
-  let at = view.field.fresh ?? head.length;
-  if (view.field.fresh == null && start) {
-    at = view.rows[view.cursor]?.task != null ? (head[3] === ' ' ? 4 : 3) : 0;
-  }
-  revealAt(at);
+  const starts = lettersOf(head);
+  const p = letterIndex(starts, box.selectionEnd);
+  const at = { i: starts[p], a: starts[Math.min(p + 1, starts.length - 1)], I: afterBox(head, 1) };
+  revealAt(view.field.fresh ?? at[key] ?? head.length);
 }
 
 // A new row above this one. On the first row it is a new note at the top, which is what Enter on
@@ -1329,8 +1459,8 @@ function veil(li, row) {
   // or a press would land against that text and not the reading's. The row's head is trimmed, as
   // the engine reads a head, and the field's is the text as typed, spaces and all, so the two are
   // compared trimmed.
-  // With vim's keys a row in normal mode stays so, since no key lands against its text there, and
-  // reads the head as it now is.
+  // With vim's keys a row read in normal mode stays so, since no key lands against its text there,
+  // its caret being at the end (see paintRows), and reads the head as it now is.
   const now = headOf(view.field.text);
   const changed = now.trim() !== row.head;
   if (changed && !vimList()) reveal();
@@ -1439,9 +1569,11 @@ function paintRows() {
 
   // The cursor has left the row the box was in: that row goes back to being read.
   const landed = fieldId !== boxIn;
-  if (landed) revealed = field?.fresh != null || revealOnLanding;
-  // With vim's keys a body closed hands its row back read, in normal mode, as a row walked to.
-  else if (wasWhole && field && !field.whole && vimList()) revealed = false;
+  // A row landed on revealed is being written, in insert with vim's keys, and one landed on read is
+  // in normal mode. With vim's keys a body closed hands its row back read, in normal mode, as a row
+  // walked to.
+  if (landed) inserting = revealed = field?.fresh != null || revealOnLanding;
+  else if (wasWhole && field && !field.whole && vimList()) inserting = revealed = false;
   if (landed && boxIn) {
     const left = rows.get(boxIn);
     if (left) left.dataset.k = '';
@@ -1557,7 +1689,10 @@ function paintRows() {
     // start, whatever the box was scrolled to in the row before.
     const at = field.fresh ?? (landed && typeof wantsText === 'number' ? Math.min(wantsText, end) : end);
     if (landed) box.scrollLeft = 0;
-    if (landed || (toggled && !field.whole) || (told && field.fresh != null)) box.setSelectionRange(at, at);
+    // A row read in vim's normal mode has its caret at the end, where its block is drawn, so a head
+    // changed under it, by an undo, a redo or a version from elsewhere, puts the caret there too.
+    const read = told && !revealed && normalMode();
+    if (landed || (toggled && !field.whole) || (told && field.fresh != null) || read) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
     if (landed || told) edges();
     if (takesFocus(box)) box.focus({ preventScroll: true });
@@ -1584,33 +1719,34 @@ function paintHints() {
   const unsaid = view.cursor == null ? ['move', 'editor', 'type', 'go_in'] : ['move', 'editor'];
   const hints = view.hints.filter((hint) => !unsaid.includes(named(hint.action)));
   // Vim's keys are this browser's to ask for, and only where they apply: in an open body, once
-  // the editor is there to have them.
-  const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
+  // the editor is there to have them, and on the line, for the list and the body both, wherever the
+  // pointer is fine and hovers, as where the list takes them. A row's foot is full, and the switch
+  // is not about the row.
+  const vimWord =
+    (view.field?.whole && editor) || (view.cursor == null && fine.matches) ? (vimOn ? 'no vim' : 'vim') : null;
   // The way back, which the engine offers last, follows the words and stays in sight when they do
   // not fit, the rest scrolling; on a phone it is pinned at the right of the bar, where a thumb
   // finds it without reading.
   const last = hints.length ? named(hints[hints.length - 1].action) : '';
   const way = ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
-  // With vim's keys a row in normal mode starts with typing in it, and in a place has stepping out
-  // before the way back, both the page's own rather than the engine's; in a row written in the way
-  // back is done, as Escape there keeps the row and reads it again.
+  // With vim's keys a row in normal mode starts with typing in it, the page's own word rather than
+  // the engine's; in a row written in the way back is done, as Escape there keeps the row and goes
+  // to normal mode.
   const mode = modeNow();
-  const zoomed = view.path.length > 0;
   set($('way'), JSON.stringify([way, mode]), () => (way ? [word(way, mode)] : []));
   const words = $('hints');
-  const changed = set(words, JSON.stringify([hints, vimWord, mode, zoomed]), () => {
+  const changed = set(words, JSON.stringify([hints, vimWord, mode]), () => {
     const words = hints.map((hint) => word(hint, mode));
-    if (mode === 'normal') {
-      words.unshift(own('type', 'i', () => typeIn(false)));
-      if (zoomed) words.push(own('back', 'h', out));
-    }
+    if (mode === 'normal') words.unshift(own('type', 'i', () => typeIn('i')));
+    // An editor not yet loaded takes the setting as it mounts.
     if (vimWord) {
       const button = el('button', 'word vim', vimWord);
       button.type = 'button';
       button.onclick = () => {
         vimOn = !vimOn;
         keep('fzn.vim', vimOn ? 'on' : null);
-        editor.setVim(vimOn);
+        editor?.setVim(vimOn);
+        measured = null;
         paintSoon();
         follow();
       };
@@ -1669,15 +1805,12 @@ function putBack(before) {
 // A word in the foot, with the key that asks for the same written after it, which the stylesheet
 // shows only where there is a pointer to read it with. A word does what its key does: with vim's
 // keys, going in from a row lands inside, the way back from a row written in is Escape's there, and
-// up from normal mode leaves the caret at the end of the line, as `/` does.
+// up from normal mode leaves the caret at the end of the line, as Escape and `/` do.
 function word(hint, mode) {
   const name = named(hint.action);
   const label = mode === 'insert' && name === 'select' ? 'done' : hint.label;
   return own(label, keyFor(hint.action, mode), () => {
-    if (mode === 'insert' && name === 'select') {
-      act('keep');
-      return unreveal();
-    }
+    if (mode === 'insert' && name === 'select') return toNormal();
     if (mode === 'normal' && name === 'select') return toLine();
     if (mode !== 'plain' && name === 'go_in') return goInAndLand();
     if (name === 'undo') return undo();
@@ -2031,7 +2164,8 @@ function placeCaret() {
     (field === box ? revealed || !!view.field?.whole : view.cursor == null);
   measured = asMeasured();
   if (field && inEditor()) return placeEditorCaret();
-  if (field === box && normalMode() && !composing && !document.body.classList.contains('locked')) {
+  const normal = field === box && normalMode();
+  if (normal && !revealed && !composing && !document.body.classList.contains('locked')) {
     return placeReadingCaret();
   }
   if (!shown) {
@@ -2049,10 +2183,12 @@ function placeCaret() {
   const text = field.value;
   // At the end of the text, or of a line in it, there is no letter, so the block is a little over
   // half a letter wide, measured on a no-break space, which wraps with the line's last word rather
-  // than hanging past the end of a full line as a space does.
+  // than hanging past the end of a full line as a space does. Otherwise it is over the whole letter
+  // after the caret, an emoji or a letter and its accent.
   const end = at >= text.length || text[at] === '\n';
-  const span = el('span', null, end ? '\u00a0' : text[at]);
-  mirror.replaceChildren(text.slice(0, at), span, end ? text.slice(at) : text.slice(at + 1));
+  const letter = end ? '' : text.slice(at, lettersOf(text.slice(at, at + 16))[1] + at);
+  const span = el('span', null, end ? '\u00a0' : letter);
+  mirror.replaceChildren(text.slice(0, at), span, text.slice(at + letter.length));
   const width = `${field.clientWidth - padding}px`;
   if (mirror.style.width !== width) mirror.style.width = width;
 
@@ -2063,8 +2199,9 @@ function placeCaret() {
   if (field === box && style.whiteSpace === 'pre') sidescroll(offsetLeft, size);
   const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
   // With vim's keys the caret is a bar wherever letters type, on the line and in a row written in,
-  // as vim's insert mode draws it, and the block is normal mode's alone.
-  const bar = vimList() && !(field === box && view.field?.whole);
+  // as vim's insert mode draws it, and the block is normal mode's alone, over the letter at its
+  // caret in a row revealed by a motion.
+  const bar = vimList() && !(field === box && view.field?.whole) && !normal;
   const tall = parseFloat(style.lineHeight) || offsetHeight;
   const wide = bar ? 2 : end ? 0.55 * size : Math.max(offsetWidth, 0.35 * size);
   const left = fieldLeft + offsetLeft - (bar ? 1 : (wide - (end ? wide : offsetWidth)) / 2);
@@ -2077,9 +2214,9 @@ function placeCaret() {
   showCaret(left, top, wide, tall);
 }
 
-// In vim's normal mode the row is read, and the caret is a block at the end of the reading, or on
-// its `…` where the row cuts it, where the terminal puts its cursor. It is measured on the reading,
-// which is what is shown, the size of the block at the end of a head being written.
+// In vim's normal mode a row not yet revealed is read, and the caret is a block at the end of the
+// reading, or on its `…` where the row cuts it, where the terminal puts its cursor. It is measured
+// on the reading, which is what is shown, the size of the block at the end of a head being written.
 function placeReadingCaret() {
   const frame = box.parentElement;
   const read = frame?.querySelector(':scope > .head');
@@ -2322,12 +2459,10 @@ function pressed(event) {
       }
       break;
     // Off the row, then off the text on the line, then out of the place; on a row written in with
-    // vim's keys, back to reading it.
+    // vim's keys, to normal mode first.
     case 'Escape':
-      if (!onLine && vimList() && !view.field?.whole) {
-        act('keep');
-        unreveal();
-      } else if (!onLine) act(view.field?.whole ? 'close' : { select: null });
+      if (!onLine && vimList() && !view.field?.whole) toNormal();
+      else if (!onLine) act(view.field?.whole ? 'close' : { select: null });
       else if (view.line !== '') act({ type: '' });
       else if (view.path.length) act('back');
       else return;
