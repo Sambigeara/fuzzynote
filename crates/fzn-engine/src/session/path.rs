@@ -149,8 +149,10 @@ fn unmarked(head: &str) -> &str {
 /// A text with a label written into its head, as it would have been typed there: the box at its
 /// start, and anything else at its end.
 fn with_label(text: &str, label: &Label, written: &str) -> String {
-    if *label == Label::Open {
-        return text::tick(text, false);
+    match label {
+        Label::Open => return text::tick(text, false),
+        Label::Done => return text::tick(text, true),
+        _ => {}
     }
     let (head, body) = text
         .split_once('\n')
@@ -227,6 +229,11 @@ impl Session {
     pub(super) fn places_named(&self) -> Vec<Step> {
         let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
+        // No note is both open and done, so a line of both boxes names nowhere to go.
+        let both = query.asks_done() && query.labels.iter().any(|t| t.label == Label::Open);
+        if both {
+            return places;
+        }
         if query.only_labels() {
             for typed in &query.labels {
                 let place = Step::Label {
@@ -260,7 +267,8 @@ impl Session {
     /// row saying `its name` is always where Tab goes. A note named only without the labels
     /// that end it is named here if its row reads so here: if it carries the place's labels.
     pub(super) fn named_here(&self, query: &Query) -> Vec<&Note> {
-        let (mut named, called) = self.engine.notes_named(query, self.show_archived);
+        let archived = self.archived_listed(query);
+        let (mut named, called) = self.engine.notes_named(query, archived);
         if called {
             named.retain(|note| {
                 let day = note.written().unwrap_or(Day::MIN);

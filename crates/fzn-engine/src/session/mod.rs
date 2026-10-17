@@ -50,10 +50,13 @@
 //! a note gone into starts a new place.
 //!
 //! A task is a note whose head starts with a box, `[ ]` while it is open and `[x]` once it is
-//! done. The box is a label too, of the open tasks, gone into as a tag is, and a note written
-//! there starts with it, since that is where a box is written. Archiving a task ticks it and
-//! bringing it back unticks it, in one version, so that no device sees the tick without the
-//! archiving.
+//! done. Each box is a label too, of the open tasks or the done ones, gone into as a tag is, and a
+//! note written there starts with it, since that is where a box is written. A new note headed by
+//! a ticked box is a task done as it is written, wherever it is written. Asking for the done
+//! tasks is asking for archived notes, since that is where they are, and a span with them
+//! measures when they were done. Archiving a task ticks it and bringing it back unticks it, in
+//! one version, so that no device sees the tick without the archiving, and that version says when
+//! it was done.
 //!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, on the line it holds the notes of

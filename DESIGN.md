@@ -47,14 +47,15 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   is kept as it is typed. Browsing is editing, and a stray key is one undo.
 - Zoom on what is shared. The original selected notes and pressed Enter, and whatever they had in
   common became the context; the old common-prefix zoom was the special case. What is reinstated is
-  the label: a tag, a person, a day or the open tasks' box typed on the line is gone into with Tab
+  the label: a tag, a person, a day or a task's box typed on the line is gone into with Tab
   and is the context, labels gone into one after another are one context, and so are a note and the
   labels gone into after it. Selecting notes, and a context of plain words, are not (see "A tag is a
   place you can go into" for why).
 - One line to search with: words find and everything else holds, so `"…"` is the exact text and a
-  tag, a person, a day, the open tasks' `[ ]` or a span narrows what is listed, and `~` at the start
-  of the line is the original's fuzzy, letters in order in heads. The original's Tab-separated
-  groups are given up, Tab being the key that goes in, and its `!` inverse is not built yet.
+  tag, a person, a day, the open tasks' `[ ]`, the done tasks' `[x]` or a span narrows what is
+  listed, and `~` at the start of the line is the original's fuzzy, letters in order in heads. The
+  original's Tab-separated groups are given up, Tab being the key that goes in, and its `!` inverse
+  is not built yet.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key, which ticks a task; show/hide archived globally.
 - Undo/redo and move up/down. Copying whole notes, and pasting them, are not built yet.
@@ -65,10 +66,10 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   is one directory of logs under the root. Plain `fzn` opens the space named in the config file
   (`main` to begin with) and `--space NAME` opens another; a tab opens `main`, or the space
   `?space=garden` names. Sharing a space is later.
-- **Note**: stable id; text; links; created and updated times; archived flag; where it sits in the
-  list, as the note it sits after, with a clock of its own (see "Where a note sits" under Storage
-  and sync). Derived, never stored: head (first line), body, tags, mentions, dates, URLs, and
-  whether it is a task.
+- **Note**: stable id; text; links; created and updated times; archived flag, and when it was
+  archived, which for a task is when it was done; where it sits in the list, as the note it sits
+  after, with a clock of its own (see "Where a note sits" under Storage and sync). Derived, never
+  stored: head (first line), body, tags, mentions, dates, URLs, and whether it is a task.
 - **Link**: from one note to another, held on the note as the target's id. There is one kind. It
   survives a rename and adds no words to the text. Links are made by position: a note written while
   looking around another is about it, and links to it. Nobody has to say "link". Brackets are the
@@ -84,7 +85,7 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   task is a note headed by its box"). Nothing else is special in a note. In particular the old
   ` >> ` prefix paths are plain text; the words in them still count, the hierarchy does not. On the
   line, and only there, three more forms are read: a phrase in quotes, a span of when notes were
-  written, and `~` at its start (see "The line" under Clients).
+  written or done, and `~` at its start (see "The line" under Clients).
 - **Date**: plain text in the note, written `2026-10-16`, and never stored apart from it. The engine
   reads it on load, as it reads tags. A link is held as an id because a note's head can change; a
   date's name cannot, so it lives in the text. The day a note was written is not typed at all: it is
@@ -144,11 +145,11 @@ session is the part that finds things, in three parts.
 
 **Index.** A Unicode-aware tokeniser, lowercased, with a URL counted as its host; no stemming. An
 inverted index with term frequencies and document lengths, a trigram index over the vocabulary for
-fuzzy matching, and a label index for tags, people, days and the open tasks' box. Beside each note's
-text is the text lowercased once, a character at a time, which a phrase and letters are matched
-against, so that a keystroke does not lowercase every note it asks. All update incrementally on
-every note change. The old corpus is 8.7k notes, 284k tokens and 12k distinct terms; the index for a
-space ten times that size fits comfortably in memory.
+fuzzy matching, and a label index for tags, people, days and the two boxes, open and done. Beside
+each note's text is the text lowercased once, a character at a time, which a phrase and letters are
+matched against, so that a keystroke does not lowercase every note it asks. All update incrementally
+on every note change. The old corpus is 8.7k notes, 284k tokens and 12k distinct terms; the index
+for a space ten times that size fits comfortably in memory.
 
 **Scorers.** Each takes the current input plus context and returns candidate notes with a score and
 a human-readable reason. Three are built, cheapest first.
@@ -188,27 +189,36 @@ added to the engine until daily use asks for it.
 - **The note is plain text; what holds it need not be.** All of a note's meaning is in its
   characters, in forms people already know: `#tag`, `@person`, `2026-10-16`, a URL, a first line, a
   box `[ ]`. That is the agreed structure, and the test for adding to it is whether the note still
-  reads right on paper. Beside the text go the facts it cannot carry: id, links, times, archived,
-  deleted. What you said goes in the text; what happened to the note goes beside it. A file per note
-  is not the store: files cannot merge two devices' edits, and most notes are one line.
+  reads right on paper. Beside the text go the facts it cannot carry: id, links, times, archived and
+  when, deleted. What you said goes in the text; what happened to the note goes beside it. A file
+  per note is not the store: files cannot merge two devices' edits, and most notes are one line.
 - **One append-only log per writer, per space.** Each line is a full snapshot of one note as JSON:
   `v`, the version of the line format, then id, text, links, created, updated, stamp, after, placed,
-  archived, deleted, device. The format is version 3: version 2 added `after` and `placed`, version
-  3 took times to the millisecond, and lines from before versions hold unix seconds. All are still
-  read; a line with a later version than the build knows is left alone, not misread (see "A line of
-  a later format is left as it is"). Times are RFC 3339 to the millisecond with the offset of the
-  clock that wrote them, `2026-10-13T10:12:56.250+01:00`, so a line reads without the app and a note
-  keeps the day it was written on wherever it is read. `updated` is when the text last changed, so
-  archiving a note does not re-date it. `stamp` is when what the version says was written, and a
-  local change is always stamped past the version it replaces, a millisecond past it when the clock
-  has not moved on since. `after` is the note it sits after and `placed` when it was put there, a
-  clock of the place's own, kept and stepped the same way. Loading replays every log in the space:
-  the version with the newest stamp gives the text, links, times and flags, ties broken by writer
-  id, and the version newest by `placed` gives the place, ties broken by the note it is after. An
-  edit leaves `placed` as it was and a move leaves `stamp`, and each carries the side it leaves as
-  it was written, writer and all, so an edit on one device and a move on another both hold, and
-  neither decides anything about the side it carries. Last-writer-wins on what a note says is the
-  known limitation, accepted for now. Deletion is a tombstone line, kept so an older version
+  archived, done, deleted, device. The format is version 3: version 2 added `after` and `placed`,
+  version 3 took times to the millisecond, and lines from before versions hold unix seconds. All
+  are still read; a line with a later version than the build knows is left alone, not misread
+  (see "A line of a later format is left as it is"). A field a build from before can do without,
+  as `done` is, comes without a new version, since such a build reads the line and passes over the
+  field. Times are RFC 3339 to the
+  millisecond with the offset of the clock that wrote them, `2026-10-13T10:12:56.250+01:00`, so a
+  line reads without the app and a note keeps the day it was written on wherever it is read.
+  `updated` is when the text last changed, so archiving anything but a task does not re-date it.
+  `done` is when the note was archived, which for a task is when it was ticked, and null while it
+  is not: the version that archives a note, by the key, by `fzn tick` or by `fzn apply`, sets it to
+  its own moment, as does a new note's version headed `[x]`, bringing the note back clears it, and
+  an edit leaves it as it was. A line that is archived and says nothing of when, as a build from
+  before `done` writes one, reads its `done` as its `updated`, the latest it can have been, and an
+  importer does the same for a page's ticked task. A line of `fzn query` carries it, and `fzn apply`
+  takes it as fzn's own, as it takes `updated`. `stamp` is when what the version says was written,
+  and a local change is always stamped past the version it replaces, a millisecond past it when the
+  clock has not moved on since. `after` is the note it sits after and `placed` when it was put
+  there, a clock of the place's own, kept and stepped the same way. Loading replays every log in the
+  space: the version with the newest stamp gives the text, links, times and flags, ties broken by
+  writer id, and the version newest by `placed` gives the place, ties broken by the note it is
+  after. An edit leaves `placed` as it was and a move leaves `stamp`, and each carries the side it
+  leaves as it was written, writer and all, so an edit on one device and a move on another both
+  hold, and neither decides anything about the side it carries. Last-writer-wins on what a note says
+  is the known limitation, accepted for now. Deletion is a tombstone line, kept so an older version
   arriving later cannot resurrect the note. What a line says, and which of two versions is the
   newer, is the engine's to settle, so that every device agrees. Where the lines are kept is the
   face's: files under the terminal, IndexedDB in a tab.
@@ -524,18 +534,23 @@ all, and none of it changes how the words rank.
   does not empty mid-word. The name rule reads a label typed as the words it says, since a head says
   its tags as words: `oil tank #house` names the note headed `Oil tank #house`.
 - `[ ]` holds the open tasks, the notes headed `[ ]` and not archived, and the rest of the line
-  still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. It is
-  read only whole: `[` and `[ ` are not words either, so they hold nothing, and a `[[` on its way to
-  a link lists no tasks on the way. A done task is not a label: `"[x]"`, a phrase, holds the done
-  tasks with archived notes shown.
+  still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. `[x]`
+  holds the done tasks, the notes headed `[x]`, archived or not; typing it is asking for them, so
+  they are listed though archived notes are otherwise hidden. Each is read only whole: `[` and
+  `[ ` are not words either, so they hold nothing, and a `[[` on its way to a link lists no tasks
+  on the way. `"[x]"` is still a phrase, held by any note with it in its text, archived notes
+  shown or not as they are.
 - A span, `START..END`, `START..` or `..END` with no spaces round the dots, holds the notes written
-  in it. Each end is a date written out or a date word, with a 24-hour `HH:MM` after it if wanted:
+  in it, and `..` as a word of its own is a span of all time. With `[x]` on the line, or in the
+  place, it holds the done tasks done in it instead, by `done`, or for a box ticked by hand and
+  never archived by `updated`: `[x] /-mon.. #work` is this week's done work, whenever it was
+  written. Each end is a date written out or a date word, with a 24-hour `HH:MM` after it if wanted:
   `/-mon 18:00..` is since six on Monday evening, and `2026-10-01..2026-10-05` runs through the end
   of the 5th; a span runs from the start of its first day or minute to the end of its last. A time
   is read by the clock of the place each note was written in, as a note's day is, a note with no
-  time of writing is in no span, and a time anywhere else on the line is words. The line says what a
-  span stands for where it says a date word's date, `→ Mon 2026-10-12 18:00 – now`; the engine words
-  both, so that the faces keep no calendar of their own, and an open start is `…`.
+  moment to measure is in no span, and a time anywhere else on the line is words. The line says what
+  a span stands for where it says a date word's date, `→ Mon 2026-10-12 18:00 – now`; the engine
+  words both, so that the faces keep no calendar of their own, and an open start is `…`.
 - `~` as the first thing on the line makes its words letters, found in order in heads, as the
   original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there. They
   rank as fzf ranks: a letter at the start of a word earns more, twice as much for the first letter
@@ -553,7 +568,7 @@ finds alike, and a line of labels in a place lists the facts that carry them. Th
 line are in the space's order, so they can be moved as the rows of an empty line can. Enter writes
 the line as it reads: quotes, `~` and spans stay as typed, and date words are written out, after a
 span's dots too. Archived notes are out of every list, typed results included, until they are asked
-for.
+for, or `[x]` asks for the done tasks.
 
 The line comes with you into a place, under one rule: if the note you went into contains what you
 typed, or holds what the line holds and its head and the heads of the notes it links to have every
@@ -567,19 +582,20 @@ line clears.
 
 ### Zoom and places
 Tab on a note's head makes it the place, and the path grows by one, wherever the caret is in the
-head. A tag, a person, a day or the open tasks can be the place too: Tab on the line goes into what
-the line names. That is the label if the line is one label and nothing else, `#house`, `@joe`,
-`/fri` or `[ ]`, or back to it if it is on the path; each label in turn if the line is several,
-`#house /today`, as if Tab had been pressed after each but passing over a label the place has
-already; and otherwise the one note in the space the line is the name of and that holds what the
-line holds, by the rule in "A name is a fact too". A line holding a span, a phrase or `~` is never
-gone into as labels are, whatever else is on it (see "A span is not a place"). In a place that rule
-holds as it does at the top: the note the line names is listed first, saying `its name`, wherever it
-is and whatever the limit, so Tab goes where the list shows, and typing a name is the way from any
-place to any note. A line that names neither, or names where you already are, leaves Tab doing
-nothing, and types nothing: a tab is never written into the line or a head. The path shows a label
-as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`, and a note as its row read where it was
-gone into from: `#house › Boiler`, not `#house › Boiler #house`, and `Boiler`, not `# Boiler`.
+head. A tag, a person, a day or the open or done tasks can be the place too: Tab on the line goes
+into what the line names. That is the label if the line is one label and nothing else, `#house`,
+`@joe`, `/fri`, `[ ]` or `[x]`, or back to it if it is on the path; each label in turn if the line
+is several, `#house /today`, as if Tab had been pressed after each but passing over a label the
+place has already; and otherwise the one note in the space the line is the name of and that holds
+what the line holds, by the rule in "A name is a fact too". A line holding a span, a phrase or `~`
+is never gone into as labels are, whatever else is on it (see "A span is not a place"). In a place
+that rule holds as it does at the top: the note the line names is listed first, saying `its name`,
+wherever it is and whatever the limit, so Tab goes where the list shows, and typing a name is the
+way from any place to any note. A line that names neither, or names where you already are, leaves
+Tab doing nothing, and types nothing: a tab is never written into the line or a head. The path shows
+a label as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`, `[x]`, and a note as its row read
+where it was gone into from: `#house › Boiler`, not `#house › Boiler #house`, and `Boiler`, not
+`# Boiler`.
 
 A row that is not under the cursor shows its head without the place's labels where they end it, when
 the note is a head only, since the place already says them: inside `#house`, `Order oil #house`
@@ -618,17 +634,19 @@ line steps back, so that inside a place "found it, clear, stay" is one key; the 
 What you write inside is about the place. Inside a note it links to it and lands at the top of the
 place. Inside a label its head ends with the label, as it would have been typed, unless the note
 carries it already: in its text, or for a day by being written on it, since the day a note was
-written is its `created`. Among the open tasks the head starts with the box instead, since that is
-where a box is written. A note written from the line has the labels added as it is written; a new
-row opens with them already in its head, the caret where the writer's text goes, and a row with
+written is its `created`. Among the open or done tasks the head starts with the box instead, since
+that is where a box is written, and among the done tasks the note is then a task done now, as any
+new note headed `[x]` is (see "A task is a note headed by its box"), so that something finished is
+logged straight into the week. A note written from the line has the labels added as it is written; a
+new row opens with them already in its head, the caret where the writer's text goes, and a row with
 nothing in it but what it opened with, or a start of it, is empty, however it is spaced. Inside
 labels gone into one after another the head ends with each of them it does not carry, in the order
-of the path: in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens
-`[ ]  #house` with the caret after the box, and in `#house › today` a note reads `Order oil #house`.
-A zoom on today opens an empty row, one on `/fri` opens ` 2026-10-16`. Only a note created there
-inherits, and only from the place: in `Boiler › today` a new note links to Boiler and is of today by
-being written on it, in `Boiler › #house` a new row opens ` #house` and links to Boiler, and in
-`#house › Boiler` a new note links to Boiler and carries no tag.
+of the path: in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens `[ ]
+#house` with the caret after the box, in `#work › [x]` it opens `[x] #work`, and in `#house › today`
+a note reads `Order oil #house`. A zoom on today opens an empty row, one on `/fri` opens `
+2026-10-16`. Only a note created there inherits, and only from the place: in `Boiler › today` a new
+note links to Boiler and is of today by being written on it, in `Boiler › #house` a new row opens `
+#house` and links to Boiler, and in `#house › Boiler` a new note links to Boiler and carries no tag.
 
 The link chord, Ctrl-L in the terminal and `link` or `unlink` in the page's foot, links the note
 under the cursor to the place's note or unlinks it, which takes it into the place or out of it when
@@ -1657,7 +1675,9 @@ the app now does is described above; an entry repeats it only where the reason n
   once through `fzn export` and `fzn import-jsonl`, with no code added for it; the rewrite keeps
   each note's `updated`, since when it was done is not known, and so that importing the export taken
   before it puts it back. Until every device runs this build, one from before archives a task
-  without ticking it; unticking and ticking it here puts it right.
+  without ticking it; unticking and ticking it here puts it right. Revised 2026-10-17 by "When a
+  note was done is kept, and `[x]` holds the done tasks": `[x]` is a label, and a new note
+  headed `[x]` is done as it is written.
 
 - **A command writes beside the app, as a writer of its own.** Decided 2026-10-16, agreed with Sam,
   revising "The engine owns sync" and the storage rule that fzn is the only thing that writes a
@@ -2108,6 +2128,50 @@ the app now does is described above; an entry repeats it only where the reason n
   the foot on a phone, where the first design for the phone took it off as chrome, since it shows
   only in a space with no notes yet, which is where a mistyped passphrase makes a space of its own
   and typing it again matters.
+
+- **When a note was done is kept, and `[x]` holds the done tasks.** Decided 2026-10-17, agreed with
+  Sam, revising "A task is a note headed by its box" where it says a done task is not a label, and
+  what a line carries under Storage and sync. Sam writes a
+  weekly roundup for colleagues: what he did this week, which is mostly tasks, and many of them
+  written weeks before they were done. `[ ] Fix the fence #work`, written three weeks ago and
+  ticked on Wednesday, belongs in this week's roundup and not in the one of the week it was
+  written. Nothing could list it: a span held the notes written in it, a done task was reachable
+  only as the phrase `"[x]"` with archived notes shown, and nothing recorded when a task was
+  ticked, since `updated` moves with any edit after it. Three changes answer it. *The moment is
+  kept*: a note gains `done`, when it was archived, which for a task is when it was ticked, beside
+  the text and not in it, since what you said goes in the text and what happened to the note goes
+  beside it. The version that archives a note sets it, so ticking stays one version with the box
+  and the flag together; bringing the note back clears it, and an edit leaves it, so putting a word
+  right in a done task does not move it into this week. The session sets it whatever wrote the
+  version, the key, `fzn tick` or `fzn apply`, so a script cannot give a done task a moment of its
+  own, as it cannot give one an `updated`, and a query read and applied back still writes nothing.
+  *A new note headed `[x]` is done as it is written*, on the line, in a new row anywhere, or from
+  `fzn apply`, so that something finished that was never written down is logged straight into the
+  week, and the faces and `apply` agree: for the whole of the visit that opened it its flag follows
+  its box, so a box typed and taken out again leaves an open note. A note written before is ticked
+  only by the key; typing a box into it changes its text and nothing else, as before. *`[x]` is a
+  label*, the done tasks, as `[ ]` is the open ones: the notes headed `[x]`, archived or not, so
+  that a box ticked by hand counts as well. Typing it asks for archived notes, since that is where
+  done tasks are, and so lists them though archived notes are otherwise hidden; that is what the
+  phrase with archived notes shown was standing in for, and the phrase still holds as any phrase
+  does. It is a place too, where a new row opens with the box, `[x]  #work` in `#work › [x]`. A
+  line of both boxes names no place, since no note is both. *A span measures what the line asks
+  about*: the notes written in it, or with `[x]` on the line or in the place, the done tasks done
+  in it, by `done`, falling back to `updated` for a box ticked by hand and never archived. So
+  `[x] /-mon.. #work` is the week's done work in `#work`, whenever it was written, and `fzn query`
+  of the same line is the roundup's draft. The box on the line changing what the span measures was
+  chosen over a second form for when, `done:/-mon..` say, which would be a code to remember for the
+  one case where the line already says it is asking about the done tasks. A box that disagrees with
+  its flag is handled as before: a task archived with its box open is in neither `[ ]` nor `[x]`,
+  and the key puts it right; a box ticked by hand and never archived is in `[x]`. The line format
+  stays at version 3. A new version was weighed, as for versions 2 and 3, and not taken: a build
+  that finds a later version leaves the line alone, so a build of 0.26 would have skipped every new
+  line and, worse, gone on writing from its own stale copy of each note, over versions it could not
+  see; while serde reads a line with a field it does not know and passes over the field, so a 0.26
+  build reads these lines whole but for `done`, and nothing has to move together. A line that is
+  archived and says nothing of when reads `done` as its `updated`, which is exact for a task ticked
+  by a build from before, since the tick is in the text. What it costs: a build without `done` that
+  edits a done note writes it without `done`, and it then reads as done at that edit's moment.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -37,7 +37,10 @@ use crate::time::Moment;
 /// alone rather than misread. Version 2 added the place, which a build of version 1 would drop
 /// from every note it rewrote. Version 3 keeps times to the millisecond, which a build of
 /// version 2 would drop, and so take two versions of a note written in one second for a tie
-/// that devices of version 3 had told apart.
+/// that devices of version 3 had told apart. A field added since that a build from before can
+/// do without, as `done` is, is not a new version: such a build reads the line and passes over
+/// the field, where a new version would have it leave the line alone, and so go on from a copy
+/// of the note older than every device's.
 const FORMAT: u32 = 3;
 
 /// One version of one note.
@@ -68,6 +71,13 @@ pub struct Record {
     pub placed: Option<Moment>,
     #[serde(default)]
     pub archived: bool,
+    /// When the note was archived, which for a task is when it was ticked: what happened to the
+    /// note, so beside the text and not in it. Archiving sets it to the moment of that version,
+    /// bringing the note back clears it, and an edit leaves it as it was. A line that is
+    /// archived and says nothing of when, from a build from before it was kept, reads its
+    /// `updated` here, the best that is known of it.
+    #[serde(default)]
+    pub done: Option<Moment>,
     /// A tombstone, kept so that an older version arriving later cannot resurrect the note.
     #[serde(default)]
     pub deleted: bool,
@@ -120,6 +130,7 @@ impl Record {
             after: None,
             placed: None,
             archived: false,
+            done: None,
             deleted: false,
             device: String::new(),
         }
@@ -130,8 +141,8 @@ impl Record {
         text::head(&self.text)
     }
 
-    /// The note as relevance sees it: the text, the links, when it was written, and the day it
-    /// was last changed on.
+    /// The note as relevance sees it: the text, the links, when it was written and when it was
+    /// done, and the day it was last changed on.
     pub fn note(&self) -> Note {
         Note {
             id: self.id.clone(),
@@ -139,8 +150,20 @@ impl Record {
             links: self.links.clone(),
             created: self.created,
             updated: self.updated.map(Moment::day),
+            done: self.finished(),
             archived: self.archived,
         }
+    }
+
+    /// When the note was done: when it was archived, or for a box ticked by hand and never
+    /// archived, which a build from before ticking could leave, when its text last changed,
+    /// since that is when the tick was typed at the latest.
+    pub fn finished(&self) -> Option<Moment> {
+        self.done.or_else(|| {
+            (text::task(&self.text) == Some(true))
+                .then_some(self.updated)
+                .flatten()
+        })
     }
 
     /// The version as a line of a log, newline included.
@@ -155,10 +178,17 @@ impl Record {
 
     /// Reads a line of a log, if it is one this build understands.
     pub fn read(line: &[u8]) -> Option<Self> {
-        serde_json::from_slice::<Versioned<Record>>(line)
+        let mut record = serde_json::from_slice::<Versioned<Record>>(line)
             .ok()
-            .filter(|line| line.v <= FORMAT)
-            .map(|line| line.record)
+            .filter(|line| line.v <= FORMAT)?
+            .record;
+        // A build from before `done` says nothing of when a note was archived; when its text
+        // last changed is the latest it can have been, and for a task it ticked it is exactly
+        // that, since the tick is in the text.
+        if record.archived && record.done.is_none() {
+            record.done = record.updated;
+        }
+        Some(record)
     }
 
     /// Reads one line of a log, sealed or plain. An envelope is opened with the seal and what
@@ -205,6 +235,7 @@ impl Record {
             && self.created == other.created
             && self.updated == other.updated
             && self.archived == other.archived
+            && self.done == other.done
             && self.deleted == other.deleted
     }
 
@@ -700,6 +731,59 @@ mod tests {
             None
         );
         assert_eq!(Record::read(b"not json"), None);
+    }
+
+    #[test]
+    fn a_line_says_when_its_note_was_done_after_whether_it_is_archived() {
+        let record = Record {
+            archived: true,
+            done: Some(Moment::utc(40)),
+            ..rec("chimney", "[x] Sweep the chimney", 20)
+        };
+        let line = record.line().unwrap();
+        assert!(
+            line.contains(r#""archived":true,"done":"1970-01-01T00:00:40.000Z","deleted":false,"#)
+        );
+        assert_eq!(Record::read(line.as_bytes()), Some(record));
+        let open = rec("oil", "[ ] Order oil", 20).line().unwrap();
+        assert!(open.contains(r#""archived":false,"done":null,"#));
+    }
+
+    #[test]
+    fn an_archived_line_that_says_nothing_of_when_was_done_when_it_last_changed() {
+        // As a build from before `done` writes a line, of this format or an older one.
+        let line = |v: u32, archived: bool, done: &str| {
+            format!(
+                r#"{{"v":{v},"id":"chimney","text":"[x] Sweep the chimney","updated":"2026-10-12T09:30:00.000Z","archived":{archived}{done}}}"#
+            )
+        };
+        let done = |v: u32, archived: bool, done: &str| {
+            Record::read(line(v, archived, done).as_bytes())
+                .unwrap()
+                .done
+        };
+        let updated = Some(Moment {
+            ms: 1_791_797_400_000,
+            offset: 0,
+        });
+        assert_eq!(done(3, true, ""), updated);
+        assert_eq!(
+            done(0, true, ""),
+            updated,
+            "a line from before versions too"
+        );
+        assert_eq!(
+            done(3, true, r#","done":null"#),
+            updated,
+            "null is nothing said"
+        );
+        assert_eq!(done(3, false, ""), None, "not archived, so not done");
+        let said = r#","done":"2026-10-05T08:00:00.000Z""#;
+        assert_eq!(
+            done(3, true, said).map(|m| m.ms),
+            Some(1_791_187_200_000),
+            "a line that says when is taken at its word"
+        );
     }
 
     #[test]

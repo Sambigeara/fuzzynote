@@ -211,6 +211,53 @@ fn apply_keeps_a_tasks_box_and_flag_together_whichever_changed() {
 }
 
 #[test]
+fn a_query_line_says_when_a_note_was_done_and_apply_keeps_that_as_fzns_own() {
+    let mut s = session();
+    house(&mut s);
+    let lines: Vec<String> = s
+        .query("#house")
+        .iter()
+        .map(|r| r.line().unwrap())
+        .collect();
+    let of = |id: &str| {
+        lines
+            .iter()
+            .find(|line| line.contains(&format!(r#""id":"{id}""#)))
+            .unwrap()
+            .clone()
+    };
+    let done = s.notes.get("chimney").unwrap().done.unwrap();
+    assert!(of("chimney").contains(r#""archived":true,"done":"2026-10-13T12:00:00.001Z","#));
+    assert!(of("oil").contains(r#""archived":false,"done":null,"#));
+
+    // A moment given is not taken, as `updated` is not: the line reads as it was read.
+    let given = |line: String| serde_json::from_str::<Given>(&line).unwrap();
+    let redated = of("chimney").replace(
+        r#""done":"2026-10-13T12:00:00.001Z""#,
+        r#""done":"2026-10-12T09:00:00.000Z""#,
+    );
+    let (_, effects) = s.apply(vec![given(redated)]).unwrap();
+    assert!(kept(&effects).is_empty(), "{effects:?}");
+    assert_eq!(s.notes.get("chimney").unwrap().done, Some(done));
+
+    // Ticked from outside it is done now, and unticked it is not done.
+    let ticked = of("oil").replace("[ ] Order oil", "[x] Order oil");
+    let (notes, _) = s.apply(vec![given(ticked)]).unwrap();
+    assert!(notes[0].archived);
+    assert_eq!(notes[0].done, notes[0].stamp);
+    let (notes, _) = s
+        .apply(vec![Given {
+            archived: Some(false),
+            ..line(&s, "chimney")
+        }])
+        .unwrap();
+    assert_eq!(
+        (notes[0].text.as_str(), notes[0].done),
+        ("[ ] Sweep the chimney #house", None)
+    );
+}
+
+#[test]
 fn apply_refuses_a_note_changed_since_it_was_read() {
     let mut s = session();
     house(&mut s);
@@ -340,7 +387,7 @@ fn apply_does_not_move_a_note() {
 #[test]
 fn a_line_given_reads_what_it_names_and_leaves_what_is_fzns() {
     let given: Given = serde_json::from_str(
-        r#"{"v":3,"id":"boiler","text":"Boiler","after":null,"device":"3f9a01c2","placed":null,"created":"2026-10-13T12:00:00Z"}"#,
+        r#"{"v":3,"id":"boiler","text":"Boiler","after":null,"device":"3f9a01c2","placed":null,"created":"2026-10-13T12:00:00Z","done":"2026-10-13T12:00:00Z"}"#,
     )
     .unwrap();
     assert_eq!(

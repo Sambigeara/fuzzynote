@@ -32,6 +32,8 @@ pub enum Label {
     Date(Day),
     /// The note is an open task: its head starts with `[ ]`, and it is not archived.
     Open,
+    /// The note is a done task: its head starts with `[x]`, archived or not.
+    Done,
 }
 
 impl Label {

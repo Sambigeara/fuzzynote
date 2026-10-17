@@ -58,7 +58,8 @@ again. $FZN_PASSPHRASE answers in place of the question, for scripts.
 query writes the notes a line finds, typed as on the line, one plain line of JSON each, readable
 without fzn: every one of them, archived ones too, in the order the app lists them, which with
 nothing to rank by is the space's order and otherwise best first. fzn query '#house /-mon..' is
-everything tagged #house written since last Monday, and fzn query '[ ]' the open tasks. export
+everything tagged #house written since last Monday, fzn query '[ ]' the open tasks, and fzn query
+'[x] /-mon.. #work' the tasks in #work done since last Monday, whenever they were written. export
 writes every live note the same way, oldest first. Neither writes anything, and jq orders and
 picks from either.
 
@@ -106,12 +107,14 @@ week such as /fri, and /+3 or /-2 for days from today are quicker ways of typing
 note writes the date in their place. /-mon is the last Monday before today.
 
 A note whose head starts [ ] is a task. Archiving it ticks it, [x], and bringing it back unticks
-it.
+it; a new note written starting [x] is done as it is written. Every line says when its note was
+archived, which for a task is when it was ticked, as done, and null while it is not.
 
 On the line, words find and everything else holds: \"a phrase\" must be in a note, #tag, @person
-and a day must be on it, [ ] holds the open tasks, and a span such as /-mon 18:00..,
-2026-10-01..2026-10-05 or ..2026-10-05 holds the notes written in it. ~ at the start of the line
-finds heads by their letters in order: ~bsv finds Boiler service.";
+and a day must be on it, [ ] holds the open tasks and [x] the done ones, archived or not, and a
+span such as /-mon 18:00.., 2026-10-01..2026-10-05 or ..2026-10-05 holds the notes written in it,
+or with [x] the tasks done in it; .. alone is all time. ~ at the start of the line finds heads by
+their letters in order: ~bsv finds Boiler service.";
 
 /// What `fzn query` with nothing after it is told.
 const QUERY_NEEDS: &str = "query needs a line, as typed in the app";

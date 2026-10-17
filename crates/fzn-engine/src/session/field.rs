@@ -77,6 +77,20 @@ impl Writing {
     }
 }
 
+/// A version of a note written in the visit that opened it, whose archived flag follows its
+/// box until the cursor leaves: a new note headed `[x]` is something done being logged, done as
+/// it is written, and one whose box is taken out before then is a note like any other. A note
+/// written before is ticked only by the key, so typing a box into it changes nothing else.
+fn first_visit(new: bool, record: Record) -> Record {
+    if !new || record.deleted {
+        return record;
+    }
+    Record {
+        archived: text::task(&record.text) == Some(true),
+        ..record
+    }
+}
+
 impl Session {
     /// Whether the note under the cursor holds something not yet written, which leaving it
     /// would write: an open body typed into, a date word not yet written out, a head emptied, or a
@@ -293,11 +307,13 @@ impl Session {
         if field.whole || field.head_empty() {
             return;
         }
-        let id = field.id.clone();
+        let (id, new) = (field.id.clone(), field.new);
         let text = field.text.trim_end_matches(['\n', '\r']).to_owned();
         let record = match self.notes.get(&id) {
             Some(held) if held.text == text => return,
-            Some(_) => self.revise(&id, text),
+            Some(_) => self
+                .revise(&id, text)
+                .map(|record| first_visit(new, record)),
             None if field.new => Some(self.created(field, text)),
             // A note gone elsewhere is not written again; leaving it says so.
             None => None,
@@ -327,6 +343,7 @@ impl Session {
             links,
             created: Some(field.opened),
             updated: Some(self.host.now()),
+            archived: text::task(&text) == Some(true),
             after: self
                 .rows
                 .iter()
@@ -503,6 +520,7 @@ impl Session {
                 let Some(record) = self.revise(&id, text.clone()) else {
                     return false;
                 };
+                let record = first_visit(new, record);
                 self.gather(record);
                 if text.is_empty() {
                     self.status = "deleted · undo brings it back".into();

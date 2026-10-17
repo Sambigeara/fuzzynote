@@ -2,7 +2,8 @@
 //!
 //! The words on the line rank, as they always have, each note with its reasons. Every other form
 //! on the line is something a note has to hold to be listed at all: a phrase in quotes, a tag, a
-//! person, a day, the box of an open task, and a span of when notes were written. A form never
+//! person, a day, the box of an open task or of a done one, and a span of when notes were
+//! written, or with the done box on the line of when they were done. A form never
 //! changes how the words rank, so a new kind of filter is one more form here and one more way for
 //! a note to hold it, and the words are left alone. A line of nothing but forms has nothing to
 //! rank by, and lists exactly what holds them in the space's order, as a place lists what is in
@@ -62,6 +63,9 @@ pub(crate) enum Label {
     Day(Day),
     /// The box `[ ]`: the notes whose heads start with it and that are not archived.
     Open,
+    /// The box `[x]`: the notes whose heads start with it, archived or not. Asking for them is
+    /// asking for archived notes, since that is where done tasks are.
+    Done,
 }
 
 impl Label {
@@ -72,6 +76,7 @@ impl Label {
             Label::Mention(person) => score::Label::Mention(person.clone()),
             Label::Day(day) => score::Label::Date(*day),
             Label::Open => score::Label::Open,
+            Label::Done => score::Label::Done,
         }
     }
 
@@ -84,6 +89,7 @@ impl Label {
             // The day a note was written is not typed: it is the note's `created`.
             Label::Day(day) => *day == created || text::facts(text).dates.contains(day),
             Label::Open => text::task(text) == Some(false),
+            Label::Done => text::task(text) == Some(true),
         }
     }
 }
@@ -92,7 +98,7 @@ impl Label {
 pub(crate) enum Hold {
     /// Its text has this in it, both lowercased as `text::lowercase` does.
     Phrase(String),
-    /// It was written in this span.
+    /// It was written in this span, or done in it.
     Span(Span),
 }
 
@@ -101,21 +107,29 @@ impl Hold {
     pub(crate) fn held_by(&self, note: &Note, lower: &str) -> bool {
         match self {
             Hold::Phrase(phrase) => lower.contains(phrase.as_str()),
-            Hold::Span(span) => note.created.is_some_and(|written| span.holds(written)),
+            Hold::Span(span) => span.read(note).is_some_and(|at| span.holds(at)),
         }
     }
 }
 
-/// When notes were written: from the start of a day, or of a minute of it, to the end of one,
-/// either end open. It is read by the clock of the place each note was written in, as a note's
-/// day is.
+/// When notes were written, or done: from the start of a day, or of a minute of it, to the end
+/// of one, either end open, or both, which is all time. It is read by the clock of the place
+/// each note was written in, as a note's day is.
 #[derive(Clone, Copy)]
 pub(crate) struct Span {
     from: Option<End>,
     to: Option<End>,
+    /// It measures when notes were done and not when they were written, since the line asks
+    /// about the done tasks.
+    done: bool,
 }
 
 impl Span {
+    /// The moment of a note the span measures: when it was written, or when it was done.
+    pub(crate) fn read(&self, note: &Note) -> Option<Moment> {
+        if self.done { note.done } else { note.created }
+    }
+
     fn holds(&self, written: Moment) -> bool {
         let wall = written.wall();
         self.from.is_none_or(|from| wall >= from.start())
@@ -202,12 +216,15 @@ impl Query {
                 i = end + 1;
                 continue;
             }
-            // The box of an open task starts a word, as a date word does, and is read only whole:
-            // `[` and `[ ` hold nothing, so that a `[[` on its way to a link lists no tasks.
-            if text::at_word_start(&chars, i) && chars[i..].starts_with(&['[', ' ', ']']) {
+            // A box starts a word, as a date word does, and is read only whole: `[` and `[ ` hold
+            // nothing, so that a `[[` on its way to a link lists no tasks.
+            let boxed = [(text::OPEN, Label::Open), (text::DONE, Label::Done)]
+                .into_iter()
+                .find(|(mark, _)| chars[i..].iter().copied().take(3).eq(mark.chars()));
+            if let Some((mark, label)) = boxed.filter(|_| text::at_word_start(&chars, i)) {
                 query.labels.push(Typed {
-                    label: Label::Open,
-                    written: text::OPEN.to_owned(),
+                    label,
+                    written: mark.to_owned(),
                     whole: true,
                 });
                 query.blank();
@@ -256,7 +273,25 @@ impl Query {
                 }
             }
         }
+        if query.asks_done() {
+            query.measure_done();
+        }
         query
+    }
+
+    /// Whether the line asks for the done tasks, with `[x]`.
+    pub(crate) fn asks_done(&self) -> bool {
+        self.labels.iter().any(|typed| typed.label == Label::Done)
+    }
+
+    /// Makes every span on the line measure when notes were done, as it does with `[x]` on the
+    /// line or in the place it is typed in.
+    pub(crate) fn measure_done(&mut self) {
+        for hold in &mut self.holds {
+            if let Hold::Span(span) = hold {
+                span.done = true;
+            }
+        }
     }
 
     /// Reads a day or a span at `i`, if one starts there, and says where it ends: `START..END`,
@@ -265,6 +300,13 @@ impl Query {
     /// words.
     fn dated(&mut self, chars: &[char], i: usize, boundary: bool, today: Day) -> Option<usize> {
         if boundary && text::dots(chars, i) {
+            // Two dots alone are a span with neither end: all time. Alone means a word of their
+            // own, so that the dots after `wait...` are not one.
+            let alone = |at: Option<&char>| at.is_none_or(|c| c.is_whitespace());
+            if alone(i.checked_sub(1).map(|at| &chars[at])) && alone(chars.get(i + 2)) {
+                self.span(None, None);
+                return Some(i + 2);
+            }
             let (to, end) = span_end(chars, i + 2, today)?;
             self.span(None, Some(to));
             return Some(end);
@@ -300,7 +342,11 @@ impl Query {
     }
 
     fn span(&mut self, from: Option<End>, to: Option<End>) {
-        let span = Span { from, to };
+        let span = Span {
+            from,
+            to,
+            done: false,
+        };
         self.holds.push(Hold::Span(span));
         self.shown.push(Shown::Span(span));
     }
@@ -491,7 +537,18 @@ mod tests {
             ["18", "00", "boiler"],
             "a time outside a span is words"
         );
-        assert!(held(&read("..")).is_empty());
+        for line in ["..", "#house .. ", "[x] .."] {
+            let query = read(line);
+            assert!(held(&query).ends_with(&["span".to_owned()]), "{line}");
+            assert_eq!(
+                query.shown(),
+                ["… – now"],
+                "two dots alone are all time: {line}"
+            );
+        }
+        for line in ["...", "x..", "wait...", "(..)"] {
+            assert!(held(&read(line)).is_empty(), "{line}");
+        }
         assert_eq!(
             held(&read("x..2026-10-05")),
             ["2026-10-05"],
@@ -552,13 +609,45 @@ mod tests {
         }
         assert!(read("[ ] #house").only_labels());
         assert!(read("[").is_empty() && read("[ ").is_empty());
-        for line in ["[x] oil", "oil[ ]", "[ oil", "[[ ]]", "\"[ ] oil\""] {
+        for line in ["[x] oil", "oil[ ]", "[ oil", "[[ ]]", "\"[ ] oil\"", "[X]"] {
             let query = read(line);
             assert!(
                 query.labels.iter().all(|typed| typed.label != Label::Open),
                 "{line:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_box_of_a_done_task_is_a_label_too_and_with_it_a_span_measures_when_notes_were_done() {
+        for (line, labels) in [
+            ("[x]", &["[x]"][..]),
+            ("[x] /-mon.. #work ", &["[x]", "#work", "span"]),
+            ("#work [x] [ ]", &["#work", "[x]", "[ ]"]),
+            ("oil[x]", &[]),
+            ("\"[x]\"", &["\"[x]\""]),
+        ] {
+            assert_eq!(held(&read(line)), labels, "{line:?}");
+        }
+        assert!(read("[x] #work").only_labels() && read("[x]").asks_done());
+        assert!(!read("[ ] /-mon..").asks_done());
+        let spans = |query: &Query| -> Vec<bool> {
+            query
+                .holds
+                .iter()
+                .filter_map(|hold| match hold {
+                    Hold::Span(span) => Some(span.done),
+                    Hold::Phrase(_) => None,
+                })
+                .collect()
+        };
+        assert_eq!(spans(&read("/-mon.. [x]")), [true], "wherever the box is");
+        assert_eq!(spans(&read("/-mon.. #work")), [false]);
+        assert_eq!(
+            spans(&read("/-mon.. \"[x]\"")),
+            [false],
+            "a phrase is not the box"
+        );
     }
 
     #[test]

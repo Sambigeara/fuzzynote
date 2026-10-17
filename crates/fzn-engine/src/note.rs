@@ -16,6 +16,9 @@ pub struct Note {
     /// written in it to the minute. Relevance reads only its day.
     pub created: Option<Moment>,
     pub updated: Option<Day>,
+    /// When the note was done: archived, or for a task ticked. A span typed with `[x]` holds the
+    /// done tasks done in it.
+    pub done: Option<Moment>,
     pub archived: bool,
 }
 
@@ -27,6 +30,7 @@ impl Note {
             links: Vec::new(),
             created: None,
             updated: None,
+            done: None,
             archived: false,
         }
     }

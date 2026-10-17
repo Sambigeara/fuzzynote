@@ -770,6 +770,7 @@ fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
             return Ok(false);
         }
         record.archived = held.archived;
+        record.done = held.done;
         let about = std::mem::replace(&mut record.links, held.links.clone());
         for link in about {
             if !record.links.contains(&link) {
@@ -777,6 +778,13 @@ fn put_imported(store: &mut Store, mut record: Record) -> Result<bool> {
             }
         }
         record.stamp = Some(store.next_stamp(&record.id));
+    }
+    // A page, or a line from before the moment was kept, says that a note was done and not
+    // when: when it last changed is the latest it can have been.
+    if !record.archived {
+        record.done = None;
+    } else if record.done.is_none() {
+        record.done = record.updated;
     }
     store.put(record)?;
     Ok(true)
@@ -818,6 +826,26 @@ mod tests {
         let b = store.notes().get("fzn:1:3").unwrap();
         assert_eq!(b.text, "a head\nand a body");
         assert_eq!(b.updated, None);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_imported_note_is_done_only_while_it_is_archived() {
+        let dir = temp_dir();
+        let file = dir.join("notes.jsonl");
+        fs::write(
+            &file,
+            concat!(
+                "{\"v\":3,\"id\":\"oil\",\"text\":\"[ ] Order oil\",\"updated\":\"2026-10-12T09:00:00Z\",\"archived\":false,\"done\":\"2026-10-12T09:00:00Z\"}\n",
+                "{\"v\":3,\"id\":\"bled\",\"text\":\"[x] Bleed the radiators\",\"updated\":\"2026-10-12T09:00:00Z\",\"archived\":true}\n",
+            ),
+        )
+        .unwrap();
+        let mut store = open(&dir.join("space"));
+        assert_eq!(jsonl(&file, &mut store).unwrap(), 2);
+        assert_eq!(store.notes().get("oil").unwrap().done, None, "not archived");
+        let bled = store.notes().get("bled").unwrap();
+        assert_eq!(bled.done, bled.updated);
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -919,6 +947,12 @@ mod tests {
         assert!(!note(2).archived);
         assert_eq!(note(3).text, "[x] Order compost\n#garden");
         assert!(note(3).archived, "ticked, so archived");
+        assert_eq!(
+            note(3).done,
+            note(3).updated,
+            "done, as far as is known, when last changed"
+        );
+        assert_eq!(note(2).done, None);
         assert!(note(3).links.is_empty());
 
         // A tag the line started with goes under the head too. A link to a page is a link to

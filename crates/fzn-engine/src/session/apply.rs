@@ -17,8 +17,8 @@ use super::{Effect, Session};
 
 /// A note as it is given from outside. A line of `fzn query` reads as one, and so does a line
 /// with an id and one field. What is not given is as held. What fzn keeps for itself is not
-/// taken from the line: `created`, `updated` and `v` are not read at all, and `device` and
-/// `placed` only to tell which version was read.
+/// taken from the line: `created`, `updated`, `done` and `v` are not read at all, and `device`
+/// and `placed` only to tell which version was read.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct Given {

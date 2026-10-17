@@ -220,7 +220,7 @@ pub(crate) fn name_of(head: &str) -> &str {
 /// The box an open task starts with.
 pub const OPEN: &str = "[ ]";
 /// The box a done task starts with.
-const DONE: &str = "[x]";
+pub const DONE: &str = "[x]";
 
 /// Whether a text is a task, and if it is, whether it is done: whether it starts with a box,
 /// `[ ]` or `[x]`. A box anywhere else, as a markdown task in a body is, makes nothing a task.

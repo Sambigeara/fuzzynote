@@ -271,3 +271,337 @@ fn a_row_says_whether_its_note_is_a_task_and_whether_it_is_ticked() {
     s.act(Action::ShowArchived);
     assert_eq!(task(&s, "oil"), Some(true));
 }
+
+#[test]
+fn the_done_box_on_the_line_lists_the_done_tasks_though_they_are_archived() {
+    let mut s = session();
+    tasks(&mut s);
+    put(&mut s, "gate", "[x] Mend the gate", &[], 7_000);
+    clear(&mut s);
+    assert!(!heads(&s).contains(&"[x] Sweep the chimney #house"));
+    type_in(&mut s, "[x]");
+    assert_eq!(
+        heads(&s),
+        ["[x] Mend the gate", "[x] Sweep the chimney #house"],
+        "archived or not, and not the shed, archived with its box open"
+    );
+    clear(&mut s);
+    type_in(&mut s, "[x] #house");
+    assert_eq!(heads(&s), ["[x] Sweep the chimney #house"]);
+    clear(&mut s);
+    type_in(&mut s, "[x] chimney");
+    assert_eq!(
+        heads(&s),
+        ["[x] Sweep the chimney #house"],
+        "words find among them"
+    );
+    clear(&mut s);
+    type_in(&mut s, "\"[x]\"");
+    assert_eq!(
+        heads(&s),
+        ["[x] Mend the gate"],
+        "the phrase still asks nothing more"
+    );
+    let exported: Vec<&str> = s.query("[x]").iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(exported, ["gate", "chimney"]);
+}
+
+#[test]
+fn the_done_box_is_a_place_and_a_note_written_there_is_a_task_done_now() {
+    let mut s = session();
+    tasks(&mut s);
+    type_in(&mut s, "#house [x]");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "[x]"]);
+    assert_eq!(heads(&s), ["[x] Sweep the chimney #house"]);
+
+    s.act(Action::Write);
+    let fresh = |s: &Session| s.view().field.map(|f| (f.text.to_owned(), f.fresh));
+    assert_eq!(fresh(&s), Some(("[x]  #house".to_owned(), Some(4))));
+    let typed = edited(&mut s, "[x] F #house");
+    let [Effect::Keep(kept)] = &typed[..] else {
+        panic!("one version: {typed:?}");
+    };
+    assert_eq!(
+        (kept.text.as_str(), kept.archived, kept.done),
+        ("[x] F #house", true, kept.stamp),
+        "done from its first version"
+    );
+    edited(&mut s, "[x] Fixed the gate latch #house");
+    s.act(Action::Select(None));
+    assert!(heads(&s).contains(&"[x] Fixed the gate latch #house"));
+
+    // Written from the line it is the same, and so in the box alone.
+    type_in(&mut s, "Swept the patio");
+    s.act(Action::Write);
+    let id = s.selected().unwrap().id.clone();
+    let held = s.notes.get(&id).unwrap();
+    assert_eq!(
+        (held.text.as_str(), held.archived, held.done),
+        ("[x] Swept the patio #house", true, held.stamp)
+    );
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    s.act(Action::Back);
+    go_to(&mut s, "[x]");
+    assert_eq!(path(&s), ["[x]"]);
+    s.act(Action::Write);
+    assert_eq!(fresh(&s), Some(("[x] ".to_owned(), Some(4))));
+
+    // Among the open tasks a note written is open, as it always was.
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    go_to(&mut s, "[ ]");
+    type_in(&mut s, "Clean the windows");
+    s.act(Action::Write);
+    let id = s.selected().unwrap().id.clone();
+    let held = s.notes.get(&id).unwrap();
+    assert_eq!((held.archived, held.done), (false, None));
+}
+
+#[test]
+fn a_new_note_headed_by_a_ticked_box_is_done_wherever_it_is_written_and_only_while_it_is() {
+    let mut s = session();
+    tasks(&mut s);
+    let done = |s: &Session, id: &str| {
+        let held = s.notes.get(id).unwrap();
+        (held.archived, held.done.is_some())
+    };
+
+    // Typed on the line at the top and written with Enter.
+    type_in(&mut s, "[x] Called the plumber");
+    let written = s.act(Action::Write);
+    let called = kept(&written)[0].id.clone();
+    assert_eq!(done(&s, &called), (true, true));
+    assert!(
+        !heads(&s).contains(&"[x] Called the plumber"),
+        "done, so archived, and out of the list until asked for"
+    );
+
+    // In a new row at the top, from its first version, and not once the box is taken out
+    // before the cursor leaves.
+    s.act(Action::Select(None));
+    s.act(Action::Write);
+    edited(&mut s, "[x] W");
+    let washed = s.selected().unwrap().id.clone();
+    assert_eq!(done(&s, &washed), (true, true));
+    edited(&mut s, "Washed the car");
+    assert_eq!(done(&s, &washed), (false, false));
+    s.act(Action::Select(None));
+    assert_eq!(
+        heads(&s)[0],
+        "Washed the car",
+        "listed at the top, as an open note is"
+    );
+
+    // In the done tasks, where the row opens with the box, the same.
+    go_to(&mut s, "[x]");
+    s.act(Action::Write);
+    edited(&mut s, "[x] S");
+    let id = s.selected().unwrap().id.clone();
+    assert_eq!(done(&s, &id), (true, true));
+    edited(&mut s, "S");
+    assert_eq!(done(&s, &id), (false, false));
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    clear(&mut s);
+    assert_eq!(heads(&s)[0], "S");
+
+    // A note written before is ticked only by the key: a box typed into it changes its text.
+    select(&mut s, "Washed the car");
+    edited(&mut s, "[x] Washed the car");
+    s.act(Action::Select(None));
+    assert_eq!(done(&s, &washed), (false, false));
+}
+
+#[test]
+fn a_line_of_both_boxes_names_no_place() {
+    let mut s = session();
+    tasks(&mut s);
+    type_in(&mut s, "[x] [ ]");
+    assert!(!labels(&s).contains(&"go in"));
+    s.act(Action::GoIn);
+    assert!(path(&s).is_empty());
+}
+
+#[test]
+fn two_devices_agree_on_when_a_task_was_done_whatever_order_their_versions_arrive_in() {
+    let at = |secs: i64| Some(NOON.plus_secs(secs));
+    let version =
+        |text: &str, archived: bool, done: Option<Moment>, secs: i64, device: &str| Record {
+            text: text.into(),
+            archived,
+            done,
+            updated: at(secs),
+            stamp: at(secs),
+            device: device.into(),
+            ..theirs("oil", "[ ] Order oil", 0)
+        };
+    let ticked = version("[x] Order oil", true, at(10), 10, "dev-a");
+    let unticked = version("[ ] Order oil", false, None, 20, "dev-b");
+    let edited = version("[ ] Order heating oil", false, None, 20, "dev-b");
+    let ticked_later = version("[x] Order oil", true, at(30), 30, "dev-a");
+    // A build from before `done` ticking it later still, saying nothing of when.
+    let old = Record::read(
+        format!(
+            r#"{{"v":3,"id":"oil","text":"[x] Order oil","created":"2026-10-13T12:00:00Z","updated":"{0}","stamp":"{0}","archived":true,"device":"dev-c"}}"#,
+            "2026-10-13T12:00:40Z"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    for (pair, text, archived, done) in [
+        ([&ticked, &unticked], "[ ] Order oil", false, None),
+        ([&ticked, &edited], "[ ] Order heating oil", false, None),
+        ([&edited, &ticked_later], "[x] Order oil", true, at(30)),
+        ([&ticked, &old], "[x] Order oil", true, at(40)),
+    ] {
+        for order in [[pair[0], pair[1]], [pair[1], pair[0]]] {
+            let mut s = session();
+            s.absorb([theirs("oil", "[ ] Order oil", 0)]);
+            s.absorb(order.map(Record::clone));
+            let held = s.notes.get("oil").unwrap();
+            assert_eq!(
+                (held.text.as_str(), held.archived, held.done),
+                (text, archived, done),
+                "{:?}",
+                order.map(|r| &r.device)
+            );
+            assert!(
+                held.archived || held.done.is_none(),
+                "never done while not archived"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_span_with_the_done_box_holds_the_tasks_done_in_it_whenever_they_were_written() {
+    let mut s = session();
+    let weeks_ago = |weeks: i64| NOON.secs() - weeks * 7 * 86_400;
+    put(
+        &mut s,
+        "fence",
+        "[ ] Fix the fence #work",
+        &[],
+        weeks_ago(3),
+    );
+    put(
+        &mut s,
+        "gate",
+        "[ ] Paint the gate #work",
+        &[],
+        weeks_ago(3),
+    );
+    put(&mut s, "shed", "[ ] Tidy the shed", &[], weeks_ago(3));
+    put(
+        &mut s,
+        "report",
+        "Wrote the report #work",
+        &[],
+        NOON.secs() - 3_600,
+    );
+    // The gate was ticked last week, the fence and the shed now.
+    let gate = s.notes.get("gate").unwrap().clone();
+    s.commit(Record {
+        text: "[x] Paint the gate #work".into(),
+        archived: true,
+        done: Some(Moment::utc(weeks_ago(1))),
+        ..gate
+    });
+    for id in ["fence", "shed"] {
+        assert!(s.tick(&[id.to_owned()], true).is_ok());
+    }
+    clear(&mut s);
+    type_in(&mut s, "[x] /-mon.. #work ");
+    assert_eq!(heads(&s), ["[x] Fix the fence #work"]);
+    type_in(&mut s, "fence");
+    assert_eq!(
+        heads(&s),
+        ["[x] Fix the fence #work"],
+        "and with words, ranked"
+    );
+    let exported: Vec<&str> = s
+        .query("[x] /-mon..")
+        .iter()
+        .map(|r| r.id.as_str())
+        .collect();
+    assert_eq!(exported.len(), 2);
+    assert!(!exported.contains(&"gate"));
+
+    // Without the box a span is when notes were written, archived or not.
+    clear(&mut s);
+    s.act(Action::ShowArchived);
+    type_in(&mut s, "/-mon.. #work");
+    assert_eq!(heads(&s), ["Wrote the report #work"]);
+    s.act(Action::ShowArchived);
+
+    // Inside the done tasks a span measures when they were done too.
+    go_to(&mut s, "[x]");
+    type_in(&mut s, "/-mon..");
+    assert_eq!(heads(&s).len(), 2);
+    assert!(!heads(&s).contains(&"[x] Paint the gate #work"));
+
+    // A box ticked by hand and never archived was done when it last changed, at the latest.
+    s.act(Action::Back);
+    clear(&mut s);
+    put(&mut s, "hedge", "[x] Trim the hedge", &[], NOON.secs() - 60);
+    type_in(&mut s, "[x] /today..");
+    assert!(heads(&s).contains(&"[x] Trim the hedge"));
+}
+
+#[test]
+fn ticking_sets_when_the_task_was_done_an_edit_keeps_it_and_unticking_clears_it() {
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Order oil #house");
+    let ticked = s.act(Action::Archive);
+    let [Effect::Keep(kept)] = &ticked[..] else {
+        panic!("one version: {ticked:?}");
+    };
+    let done = kept.done;
+    assert!(done.is_some());
+    assert_eq!(done, kept.stamp, "the moment of the version that ticked it");
+
+    // Edited while done, it was done when it was.
+    s.act(Action::Select(None));
+    s.act(Action::ShowArchived);
+    select(&mut s, "[x] Order oil #house");
+    let edit = edited(&mut s, "[x] Order heating oil #house");
+    let [Effect::Keep(kept)] = &edit[..] else {
+        panic!("one version: {edit:?}");
+    };
+    assert_ne!(kept.stamp, done);
+    assert_eq!(kept.done, done);
+
+    s.act(Action::Select(None));
+    select(&mut s, "[x] Order heating oil #house");
+    s.act(Action::Archive);
+    assert_eq!(
+        s.notes.get("oil").unwrap().done,
+        None,
+        "unticked, so not done"
+    );
+    s.act(Action::Undo);
+    assert_eq!(
+        s.notes.get("oil").unwrap().done,
+        done,
+        "undo puts back when"
+    );
+
+    // Anything archived is done when it was archived, and a tick by id is the key's.
+    s.act(Action::Select(None));
+    select(&mut s, "Boiler #house");
+    s.act(Action::Archive);
+    assert!(s.notes.get("boiler").unwrap().done.is_some());
+    let by_id = s.tick(&["radiators".to_owned()], true).unwrap();
+    let [Effect::Keep(kept)] = &by_id[..] else {
+        panic!("one version: {by_id:?}");
+    };
+    assert_eq!((kept.archived, kept.done), (true, kept.stamp));
+    let back = s.tick(&["radiators".to_owned()], false).unwrap();
+    let [Effect::Keep(kept)] = &back[..] else {
+        panic!("one version: {back:?}");
+    };
+    assert_eq!(kept.done, None);
+}

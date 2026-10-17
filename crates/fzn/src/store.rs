@@ -998,6 +998,7 @@ pub(crate) mod tests {
         s.put(rec("n1", "first", 10)).unwrap();
         s.put(Record {
             archived: true,
+            done: Some(Moment::utc(30)),
             ..rec("n1", "first, done", 30)
         })
         .unwrap();

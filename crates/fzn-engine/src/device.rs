@@ -2031,6 +2031,22 @@ mod tests {
         assert_eq!(heads(&again), before);
     }
 
+    #[test]
+    fn compacting_keeps_when_each_task_was_done() {
+        let mut a = device("dev-a");
+        write(&mut a, "[ ] Bleed the radiators");
+        a.act(Action::Archive);
+        let done = a.session.query("\"[x]\"")[0].done;
+        assert!(done.is_some());
+        let todo = a.compact();
+        let bled = todo.keep[0].lines[1..]
+            .iter()
+            .map(|line| opened(line))
+            .find(|record| record.text == "[x] Bleed the radiators")
+            .unwrap();
+        assert_eq!(bled.done, done);
+    }
+
     /// A device whose clock is `ahead` seconds past the relay's midday.
     fn clocked(ahead: i64) -> Device {
         Device::new(

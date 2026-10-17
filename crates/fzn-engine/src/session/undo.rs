@@ -74,9 +74,21 @@ impl Session {
     /// says, unchanged, keeps the stamp and the writer it was written with. A place that is the
     /// one held keeps the later of its two clocks: a move to where the note already is stamps
     /// its own, to be put before what was placed there since.
+    ///
+    /// When the note was archived is the session's to say, whatever wrote the version: archived
+    /// now, it is this version's stamp; brought back, it is none; archived already, it is as it
+    /// was, so that an edit of a done task does not re-date when it was done. A version that
+    /// says when, as one put back by undo does, keeps what it says.
     pub(super) fn write(&mut self, mut record: Record) -> Record {
         let now = self.host.now();
         let held = self.notes.version(&record.id);
+        if !record.archived {
+            record.done = None;
+        } else if record.done.is_none() {
+            record.done = held
+                .filter(|held| held.archived && !held.deleted)
+                .and_then(|held| held.done);
+        }
         (record.stamp, record.device) = match held {
             Some(held) if held.says_the_same(&record) => (held.stamp, held.device.clone()),
             _ => (
@@ -84,6 +96,12 @@ impl Session {
                 self.device.clone(),
             ),
         };
+        // Archived by this version, whose moment is when it was done. A note archived already
+        // with no moment held, from a line that said nothing of when, is left saying nothing.
+        let was_archived = held.is_some_and(|held| held.archived && !held.deleted);
+        if record.archived && record.done.is_none() && !was_archived {
+            record.done = record.stamp;
+        }
         record.placed = match held {
             Some(held) if held.after == record.after => record.placed.max(held.placed),
             _ => Some(
@@ -168,7 +186,8 @@ impl Session {
 
     /// Turns the line into a note, linked to the note being looked around and to whatever it
     /// names in brackets, with each label being looked around that it does not carry already
-    /// written in, with its date words written out as dates, and puts the cursor on it: it is the
+    /// written in, with its date words written out as dates, done now if it starts with a
+    /// ticked box, and puts the cursor on it: it is the
     /// note most likely to be gone on with, and Enter there opens a row under it. With nothing on
     /// the line, opens a new note at the top of the list to be written in place. A note's link is
     /// not in its text, and a new row has the labels in its head from the start.
@@ -188,6 +207,7 @@ impl Session {
             links,
             created: Some(now),
             updated: Some(now),
+            archived: text::task(&text) == Some(true),
             ..Record::new(id.clone(), text)
         });
         self.line.clear();

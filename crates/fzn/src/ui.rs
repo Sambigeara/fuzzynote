@@ -1600,6 +1600,7 @@ mod tests {
                 after: None,
                 placed: None,
                 archived: false,
+                done: None,
                 deleted: false,
                 device: WRITER.into(),
             }

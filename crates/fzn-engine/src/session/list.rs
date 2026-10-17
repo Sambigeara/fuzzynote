@@ -7,7 +7,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use crate::engine::{self, Hit, SearchOptions};
-use crate::query::Query;
+use crate::query::{Label, Query};
 use crate::record::Record;
 use crate::score::Scorer;
 use crate::text;
@@ -19,11 +19,12 @@ impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
     /// line.
     pub(super) fn refresh(&mut self, reset: bool) {
-        let query = Query::read(&self.line, self.today());
+        let query = self.read_line();
+        let archived = self.archived_listed(&query);
         (self.rows, self.finds_from) = match (self.path.is_empty(), query.ranks()) {
             (false, _) => self.in_place(&query),
-            (true, true) => (self.found(&query, self.show_archived, FOUND_LIMIT), None),
-            (true, false) => (self.found(&query, self.show_archived, TOP_LIMIT), None),
+            (true, true) => (self.found(&query, archived, FOUND_LIMIT), None),
+            (true, false) => (self.found(&query, archived, TOP_LIMIT), None),
         };
         self.parsed = query;
         self.stale = false;
@@ -31,6 +32,24 @@ impl Session {
         self.cursor = cursor
             .filter(|_| !self.rows.is_empty())
             .map(|i| i.min(self.rows.len() - 1));
+    }
+
+    /// The line as it is read here: inside the done tasks a span on it measures when notes were
+    /// done, as it does with `[x]` on the line.
+    pub(super) fn read_line(&self) -> Query {
+        let mut query = Query::read(&self.line, self.today());
+        if self.labels_here().any(|(label, _)| *label == Label::Done) {
+            query.measure_done();
+        }
+        query
+    }
+
+    /// Whether archived notes are listed: when they are shown, and when the line or the place
+    /// asks for the done tasks, which are archived.
+    pub(super) fn archived_listed(&self, query: &Query) -> bool {
+        self.show_archived
+            || query.asks_done()
+            || self.labels_here().any(|(label, _)| *label == Label::Done)
     }
 
     /// The notes to list, in the order the space keeps them in, the archived ones too if asked.
@@ -154,6 +173,7 @@ impl Session {
             labels: &labels,
             written: &written,
         };
+        let archived = self.archived_listed(query);
         if !query.ranks() {
             let facts: HashMap<&str, Option<&str>> = self
                 .engine
@@ -162,7 +182,7 @@ impl Session {
                 .map(|(note, link)| (note.id.as_str(), link))
                 .collect();
             let rows = self
-                .kept(self.show_archived)
+                .kept(archived)
                 .filter_map(|r| {
                     // How it is linked is a fact too, and the one thing said about it.
                     let link = facts.get(r.id.as_str())?;
@@ -177,7 +197,7 @@ impl Session {
         }
         let opts = SearchOptions {
             limit: PLACE_LIMIT,
-            include_archived: self.show_archived,
+            include_archived: archived,
             today: Some(self.today()),
         };
         let near = self.engine.neighbourhood(&place, &opts);
