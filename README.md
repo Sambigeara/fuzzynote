@@ -61,15 +61,6 @@ which Ghostty, foot, kitty, Alacritty, iTerm2 and others have. A terminal that c
 Enter, and the footer then says `^V tick`, since Ctrl-V works in every terminal. Ctrl-/ opens the
 first URL in the note you are on.
 
-With `vim = true` in the config file the list takes vim's keys. A row you walk to is in normal
-mode, with a block cursor at the end of its text: `j` and `k` walk; `h`, `l` and the arrows move
-the cursor along the text, `0` and Home to its start, `^` past a task's box, `$` and End to its
-end, and `w`, `b` and `e` by words; `i` types before the cursor, `a` after it, `I` at the start and
-`A` at the end; `o` and `O` open a row under or above, `x` ticks, `D` deletes, `y` copies, `u`
-undoes, Ctrl-D and Ctrl-U page by ten, Tab goes in, and Esc or `/` goes to the line. A row you
-write in types, with a bar, until Esc, which goes back to normal mode with the cursor a letter
-back; so Esc twice takes you to the line. The line always types, and the footer shows vim's letters.
-
 Inside tmux, Shift-Enter reaches fzn when tmux is set to pass it on in the form fzn reads:
 
 ```

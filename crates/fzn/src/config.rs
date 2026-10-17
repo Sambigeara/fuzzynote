@@ -1,5 +1,5 @@
-//! Configuration: where notes live, which space to open, which editor to use, whether the list
-//! takes vim's keys, and the engine weights.
+//! Configuration: where notes live, which space to open, which editor to use, and the engine
+//! weights.
 //!
 //! The config directory also holds the key to each space this machine opens. It must never be
 //! copied along with the notes, which is why it is separate from them.
@@ -29,8 +29,6 @@ pub struct Config {
     pub space: Option<String>,
     /// Editor for Ctrl-O. Defaults to `$VISUAL`, then `$EDITOR`, then `vi`.
     pub editor: Option<String>,
-    /// Vim's keys for the list: a row walked to takes vim's letters, and one written in types.
-    pub vim: bool,
     /// A relay to sync with. With none, nothing leaves this machine.
     pub relay: Option<String>,
     pub weights: Weights,
@@ -50,11 +48,6 @@ pub const TEMPLATE: &str = r#"# fzn configuration.
 # Editor opened by Ctrl-O. Falls back to $VISUAL, then $EDITOR, then vi. It is split on spaces,
 # so "code --wait" runs code with --wait, and a path with a space in it cannot be given here.
 # editor = "vim"
-
-# Vim's keys for the list. A row walked to is in normal mode, a block cursor, where j and k walk,
-# i and a type, o opens a row, x ticks, D deletes, u undoes and Esc does nothing; a row written in
-# types, a bar, until Esc. The line always types. The body is your editor's, so this is the list.
-# vim = true
 
 # A relay to sync with: a machine running `fzn relay` that your devices can reach. With this
 # set, fzn syncs whichever space it opens for as long as it is open, and works as before when
@@ -191,9 +184,13 @@ mod tests {
         assert_eq!(cfg.editor.as_deref(), Some("nano"));
         assert_eq!(cfg.weights.lexical, 2.0);
         assert_eq!(cfg.weights.explicit, Weights::default().explicit);
-        assert!(!cfg.vim, "vim's keys are asked for");
-        let cfg: Config = toml::from_str("vim = true\n").unwrap();
-        assert!(cfg.vim);
+    }
+
+    #[test]
+    fn a_config_still_saying_vim_is_true_opens_as_without_it() {
+        let cfg: Config = toml::from_str("editor = \"nano\"\nvim = true\n").unwrap();
+        let without: Config = toml::from_str("editor = \"nano\"\n").unwrap();
+        assert_eq!(cfg, without);
     }
 
     #[test]

@@ -33,14 +33,6 @@
 //! alternate screen and the next program would inherit it. Under the flags Ctrl-I, Ctrl-M and
 //! Ctrl-[ come apart from Tab, Enter and Escape, so each is bound to what the hand meant by it.
 //!
-//! With `vim = true` a row walked to is in vim's normal mode, where letters are commands and
-//! nothing is typed, and a row written in is in insert, as without vim; the terminal's cursor is a
-//! block in the one and a bar in the other. Normal mode keeps a caret in the head, which vim's
-//! motions move as they do on one line of vim, so that typing starts where vim's hands expect,
-//! and Escape there goes up to the line, as it goes off a row without vim. The line is always
-//! typing, so it is as it is without vim, and every key in normal mode is a single key, so that
-//! none depends on the one before.
-//!
 //! The caret moves and Backspace takes a letter as it is drawn, a grapheme cluster, so that an
 //! accent goes with its letter; and everything is measured in the columns the terminal draws it
 //! in, so that a Chinese head, two columns a letter, is cut and its date placed where they are
@@ -83,7 +75,6 @@ use anyhow::{Result, anyhow};
 use fzn_engine::{
     Action, Device, Editing, Hint, Key, Moment, RELAY, Row, Todo, View, Weights, time,
 };
-use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
@@ -161,12 +152,6 @@ pub struct App {
     /// What the terminal was asked for so that it tells Shift-Enter from Enter, once it has been
     /// asked; until then, as in tests, nothing was.
     keyboard: Option<Keyboard>,
-    /// Whether the list takes vim's keys.
-    vim: bool,
-    /// With vim's keys, whether the row the cursor is on is in normal mode rather than insert.
-    normal: bool,
-    /// The cursor's shape as it was last set, which only vim's keys set.
-    shape: Option<SetCursorStyle>,
 }
 
 /// What the terminal was asked for so that it tells apart keys its plain encoding sends alike,
@@ -293,218 +278,16 @@ fn bound(
     })
 }
 
-/// What a key asks for on a row in vim's normal mode, beyond what [`bound`] gives it.
-#[derive(Debug, PartialEq)]
-enum Normal {
-    /// What the key asks for of the session, as it would anywhere.
-    Act(Action),
-    /// Down the list by this many rows, or up it, stopping at its first and last rows, so that a
-    /// stray `k` never lands on the line to be typed there.
-    Walk(i64),
-    /// Into the note, the cursor landing on the first row inside.
-    In,
-    /// The caret along the head, nothing written.
-    Caret(Motion),
-    /// Typing in the head, from where the caret is or at one of its ends.
-    Type(Typing),
-    /// A new row above this one.
-    Above,
-    /// To the line, the caret at the end of its text.
-    ToLine,
-}
-
-/// Where a motion takes the caret in a head, as vim's do on one line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Motion {
-    /// One letter back, `h` or Left.
-    Back,
-    /// One letter on, `l` or Right.
-    On,
-    /// The start of the head, `0` or Home.
-    Start,
-    /// The first letter after a task's box and its spaces, `^`.
-    First,
-    /// The end of the head, after its last letter, `$` or End.
-    End,
-    /// The start of the next word, `w`.
-    Word,
-    /// The start of this word or the one before, `b`.
-    WordBack,
-    /// The last letter of this word or the next, `e`.
-    WordEnd,
-}
-
-/// Where typing starts in a head: before the letter under the caret, after it, at the start
-/// after a task's box, or at the end.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Typing {
-    Before,
-    After,
-    Start,
-    End,
-}
-
-/// What a key asks for on a row in vim's normal mode, where letters are commands and nothing is
-/// typed: vim's single keys for what fzn does, the caret's motions along the head, and the rest
-/// of fzn's keys as ever, except that Ctrl-D and Ctrl-U page by ten as vim's do, `D` and `u`
-/// deleting and undoing here, and Escape goes to the line, as it goes off a row without vim's
-/// keys. The arrows, Home and End move the caret only without modifiers, so that nothing is
-/// selected in normal mode. Any other letter, and the keys that edit, do nothing.
-fn normal(code: KeyCode, modifiers: KeyModifiers, zoomed: bool, empty: bool) -> Option<Normal> {
-    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
-    let plain = modifiers.is_empty();
-    Some(match (code, ctrl) {
-        (KeyCode::Esc, _) | (KeyCode::Char('/'), false) => Normal::ToLine,
-        (KeyCode::Char('j'), false) => Normal::Walk(1),
-        (KeyCode::Char('k'), false) => Normal::Walk(-1),
-        (KeyCode::Char('d'), true) => Normal::Walk(10),
-        (KeyCode::Char('u'), true) => Normal::Walk(-10),
-        (KeyCode::Tab, _) => Normal::In,
-        (KeyCode::Char('h'), false) => Normal::Caret(Motion::Back),
-        (KeyCode::Left, _) if plain => Normal::Caret(Motion::Back),
-        (KeyCode::Char('l'), false) => Normal::Caret(Motion::On),
-        (KeyCode::Right, _) if plain => Normal::Caret(Motion::On),
-        (KeyCode::Char('0'), false) => Normal::Caret(Motion::Start),
-        (KeyCode::Home, _) if plain => Normal::Caret(Motion::Start),
-        (KeyCode::Char('^'), false) => Normal::Caret(Motion::First),
-        (KeyCode::Char('$'), false) => Normal::Caret(Motion::End),
-        (KeyCode::End, _) if plain => Normal::Caret(Motion::End),
-        (KeyCode::Char('w'), false) => Normal::Caret(Motion::Word),
-        (KeyCode::Char('b'), false) => Normal::Caret(Motion::WordBack),
-        (KeyCode::Char('e'), false) => Normal::Caret(Motion::WordEnd),
-        (KeyCode::Char('i'), false) => Normal::Type(Typing::Before),
-        (KeyCode::Char('a'), false) => Normal::Type(Typing::After),
-        (KeyCode::Char('I'), false) => Normal::Type(Typing::Start),
-        (KeyCode::Char('A'), false) => Normal::Type(Typing::End),
-        (KeyCode::Char('o'), false) => Normal::Act(Action::Write),
-        (KeyCode::Char('O'), false) => Normal::Above,
-        (KeyCode::Char('x'), false) => Normal::Act(Action::Archive),
-        (KeyCode::Char('D'), false) => Normal::Act(Action::Delete),
-        (KeyCode::Char('y'), false) => Normal::Act(Action::Copy),
-        (KeyCode::Char('u'), false) => Normal::Act(Action::Undo),
-        (KeyCode::Char(_), false) => return None,
-        (KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End, _) => return None,
-        _ => Normal::Act(bound(code, modifiers, Place::Row, zoomed, empty)?),
-    })
-}
-
-/// Where the letters of a task's box, and the spaces after it, end in a head: the first letter
-/// typed at the start of a task, or the start of a head that is not one. `spaces` says how many
-/// spaces after the box are counted, `I` taking one and `^` all of them.
-fn after_box(head: &str, task: bool, spaces: usize) -> usize {
-    if !task {
-        return 0;
-    }
-    let blanks = head.chars().skip(3).take(spaces).take_while(|c| *c == ' ');
-    letters_in(head, 3 + blanks.count())
-}
-
-/// Which of vim's small words a letter is in: a run of letters, digits and `_`, or a run of other
-/// characters that are not blank, with blanks parting them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Blank,
-    Word,
-    Other,
-}
-
-fn kind(letter: &str) -> Kind {
-    match letter.chars().next() {
-        Some(c) if c.is_whitespace() => Kind::Blank,
-        Some(c) if c.is_alphanumeric() || c == '_' => Kind::Word,
-        _ => Kind::Other,
-    }
-}
-
-/// Where a motion takes the caret, in letters as drawn, in a head whose first letter after a
-/// task's box and its spaces is `first`. The caret goes from the start to the end, the end being
-/// after the last letter, and never past either. `e` with no word after the caret stays.
-fn moved(head: &str, caret: usize, motion: Motion, first: usize) -> usize {
-    let kinds: Vec<Kind> = head.graphemes(true).map(kind).collect();
-    let end = kinds.len();
-    let caret = caret.min(end);
-    let blank = |i: usize| kinds[i] == Kind::Blank;
-    match motion {
-        Motion::Back => caret.saturating_sub(1),
-        Motion::On => (caret + 1).min(end),
-        Motion::Start => 0,
-        Motion::First => first.min(end),
-        Motion::End => end,
-        Motion::Word => {
-            let mut i = caret;
-            if i < end && !blank(i) {
-                let was = kinds[i];
-                while i < end && kinds[i] == was {
-                    i += 1;
-                }
-            }
-            while i < end && blank(i) {
-                i += 1;
-            }
-            i
-        }
-        Motion::WordBack => {
-            let mut i = caret;
-            while i > 0 && blank(i - 1) {
-                i -= 1;
-            }
-            if i > 0 {
-                let was = kinds[i - 1];
-                while i > 0 && kinds[i - 1] == was {
-                    i -= 1;
-                }
-            }
-            i
-        }
-        Motion::WordEnd => {
-            let mut i = caret + 1;
-            while i < end && blank(i) {
-                i += 1;
-            }
-            if i >= end {
-                return caret;
-            }
-            while i + 1 < end && kinds[i + 1] == kinds[i] {
-                i += 1;
-            }
-            i
-        }
-    }
-}
-
-/// Which keys are in use, for the footer: whether Shift-Enter can be told from Enter, and, with
-/// vim's keys, the mode of the row the cursor is on.
+/// Which keys are in use, for the footer: whether Shift-Enter can be told from Enter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Keys {
     shift_enter: bool,
-    mode: Mode,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode {
-    /// Without vim's keys, or on the line, which is always typing.
-    Plain,
-    /// With vim's keys, on a row being written in.
-    Insert,
-    /// With vim's keys, on a row walked to.
-    Normal,
-}
-
-/// The key that asks for an action, as the footer names it. In normal mode it is vim's letter
-/// where there is one, Tab going in and Escape going up as they do without vim's keys, and tick
-/// is Shift-Enter wherever the terminal can tell it from Enter; Ctrl-V, which ticks in every
-/// terminal, is then the key the footer leaves out.
+/// The key that asks for an action, as the footer names it. Tick is Shift-Enter wherever the
+/// terminal can tell it from Enter; Ctrl-V, which ticks in every terminal, is then the key the
+/// footer leaves out.
 fn key_for(action: &Action, keys: Keys) -> &'static str {
-    if keys.mode == Mode::Normal {
-        match action {
-            Action::Write => return "o",
-            Action::Archive => return "x",
-            Action::Delete => return "D",
-            Action::Copy => return "y",
-            Action::Undo => return "u",
-            _ => {}
-        }
-    }
     match action {
         Action::Write => "Enter",
         Action::Editor => "^O",
@@ -556,26 +339,14 @@ fn comes_back(action: &Action) -> bool {
 }
 
 /// The keys that do something where the cursor is, for the footer. The way back is always last,
-/// and where the session has no way back for it to take, two Escapes quit. In normal mode it
-/// starts with typing, which is the face's own and not the session's, and the caret's motions are
-/// not written, being the field's own as Left and Right are without vim's keys; in insert Escape
-/// is vim's, and says it is done.
+/// and where the session has no way back for it to take, two Escapes quit.
 fn footer(hints: &[Hint], keys: Keys, room: usize) -> String {
     let hints = keyed(hints, keys);
     let mut said: Vec<String> = hints
         .iter()
-        .map(|hint| {
-            let label = match (&hint.action, keys.mode) {
-                (Action::Select(None), Mode::Insert) => "done",
-                _ => hint.label,
-            };
-            format!("{} {label}", key_for(&hint.action, keys))
-        })
+        .map(|hint| format!("{} {}", key_for(&hint.action, keys), hint.label))
         .collect();
     let back = hints.last().is_some_and(|h| comes_back(&h.action));
-    if keys.mode == Mode::Normal {
-        said.insert(0, "i type".to_owned());
-    }
     if !back {
         said.push("Esc Esc quits".to_owned());
     }
@@ -811,7 +582,7 @@ fn take_terminal() -> Result<(DefaultTerminal, Keyboard)> {
     if let Err(why) =
         execute!(std::io::stdout(), EnableBracketedPaste).and_then(|()| tell_keys_apart(keyboard))
     {
-        give_terminal_back(false);
+        give_terminal_back();
         return Err(why.into());
     }
     Ok((terminal, keyboard))
@@ -833,20 +604,17 @@ fn take_terminal_back(terminal: &mut DefaultTerminal, keyboard: Keyboard) -> Res
         .and_then(|()| tell_keys_apart(keyboard))
         .and_then(|()| terminal.clear());
     if let Err(why) = taken {
-        give_terminal_back(false);
+        give_terminal_back();
         return Err(why.into());
     }
     Ok(())
 }
 
-/// Gives the terminal back as it was found: the keyboard as it was, the person's own cursor
-/// where vim's keys `shaped` it, and a paste as keys again. The keyboard is put back before the
-/// alternate screen is left, since a terminal keeps a pushed flag for the screen it was pushed on.
-fn give_terminal_back(shaped: bool) {
+/// Gives the terminal back as it was found: the keyboard as it was, and a paste as keys again.
+/// The keyboard is put back before the alternate screen is left, since a terminal keeps a pushed
+/// flag for the screen it was pushed on.
+fn give_terminal_back() {
     let _ = stop_telling_keys_apart();
-    if shaped {
-        let _ = execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
-    }
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
 }
@@ -1383,9 +1151,6 @@ impl App {
             unreachable: None,
             looked: Instant::now(),
             keyboard: None,
-            vim: false,
-            normal: true,
-            shape: None,
         };
         // An empty space says how to begin, until the first key.
         if app.device.view().status.is_empty() {
@@ -1398,12 +1163,6 @@ impl App {
             }
         }
         Ok(app)
-    }
-
-    /// Gives the list vim's keys: a row walked to is in normal mode, and one written in is in
-    /// insert.
-    pub fn use_vim(&mut self) {
-        self.vim = true;
     }
 
     /// Syncs with a relay while this window holds the keeper's lease, which it takes now if no
@@ -1453,23 +1212,19 @@ impl App {
         // A panic gives the terminal back too, its keyboard first, while the alternate screen it
         // was asked on is still up: ratatui's own hook restores the rest.
         let hook = std::panic::take_hook();
-        let vim = self.vim;
         std::panic::set_hook(Box::new(move |info| {
             let _ = stop_telling_keys_apart();
-            if vim {
-                let _ = execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
-            }
             let _ = execute!(std::io::stdout(), DisableBracketedPaste);
             hook(info);
         }));
         let outcome = self.event_loop(&mut terminal);
-        give_terminal_back(self.shape.is_some());
+        give_terminal_back();
         outcome
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
-            self.paint(terminal)?;
+            terminal.draw(|frame| self.draw(frame))?;
             while !event::poll(self.wait())? {
                 let mut changed = self.hear()?;
                 if self.looked.elapsed() >= LOOK {
@@ -1478,7 +1233,7 @@ impl App {
                     changed |= self.keep_relay()?;
                 }
                 if changed {
-                    self.paint(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
                 }
             }
             let flow = match event::read()? {
@@ -1494,39 +1249,10 @@ impl App {
         }
     }
 
-    /// Draws the view, and sets the cursor's shape where vim's keys say the mode by it.
-    fn paint(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        terminal.draw(|frame| self.draw(frame))?;
-        let shape = self.shape_wanted(&self.device.view());
-        if shape != self.shape {
-            if let Some(shape) = shape {
-                execute!(std::io::stdout(), shape)?;
-            }
-            self.shape = shape;
-        }
-        Ok(())
-    }
-
-    /// The cursor's shape: with vim's keys, a block on a row in normal mode, where letters are
-    /// commands, and a bar wherever they are typed; without them, the person's own, untouched.
-    fn shape_wanted(&self, view: &View) -> Option<SetCursorStyle> {
-        match self.keys_here(view).mode {
-            _ if !self.vim => None,
-            Mode::Normal => Some(SetCursorStyle::SteadyBlock),
-            Mode::Plain | Mode::Insert => Some(SetCursorStyle::SteadyBar),
-        }
-    }
-
-    /// Which keys are in use where the cursor is, for the footer.
-    fn keys_here(&self, view: &View) -> Keys {
-        let mode = match (self.vim, view.field.is_some(), self.normal) {
-            (true, true, true) => Mode::Normal,
-            (true, true, false) => Mode::Insert,
-            _ => Mode::Plain,
-        };
+    /// Which keys are in use, for the footer.
+    fn keys_here(&self) -> Keys {
         Keys {
             shift_enter: matches!(self.keyboard, Some(Keyboard::Kitty | Keyboard::Modified)),
-            mode,
         }
     }
 
@@ -1561,49 +1287,6 @@ impl App {
                 self.act_from(before, Action::Close)?;
             }
             return Ok(Flow::Quit);
-        }
-        // With vim's keys a row walked to takes vim's, and in a row written in Escape is vim's
-        // alone, keeping the row and going to normal mode with the caret a letter back, as vim's
-        // Escape moves it, and Tab lands on the first row inside. The caret follows the text it
-        // was before, so that a date word written out ahead of it does not move it onto another
-        // letter, and where keeping changed that text it is only kept within the head. A new row
-        // with only the labels it opened with has its caret where it belongs. The row stays
-        // scrolled with its caret, as it was written, until the cursor leaves it.
-        if self.vim && place == Place::Row {
-            if self.normal {
-                return match normal(code, modifiers, zoomed, empty) {
-                    Some(asked) => self.in_normal(before, asked),
-                    None => Ok(Flow::Continue),
-                };
-            }
-            match code {
-                KeyCode::Esc => {
-                    let text = field.unwrap_or_default();
-                    let after: String = head_and_body(&text)
-                        .0
-                        .graphemes(true)
-                        .skip(self.row_cursor)
-                        .collect();
-                    let flow = self.act_from(before, Action::Keep)?;
-                    self.normal = true;
-                    if let Some(field) = &self.device.view().field {
-                        let head = head_and_body(field.text).0;
-                        self.row_cursor = match field.fresh {
-                            Some(at) => letters_in(head, at),
-                            None if head.ends_with(&after) => {
-                                (letters(head) - letters(&after)).saturating_sub(1)
-                            }
-                            None => self.row_cursor.saturating_sub(1),
-                        };
-                        if field.fresh.is_none() {
-                            self.row_left = Some(self.row_left.unwrap_or(0));
-                        }
-                    }
-                    return Ok(flow);
-                }
-                KeyCode::Tab => return self.go_in_and_land(before),
-                _ => {}
-            }
         }
         if let Some(action) = bound(code, modifiers, place, zoomed, empty) {
             return self.act_from(before, action);
@@ -1654,96 +1337,8 @@ impl App {
         Ok(Flow::Continue)
     }
 
-    /// Does what a key asks for on a row in vim's normal mode.
-    fn in_normal(&mut self, before: Before, asked: Normal) -> Result<Flow> {
-        let (at, rows, line_empty, head, task, fresh) = {
-            let view = self.device.view();
-            let at = view.cursor.unwrap_or(0);
-            let fresh = view.field.as_ref().and_then(|field| field.fresh);
-            let head = view
-                .field
-                .as_ref()
-                .map_or("", |field| head_and_body(field.text).0)
-                .to_owned();
-            (
-                at,
-                view.rows.len(),
-                view.line.is_empty(),
-                head,
-                view.rows.get(at).is_some_and(|row| row.task.is_some()),
-                fresh,
-            )
-        };
-        match asked {
-            Normal::Act(action) => self.act_from(before, action),
-            Normal::Walk(by) => {
-                let to = i64::try_from(at).unwrap_or(0) + by;
-                let to = to.clamp(0, i64::try_from(rows.max(1)).unwrap_or(1) - 1);
-                match to - i64::try_from(at).unwrap_or(0) {
-                    0 => Ok(Flow::Continue),
-                    by => self.act_from(before, Action::Move(by)),
-                }
-            }
-            Normal::In => self.go_in_and_land(before),
-            // A motion shows the head as it is written, scrolled with its caret, even where the
-            // caret cannot move, as a key that moves the caret does without vim's keys.
-            Normal::Caret(motion) => {
-                let first = after_box(&head, task, usize::MAX);
-                self.row_cursor = moved(&head, self.row_cursor, motion, first);
-                self.row_left = Some(self.row_left.unwrap_or(0));
-                Ok(Flow::Continue)
-            }
-            // A new row with only the labels it opened with is typed in where its caret belongs,
-            // after a task's box and before the labels, so that Backspace there still takes it
-            // away. A task's box, and a space after it, are not what is typed at the start of a
-            // head; `[ ]Order` is a task too.
-            Normal::Type(typing) => {
-                let end = letters(&head);
-                self.row_cursor = match (fresh, typing) {
-                    (Some(at), _) => letters_in(&head, at),
-                    (None, Typing::Before) => self.row_cursor.min(end),
-                    (None, Typing::After) => (self.row_cursor + 1).min(end),
-                    (None, Typing::Start) => after_box(&head, task, 1),
-                    (None, Typing::End) => end,
-                };
-                self.row_left = Some(self.row_left.unwrap_or(0));
-                self.normal = false;
-                Ok(Flow::Continue)
-            }
-            // On the first row a new row above is a new note at the top, which is what Enter on an
-            // empty line opens; with text on the line, that Enter would write the line instead.
-            Normal::Above => match at.checked_sub(1) {
-                Some(above) => {
-                    self.act_from(before, Action::Select(Some(above)))?;
-                    self.act(Action::Write)
-                }
-                None if line_empty => {
-                    self.act_from(before, Action::Select(None))?;
-                    self.act(Action::Write)
-                }
-                None => Ok(Flow::Continue),
-            },
-            Normal::ToLine => {
-                let flow = self.act_from(before, Action::Select(None))?;
-                self.cursor = letters(self.device.view().line);
-                Ok(flow)
-            }
-        }
-    }
-
-    /// Goes into the note under the cursor and, with vim's keys, lands on the first row inside,
-    /// in normal mode, as walking onto a row does. Nothing more happens if the session did not
-    /// go in, as for a new row with nothing in it.
-    fn go_in_and_land(&mut self, before: Before) -> Result<Flow> {
-        let flow = self.act_from(before, Action::GoIn)?;
-        if self.device.view().cursor.is_none() {
-            return self.act(Action::Move(1));
-        }
-        Ok(flow)
-    }
-
     /// Puts what was pasted into the text the cursor is in, the head of its row or the line, at
-    /// the caret, as one change. A row in vim's normal mode takes nothing.
+    /// the caret, as one change.
     fn paste(&mut self, text: &str) -> Result<Flow> {
         self.escaped = false;
         self.device.say("");
@@ -1752,9 +1347,6 @@ impl App {
             return Ok(Flow::Continue);
         }
         let view = self.device.view();
-        if self.vim && self.normal && view.field.is_some() {
-            return Ok(Flow::Continue);
-        }
         if let Some(field) = &view.field {
             let (head, body) = match field.text.split_once('\n') {
                 Some((head, body)) => (head, Some(body)),
@@ -1804,17 +1396,14 @@ impl App {
             on: was_on,
             fresh: was_fresh,
         } = before;
-        let (writes, erases) = (action == Action::Write, action == Action::Erase);
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
         let view = self.device.view();
         // A line the device changed, as it does on the way into a note and out of one, has its
         // cursor at the end, and so does the head of a row just landed on. A head put back or
-        // written in place keeps its caret where it was, if the head is still that long, but on
-        // a row read in vim's normal mode, whose caret is drawn at the end, it goes to the end,
-        // so that `a`, `i` and the motions start from where the block is. A new row with only
-        // the labels it opened with, landed on or put back to them, has its caret where the
-        // device says, after a task's box and before the rest.
+        // written in place keeps its caret where it was, if the head is still that long. A new
+        // row with only the labels it opened with, landed on or put back to them, has its caret
+        // where the device says, after a task's box and before the rest.
         if view.line != line {
             self.cursor = letters(view.line);
         }
@@ -1822,10 +1411,9 @@ impl App {
             let head = head_and_body(field.text).0;
             let end = letters(head);
             let stayed = under_cursor(&view) == was_on;
-            let read = self.vim && self.normal && self.row_left.is_none();
             self.row_cursor = match field.fresh {
-                Some(start) if !(stayed && was_fresh) || read => letters_in(head, start),
-                _ if stayed && !read => self.row_cursor.min(end),
+                Some(start) if !(stayed && was_fresh) => letters_in(head, start),
+                _ if stayed => self.row_cursor.min(end),
                 _ => end,
             };
             // A row landed on reads from its start until a key writes in it or moves its caret.
@@ -1834,15 +1422,6 @@ impl App {
             }
         } else {
             self.row_left = None;
-        }
-        // With vim's keys a row written in is in insert, and one landed on any other way is in
-        // normal mode. Backspace taking an empty row away leaves the mode as it was on the row
-        // above, as vim's Backspace at the start of a line in insert stays in insert.
-        let now_on = under_cursor(&view);
-        if writes && now_on.is_some() {
-            self.normal = false;
-        } else if !erases && now_on.is_some() && now_on != was_on {
-            self.normal = true;
         }
         Ok(flow)
     }
@@ -1967,7 +1546,7 @@ impl App {
         // relay go for as long, and another window takes it within a look; this one tries to
         // take it back at its next look after.
         self.let_relay_go();
-        give_terminal_back(self.shape.take().is_some());
+        give_terminal_back();
         let edited = edit_in(&self.editor, &id, text);
         // What the editor left is saved before the terminal is taken back, so that failing to
         // take it back loses nothing.
@@ -1975,22 +1554,13 @@ impl App {
         take_terminal_back(terminal, self.keyboard.unwrap_or(Keyboard::Plain))
     }
 
-    /// Saves what the editor left, or says why there is nothing to save. With vim's keys the row
-    /// is walked back to, in normal mode, as after a body closes: its caret at the end of its
-    /// head, which reads from its start.
+    /// Saves what the editor left, or says why there is nothing to save.
     fn edited(&mut self, id: String, edited: Result<String, String>) -> Result<()> {
-        self.normal = true;
         match edited {
             Ok(text) => {
                 self.act(Action::Save { id, text })?;
             }
             Err(why) => self.device.say(why),
-        }
-        if self.vim
-            && let Some(field) = &self.device.view().field
-        {
-            self.row_cursor = letters(head_and_body(field.text).0);
-            self.row_left = None;
         }
         Ok(())
     }
@@ -2000,7 +1570,7 @@ impl App {
     fn draw(&mut self, frame: &mut Frame) {
         let view = self.device.view();
         let status = self.status_of(&view);
-        let keys = self.keys_here(&view);
+        let keys = self.keys_here();
         let width = usize::from(frame.area().width);
         let height = usize::from(frame.area().height);
         let zoomed = !view.path.is_empty();
@@ -2038,8 +1608,7 @@ impl App {
         y += 1;
 
         // The row the cursor is on is drawn from the note as it is being typed, with the
-        // terminal's cursor in its head, on one row. In vim's normal mode it is read as a row
-        // landed on is until a motion moves its caret or Escape from insert leaves it written.
+        // terminal's cursor in its head, on one row.
         let selected = view
             .cursor
             .and_then(|i| view.rows.get(i).map(|row| (i, row)))
@@ -2239,15 +1808,11 @@ mod tests {
     }
 
     /// Writes a note from the line and comes back to the line for the next: Enter takes the
-    /// cursor to the note it wrote, and Esc brings it back, or with vim's keys two of them, the
-    /// first to normal mode.
+    /// cursor to the note it wrote, and Esc brings it back.
     fn write(app: &mut App, text: &str) {
         type_in(app, text);
         press(app, KeyCode::Enter, false);
         if on_note(app) {
-            press(app, KeyCode::Esc, false);
-        }
-        if on_note(app) && app.vim {
             press(app, KeyCode::Esc, false);
         }
     }
@@ -2868,10 +2433,6 @@ mod tests {
             "^↑" => (KeyCode::Up, ctrl),
             "^↓" => (KeyCode::Down, ctrl),
             "Tab" => (KeyCode::Tab, KeyModifiers::NONE),
-            letter if letter.chars().count() == 1 => (
-                KeyCode::Char(letter.chars().next().unwrap()),
-                KeyModifiers::NONE,
-            ),
             chord => {
                 let mut chars = chord.chars();
                 assert_eq!(chars.next(), Some('^'), "{chord}");
@@ -2881,26 +2442,16 @@ mod tests {
         }
     }
 
-    /// The footer as it is now, having checked that every key it names asks for what it says. In
-    /// insert with vim's keys Escape is vim's, and is tested on its own.
+    /// The footer as it is now, having checked that every key it names asks for what it says.
     fn keys(app: &App) -> String {
         let view = app.device.view();
         let zoomed = !view.path.is_empty();
         let (place, empty) = app.caret(&view);
-        let now = app.keys_here(&view);
+        let now = app.keys_here();
         for hint in keyed(view.hints, now) {
             let key = key_for(&hint.action, now);
             let (code, modifiers) = named(key);
-            let asked = match now.mode {
-                Mode::Insert if hint.action == Action::Select(None) => continue,
-                Mode::Normal => match normal(code, modifiers, zoomed, empty) {
-                    Some(Normal::Act(action)) => Some(action),
-                    Some(Normal::In) => Some(Action::GoIn),
-                    Some(Normal::ToLine) => Some(Action::Select(None)),
-                    _ => None,
-                },
-                Mode::Plain | Mode::Insert => bound(code, modifiers, place, zoomed, empty),
-            };
+            let asked = bound(code, modifiers, place, zoomed, empty);
             assert_eq!(asked.as_ref(), Some(&hint.action), "{key} {}", hint.label);
         }
         footer(view.hints, now, usize::MAX)
@@ -3089,865 +2640,6 @@ mod tests {
         app.keyboard = Some(Keyboard::Plain);
         press(&mut app, KeyCode::Down, false);
         assert!(keys(&app).contains("^V tick"), "{}", keys(&app));
-        done(&space);
-    }
-
-    /// The app on a new space with vim's keys for the list.
-    fn vim_app() -> (App, PathBuf) {
-        let (mut app, space) = app();
-        app.use_vim();
-        (app, space)
-    }
-
-    /// The mode the keys are in where the cursor is.
-    fn mode(app: &App) -> Mode {
-        app.keys_here(&app.device.view()).mode
-    }
-
-    fn row_at(app: &App) -> Option<usize> {
-        app.device.view().cursor
-    }
-
-    #[test]
-    fn with_vim_a_row_walked_to_takes_vims_letters_and_j_and_k_stop_at_the_ends() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service");
-        write(&mut app, "Fix the gutter");
-        write(&mut app, "Sweep the shed");
-        assert_eq!(mode(&app), Mode::Plain, "the line is always typing");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(mode(&app), Mode::Normal);
-        type_in(&mut app, "k");
-        assert_eq!(row_at(&app), Some(0), "k never falls onto the line");
-        type_in(&mut app, "j");
-        assert_eq!(row_at(&app), Some(1));
-        type_in(&mut app, "jj");
-        assert_eq!(row_at(&app), Some(2), "nor past the last row");
-        assert_eq!(field(&app).as_deref(), Some("Boiler service"));
-
-        // Nothing is typed: not a letter vim's keys leave unbound, not a paste, and no key that
-        // edits.
-        type_in(&mut app, "zq3G");
-        app.paste("pasted").unwrap();
-        for code in [KeyCode::Delete, KeyCode::Backspace] {
-            press(&mut app, code, false);
-        }
-        chord(&mut app, 'w');
-        assert_eq!(field(&app).as_deref(), Some("Boiler service"));
-        assert_eq!(row_at(&app), Some(2));
-        assert_eq!(mode(&app), Mode::Normal);
-
-        // The arrows up and down are as ever: up from the first row is the line.
-        press(&mut app, KeyCode::Up, false);
-        press(&mut app, KeyCode::Up, false);
-        press(&mut app, KeyCode::Up, false);
-        assert!(!on_note(&app));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_shift_a_types_at_the_end_of_the_head_and_shift_i_after_a_tasks_box() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        write(&mut app, "[ ] Order oil");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        assert_eq!(mode(&app), Mode::Insert);
-        assert_eq!(
-            app.row_cursor, 13,
-            "a row walked to has its caret at the end"
-        );
-        type_in(&mut app, " now");
-        assert_eq!(field(&app).as_deref(), Some("[ ] Order oil now"));
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(mode(&app), Mode::Normal);
-
-        type_in(&mut app, "I");
-        assert_eq!(app.row_cursor, 4, "after the box");
-        type_in(&mut app, "Gas ");
-        assert_eq!(field(&app).as_deref(), Some("[ ] Gas Order oil now"));
-        press(&mut app, KeyCode::Esc, false);
-        type_in(&mut app, "A");
-        assert_eq!((mode(&app), app.row_cursor), (Mode::Insert, 21));
-        press(&mut app, KeyCode::Esc, false);
-
-        type_in(&mut app, "j");
-        type_in(&mut app, "I");
-        assert_eq!(field(&app).as_deref(), Some("Boiler"));
-        assert_eq!(app.row_cursor, 0, "at the start of a head with no box");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_o_and_enter_open_a_row_under_in_insert_and_shift_o_one_above() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Fix the gutter");
-        write(&mut app, "Sweep the shed");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "o");
-        assert_eq!((row_at(&app), mode(&app)), (Some(1), Mode::Insert));
-        type_in(&mut app, "Order oil");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(
-            heads(&app),
-            ["Sweep the shed", "Order oil", "Fix the gutter"]
-        );
-
-        type_in(&mut app, "O");
-        assert_eq!((row_at(&app), mode(&app)), (Some(1), Mode::Insert));
-        type_in(&mut app, "Bleed the radiators");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(
-            heads(&app),
-            [
-                "Sweep the shed",
-                "Bleed the radiators",
-                "Order oil",
-                "Fix the gutter"
-            ]
-        );
-
-        // Enter is o, and a new row left empty goes, from normal mode as from insert.
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!((row_at(&app), mode(&app)), (Some(2), Mode::Insert));
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(mode(&app), Mode::Normal);
-        type_in(&mut app, "j");
-        assert_eq!(heads(&app).len(), 4);
-        assert_eq!(field(&app).as_deref(), Some("Order oil"));
-
-        // On the first row, O opens a new note at the top, when the line has nothing on it.
-        type_in(&mut app, "kk");
-        type_in(&mut app, "O");
-        assert_eq!((row_at(&app), field(&app)), (Some(0), Some(String::new())));
-        assert_eq!(mode(&app), Mode::Insert);
-        press(&mut app, KeyCode::Esc, false);
-        press(&mut app, KeyCode::Up, false);
-        type_in(&mut app, "the");
-        press(&mut app, KeyCode::Down, false);
-        let before = heads(&app);
-        type_in(&mut app, "O");
-        assert_eq!(heads(&app), before, "with text on the line, nothing");
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_backspace_takes_an_empty_row_away_in_normal_mode_as_ever() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Fix the gutter");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "o");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!((row_at(&app), mode(&app)), (Some(1), Mode::Normal));
-        press(&mut app, KeyCode::Backspace, false);
-        assert_eq!(heads(&app), ["Fix the gutter"]);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_x_ticks_shift_d_deletes_and_u_undoes() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Sweep the shed");
-        write(&mut app, "[ ] Order oil");
-        write(&mut app, "Boiler service");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "j");
-        type_in(&mut app, "x");
-        let done_task = |space: &Path| {
-            on_disk(space)
-                .notes()
-                .records()
-                .any(|r| r.text == "[x] Order oil" && r.archived)
-        };
-        assert!(done_task(&space));
-        assert_eq!(mode(&app), Mode::Normal);
-        type_in(&mut app, "u");
-        assert!(!done_task(&space), "undone");
-
-        type_in(&mut app, "D");
-        assert_eq!(app.device.view().notes, 2);
-        assert!(on_note(&app));
-        type_in(&mut app, "u");
-        assert_eq!(app.device.view().notes, 3);
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_y_copies_and_the_chords_are_as_ever_in_normal_mode() {
-        let ctrl = KeyModifiers::CONTROL;
-        let none = KeyModifiers::NONE;
-        let asked = |code, modifiers| normal(code, modifiers, false, false);
-        assert_eq!(
-            asked(KeyCode::Char('y'), none),
-            Some(Normal::Act(Action::Copy))
-        );
-        assert_eq!(
-            asked(KeyCode::Enter, KeyModifiers::SHIFT),
-            Some(Normal::Act(Action::Archive))
-        );
-        for (c, action) in [
-            ('v', Action::Archive),
-            ('o', Action::Editor),
-            ('l', Action::Link),
-            ('c', Action::Copy),
-            ('/', Action::OpenUrl),
-            ('7', Action::OpenUrl),
-            ('r', Action::Redo),
-        ] {
-            assert_eq!(
-                asked(KeyCode::Char(c), ctrl),
-                Some(Normal::Act(action)),
-                "{c}"
-            );
-        }
-        assert_eq!(
-            asked(KeyCode::Up, ctrl),
-            Some(Normal::Act(Action::Shift(-1)))
-        );
-        assert_eq!(asked(KeyCode::Char('G'), none), None);
-        assert_eq!(asked(KeyCode::Char('d'), none), None, "so dd does nothing");
-    }
-
-    #[test]
-    fn with_vim_ctrl_d_and_ctrl_u_page_by_ten_in_normal_mode_and_delete_and_undo_in_insert() {
-        let (mut app, space) = vim_app();
-        for n in 0..25 {
-            write(&mut app, &format!("Seed packet {n}"));
-        }
-        press(&mut app, KeyCode::Down, false);
-        for to in [10, 20, 24] {
-            chord(&mut app, 'd');
-            assert_eq!(row_at(&app), Some(to));
-        }
-        for to in [14, 4, 0] {
-            chord(&mut app, 'u');
-            assert_eq!(row_at(&app), Some(to));
-        }
-        assert_eq!(app.device.view().notes, 25, "nothing deleted");
-
-        type_in(&mut app, "i");
-        chord(&mut app, 'd');
-        assert_eq!(app.device.view().notes, 24, "deleted from insert");
-        assert_eq!(mode(&app), Mode::Normal);
-        type_in(&mut app, "i");
-        chord(&mut app, 'u');
-        assert_eq!(app.device.view().notes, 25, "and undone from insert");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_tab_goes_in_and_lands_on_the_first_row_inside_and_escape_comes_out_by_the_line() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        write(&mut app, "House");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "j");
-        assert_eq!(field(&app).as_deref(), Some("Boiler"));
-        press(&mut app, KeyCode::Tab, false);
-        assert_eq!(path(&app), ["Boiler"]);
-        assert!(!on_note(&app), "nothing inside, so the line");
-        write(&mut app, "pressure low");
-        write(&mut app, "gauge reads two bar");
-
-        // l and h move the caret and never go in or out.
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "lhh");
-        assert_eq!(path(&app), ["Boiler"]);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-
-        // Out of a place is the line's ladder: Escape to the line, then Escape on it.
-        press(&mut app, KeyCode::Esc, false);
-        assert!(!on_note(&app));
-        assert_eq!(path(&app), ["Boiler"]);
-        press(&mut app, KeyCode::Esc, false);
-        assert!(path(&app).is_empty());
-
-        // Tab from normal mode lands on the first row inside, in normal mode, and so does Tab
-        // from insert.
-        press(&mut app, KeyCode::Down, false);
-        while field(&app).as_deref() != Some("Boiler") {
-            type_in(&mut app, "j");
-        }
-        press(&mut app, KeyCode::Tab, false);
-        assert_eq!(path(&app), ["Boiler"]);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        press(&mut app, KeyCode::Esc, false);
-        press(&mut app, KeyCode::Esc, false);
-        press(&mut app, KeyCode::Down, false);
-        while field(&app).as_deref() != Some("Boiler") {
-            type_in(&mut app, "j");
-        }
-        type_in(&mut app, "i");
-        press(&mut app, KeyCode::Tab, false);
-        assert_eq!(path(&app), ["Boiler"], "Tab in insert goes in too");
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_in_a_row_written_in_keeps_it_and_goes_to_normal_mode() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        write(&mut app, "House");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        type_in(&mut app, " /today");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        let kept = field(&app).unwrap();
-        assert!(
-            !kept.contains("/today"),
-            "its date words written out: {kept}"
-        );
-        assert_eq!(
-            app.row_cursor,
-            letters(head_and_body(&kept).0) - 1,
-            "on the last letter of the head as kept"
-        );
-
-        // The arrows leave a row written in and land in normal mode.
-        type_in(&mut app, "i");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!((row_at(&app), mode(&app)), (Some(1), Mode::Normal));
-        type_in(&mut app, "a");
-        press(&mut app, KeyCode::Up, false);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        type_in(&mut app, "A");
-        press(&mut app, KeyCode::Up, false);
-        assert!(!on_note(&app));
-        assert_eq!(mode(&app), Mode::Plain);
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_slash_goes_to_the_line_with_its_caret_at_the_end_and_the_list_as_it_is() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service");
-        write(&mut app, "Boiler pressure");
-        type_in(&mut app, "boil");
-        press(&mut app, KeyCode::Left, false);
-        press(&mut app, KeyCode::Down, false);
-        let listed = heads(&app);
-        type_in(&mut app, "/");
-        assert!(!on_note(&app));
-        assert_eq!((line(&app).as_str(), app.cursor), ("boil", 4));
-        assert_eq!(heads(&app), listed);
-        type_in(&mut app, "er");
-        assert_eq!(line(&app), "boiler", "the line types");
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(
-            field(&app).as_deref(),
-            Some("boiler"),
-            "and Enter writes it"
-        );
-        assert_eq!(mode(&app), Mode::Insert);
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_the_line_types_as_without_it_and_tab_there_stays_on_the_line() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service #house");
-        type_in(&mut app, "jk");
-        assert_eq!(line(&app), "jk");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(line(&app), "", "Escape on the line clears it");
-        type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Tab, false);
-        assert_eq!(path(&app), ["#house"]);
-        assert!(
-            !on_note(&app),
-            "the cursor stays on the line, since you were typing"
-        );
-        press(&mut app, KeyCode::Enter, false);
-        assert_eq!(mode(&app), Mode::Insert, "a new row is written in");
-        type_in(&mut app, "Order oil");
-        assert_eq!(field(&app).as_deref(), Some("Order oil #house"));
-        type_in(&mut app, "x");
-        assert_eq!(field(&app).as_deref(), Some("Order oilx #house"));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_the_footer_writes_vims_letters_tab_and_esc_in_normal_mode_and_esc_done_in_insert() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "trainingapp");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(
-            keys(&app),
-            "i type  o new note  ^O editor  Tab go in  x archive  D delete  y copy  u undo  Esc up"
-        );
-        app.keyboard = Some(Keyboard::Kitty);
-        assert!(
-            keys(&app).contains("x archive"),
-            "x, as ever in normal mode"
-        );
-        type_in(&mut app, "i");
-        assert_eq!(
-            keys(&app),
-            "Enter new note  ^O editor  Tab go in  ⇧Enter archive  ^D delete  ^C copy  ^U undo  \
-             Esc done"
-        );
-        press(&mut app, KeyCode::Tab, false);
-        write(&mut app, "squat form video https://example.com/squat");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(
-            keys(&app),
-            "i type  o new note here  ^O editor  Tab go in  ^L unlink  x archive  D delete  \
-             y copy  ^/ open URL  u undo  Esc up",
-            "in a place, no h back"
-        );
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(
-            keys(&app),
-            "Enter new note here  ↓ pick a note  ^V show archived  ^U undo  Esc back",
-            "the line is as without vim"
-        );
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_the_cursor_is_a_block_on_a_row_in_normal_mode_and_a_bar_where_letters_type() {
-        let (mut app, space) = app();
-        write(&mut app, "Boiler");
-        let shape = |app: &App| app.shape_wanted(&app.device.view());
-        assert_eq!(
-            shape(&app),
-            None,
-            "without vim the cursor is the person's own"
-        );
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(shape(&app), None);
-        press(&mut app, KeyCode::Esc, false);
-
-        app.use_vim();
-        assert_eq!(shape(&app), Some(SetCursorStyle::SteadyBar));
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(shape(&app), Some(SetCursorStyle::SteadyBlock));
-        type_in(&mut app, "i");
-        assert_eq!(shape(&app), Some(SetCursorStyle::SteadyBar));
-        done(&space);
-    }
-
-    #[test]
-    fn tmux_is_asked_for_modify_other_keys_only_with_extended_keys_on_and_the_csi_u_format() {
-        assert!(passes_csi_u("on|csi-u\n"));
-        assert!(passes_csi_u("always|csi-u"));
-        assert!(!passes_csi_u("off|csi-u\n"), "off passes nothing on");
-        assert!(!passes_csi_u("on|xterm\n"), "crossterm drops xterm's form");
-        assert!(!passes_csi_u("|"), "an older tmux knows neither");
-        assert!(!passes_csi_u(""));
-    }
-
-    #[test]
-    fn with_vim_the_editor_hands_the_row_back_in_normal_mode() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
-            panic!("the note under the cursor was not handed over");
-        };
-        app.edited(id.clone(), Ok(format!("{text}\nThe combi.")))
-            .unwrap();
-        assert_eq!(field(&app).as_deref(), Some("Boiler\nThe combi."));
-        assert_eq!(mode(&app), Mode::Normal);
-        assert_eq!((app.row_cursor, app.row_left), (6, None), "walked back to");
-
-        type_in(&mut app, "0i");
-        app.edited(id, Err("vi exited with 1; note unchanged".into()))
-            .unwrap();
-        assert_eq!(mode(&app), Mode::Normal, "however the editor finished");
-        assert_eq!((app.row_cursor, app.row_left), (6, None));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_ctrl_bracket_and_ctrl_i_in_a_row_written_in_are_escape_and_tab() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        write(&mut app, "House");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        chord(&mut app, '[');
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        type_in(&mut app, "ji");
-        chord(&mut app, 'i');
-        assert_eq!(path(&app), ["Boiler"]);
-        assert!(!on_note(&app), "nothing inside, so the line");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_a_new_row_is_typed_in_where_its_caret_belongs_and_backspace_takes_it_away() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service #house");
-        type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Tab, false);
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "O");
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Insert));
-        assert_eq!(field(&app).as_deref(), Some(" #house"));
-        assert_eq!(app.row_cursor, 0, "before the label");
-        press(&mut app, KeyCode::Esc, false);
-        for letter in ["i", "a", "A", "I"] {
-            type_in(&mut app, letter);
-            assert_eq!(app.row_cursor, 0, "{letter}");
-            press(&mut app, KeyCode::Esc, false);
-        }
-        type_in(&mut app, "i");
-        press(&mut app, KeyCode::Backspace, false);
-        assert_eq!(heads(&app), ["Boiler service #house"]);
-        assert!(!on_note(&app), "the first row went, so the line");
-
-        write(&mut app, "[ ]Order oil");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(field(&app).as_deref(), Some("[ ]Order oil #house"));
-        type_in(&mut app, "I");
-        assert_eq!(app.row_cursor, 3, "after a box with no space after it");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_backspace_taking_a_row_away_in_insert_leaves_insert_on_the_row_above() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Fix the gutter");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "o");
-        assert_eq!((row_at(&app), mode(&app)), (Some(1), Mode::Insert));
-        press(&mut app, KeyCode::Backspace, false);
-        assert_eq!(heads(&app), ["Fix the gutter"]);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Insert));
-        type_in(&mut app, "s");
-        assert_eq!(field(&app).as_deref(), Some("Fix the gutters"));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_a_paste_goes_into_a_row_written_in_and_onto_the_line() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "A");
-        app.paste(" service").unwrap();
-        assert_eq!(field(&app).as_deref(), Some("Boiler service"));
-        press(&mut app, KeyCode::Esc, false);
-        type_in(&mut app, "/");
-        app.paste("boil").unwrap();
-        assert_eq!(line(&app), "boil");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_h_l_and_the_arrows_move_the_caret_a_letter_and_stop_at_the_ends() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(app.row_cursor, 6);
-        type_in(&mut app, "l");
-        assert_eq!(app.row_cursor, 6, "l stops at the end");
-        type_in(&mut app, "h");
-        assert_eq!(app.row_cursor, 5);
-        type_in(&mut app, "hhhhhhh");
-        assert_eq!(app.row_cursor, 0, "h stops at the start");
-        press(&mut app, KeyCode::Left, false);
-        assert_eq!(app.row_cursor, 0);
-        press(&mut app, KeyCode::Right, false);
-        press(&mut app, KeyCode::Right, false);
-        assert_eq!(app.row_cursor, 2);
-        assert_eq!((row_at(&app), mode(&app)), (Some(0), Mode::Normal));
-        assert_eq!(field(&app).as_deref(), Some("Boiler"), "nothing written");
-
-        // With a modifier the arrows do nothing, so that nothing is selected in normal mode.
-        for modifiers in [
-            KeyModifiers::SHIFT,
-            KeyModifiers::CONTROL,
-            KeyModifiers::ALT,
-        ] {
-            press_with(&mut app, KeyCode::Left, modifiers);
-            press_with(&mut app, KeyCode::Right, modifiers);
-            press_with(&mut app, KeyCode::Home, modifiers);
-            press_with(&mut app, KeyCode::End, modifiers);
-            assert_eq!(app.row_cursor, 2, "{modifiers:?}");
-        }
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_0_and_home_go_to_the_start_caret_after_a_tasks_box_and_dollar_and_end_to_the_end() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service");
-        write(&mut app, "[ ] Order oil");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "0");
-        assert_eq!(app.row_cursor, 0);
-        type_in(&mut app, "^");
-        assert_eq!(
-            app.row_cursor, 4,
-            "the first letter after the box and its space"
-        );
-        type_in(&mut app, "$");
-        assert_eq!(app.row_cursor, 13, "after the last letter");
-        press(&mut app, KeyCode::Home, false);
-        assert_eq!(app.row_cursor, 0);
-        press(&mut app, KeyCode::End, false);
-        assert_eq!(app.row_cursor, 13);
-        press_with(&mut app, KeyCode::Char('^'), KeyModifiers::SHIFT);
-        assert_eq!(app.row_cursor, 4, "shifted, as some terminals send it");
-
-        type_in(&mut app, "j$^");
-        assert_eq!(field(&app).as_deref(), Some("Boiler service"));
-        assert_eq!(app.row_cursor, 0, "the start, where there is no box");
-        press_with(&mut app, KeyCode::Char('$'), KeyModifiers::SHIFT);
-        assert_eq!(app.row_cursor, 14);
-        assert_eq!(
-            after_box("[x]   Sweep", true, usize::MAX),
-            6,
-            "every space after it"
-        );
-        done(&space);
-    }
-
-    #[test]
-    fn w_b_and_e_go_by_vims_small_words_parting_letters_from_punctuation_at_blanks() {
-        let head = "fix boiler-valve, now_ok  x";
-        let walk = |motion, from: &[usize]| -> Vec<usize> {
-            from.iter().map(|&at| moved(head, at, motion, 0)).collect()
-        };
-        assert_eq!(
-            walk(Motion::Word, &[0, 4, 10, 11, 16, 18, 26, 27]),
-            [4, 10, 11, 16, 18, 26, 27, 27]
-        );
-        assert_eq!(
-            walk(Motion::WordBack, &[27, 26, 25, 18, 16, 13, 11, 10, 4, 0]),
-            [26, 18, 18, 16, 11, 11, 10, 4, 0, 0]
-        );
-        assert_eq!(
-            walk(Motion::WordEnd, &[0, 2, 5, 9, 10, 15, 16, 23, 26, 27]),
-            [2, 9, 9, 10, 15, 16, 23, 26, 26, 27]
-        );
-
-        // A letter is as drawn: an accent goes with its letter, and a wide letter is one, so a
-        // Chinese run is one word and a cup of coffee is punctuation.
-        let head = "cafe\u{301} ☕ 火车 ok";
-        let walk = |motion, at| moved(head, at, motion, 0);
-        assert_eq!(walk(Motion::Word, 0), 5);
-        assert_eq!(walk(Motion::Word, 5), 7);
-        assert_eq!(walk(Motion::WordEnd, 0), 3);
-        assert_eq!(walk(Motion::WordEnd, 5), 8);
-        assert_eq!(walk(Motion::WordBack, 10), 7);
-        assert_eq!(walk(Motion::On, 3), 4);
-    }
-
-    #[test]
-    fn with_vim_i_types_before_the_letter_under_the_caret_and_a_after_it() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "b");
-        assert_eq!(app.row_cursor, 7);
-        type_in(&mut app, "i");
-        type_in(&mut app, "gas ");
-        assert_eq!(field(&app).as_deref(), Some("Boiler gas service"));
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(
-            app.row_cursor, 10,
-            "a letter back from where typing stopped"
-        );
-        type_in(&mut app, "0a");
-        assert_eq!((mode(&app), app.row_cursor), (Mode::Insert, 1));
-        type_in(&mut app, "-");
-        assert_eq!(field(&app).as_deref(), Some("B-oiler gas service"));
-        press(&mut app, KeyCode::Esc, false);
-        for letter in ["i", "a"] {
-            type_in(&mut app, "$");
-            type_in(&mut app, letter);
-            assert_eq!(
-                app.row_cursor, 19,
-                "at the end both type at the end: {letter}"
-            );
-            press(&mut app, KeyCode::Esc, false);
-        }
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_from_insert_moves_the_caret_a_letter_back_within_the_head_as_kept() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!((mode(&app), app.row_cursor), (Mode::Normal, 5));
-        type_in(&mut app, "I");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!((mode(&app), app.row_cursor), (Mode::Normal, 0));
-
-        // Keeping a head that writes out shorter puts the caret on its last letter.
-        type_in(&mut app, "A");
-        type_in(&mut app, " /task");
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(field(&app).as_deref(), Some("[ ] Boiler"));
-        assert_eq!(app.row_cursor, 9);
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_undo_and_redo_on_a_row_read_in_normal_mode_leave_the_caret_at_the_end() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Sweep the patio");
-        write(&mut app, "Shed");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "A");
-        type_in(&mut app, " service");
-        press(&mut app, KeyCode::Esc, false);
-        type_in(&mut app, "jk");
-        assert_eq!(field(&app).as_deref(), Some("Shed service"));
-        type_in(&mut app, "u");
-        assert_eq!(field(&app).as_deref(), Some("Shed"));
-        assert_eq!(app.row_cursor, 4);
-        press(&mut app, KeyCode::Char('r'), true);
-        assert_eq!(field(&app).as_deref(), Some("Shed service"));
-        assert_eq!((mode(&app), app.row_cursor), (Mode::Normal, 12));
-        type_in(&mut app, "aX");
-        assert_eq!(field(&app).as_deref(), Some("Shed serviceX"));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_in_normal_mode_goes_to_the_line_with_its_caret_at_the_end() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service");
-        write(&mut app, "Boiler pressure");
-        type_in(&mut app, "boil");
-        press(&mut app, KeyCode::Left, false);
-        press(&mut app, KeyCode::Down, false);
-        let listed = heads(&app);
-        assert!(matches!(
-            press(&mut app, KeyCode::Esc, false),
-            Flow::Continue
-        ));
-        assert!(!on_note(&app));
-        assert_eq!((line(&app).as_str(), app.cursor), ("boil", 4));
-        assert_eq!(heads(&app), listed, "the list as it is");
-        assert_eq!(app.device.view().status, "", "nothing about quitting");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_two_escapes_from_insert_land_on_the_line_and_none_quits() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        type_in(&mut app, "boil");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "i");
-        for _ in 0..2 {
-            assert!(matches!(
-                press(&mut app, KeyCode::Esc, false),
-                Flow::Continue
-            ));
-        }
-        assert!(!on_note(&app), "on the line");
-        assert_eq!(line(&app), "boil");
-        assert!(matches!(
-            press(&mut app, KeyCode::Esc, false),
-            Flow::Continue
-        ));
-        assert_eq!(line(&app), "", "the third clears the line");
-        assert_eq!(app.device.view().status, "", "and says nothing of quitting");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_e_goes_to_the_last_letter_of_the_word_through_the_keys() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler service due");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "0e");
-        assert_eq!(app.row_cursor, 5);
-        type_in(&mut app, "e");
-        assert_eq!(app.row_cursor, 13);
-        type_in(&mut app, "ee");
-        assert_eq!(
-            app.row_cursor, 17,
-            "the last word's last letter, and there it stays"
-        );
-        assert_eq!(mode(&app), Mode::Normal);
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_from_insert_in_a_row_written_from_the_line_stays_scrolled_with_its_caret() {
-        let (mut app, space) = vim_app();
-        type_in(
-            &mut app,
-            "the radiators in the house want bleeding before the winter",
-        );
-        press(&mut app, KeyCode::Enter, false);
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(mode(&app), Mode::Normal);
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "…leeding before the winter");
-        let under = shot.rows[1].chars().nth(usize::from(shot.cursor.0));
-        assert_eq!(
-            (shot.cursor, under),
-            ((26, 1), Some('r')),
-            "on the last letter"
-        );
-        type_in(&mut app, "iZ");
-        assert_eq!(
-            field(&app).as_deref(),
-            Some("the radiators in the house want bleeding before the winteZr")
-        );
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_in_a_new_task_row_keeps_the_caret_at_its_own_place() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "[ ] Order oil #house");
-        type_in(&mut app, "#house");
-        press(&mut app, KeyCode::Tab, false);
-        type_in(&mut app, "[ ]");
-        press(&mut app, KeyCode::Tab, false);
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "O");
-        let fresh = field(&app).unwrap();
-        let at = app.row_cursor;
-        assert!(fresh.starts_with("[ ] ") && at == 4, "{fresh:?} {at}");
-        press(&mut app, KeyCode::End, false);
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(
-            (mode(&app), app.row_cursor),
-            (Mode::Normal, 4),
-            "not a letter back"
-        );
-        press(&mut app, KeyCode::Backspace, false);
-        assert_eq!(heads(&app).len(), 1, "Backspace still takes it away");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_escape_from_insert_follows_the_text_when_a_date_word_before_it_is_written_out() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "Boiler");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "A");
-        type_in(&mut app, " /today service");
-        for _ in 0.."service".len() {
-            press(&mut app, KeyCode::Left, false);
-        }
-        press(&mut app, KeyCode::Esc, false);
-        let kept = field(&app).unwrap();
-        assert!(!kept.contains("/today"), "{kept}");
-        let head: Vec<&str> = head_and_body(&kept).0.graphemes(true).collect();
-        assert_eq!(
-            head[app.row_cursor..].concat(),
-            " service",
-            "a letter back from the s of service, where typing stopped, in {kept:?}"
-        );
         done(&space);
     }
 
@@ -4806,80 +3498,6 @@ mod tests {
         let shot = screen(&mut app, 40, 8);
         assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
         assert_eq!(shot.cursor, (26, 1));
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_a_long_head_reads_from_its_start_until_a_motion_and_stays_written_after_escape() {
-        let (mut app, space) = vim_app();
-        write(&mut app, LONG);
-        press(&mut app, KeyCode::Down, false);
-        assert_eq!(mode(&app), Mode::Normal);
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
-        assert_eq!(shot.cursor, (26, 1), "the block on the `…`");
-
-        // A motion scrolls the row with its caret, even where the caret cannot move.
-        type_in(&mut app, "l");
-        assert_eq!(mode(&app), Mode::Normal);
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
-        assert_eq!(shot.cursor, (26, 1), "after the last letter");
-        type_in(&mut app, "b");
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
-        assert_eq!(shot.cursor, (22, 1), "on the b of bled");
-        type_in(&mut app, "0");
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
-        assert_eq!(shot.cursor, (1, 1));
-
-        // Leaving the row and coming back reads it from its start again.
-        press(&mut app, KeyCode::Up, false);
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "A");
-        assert_eq!(mode(&app), Mode::Insert);
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
-        assert_eq!(shot.cursor, (26, 1));
-
-        // Escape is normal mode, with the caret a letter back, and the row stays as written.
-        press(&mut app, KeyCode::Esc, false);
-        assert_eq!(mode(&app), Mode::Normal);
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "…r the radiators are bled");
-        assert_eq!(shot.cursor, (25, 1), "on the d of bled");
-
-        type_in(&mut app, "I");
-        let shot = screen(&mut app, 40, 8);
-        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
-        assert_eq!(shot.cursor, (1, 1), "at the start");
-        done(&space);
-    }
-
-    #[test]
-    fn with_vim_the_block_sits_on_the_letter_at_the_caret_two_columns_for_a_wide_one() {
-        let (mut app, space) = vim_app();
-        write(&mut app, "火车站 Boiler");
-        press(&mut app, KeyCode::Down, false);
-        type_in(&mut app, "0l");
-        assert_eq!(app.row_cursor, 1);
-        assert_eq!(
-            screen(&mut app, 40, 8).cursor,
-            (3, 1),
-            "on 车, after 火's two columns"
-        );
-        type_in(&mut app, "w");
-        assert_eq!(app.row_cursor, 4);
-        assert_eq!(screen(&mut app, 40, 8).cursor, (8, 1), "on the B");
-        type_in(&mut app, "h");
-        assert_eq!(screen(&mut app, 40, 8).cursor, (7, 1), "on the blank");
-        type_in(&mut app, "$");
-        assert_eq!(
-            screen(&mut app, 40, 8).cursor,
-            (14, 1),
-            "after the last letter"
-        );
         done(&space);
     }
 

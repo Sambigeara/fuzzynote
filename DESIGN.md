@@ -28,9 +28,7 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   opens the body; Tab goes in, from a head into its note and from the line into what the line names;
   Esc clears the line, or comes back; and where you are is what you are talking about. Every other
   key is maintenance, and the footer shows only the ones that apply right now. A key is justified by
-  the flow it sits in, never inherited. No key means something by the key before it. A mode the
-  person turned on, vim's, squares with that as where the cursor is does: it is a state, shown by
-  the cursor's shape, and every key in it is one key.
+  the flow it sits in, never inherited. No key means something by the key before it.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
   in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
   a little heavier, with no caret drawn. Nothing else is highlighted and almost nothing else is
@@ -733,19 +731,6 @@ row, writing out its date words, off the text on the line, out of the place, and
 line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing
 out the head first.
 
-With `vim = true` in the config the list takes vim's keys (see "Vim's keys walk the list" and
-"Vim's normal mode has a caret, and Escape goes up"). A row walked to is in normal mode, with the
-terminal's cursor a steady block over the letter at the caret, or after the last letter at the end,
-where a row walked to has it; a row written in is in insert, with a steady bar, as the line always
-has. In normal mode `h` and Left, `l` and Right move the caret a letter and stop at the ends, `0`
-and Home go to the start, `^` to the first letter after a task's box, `$` and End to the end, and
-`w`, `b` and `e` go by vim's small words; nothing is written. `i` types before the letter under the
-caret and `a` after it, `I` at the start after a task's box and `A` at the end. Escape in normal
-mode goes up to the line, its caret at the end of its text, and in insert keeps the row and goes to
-normal mode with the caret a letter back; Tab goes in. fzn sets the cursor's shape only with vim's
-keys, and puts the person's own back, `CSI 0 SP q`, before the editor runs, on the way out and on a
-panic. The body is the person's own editor, so the setting is the list's alone.
-
 The screen is flat: no borders, no boxes, the terminal's own colours. Everything is measured in the
 columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
 a letter as it is drawn, an accent with its letter. The path is a dim row above the line and only in
@@ -763,30 +748,25 @@ head is read beside it"). A head too long for it reads from its start, cut with 
 terminal's cursor on the `…`, which is where the rest is, until a key writes in it or moves its
 caret; then it scrolls sideways under the caret as a one-line field does, moving only when the caret
 comes within five columns of an edge, as vim's `sidescrolloff` keeps them, and each edge that hides
-text shows `…`. Once the cursor leaves it, it reads from its start again. With vim's keys a motion
-in normal mode moves the caret as such a key does, and Escape from insert leaves the row scrolled as
-it was written, until the cursor leaves it. The tail follows the head as far as it
-fits, cut with `…` as off the cursor, and the line scrolls as the head does once written in. The
-foot of the list is kept for the body of what the cursor is on: the note on its row, and a head its
-row cuts, whole, above the body; and on the line in a place the note you are in. It is a row of
-nothing, then up to five rows of the body, dimmed, set in two columns from the rows' text and cut
-with a `…` when it goes on. The rows are kept whatever the note holds, on a row and on the line in a
-place alike, so walking the list never changes how much of it is shown; on the line outside a place
-the list has the whole height. On a short screen they shrink, keeping the list at least half its
-room, and go when fewer than two would be left. One dim footer row names the chords that apply where
-the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or
-`Esc up`, or `Esc Esc quits` where there is none; with vim's keys, a row in normal mode starts with
-`i type`, writes vim's letters, `x tick`, and `Tab go in` and `Esc up` as without them, and a row
-written in ends `Esc done`; the caret's motions are not written, as Left and Right are not.
-A narrow terminal loses chords from the middle, never the first or the way back. A
-status row above it exists only while there is something to say, each key clearing what the one
-before said, and where the body has its rows it takes the last of them, so that the list keeps its
-height. Nothing says how many notes there are or that sync is working; `not syncing` is said in the
-corner of the foot when it is not, and in its place, while syncing, how far this machine's clock is
-from the relay's when that is more than two minutes, `this device's clock is 5 min ahead`. A window
-that does not hold the socket says neither, since what it writes reaches the relay through the one
-that does. Why a relay refused this device is said on the status row, after the relay's host, until
-a relay takes it in.
+text shows `…`. Once the cursor leaves it, it reads from its start again. The tail follows the head
+as far as it fits, cut with `…` as off the cursor, and the line scrolls as the head does once
+written in. The foot of the list is kept for the body of what the cursor is on: the note on its row,
+and a head its row cuts, whole, above the body; and on the line in a place the note you are in. It
+is a row of nothing, then up to five rows of the body, dimmed, set in two columns from the rows'
+text and cut with a `…` when it goes on. The rows are kept whatever the note holds, on a row and on
+the line in a place alike, so walking the list never changes how much of it is shown; on the line
+outside a place the list has the whole height. On a short screen they shrink, keeping the list at
+least half its room, and go when fewer than two would be left. One dim footer row names the chords
+that apply where the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`,
+`Esc back` or `Esc up`, or `Esc Esc quits` where there is none. A narrow terminal loses chords from
+the middle, never the first or the way back. A status row above it exists only while there is
+something to say, each key clearing what the one before said, and where the body has its rows it
+takes the last of them, so that the list keeps its height. Nothing says how many notes there are or
+that sync is working; `not syncing` is said in the corner of the foot when it is not, and in its
+place, while syncing, how far this machine's clock is from the relay's when that is more than two
+minutes, `this device's clock is 5 min ahead`. A window that does not hold the socket says neither,
+since what it writes reaches the relay through the one that does. Why a relay refused this device is
+said on the status row, after the relay's host, until a relay takes it in.
 
 Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
 inverse, Ctrl-^ export.
@@ -1372,7 +1352,9 @@ the app now does is described above; an entry repeats it only where the reason n
   head back and otherwise is undo, one key for the last change written or not. The list holds still
   while the cursor walks it, so that the arrow that writes a head lands where it was aimed. Revised
   2026-10-17 by "Vim's keys walk the list": with vim's keys turned on, a row walked to takes vim's
-  letters as commands and is written in only once asked to.
+  letters as commands and is written in only once asked to. Revised 2026-10-17 by "The list's vim
+  keys are taken out": a row walked to is a field again whatever the config or the browser says, the
+  list having one set of keys.
 
 - **A new row opens under any row.** Decided 2026-10-14, with "Enter opens a row under; the body is
   Ctrl-O": not only at the top of the list, and an empty one goes from wherever it is when the
@@ -1460,7 +1442,8 @@ the app now does is described above; an entry repeats it only where the reason n
   2026-10-16: `:w` writes by `Keep` and does not reopen the body ("Keep writes and stays"), and the
   page is built into the relay ("The relay carries the page; a directory stands in for it while the
   page is worked on"). Revised 2026-10-17 by "Vim's keys walk the list": the browser's vim mode
-  covers the list as well as the body.
+  covers the list as well as the body. Revised 2026-10-17 by "The list's vim keys are taken out":
+  the browser's vim mode is the body's alone again, switched by the word in an open body's foot.
 
 - **In vim mode Esc is vim's alone.** Decided 2026-10-14, at Sam's direction, revising the entry
   above: Esc never closes the body in vim mode. Hands that press Esc twice to be sure of normal mode
@@ -1469,7 +1452,9 @@ the app now does is described above; an entry repeats it only where the reason n
   on the page. Revised 2026-10-17 by "Vim's keys walk the list", which makes Esc vim's alone on a
   row too, in both faces. Revised 2026-10-17 by "Vim's normal mode has a caret, and Escape goes
   up": on a row in normal mode Escape goes to the line, so on a row it is vim's alone in insert
-  only; in the body it is as above.
+  only; in the body it is as above. Revised 2026-10-17 by "The list's vim keys are taken out": the
+  list has no vim keys, so on a row Escape is the ladder it always was; in the body it is vim's
+  alone, as above.
 
 - **A tag is a place you can go into.** Decided 2026-10-14, at Sam's direction. A tag, a person or a
   day typed on the line is gone into with the arrow at the end of the line, as a note is gone into
@@ -2526,6 +2511,8 @@ the app now does is described above; an entry repeats it only where the reason n
   or an undo puts text back in it, since no key lands against its text there; it is revealed only by
   the keys that write in it. Revised 2026-10-17 by "Vim's normal mode has a caret, and Escape goes
   up": in normal mode its motions reveal it too, the row staying in normal mode and read-only.
+  Revised 2026-10-17 by "The list's vim keys are taken out": the list has no normal mode, so its
+  rows are read and revealed alike in every browser.
 
 - **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
   revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
@@ -2607,7 +2594,9 @@ the app now does is described above; an entry repeats it only where the reason n
   Escape goes up": normal mode has a caret that vim's motions move, `l` and `h` move it rather than
   going in and stepping out, `i` and `a` type at it, and Escape in normal mode goes to the line.
   Revised 2026-10-17 by "The page's `vim` word is on the line too", which puts the page's word in
-  the foot on the line as well as in an open body's.
+  the foot on the line as well as in an open body's. Revised 2026-10-17 by "The list's vim keys are
+  taken out", which reverses it: the list has one set of keys, the terminal's config has no `vim`,
+  and the page's word is vim mode for the body alone.
 
 - **A row is one line, and a long head is read beside it.** Decided 2026-10-17, at Sam's direction,
   revising "The row under the cursor reads until it is written in" where a revealed head whose
@@ -2744,7 +2733,9 @@ the app now does is described above; an entry repeats it only where the reason n
   still and were not taken. Weighed and not taken: the keys shown only while Control is held, as
   iPadOS shows its sheet on a held Command, which keeps the resting foot as it was but which nobody
   finds unless told; a `?` sheet, `?` being a letter in a field that always has the focus; and a
-  `keys` word, which would be in the foot on every row.
+  `keys` word, which would be in the foot on every row. Revised 2026-10-17 by "The list's vim keys
+  are taken out": no row writes vim's letters, so the foot writes chords alone, and the query is
+  where only chords are taken.
 
 - **Vim's normal mode has a caret, and Escape goes up.** Decided 2026-10-17, at Sam's direction, as
   one design for both faces, revising "Vim's keys walk the list" where Escape in normal mode did
@@ -2786,7 +2777,8 @@ the app now does is described above; an entry repeats it only where the reason n
   `h` for going in and out, which no vim hand reads as anything but the caret, and Escape doing
   nothing so that a doubled press stays on the row, which left normal mode with no way up but `/`; a
   doubled Escape from insert now lands on the line, which is where the line's typing is, and quits
-  nothing.
+  nothing. Revised 2026-10-17 by "The list's vim keys are taken out", which reverses it with the
+  rest of the list's vim mode: a row's caret and Escape are as they are without vim.
 
 - **The page's `vim` word is on the line too.** Decided 2026-10-17, at Sam's direction, revising
   "Vim's keys walk the list" and the Browser's body passage, where the word was in the foot of an
@@ -2800,7 +2792,31 @@ the app now does is described above; an entry repeats it only where the reason n
   as it mounts. Not on a touch screen, as before, whose keyboard has no Escape; and not on a row,
   whose foot is full, the busiest rows' scrolling already, and which the switch is not about. The
   terminal's switch stays its config's `vim = true`. It came with "Vim's normal mode has a caret,
-  and Escape goes up", which says what the switch turns on.
+  and Escape goes up", which says what the switch turns on. Revised 2026-10-17 by "The list's vim
+  keys are taken out", which reverses it: the word is in the foot of an open body only, once the
+  editor has loaded, and turns vim mode on or off for the body alone.
+
+- **The list's vim keys are taken out.** Decided 2026-10-17, at Sam's direction, reversing "Vim's
+  keys walk the list", "Vim's normal mode has a caret, and Escape goes up" and "The page's `vim`
+  word is on the line too", and "In vim mode Esc is vim's alone" as they made it hold on a row. A
+  day into the list's vim mode, with a third round of it asked for, `j` and `k` onto the line and
+  the line modal too, Sam chose to take it out, keeping vim in the page's open body. fzn's own rule
+  that no key means something by the key before it leaves out what makes vim's modes worth having,
+  `dd`, `gg`, `cw`, counts and operators, so the list's vim mode could only ever be vim's single
+  keys, and each use found the next thing vim's hands expected and it lacked: a caret, then motions
+  and an Escape that went up, then a line with modes. Each round was designed twice, once for each
+  face, every key added after it would have wanted a vim answer as well, and the keys without vim
+  already do all it did: the arrows walk, a letter or Enter writes, and Escape comes back. Now the
+  list has one set of keys, as before "Vim's keys walk the list". The terminal's config has no
+  `vim`, and one that still says `vim = true` opens as without it; the terminal never sets its
+  cursor's shape. The page's word `vim` is in the foot of an open body only, once the editor has
+  loaded, and turns vim mode on or off for the body alone, kept per browser, as it was. The body's
+  vim mode is CodeMirror's and is unchanged, and so are its decisions: Escape is vim's alone there,
+  and `j` and `k` go by the lines as shown. Weighed: making the line modal as well, so that `j` and
+  `k` cross onto it and Escape steps from insert to normal and then up, which would have made the
+  line the top row of one modal list, and been a fourth round of the same; and keeping 0.29's vim
+  mode as it was, off unless asked for, which cost nothing now and a second answer for every key
+  later. If daily use asks for `j` and `k` again, that design is where to start.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -2859,12 +2875,9 @@ the app now does is described above; an entry repeats it only where the reason n
   when it is written, which the editor already risked. The text CRDT is the answer.
 - A summon key. Starting should feel like switching a window, so the terminal build wants a
   keybinding that raises a running instance (a special workspace on Hyprland). Outside the app.
-- Vim mode: whether the caret's shape is enough to say the mode, in the body and now on a row of the
-  list, where a block for normal mode and a bar for insert are the only sign; whether one switch for
-  the body and the list is right, the page's word in the foot on the line and in an open body and
-  the terminal's line in its config; and whether `/` then Enter writing a note, where vim's hands
-  expect Enter to accept the search, is felt. Daily use with it on decides. Marking the rest of the
-  engine's syntax (tags, people, dates) in place in the body, in the two greys, is a small
+- Vim mode in the body: whether the caret's shape is enough to say the mode, and whether the word in
+  an open body's foot is where the switch belongs; daily use with it on decides. Marking the rest of
+  the engine's syntax (tags, people, dates) in place in the body, in the two greys, is a small
   decoration left until use asks; URLs and bracketed names are marked as markdown since 2026-10-15.
 - Whether the body should be kept as it is typed too. A version is the whole note, so a keystroke in
   a long body writes all of it; it is kept when it closes, as the terminal's editor keeps it. Use
