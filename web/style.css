@@ -551,8 +551,7 @@ a:hover { text-decoration-color: currentColor; }
    box does, in the same face, size and leading, so that the text does not move by a pixel when it
    takes over; the rules are prefixed to outrank the stylesheet the editor brings. The page's caret
    is the only caret, so the editor's own cursors are hidden, and a selection is a grey. In vim's
-   insert mode the caret is a bar, as a terminal shows it, and a block otherwise; with vim's keys
-   the line and a row written in have the bar too, and a row in normal mode the block. */
+   insert mode the caret is a bar, as a terminal shows it, and a block otherwise. */
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }

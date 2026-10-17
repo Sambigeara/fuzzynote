@@ -31,7 +31,7 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   the flow it sits in, never inherited. No key means something by the key before it.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
   in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
-  a little heavier, with no caret drawn. Nothing else is highlighted and almost nothing else is
+  a little heavier, its caret at the end. Nothing else is highlighted and almost nothing else is
   drawn: no borders, no counts, no colour. The body read is that of what the cursor is on, in a
   place of its own apart from the list, never under a row or the line. What is not being asked for
   is not on the screen.
@@ -930,10 +930,12 @@ written at the end of its row, a caret's width off the head, or at the end of it
 width, and typing changes it; a note with a body has `¶` just before the date, since the tail, where
 the mark is off the cursor, is not there. Until the row is written in it reads as it does off the
 cursor, on one line, cut with `…`, its marks rendered, a task's box drawn and a place's labels
-hidden, heavier and with no caret drawn: the box is under the reading, holding the focus whenever it
-would, showing nothing. A key that would change the head (a letter, Backspace, Delete) or move the
-caret in it (Left, Right, Home, End, and their Shift and word forms), a paste, a cut, dictation, a
-composition starting, a selection made in it, or a press on its words reveals it: the reading goes,
+hidden, heavier, with the page's block at the end of the reading, or on its `…` where the row cuts
+it, where the box's caret is and where the terminal puts its cursor: the box is under the reading,
+holding the focus whenever it would, showing nothing. A key that would change the head (a letter,
+Backspace, Delete) or move the caret in it (Left, Right, Home, End, and their Shift and word forms),
+a paste, a cut, dictation, a composition starting, a selection made in it, or a press on its words
+reveals it: the reading goes,
 the box shows the text as typed, and what revealed it lands as it would have, a letter at the end
 and Left one before it. Up, Down, the pages, Tab, Enter, Escape and the chords do not, since they
 leave the row or act on the note as a whole. It stays revealed until the cursor leaves the row. A
@@ -964,72 +966,20 @@ with it shut the head is written in its row. While the body is open the sheet ho
 editor, fetched after the first pause in keys once the page has painted, or when a body opens if
 that is sooner: the markdown styled where it stands with every mark in sight, the marks in the faint
 grey and the text in ink, headings and strong text heavier, emphasis slanted, code in the monospace,
-soft wrap, step undo, a grey selection, and vim mode for the browser that asked for it with the word
-`vim` in the foot, on the line and in an open body, which a touch screen, whose keyboard has no
-Escape, is not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do,
-since a note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is
-vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the
-text back first, and `:w` writes and stays, scrolled where it was. The page's caret is drawn from
-the editor's coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt
-for a command is at the foot of the sheet, under the text and a hairline. The head stays an ordinary
-field, but that the same word gives the list vim's keys too (see *Vim's keys on the list*). Until
-the editor has loaded, and if it never does, the sheet holds a plain text area. The `editor` the
-engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and
-the bar the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from
-the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
-the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
-closes it.
-
-*Vim's keys on the list.* The word `vim`, kept per browser, covers the list as well as the body, as
-"Vim's keys walk the list" and "Vim's normal mode has a caret, and Escape goes up" have it for both
-faces. It is in the foot on the line, whether or not the editor has loaded, which takes the setting
-as it mounts, and in an open body once the editor is there; not on a row, whose foot is full and
-which the switch is not about (see "The page's `vim` word is on the line too"). It is offered and
-taken only where the pointer is fine and hovers, the query that writes the chords after the words,
-so that wherever normal mode is its letters are written; a touch screen does without. The reveal and
-the mode are two states. A row walked to, by an arrow, `j`, `k`, going in, a press beside its words
-or a body closing, is read, unrevealed, and in normal mode, with the block caret at the end of its
-reading, or on its `…` where the row cuts it. Normal mode has a caret in the head, from its start to
-its end after the last letter, and its motions move it and nothing else: `h` and Left a letter back
-and `l` and Right a letter on, stopping at the ends; `0` and Home to the start, `^` to the first
-letter after a task's box and its spaces, and `$` and End to the end; `w`, `b` and `e` by vim's
-small words. A letter is a grapheme, what the box's own Left and Right step over, never half a
-surrogate pair. Shift, Control and Meta with the caret's keys do nothing, so that no selection is
-made in normal mode; Alt with them is the browser's Back and Forward, as without vim's keys, but on
-a Mac, where Option would move the hidden caret by a word, and does nothing there. The first motion
-reveals the row, even where the caret cannot move, as a caret key does without vim's keys: the marks
-are shown and the field scrolls sideways to keep five letters beside the caret, as for Home and End,
-with the block over the letter at the caret, its width, or after the last letter at the end,
-measured in the box as the caret always is. The row stays in normal mode, revealed, until the cursor
-leaves it or something writes in it. What the reveal does without vim's keys, a letter revealing the
-row and typing, is the one thing normal mode changes: its keys act, the rest are swallowed, and the
-box is read-only meanwhile, so that a paste, a composition, dictation or the browser's own undo
-writes nothing either, while the box keeps the focus, as Vimium needs to leave its keys to the page.
-`i` types before the letter under the caret and `a` after it, both at the end when the caret is
-there, so that on a row just walked to they type at the end; `A` types at the end and `I` at the
-start after a task's box; a new row with only the labels it opened with keeps its own place for the
-caret. `o`, `O`, Enter, Enter on the line and a press on the words, of a row read or one a motion
-revealed, go to insert as they do without vim's keys, with a bar. Escape in insert keeps the row,
-writing out its date words, and goes to normal mode with the caret a letter back, as vim's Escape
-moves it, following the text: where the head as kept ends with what followed the caret, a date word
-before it having been written out, a letter back from the same place in that text, and otherwise a
-letter back from where it was, onto the last letter at most, never before the start; the row staying
-revealed as it was written until the cursor leaves it. Escape in normal mode, or Ctrl-[, goes up to
-the line, its caret at the end of its text and the list as it is, as Escape on a row does without
-vim's keys, and from the line its ladder is as ever: two Escapes from insert land on the line. Tab
-goes in and lands on the first row inside, in normal mode; out of a place is the line's ladder.
-Shift-Enter does not reveal. In normal mode Ctrl-D and Ctrl-U page by ten, as vim's do, and `D`
-deletes and `u` undoes; in insert and without vim's keys Ctrl-D deletes and Ctrl-U undoes, as in
-*Keys*. A head changed in place, from elsewhere, while a row is read in normal mode stays read, as
-it now is, its caret at the end where the block is, so that no key lands against its text there. On
-the page `x` and Shift-Enter tick; Ctrl-V stays the browser's paste, which writes nothing in normal
-mode, and Ctrl-R redoes only there. The line has a bar too, being always typing; without vim's keys
-every caret is the block it was. The foot writes vim's letters in normal mode, word first, `type i`,
-`new note o`, `body ^O`, `tick x`, `delete D`, `copy y`, `undo u`, `redo ^R`, and nothing after `go
-in` or `up`, whose keys are Tab and Escape, as without vim's keys; the caret's motions are not
-written, being the field's own, as Left and Right are without vim's keys. `type` is the page's own
-word and does what `i` does, and in insert the way back is `done`, which does what Escape does
-there.
+soft wrap, step undo, a grey selection, and vim mode for the body, for the
+browser that asked for it with the word `vim` in the foot of an open body, once the editor has
+loaded, which a touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k`
+move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a
+line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the
+word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and stays,
+scrolled where it was. The page's caret is drawn from the editor's coordinates, a block in normal
+and visual mode and a bar in insert mode. Vim's prompt for a command is at the foot of the sheet,
+under the text and a hairline. The head stays an ordinary field. Until the editor has loaded, and if
+it never does, the sheet holds a plain text area. The `editor` the engine offers is not shown here.
+At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
+it is open; a wider touch screen keeps it in the column, sized from the frame. On a touch screen it
+opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
+open, and `done`, the back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -1057,11 +1007,12 @@ otherwise gives it only for something that asked to write, a finger on a head's 
 on a keyboard joined to the device, or the word `new note`; no control takes the focus, on any
 width, so the words, the cross, the arrows and the path's steps act on where the cursor is and leave
 the keyboard as it was. The caret is drawn where the cursor is whether or not the keyboard is up,
-still while it is down, though a row not yet revealed draws none. There is no gesture of the app's
-own: tap, scroll and the system's back are the whole of it. A manifest and an icon let the page be
-added to a home screen as an app of its own, the browser's bars in the paper's colour, opening the
-space it was added from. The passphrase's field waits for a tap, with the resting caret at its
-start, the keyboard's key says `go`, and a word `open` under the sentence opens the space.
+still while it is down, and on a row not yet revealed at the end of its reading. There is no
+gesture of the app's own: tap, scroll and the system's back are the whole of it. A manifest and
+an icon let the page be added to a home screen as an app of its own, the browser's bars in the
+paper's colour, opening the space it was added from. The passphrase's field waits for a tap, with
+the resting caret at its start, the keyboard's key says `go`, and a word `open` under the sentence
+opens the space.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own. Where the browser gives the page Web Locks, a tab holds the lowest slot no other tab
@@ -2512,7 +2463,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the keys that write in it. Revised 2026-10-17 by "Vim's normal mode has a caret, and Escape goes
   up": in normal mode its motions reveal it too, the row staying in normal mode and read-only.
   Revised 2026-10-17 by "The list's vim keys are taken out": the list has no normal mode, so its
-  rows are read and revealed alike in every browser.
+  rows are read and revealed alike in every browser. Revised 2026-10-17 by "The row read shows its
+  caret": on the page a row read has the block at the end of its reading, or on its `…`.
 
 - **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
   revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
@@ -2817,6 +2769,19 @@ the app now does is described above; an entry repeats it only where the reason n
   line the top row of one modal list, and been a fourth round of the same; and keeping 0.29's vim
   mode as it was, off unless asked for, which cost nothing now and a second answer for every key
   later. If daily use asks for `j` and `k` again, that design is where to start.
+
+- **The row read shows its caret.** Decided 2026-10-17, at Sam's direction, revising "The row under
+  the cursor reads until it is written in", where on the page a row not yet revealed drew no caret,
+  the head as read lying over the box, and the principle "One cursor", which said so. Sam wanted the
+  caret visible while walking the list. Walking the list, the one sign of the cursor was a heavier
+  head, and where typing would start showed only once a key was pressed. Now a row read has the
+  page's block at the end of its reading, or on its `…` where the row cuts it, which is where the
+  terminal puts its cursor on the same row and where the caret is in the head as written, so that
+  the first key types or moves from where the block was. The block is measured on the reading, which
+  is what is shown, and breathes or rests as the caret does elsewhere, resting on a touch screen as
+  it does on the line. The reading is unchanged: the marks stay hidden until a key writes in the row
+  or moves its caret. The terminal drew its cursor there already. It came with "The list's vim keys
+  are taken out", whose normal mode had drawn this block on a row read, and only there.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
