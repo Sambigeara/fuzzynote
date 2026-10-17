@@ -322,7 +322,7 @@ fn undo_and_redo_on_an_empty_new_note_do_nothing_and_undo_on_one_typed_into_empt
     assert!(matches!(&kept(&undone)[..], [r] if r.deleted));
     assert_eq!(field(&s), Some((String::new(), true, false)));
     assert_eq!(heads(&s), ["", "House"]);
-    assert_eq!(s.view().field.unwrap().updated, None);
+    assert_eq!(s.view().field.unwrap().created, None);
     assert_eq!(s.notes.len(), 1);
     assert_eq!(s.undo.len(), undo);
 }
@@ -979,6 +979,34 @@ fn a_row_offers_a_new_note_first_and_an_empty_new_note_does_not() {
 }
 
 #[test]
+fn the_rows_date_is_the_day_its_note_was_written_not_the_day_it_last_changed() {
+    let mut s = session();
+    let written = NOON.secs() - 21 * 86_400;
+    s.commit(Record {
+        created: Some(Moment::utc(written)),
+        updated: Some(NOON),
+        ..Record::new("fence", "Fix the fence")
+    });
+    s.commit(Record::new("gate", "Paint the gate"));
+    s.refresh(true);
+    select(&mut s, "Fix the fence");
+    assert_eq!(s.view().field.unwrap().created, Some(Moment::utc(written)));
+    edited(&mut s, "Fix the fence posts");
+    assert_eq!(
+        s.view().field.unwrap().created,
+        Some(Moment::utc(written)),
+        "an edit is not when it was written"
+    );
+    s.act(Action::Select(None));
+    select(&mut s, "Paint the gate");
+    assert_eq!(
+        s.view().field.unwrap().created,
+        None,
+        "a note that never said"
+    );
+}
+
+#[test]
 fn typing_into_a_new_row_writes_the_note_at_its_first_letter_and_each_letter_after() {
     let mut s = session();
     put(&mut s, "house", "House", &[], 1_000);
@@ -988,7 +1016,7 @@ fn typing_into_a_new_row_writes_the_note_at_its_first_letter_and_each_letter_aft
     s.act(Action::Write);
     let id = s.rows[0].id.clone();
     assert_eq!(
-        s.view().field.unwrap().updated,
+        s.view().field.unwrap().created,
         None,
         "no date until it is written"
     );
@@ -1004,7 +1032,7 @@ fn typing_into_a_new_row_writes_the_note_at_its_first_letter_and_each_letter_aft
     assert_eq!(held.created, Some(NOON), "when Enter was pressed");
     assert_eq!(s.rows[0].head, "Bo");
     assert_eq!(
-        s.view().field.unwrap().updated,
+        s.view().field.unwrap().created,
         Some(NOON),
         "the field has its date"
     );
@@ -1142,7 +1170,7 @@ fn a_new_row_cleared_with_its_body_open_is_taken_off_every_device_when_the_body_
     );
     let row = s.selected().unwrap();
     assert_eq!(row.head, "");
-    assert_eq!(s.view().field.unwrap().updated, None);
+    assert_eq!(s.view().field.unwrap().created, None);
     assert_eq!(s.undo.len(), undo, "nothing to undo");
 
     // A letter typed there writes it again, and leaving it empty writes nothing more.

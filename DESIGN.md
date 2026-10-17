@@ -128,7 +128,7 @@ no network call, so the same code runs in a terminal, in a browser tab and in a 
 - Out: the *view*, which is everything there is to paint: the path, the line and what its date words
   and spans stand for, the rows with their reasons, each with the head it shows off the cursor and
   whether it is a task and ticked, where what a place only finds begins, where the cursor is, the
-  note under it as it is being written and when it last changed, the note you are in, what just
+  note under it as it is being written and when it was written, the note you are in, what just
   happened, and what can be asked for where the cursor is, each with what to call it there. A face
   puts its own key or button beside each. What the view says is worked out once an action or an
   arrival is done with, so a face may ask for it as often as it paints.
@@ -700,8 +700,9 @@ row, after a dim `>` in the column the rows leave empty, so that its text lines 
 its date words and spans stand for is shown after it, dimmed, `→ Fri 2026-10-16` or
 `→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly, each a head and then, dimmed, a
 `¶` if it has a body, the names of what it links to after an arrow, and its reasons joined by `·`;
-the row the cursor is on has the terminal's cursor at the end of its head, the head in bold, and its
-date at the right. The foot of the list is kept for the body of what the cursor is on: the note on
+the row the cursor is on has the terminal's cursor at the end of its head, the head in bold, and the
+day its note was written at the right, the day a day label and a span read too, or none for a note
+that never said. The foot of the list is kept for the body of what the cursor is on: the note on
 its row, and on the line in a place the note you are in. It is a row of nothing, then up to five
 rows of the body, dimmed, set in two columns from the rows' text and cut with a `…` when it goes on.
 The rows are kept whatever the note holds, on a row and on the line in a place alike, so walking the
@@ -853,7 +854,8 @@ selected row's, goes into what it names when it names somewhere. Each keeps its 
 not there, so that neither moves the other, or the dates, by coming or going; and since they are on
 the line, clearing and going in are not also words in the foot.
 
-*Writing in a row.* The head of the row the cursor is on is a text box, and typing changes it; Enter
+*Writing in a row.* The head of the row the cursor is on is a text box, with the day its note was
+written at the end of its row, or under the head at a phone's width, and typing changes it; Enter
 opens a new row under it; Ctrl-O, or `body` in the foot, opens the whole note in the sheet, a
 bounded overlay over the column with the page dimmed slightly behind it, which scrolls on its own,
 and in it Enter is a line break, Tab indents and Shift-Tab takes the indent back, the arrows move
@@ -1935,7 +1937,8 @@ the app now does is described above; an entry repeats it only where the reason n
   action, where a terminal that asked for the view four times a key read the line four times. A
   session filled from nothing, as a new device is by its first sync, says nothing of it, however
   many logs the space arrives in, until something is first asked of it: the space arriving is not
-  news, and `N changed elsewhere` is kept for what changes after.
+  news, and `N changed elsewhere` is kept for what changes after. Revised 2026-10-17 by "A row's
+  date is the day its note was written": the field's date is its `created`.
 
 - **A head reads every inline mark a body does.** Decided 2026-10-16, at Sam's direction, revising
   "A body's markdown is rendered where it is read and styled where it is written" where it kept a
@@ -2206,6 +2209,21 @@ the app now does is described above; an entry repeats it only where the reason n
   listed oldest first, so that `..` in the app ends at now with the newest 500, where cutting the
   newest would leave a span to now without the week it was typed for; `fzn query` is not cut,
   which is where a whole history is read.
+
+- **A row's date is the day its note was written.** Decided 2026-10-17, agreed with Sam, revising
+  the view under the engine's Session, where the note under the cursor came with when it last
+  changed, and "The view says what both faces worked out", where the date of the cursor's row was
+  the field's, by which it meant the note's `updated`. The date on the row under the cursor, at the
+  right in the terminal and on the page at the row's end or under its head, said when the note last
+  changed, so `[ ] Fix the fence #work`, written three weeks ago and ticked on Wednesday, said
+  Wednesday on a line of last month's notes, and putting a word right in an old note made it read as
+  today's. Everything else that reads a day reads `created`: a day typed on the line holds the notes
+  written on it, a span holds the notes written in it, and a note written in a day's place is of
+  that day by being written on it. So the row says the day the note belongs to, the one those agree
+  on, and `Field.updated` became the field's `created`, which both faces read. A note with no
+  `created` shows no date, which is most of a space imported from the 2022 notes, where the time of
+  writing survives on 7% of them: a date there would be a guess. When a note was last changed is
+  still kept, and still what orders a ranked list's recency; it is only not said on the row.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

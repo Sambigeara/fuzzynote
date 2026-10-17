@@ -985,9 +985,10 @@ function dateRow(li) {
   const main = li.querySelector(':scope > .main');
   if (!main) return;
   let time = main.querySelector(':scope > time');
-  const updated = view.field?.updated;
-  if (!updated) return time?.remove();
-  const text = day(updated);
+  // The day the note was written, which is the day it belongs to.
+  const created = view.field?.created;
+  if (!created) return time?.remove();
+  const text = day(created);
   if (!time) {
     time = el('time', null, text);
     main.insertBefore(time, main.querySelector(':scope > .chev'));

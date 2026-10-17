@@ -315,8 +315,9 @@ pub struct Field<'a> {
     pub fresh: Option<usize>,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
-    /// When the note was last changed, as it is held. None for a new note not yet written.
-    pub updated: Option<Moment>,
+    /// When the note was written, as it is held: the day it belongs to, which a day label and a
+    /// span read too. None for a new note not yet written, and for a note that never said.
+    pub created: Option<Moment>,
 }
 
 /// The note being looked around, as a face shows what it says.
@@ -609,7 +610,7 @@ impl Session {
                 text: &field.text,
                 fresh: field.blank().then(|| field.start()),
                 whole: field.whole,
-                updated: self.notes.get(&field.id).and_then(|r| r.updated),
+                created: self.notes.get(&field.id).and_then(|r| r.created),
             }),
         }
     }

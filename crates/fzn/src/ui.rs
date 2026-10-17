@@ -743,20 +743,20 @@ fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
 }
 
 /// The row the cursor is on, `head` being its head as it is now typed: the head bold and the day
-/// it was `updated` at the right, and its tail after the head or, when it does not fit there, on a
-/// row of its own under it, since this is the row being asked about. A head too long for the room
-/// scrolls so that the caret, `caret` letters in, stays in sight; the column it is then drawn at
-/// comes back with the rows.
+/// it was `created` at the right, the day it belongs to, and its tail after the head or, when it
+/// does not fit there, on a row of its own under it, since this is the row being asked about. A
+/// head too long for the room scrolls so that the caret, `caret` letters in, stays in sight; the
+/// column it is then drawn at comes back with the rows.
 fn selected_rows(
     row: &Row,
     head: &str,
-    updated: Option<Moment>,
+    created: Option<Moment>,
     caret: usize,
     scores: bool,
     width: usize,
 ) -> (Vec<Line<'static>>, usize) {
     let score = score_of(row, scores);
-    let date = updated.map_or_else(String::new, |m| time::format_day(m.day()));
+    let date = created.map_or_else(String::new, |m| time::format_day(m.day()));
     let dated = if date.is_empty() { 0 } else { date.width() + 2 };
     let room = width.saturating_sub(2 + score.width() + dated).max(1);
     let (head, at) = scrolled(head, caret, room);
@@ -1309,11 +1309,11 @@ impl App {
                     .field
                     .as_ref()
                     .map_or(row.head.as_str(), |f| head_and_body(f.text).0);
-                let updated = view.field.as_ref().and_then(|f| f.updated);
+                let created = view.field.as_ref().and_then(|f| f.created);
                 let painted = selected_rows(
                     row,
                     head,
-                    updated,
+                    created,
                     self.row_cursor,
                     view.scores_shown,
                     width,
@@ -2840,7 +2840,7 @@ mod tests {
         write(&mut app, long);
         press(&mut app, KeyCode::Down, false);
         let shot = screen(&mut app, 40, 8);
-        let date = time::format_day(app.device.view().field.unwrap().updated.unwrap().day());
+        let date = time::format_day(app.device.view().field.unwrap().created.unwrap().day());
         assert!(shot.rows[1].ends_with(&date), "{:?}", shot.rows[1]);
         assert!(shot.rows[1].contains("are bled"), "{:?}", shot.rows[1]);
         assert!(shot.cursor.0 < 40 - 12, "{:?}", shot.cursor);
@@ -3044,8 +3044,8 @@ mod tests {
         // Written last, the note with a body is first on the list, and the other under it.
         assert_eq!(heads(&app)[0], picked);
         let other = heads(&app)[1].clone();
-        let updated = app.device.view().field.unwrap().updated.unwrap();
-        let date = format!(" {}", time::format_day(updated.day()));
+        let created = app.device.view().field.unwrap().created.unwrap();
+        let date = format!(" {}", time::format_day(created.day()));
         let shot = screen(&mut app, 60, 10);
         assert!(
             shot.rows[1].starts_with(&format!(" {picked} ¶")) && shot.rows[1].ends_with(&date),
@@ -3530,12 +3530,12 @@ mod tests {
     #[test]
     fn a_wide_head_under_the_cursor_has_its_date_at_the_edge_and_the_caret_at_its_end() {
         let row = a_row("浴室的瓷砖要换 #house");
-        let updated = Moment::utc(0);
-        let date = time::format_day(updated.day());
+        let created = Moment::utc(0);
+        let date = time::format_day(created.day());
         let (rows, x) = selected_rows(
             &row,
             &row.head,
-            Some(updated),
+            Some(created),
             letters(&row.head),
             false,
             40,

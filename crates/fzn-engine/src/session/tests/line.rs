@@ -930,7 +930,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     assert_eq!(view["rows"][0]["head"], "Boiler");
     assert_eq!(view["rows"][0]["has_body"], true);
     assert_eq!(view["rows"][0]["shown"], serde_json::Value::Null);
-    assert!(view["rows"][0].get("updated").is_none());
+    assert!(view["rows"][0].get("created").is_none());
     assert_eq!(view["rows"][0]["task"], serde_json::Value::Null);
     assert_eq!(view["finds_from"], serde_json::Value::Null);
     assert_eq!(view["notes"], 1);
@@ -941,7 +941,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
             "text": "Boiler\nthe plan",
             "fresh": null,
             "whole": false,
-            "updated": "1970-01-01T00:50:00.000Z"
+            "created": "1970-01-01T00:50:00.000Z"
         })
     );
     assert!(view.get("open").is_none());
