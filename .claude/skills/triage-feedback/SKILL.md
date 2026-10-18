@@ -123,9 +123,11 @@ An entry is dealt with when its fix is in the build the author runs (committed, 
 `fzn` installed after it; for the page, on the relay), or when it has been decided
 to do nothing about it.
 
-Tick off only the entries named, or agreed to when you proposed them. Take their ids from a
-fresh query, since numbers from a triage mean nothing in another conversation and words can
-match more than one head: if they do, ask which. Then:
+Once an entry is dealt with that way, tick it off without asking: the author's standing word is
+that addressed and deployed means ticked. An entry only partly dealt with, or still waiting on a
+decision, stays open. Otherwise tick off only the entries named. Take their ids from a fresh
+query, since numbers from a triage mean nothing in another conversation and words can match more
+than one head: if they do, ask which. Then:
 
 ```sh
 fzn tick ID [ID ...]
@@ -137,6 +139,16 @@ note that is not an open task, is said by its id, nothing is ticked, and it exit
 works with the app open on the space, which shows the tick within a second, and never asks for
 the passphrase. Report each entry by its head as it now stands, and how many are still open,
 from the query run again.
+
+An entry written as a plain note rather than a task, its head without a box, is refused by
+`tick`. It is archived instead, as Ctrl-V archives a note that is not a task, through `apply`,
+which writes all or none and refuses a note changed since it was read:
+
+```sh
+fzn query '#fzn #feedback' | jq -c 'select(.id == "ID") | .archived = true' | fzn apply
+```
+
+The same with `.archived = false` brings it back.
 
 If it answers `unknown argument "tick"`, the build predates the command. Give the author the
 heads to tick in the app instead: `#fzn #feedback` on the line and Tab goes into them, and
