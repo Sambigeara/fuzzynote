@@ -43,3 +43,5 @@ sha2.workspace = true
 [dev-dependencies]
 # For reading back what the relay sent gzipped.
 flate2 = "1"
+# A certificate of a test's own, for a relay behind TLS that the built-in roots do not know.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }

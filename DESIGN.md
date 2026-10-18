@@ -1275,7 +1275,8 @@ the app now does is described above; an entry repeats it only where the reason n
   not a clipboard from the terminal. There is no auth and no TLS yet, by the same decision: the key
   is what protects the notes, and the address is what protects the relay's disk and time. Revised
   2026-10-16 by "A space is entered with its key, and made with a token": there is auth now, made
-  from the same key, and still no TLS.
+  from the same key, and still no TLS. Revised 2026-10-18 by "The terminal speaks wss": the relay
+  still has none, and a device reaches one behind a proxy that has it under TLS.
 
 - **Per-note last-writer-wins stays, for now.** Revisited 2026-10-14 when asked whether the CRDT
   could be made more robust. The stamp is already a per-note logical clock (a local change is always
@@ -3063,11 +3064,14 @@ the app now does is described above; an entry repeats it only where the reason n
   seconds, so every command waited out its close and then said it had not synced, and a refused
   device would have dialled again every six seconds instead of waiting longer each time; so
   either end that lets a connection go now says so with a close, or answers the peer's, which a
-  proxy passes on at once. Weighed: OpenSSL through native-tls, which a static musl build cannot
-  carry; the system's roots, which a static binary would have to find on each machine; a plain
-  `ws://` port on the public relay, where the token, a space's one claim and every proof would
-  cross in the clear; and a tunnel such as the host's own proxy command, which would have to be
-  kept running beside the terminal.
+  proxy passes on at once, and a device that closes takes the relay's answer as the end, since
+  the socket may stay open after it. A relay with no TLS that is spoken TLS to, by a device that
+  names it as `wss://` by mistake, turns it away at once and says so, where it waited a greeting
+  for a request that would never come. Weighed: OpenSSL through native-tls, which a static musl
+  build cannot carry; the system's roots, which a static binary would have to find on each
+  machine; a plain `ws://` port on the public relay, where the token, a space's one claim and
+  every proof would cross in the clear; and a tunnel such as the host's own proxy command, which
+  would have to be kept running beside the terminal.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

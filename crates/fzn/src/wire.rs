@@ -121,15 +121,19 @@ impl Wire {
     }
 
     /// Sends what is waiting to go, then closes, giving the peer a greeting's time to hear it,
-    /// and says whether the peer closed in that time. Any end of the connection counts, since a
-    /// relay from before closes were answered drops the socket once it reads the close, and has
-    /// read everything sent before the close by then all the same.
+    /// and says whether the peer closed in that time. The peer's close answering it is the end,
+    /// since a relay takes in each message whole before it reads the next, so its answer says it
+    /// has everything sent before; the socket may stay open after it, as a proxy in front holds
+    /// one. Any other end of the connection counts too, since a relay from before closes were
+    /// answered drops the socket once it reads the close, having read the rest by then all the
+    /// same.
     pub fn close(mut self) -> bool {
         let deadline = Instant::now() + GREETING;
         let _ = self.socket.close(None);
         // Reading drives the close: it sends what is queued and ends when the peer closes too.
         while Instant::now() < deadline {
             match self.socket.read() {
+                Ok(Frame::Close(_)) => return true,
                 Err(e) if !would_wait(&e) => return true,
                 _ => {}
             }
@@ -160,11 +164,47 @@ impl Wire {
 /// A connection let go is said to be over with a close, or the peer's close is answered, before
 /// the socket goes. A proxy in front of a relay holds a socket dropped behind it open for seconds,
 /// in which the other end cannot tell a connection ended from a quiet one, nor that a refusal was
-/// quick; a close is passed on at once. It is said in the time a socket has to write, and only
-/// tried: a peer already gone needs nothing said.
+/// quick; a close is passed on at once. Under TLS the TLS is closed too, after it. It is said in
+/// the time a socket has to write, and only tried: a peer already gone needs nothing said.
 impl Drop for Wire {
     fn drop(&mut self) {
         let _ = self.socket.close(None);
         let _ = self.socket.flush();
+        if let Stream::Tls(tls) = self.socket.get_mut() {
+            tls.conn.send_close_notify();
+            let _ = tls.flush();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[test]
+    fn a_close_answered_is_the_end_even_while_a_proxy_holds_the_socket_open() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            // Reading the close queues its answer and flushing sends it; then the socket is held.
+            while !matches!(socket.read(), Ok(Frame::Close(_)) | Err(_)) {}
+            let _ = socket.flush();
+            thread::sleep(GREETING);
+        });
+        let stream = TcpStream::connect(address).unwrap();
+        let asked = format!("ws://{address}/");
+        let (socket, _) = tungstenite::client(asked.as_str(), Stream::Plain(stream)).unwrap();
+        let wire = Wire::new(socket).unwrap();
+        let began = Instant::now();
+        assert!(wire.close(), "the close was not answered");
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
     }
 }

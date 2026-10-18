@@ -689,13 +689,36 @@ impl Relay {
     }
 }
 
+/// The first byte of a TLS handshake, which a device that names this relay as `wss://` sends.
+const TLS_HELLO: u8 = 0x16;
+
+/// Why a connection was not a request, when it opened with TLS: the one such reason a relay says,
+/// since it is a device named as `wss://` by mistake and not a stranger.
+#[derive(Debug)]
+struct SpokeTls;
+
+impl std::fmt::Display for SpokeTls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "it spoke TLS, which this relay has none of: name it as ws://, or put a proxy that \
+             has TLS in front of it",
+        )
+    }
+}
+
+impl std::error::Error for SpokeTls {}
+
 /// The head of the request a connection opens with, looked at without taking it off the socket,
-/// so that a request for a websocket can still be handed whole to the websocket library.
+/// so that a request for a websocket can still be handed whole to the websocket library. A
+/// connection that opens with TLS is told at once, since no request will follow.
 fn opening(stream: &TcpStream) -> Result<Vec<u8>> {
     let mut seen = vec![0u8; 16 * 1024];
     let deadline = Instant::now() + GREETING;
     loop {
         let so_far = stream.peek(&mut seen)?;
+        if so_far > 0 && seen[0] == TLS_HELLO {
+            return Err(SpokeTls.into());
+        }
         if let Some(end) = seen[..so_far].windows(4).position(|w| w == b"\r\n\r\n") {
             seen.truncate(end + 4);
             return Ok(seen);
@@ -954,8 +977,14 @@ fn serve(hub: &Hub, stream: TcpStream, greeting: Greeting) {
     if timed.is_err() {
         return;
     }
-    let Ok(head) = opening(&stream) else {
-        return;
+    let head = match opening(&stream) {
+        Ok(head) => head,
+        Err(why) => {
+            if why.is::<SpokeTls>() {
+                eprintln!("fzn relay: {from}: {why}");
+            }
+            return;
+        }
     };
     if !asks_for_a_socket(&String::from_utf8_lossy(&head)) {
         // A page that fails to go has nobody to tell.
@@ -1609,7 +1638,7 @@ pub(crate) mod tests {
         let address = relay(&hub);
 
         let mut done = Raw::knock(&address, "/1/main", None);
-        assert!(matches!(done.next(), Some(Message::Now(_))));
+        assert_eq!(done.enter(&a_key()), Ok(()));
         done.socket.close(None).unwrap();
         let answered = loop {
             match done.socket.read() {

@@ -182,6 +182,16 @@ fn unnamed(relay: &str) -> String {
 /// system's lookup cannot be told how long it has, so it is asked on a thread, which is left to
 /// finish on its own when it takes too long.
 pub fn dial(to: &Dial, space: &str) -> Result<Wire> {
+    dial_trusting(to, space, trusted)
+}
+
+/// [`dial`], trusting under TLS what `trust` makes, which is the built-in roots but for a test,
+/// which brings a certificate of its own.
+fn dial_trusting(
+    to: &Dial,
+    space: &str,
+    trust: impl FnOnce() -> Result<Arc<ClientConfig>>,
+) -> Result<Wire> {
     let authority = &to.authority;
     let deadline = Instant::now() + GREETING;
     let late = || anyhow!("no answer within {} seconds", GREETING.as_secs());
@@ -235,7 +245,7 @@ pub fn dial(to: &Dial, space: &str) -> Result<Wire> {
         let host = host.trim_start_matches('[').trim_end_matches(']');
         let checked = ServerName::try_from(host.to_owned())
             .with_context(|| format!("{host} is not a name a certificate can be for"))?;
-        let tls = ClientConnection::new(trusted()?, checked)?;
+        let tls = ClientConnection::new(trust()?, checked)?;
         let stream = Stream::Tls(Box::new(StreamOwned::new(tls, stream)));
         (stream, format!("wss://{}{path}", to.shown))
     } else {
@@ -574,18 +584,149 @@ mod tests {
         assert!(!dial_of("nas.local").unwrap().tls);
     }
 
+    /// A relay behind a proxy with TLS, as a test can have one: a certificate of its own for
+    /// `localhost`, and a websocket under it that says what it was asked for, with what
+    /// subprotocols, and the first thing it heard, then answers the close. Gives its port and a
+    /// trust that knows its certificate.
+    fn behind_tls() -> (u16, Arc<ClientConfig>, Receiver<(String, String, String)>) {
+        let made = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let certificate = made.cert.der().clone();
+        let key = rustls::pki_types::PrivatePkcs8KeyDer::from(made.signing_key.serialize_der());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let server = rustls::ServerConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate.clone()], key.into())
+            .unwrap();
+        let server = Arc::new(server);
+        let mut roots = RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let trust = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (told, heard) = mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                stream.set_read_timeout(Some(GREETING)).unwrap();
+                let tls = StreamOwned::new(
+                    rustls::ServerConnection::new(server.clone()).unwrap(),
+                    stream,
+                );
+                let (mut path, mut offered) = (String::new(), String::new());
+                // The error it may give is tungstenite's own answer to a handshake, large as it is.
+                #[allow(clippy::result_large_err)]
+                let answer = |request: &tungstenite::handshake::server::Request, response| {
+                    path = request.uri().path().to_owned();
+                    let protocols = request.headers().get("Sec-WebSocket-Protocol");
+                    offered = protocols
+                        .and_then(|p| p.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned();
+                    let mut response: tungstenite::handshake::server::Response = response;
+                    if protocols.is_some() {
+                        let fzn = "fzn".parse().unwrap();
+                        response.headers_mut().insert("Sec-WebSocket-Protocol", fzn);
+                    }
+                    Ok(response)
+                };
+                let Ok(mut socket) = tungstenite::accept_hdr(tls, answer) else {
+                    continue;
+                };
+                let first = loop {
+                    match socket.read() {
+                        Ok(tungstenite::Message::Text(text)) => break text.as_str().to_owned(),
+                        Ok(_) => {}
+                        Err(_) => break String::new(),
+                    }
+                };
+                if told.send((path, offered, first)).is_err() {
+                    return;
+                }
+                while socket.read().is_ok() {}
+                let _ = socket.flush();
+            }
+        });
+        (port, Arc::new(trust), heard)
+    }
+
     #[test]
-    fn a_relay_named_as_wss_that_speaks_no_tls_is_given_up_on_and_hears_nothing_in_the_clear() {
-        let (address, asked) = refusing();
-        let to = dial_of(&format!("wss://joe:{TOKEN}@{address}")).unwrap();
-        let began = Instant::now();
-        let Err(why) = dial(&to, "main") else {
-            panic!("a relay with no TLS was dialled into as one with it");
+    fn a_relay_behind_a_proxy_with_tls_is_dialled_under_it_and_hears_what_is_said() {
+        let (port, trust, heard) = behind_tls();
+        let to = dial_of(&format!("wss://joe:{TOKEN}@localhost:{port}")).unwrap();
+        let mut wire = dial_trusting(&to, "main", || Ok(trust)).unwrap();
+        wire.say("{\"have\":{}}".to_owned()).unwrap();
+        wire.keep_up().unwrap();
+        let (path, offered, said) = heard.recv_timeout(GREETING).unwrap();
+        assert_eq!(path, "/1/joe/main");
+        assert!(offered.contains(&format!("fzn.token.{TOKEN}")), "{offered}");
+        assert_eq!(said, "{\"have\":{}}");
+        assert!(wire.close(), "the close was not answered");
+    }
+
+    #[test]
+    fn a_relay_behind_tls_is_held_to_a_certificate_the_roots_vouch_for_and_for_its_host() {
+        let (port, trust, _) = behind_tls();
+        let to = dial_of(&format!("wss://joe:{TOKEN}@127.0.0.1:{port}")).unwrap();
+        let Err(why) = dial_trusting(&to, "main", || Ok(trust)) else {
+            panic!("a certificate for localhost was taken for 127.0.0.1");
         };
-        assert!(began.elapsed() < GREETING, "{:?}: {why:#}", began.elapsed());
-        assert!(!format!("{why:#}").contains(TOKEN), "{why:#}");
-        let heard = asked.recv_timeout(GREETING).unwrap();
-        assert_eq!(heard, "", "the relay read a request: {heard}");
+        assert!(format!("{why:#}").contains("not valid for name"), "{why:#}");
+        let to = dial_of(&format!("wss://localhost:{port}")).unwrap();
+        let Err(why) = dial(&to, "main") else {
+            panic!("a certificate the built-in roots do not vouch for was taken");
+        };
+        assert!(
+            format!("{why:#}").contains("invalid peer certificate"),
+            "{why:#}"
+        );
+    }
+
+    #[test]
+    fn a_token_for_a_relay_named_as_wss_never_crosses_the_network_in_the_clear() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (told, heard) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
+            let mut seen = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stream, &mut seen);
+            let _ = told.send(seen);
+        });
+        let to = dial_of(&format!("wss://joe:{TOKEN}@{address}")).unwrap();
+        assert!(
+            dial(&to, "main").is_err(),
+            "a listener that answers nothing was dialled into"
+        );
+        let seen = heard.recv_timeout(GREETING).unwrap();
+        assert_eq!(seen.first(), Some(&0x16), "it did not open with TLS");
+        let token = TOKEN.as_bytes();
+        assert!(
+            !seen.windows(token.len()).any(|w| w == token),
+            "the token crossed in the clear"
+        );
+    }
+
+    #[test]
+    fn a_relay_with_no_tls_named_as_wss_turns_the_device_away_at_once() {
+        let root = crate::relay::tests::temp_dir();
+        let address = crate::relay::tests::relay(&root);
+        let to = dial_of(&format!("wss://{address}")).unwrap();
+        let began = Instant::now();
+        assert!(dial(&to, "main").is_err());
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
