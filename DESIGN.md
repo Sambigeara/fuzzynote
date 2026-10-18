@@ -858,33 +858,35 @@ a reload made within a minute of the last.
 text left-aligned, and the line a little above a third of the way down, where it stays: it does not
 move when you type or when results arrive. A faint hairline under the line sets it apart from the
 rows. The blank page is the caret and, under it in faint grey, the heads at the top of the list
-fading out by the eighth. As you type, what is found takes their place; only a row that is new fades
-in, and nothing else moves. A row is one line, wider than a phone's, wherever the cursor is: a head
-longer than its row ends in `…`, on the cursor and off it (see "A row is one line, and a long head
-is read beside it"). The document never scrolls, at any width: the list scrolls under the line. Only
-the rows that can be seen are made: those that fit and twenty more, at least twenty past the cursor,
-and fifty more whenever the list is scrolled to within two rows of its end; a new list starts again
-from what fits, and a row made because the list was scrolled or walked to it does not fade in. The
-path, in a place, is in the margin above the line, `main › Boiler`: the space's name and then each
-step, each a way back to it, the first to the top, a note's step read as its row is. The tab's title
-stays `fzn`, or `fzn · garden` in another space. Paper, ink and two greys, and one colour, a muted
-blue, for a link; light or dark by the system's preference. On a page at least 75rem wide the body
-of what the cursor is on is read beside the list: the note under the cursor, and the whole of its
-head, above the body, when its row cuts it, or with the cursor on the line in a place the note you
-are in. It is rendered as markdown, in the soft grey, from the top of the first row's text, with no
-border, scrolled on its own and faded at its foot as the list is. A narrower page has no room for
-it: a note's body, and the whole of a head its row cuts, are read there by opening it, and the note
-you are in is read above the line, rendered, under the path and in the path's smaller size, clamped
-to six lines, and opened with a tap, so that where you are is all above the line and what is found
-follows it directly; the margin grows downwards only for a body longer than it has room for. At a
-phone's width, 640px and under, the column is the screen's width with the line at the top, a long
-path gives up its middle, the note you are in is clamped to three lines and, on a touch screen,
-hidden while the keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse
-keeps it in sight: it has the room, and a field there has the focus almost always. A head there is
-read whole, on as many lines as it takes, since there is no room beside the list to read the rest
-in: every row leaves the arrow's room at its end, whether or not it has the arrow, so that a head
-wraps the same on the cursor as off it, and the row under the cursor keeps its tail with its date at
-the tail's end, so that walking the list moves nothing; a row with no tail has no date there.
+fading out by the eighth; at a phone's width they run the list's height, faded at its foot as the
+list is, and scroll, since a phone has no arrows to walk onto the rest. As you type, what is found
+takes their place; only a row that is new fades in, and nothing else moves. A row is one line, wider
+than a phone's, wherever the cursor is: a head longer than its row ends in `…`, on the cursor and
+off it (see "A row is one line, and a long head is read beside it"). The document never scrolls, at
+any width: the list scrolls under the line. Only the rows that can be seen are made: those that fit
+and twenty more, at least twenty past the cursor, and fifty more whenever the list is scrolled to
+within two rows of its end; a new list starts again from what fits, at its top, and a row made
+because the list was scrolled or walked to it does not fade in. The path, in a place, is in the
+margin above the line, `main › Boiler`: the space's name and then each step, each a way back to it,
+the first to the top, a note's step read as its row is. The tab's title stays `fzn`, or `fzn ·
+garden` in another space. Paper, ink and two greys, and one colour, a muted blue, for a link; light
+or dark by the system's preference. On a page at least 75rem wide the body of what the cursor is on
+is read beside the list: the note under the cursor, and the whole of its head, above the body, when
+its row cuts it, or with the cursor on the line in a place the note you are in. It is rendered as
+markdown, in the soft grey, from the top of the first row's text, with no border, scrolled on its
+own and faded at its foot as the list is. A narrower page has no room for it: a note's body, and the
+whole of a head its row cuts, are read there by opening it, and the note you are in is read above
+the line, rendered, under the path and in the path's smaller size, clamped to six lines, and opened
+with a tap, so that where you are is all above the line and what is found follows it directly; the
+margin grows downwards only for a body longer than it has room for. At a phone's width, 640px and
+under, the column is the screen's width with the line at the top, a long path gives up its middle,
+the note you are in is clamped to three lines and, on a touch screen, hidden while the keyboard is
+up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the
+room, and a field there has the focus almost always. A head there is read whole, on as many lines as
+it takes, since there is no room beside the list to read the rest in: every row leaves the arrow's
+room at its end, whether or not it has the arrow, so that a head wraps the same on the cursor as off
+it, and the row under the cursor keeps its tail with its date at the tail's end, so that walking the
+list moves nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
@@ -1407,7 +1409,8 @@ the app now does is described above; an entry repeats it only where the reason n
   says more. Revised 2026-10-15: the column sits left of centre ("A body is read apart from its
   row"). Revised 2026-10-17 by "A word shows its chord": the page's foot writes a word's chord after
   it again, as plain grey text and never a badge. Revised 2026-10-18 by "A link is blue, and code
-  has a wash": the page has one colour, for a link.
+  has a wash": the page has one colour, for a link. Revised 2026-10-18 by "On a phone the resting
+  list runs the screen": at a phone's width the resting heads run the list's height and scroll.
 
 - **A head is kept as it is typed.** Decided 2026-10-14, at Sam's direction, replacing the call in
   "A note is written in place" that a version is written when the row closes, and with it that a new
@@ -3096,6 +3099,21 @@ the app now does is described above; an entry repeats it only where the reason n
   line, 52px, at 1400, 1000, 700 and 390 pixels. Weighed: a `back` that steps out and leaves the
   line as it is, as the browser's own Back does, one press a step rather than two, but it leaves a
   search made inside a place standing at the top, with the cross still to find.
+
+- **On a phone the resting list runs the screen.** Decided 2026-10-18, at Sam's direction, revising
+  the resting page of "One cursor, no chrome" at a phone's width. Since 2026-10-15 the faint heads
+  there were faded out by the fifth row's height and did not scroll. Heads wrap at that width, so
+  that was often two or three notes, and a phone has no arrows to walk onto the rest, which could be
+  reached only by typing. Now at a phone's width the resting list runs the list's whole height,
+  faded at its foot as the list always is, and scrolls, its heads still faint and their tails
+  hidden; a tap on one puts the cursor there, and a list scrolled there and then made wider, as a
+  phone turned on its side is, goes back to its top, since it cannot be scrolled back there. A new
+  list made with the cursor on the line, by a letter typed or a step in or out, starts at its top,
+  at every width, which a list that could not be scrolled at rest had never needed to say. Wider
+  pages keep the fade by the eighth and no scroll: there the arrows walk onto the rest, and the
+  blank page is the point. Weighed: the fade by the fifth row with a scroll, which still shows two
+  or three notes before it fades; and the fade by the eighth as on wider pages, which at a phone's
+  width is four or five wrapped notes and still hides the rest.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
