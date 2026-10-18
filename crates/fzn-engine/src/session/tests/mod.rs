@@ -10,6 +10,7 @@ mod apply;
 mod caret;
 mod field;
 mod forms;
+mod going;
 mod line;
 mod order;
 mod places;

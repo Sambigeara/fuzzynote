@@ -24,6 +24,9 @@ pub(super) struct Writing {
     new: bool,
     /// The body is open: the field holds the whole note and not only its head.
     pub(super) whole: bool,
+    /// Typed into in this visit, whether or not what was typed has been written out, and not
+    /// put back since.
+    touched: bool,
     /// When the cursor landed, which is `created` for a new note.
     opened: Moment,
     /// What a new note's head opened with: the labels of the place it was opened in, the box
@@ -46,6 +49,12 @@ impl Writing {
         // A newline at the end is dropped on writing, so it is not a change.
         let ends = ['\n', '\r'];
         self.text.trim_end_matches(ends) != self.original.trim_end_matches(ends)
+    }
+
+    /// Whether the person is writing in it: a new note, a body open, or a head typed into in
+    /// this visit. Such a field's row is not taken from under the hands.
+    pub(super) fn in_hand(&self) -> bool {
+        self.new || self.whole || self.touched
     }
 
     /// A new note with nothing in it but the label it opened with, which goes if it is left so.
@@ -159,6 +168,7 @@ impl Session {
         match action {
             // A head is kept as it is typed; an open body waits for it to close.
             Action::Edited(text) => {
+                field.touched |= text != field.text;
                 field.text = text;
                 if !field.whole {
                     self.keep();
@@ -415,6 +425,8 @@ impl Session {
             return;
         };
         field.text = field.original.clone();
+        // Put back, it is no longer being written in.
+        field.touched = false;
         let (id, original, blank) = (field.id.clone(), field.original.clone(), field.blank());
         let ours = field.entry.filter(|&i| i + 1 == self.undo.len());
         let Some(held) = self.notes.get(&id).cloned() else {
@@ -461,6 +473,17 @@ impl Session {
     /// typed into is left as it reads, and is written past theirs at the next keystroke or when
     /// the cursor leaves.
     pub(super) fn land(&mut self) {
+        // A row kept under the hands while its note went goes once the cursor is off it, unless
+        // what was written there since, a head put back say, has brought the note back.
+        if let Some(going) = self.going.clone()
+            && self.selected().is_none_or(|r| r.id != going)
+        {
+            let goes = self.goes(&going, &mut None);
+            self.going = None;
+            if goes && let Some(at) = self.drop_row(&going) {
+                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
+            }
+        }
         let Some((id, head)) = self.selected().map(|r| (r.id.clone(), r.head.clone())) else {
             self.field = None;
             return;
@@ -487,6 +510,7 @@ impl Session {
                     text,
                     new: false,
                     whole: false,
+                    touched: false,
                     opened: self.host.now(),
                     label: String::new(),
                     entry: None,
@@ -527,6 +551,7 @@ impl Session {
             original: label.clone(),
             new: true,
             whole: false,
+            touched: false,
             opened,
             label,
             entry: None,
@@ -604,6 +629,14 @@ impl Session {
             field.text = text;
         }
         self.mend_row(&id);
+        // A new note headed `[x]` is archived as it is written, and its row says so once it is
+        // written out, so that a version arriving later is not taken for a tick.
+        if let (Some(row), Some(record)) = (
+            self.rows.iter_mut().find(|r| r.id == id),
+            self.notes.get(&id),
+        ) {
+            row.archived = record.archived;
+        }
         self.stale = true;
         wrote
     }
@@ -688,7 +721,7 @@ impl Session {
     }
 
     /// Puts a row right where it stands, from the note as it is now held.
-    fn mend_row(&mut self, id: &str) {
+    pub(super) fn mend_row(&mut self, id: &str) {
         let Some(record) = self.notes.get(id) else {
             return;
         };
