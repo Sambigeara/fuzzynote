@@ -960,7 +960,9 @@ touch screen's keyboard has no chords, no Tab and no Escape, so the phone's bar 
 has a tooltip. In an open body the chords are the editor's, so only the way out has its key there,
 `done Esc`, or `done :q` with vim's keys, Escape being vim's alone. The foot is one line at every
 width, 3.25rem tall, and holds still (see "The foot holds still"): the words never wrap; the way
-back (`back`, `up` or `done`) follows them and stays in sight when they do not fit; the rest scroll
+back, Escape's next rung, `up` on a row, `clear` while the line has text, `back` in a place with the
+line empty or `done` in an open body, is the last word wherever there is one, as the terminal's
+footer ends with it, and follows the words and stays in sight when they do not fit; the rest scroll
 sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad, and go back
 to their start whenever they change or the cursor moves to another row. Wider than a phone the foot
 reaches from the column's left to the window's right margin, so that on a wide page the busiest
@@ -972,8 +974,9 @@ and nothing is drawn there when nothing is said.
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A cross after it clears it when it has text, and a `›` after the cross, in the column of the
 selected row's, goes into what it names when it names somewhere. Each keeps its place while it is
-not there, so that neither moves the other, or the dates, by coming or going; and since they are on
-the line, clearing and going in are not also words in the foot.
+not there, so that neither moves the other, or the dates, by coming or going. Since the arrow is on
+the line, going in is not also a word in the foot; clearing is, being Escape's next rung, which the
+foot always ends with (see *Keys*).
 
 *Writing in a row.* The head of the row the cursor is on is a text box, with the day its note was
 written at the end of its row, a caret's width off the head, or at the end of its tail at a phone's
@@ -2989,6 +2992,8 @@ the app now does is described above; an entry repeats it only where the reason n
   52px and one line at 1400, 1000, 800, 700 and 390 pixels, with no key on the phone's bar. Weighed:
   `Enter` in both faces, plainer in a terminal, but four letters more on every row of a foot that
   has to hold to one line; and leaving the four keys unwritten, which is what this revises.
+  Revised 2026-10-18 by "The foot ends with Escape's next rung": clearing the line is a word again,
+  as the way back.
 
 - **A row whose note goes is taken away where it stands.** Decided 2026-10-18, at Sam's direction,
   revising "The head is a field whenever the cursor is on it", where the list held still for
@@ -3072,6 +3077,25 @@ the app now does is described above; an entry repeats it only where the reason n
   machine; a plain `ws://` port on the public relay, where the token, a space's one claim and
   every proof would cross in the clear; and a tunnel such as the host's own proxy command, which
   would have to be kept running beside the terminal.
+
+- **The foot ends with Escape's next rung.** Decided 2026-10-18, at Sam's direction, revising
+  "Every word shows its key". Escape comes back a rung at a time, off the row, off the text on the
+  line, out of the place, and the engine offers that rung as the last hint, so the terminal's
+  footer always ends with it. The page's did not: clearing the line was left to the line's cross.
+  But stepping out of a place puts back on the line the search it was gone into with, so the line
+  had text and the foot's way back was nothing, and on the phone, where the way back is pinned at
+  the right of the bar for a thumb, the way out of a place several steps deep was the cross at the
+  top of the screen and `back` at the foot in turn, two targets at opposite ends. Now the way back
+  is the last word wherever there is one, `up Esc` on a row, `clear Esc` while the line has text and
+  `back Esc` in a place with the line empty, and `done` in an open body as before, so that a way out
+  is one spot pressed again and again; the cross stays, where the eye is while typing, and going in
+  from the line is still only its arrow. The terminal and the engine are unchanged. On a scratch
+  relay, having gone into a tag by typing it and from there into a note found by a search, and
+  stepped back out of the note, three taps on the one spot at the right of the phone's bar, `clear`,
+  `back`, `clear`, came back to the top with the keyboard left as it was, and the foot held to one
+  line, 52px, at 1400, 1000, 700 and 390 pixels. Weighed: a `back` that steps out and leaves the
+  line as it is, as the browser's own Back does, one press a step rather than two, but it leaves a
+  search made inside a place standing at the top, with the cross still to find.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

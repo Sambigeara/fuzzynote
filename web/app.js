@@ -1045,9 +1045,10 @@ function keyFor(action) {
       return '⇧↵';
     case 'go_in':
       return 'Tab';
-    // Escape's rungs that are words, off the row and out of the place; clearing the line between
-    // them is the line's cross.
+    // Escape's rungs, off the row, off the text on the line and out of the place, each a word as
+    // the way back; clearing the line is its cross as well.
     case 'select':
+    case 'type':
     case 'back':
       return 'Esc';
     // On a Mac Control with an arrow is the system's, so moving a note is its words alone there.
@@ -1450,19 +1451,21 @@ function paintRows() {
 }
 
 // The words in the foot: what can be asked for where the cursor is. Moving has the arrows and a
-// tap on a row, and the editor is the row itself, so neither gets a word. On the line, clearing it
-// is the cross and going in is the arrow after it, so neither does either.
+// tap on a row, and the editor is the row itself, so neither gets a word. On the line, going in is
+// the arrow after it, so it has none either. Clearing the line has its cross, and a word too, since
+// it is Escape's next rung and the foot always ends with that, as the terminal's footer does.
 function paintHints() {
-  const unsaid = view.cursor == null ? ['move', 'editor', 'type', 'go_in'] : ['move', 'editor'];
+  const unsaid = view.cursor == null ? ['move', 'editor', 'go_in'] : ['move', 'editor'];
   const hints = view.hints.filter((hint) => !unsaid.includes(named(hint.action)));
   // Vim's keys are this browser's to ask for, and only where they apply: in an open body, once
   // the editor is there to have them.
   const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
-  // The way back, which the engine offers last, follows the words and stays in sight when they do
-  // not fit, the rest scrolling; on a phone it is pinned at the right of the bar, where a thumb
-  // finds it without reading.
+  // The way back, Escape's next rung, which the engine offers last, follows the words and stays in
+  // sight when they do not fit, the rest scrolling; on a phone it is pinned at the right of the
+  // bar, where a thumb finds it without reading, so that a way out of a place several steps deep
+  // is one spot pressed again and again, clearing the line and then stepping out.
   const last = hints.length ? named(hints[hints.length - 1].action) : '';
-  const way = ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
+  const way = ['back', 'select', 'type', 'close'].includes(last) ? hints.pop() : null;
   // What a word's key is can change while the words do not, as vim's keys come and go.
   const said = (hint) => [hint, keyFor(hint.action)];
   set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
