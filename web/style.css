@@ -641,7 +641,9 @@ body.resting .row .head a,
 .hl-code .hl-mono { font-size: inherit; }
 
 /* Resting: the line empty, the cursor on it, nowhere gone into. The recent notes are faint heads
-   that fade into the paper by the eighth row. They are all still there to walk onto. */
+   that fade into the paper by the eighth row, and the list does not scroll: the rest are all still
+   there for the arrows to walk onto. A phone has no arrows, so there they run the list's height
+   and scroll. */
 body.resting #list {
   overflow: hidden;
   mask-image: linear-gradient(to bottom, #000 calc(5 * var(--row)), transparent calc(8 * var(--row)));
@@ -797,9 +799,12 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   }
   #top { padding: 0.625rem 0 0.5rem; gap: 0.25rem; }
   #list { margin: 0 calc(-1 * var(--gutter)); padding: 0.5rem 0 calc(2 * var(--row)); }
+  /* At rest the faint heads run the list's whole height, faded at its foot as the list always is,
+     and scroll, since without arrows a head below the fade could be reached only by typing. */
   body.resting #list {
-    mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(3 * var(--row)), transparent calc(5 * var(--row)));
+    overflow-y: auto;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
   }
   /* At a phone's width a head is read whole, on as many lines as it takes, on the cursor and off
      it, and written so: there is no room beside the list to read the rest in, and cut at forty

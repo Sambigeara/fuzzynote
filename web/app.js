@@ -709,10 +709,19 @@ function reframe() {
     framing = false;
     frame();
     fits = 0;
+    unscroll();
     placeCaret();
     // The head being written stays above the keyboard as it comes up.
     if (document.activeElement === box && !view?.field?.whole) box.scrollIntoView({ block: 'nearest' });
   });
+}
+
+// The resting list scrolls only at a phone's width. One scrolled there and then made wider, as a
+// phone turned on its side is, would be held where it was with no way to scroll back, so it goes
+// back to its top, where the arrows begin.
+const stuck = () => getComputedStyle(list).overflowY === 'hidden';
+function unscroll() {
+  if (list.scrollTop && stuck()) list.scrollTop = 0;
 }
 window.visualViewport?.addEventListener('resize', reframe);
 window.visualViewport?.addEventListener('scroll', reframe);
@@ -1324,7 +1333,8 @@ function paintRows() {
   boxIn = fieldId;
 
   const asking = JSON.stringify([view.line, view.path]);
-  if (asking !== listFor) {
+  const anew = asking !== listFor;
+  if (anew) {
     listFor = asking;
     further = 0;
   }
@@ -1441,12 +1451,14 @@ function paintRows() {
   quiet = false;
 
   // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from
-  // elsewhere, or a head being written, must not pull the list from where it was scrolled to.
+  // elsewhere, or a head being written, must not pull the list from where it was scrolled to. A new
+  // list with the cursor on the line starts at its top, though the list before it was scrolled, as
+  // a phone's resting list can be.
   const under = view.cursor != null ? view.rows[view.cursor]?.id ?? '' : '';
   if (under !== list.dataset.under) {
     if (under) rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     else list.scrollTop = 0;
-  }
+  } else if (!under && anew) list.scrollTop = 0;
   list.dataset.under = under;
 }
 
@@ -2696,7 +2708,7 @@ function restore() {
     further = Math.ceil(scroll / rowHeight()) + MARGIN;
     paintSoon();
     requestAnimationFrame(() => {
-      list.scrollTop = scroll;
+      if (!stuck()) list.scrollTop = scroll;
     });
   }
 }
