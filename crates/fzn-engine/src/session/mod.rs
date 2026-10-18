@@ -77,8 +77,8 @@
 //! it but the label it opened with, its row goes. The list holds still while the cursor walks it,
 //! nothing put into it or moved in it, so that the arrow that leaves a head lands where it was
 //! aimed, and is put in order when the cursor comes back to the line. But what changes shows at
-//! once: a row whose note goes, deleted or ticked here or elsewhere, takes only its row, so that
-//! what was listed beside the note, found by its name, does not go with it, and a note changed
+//! once: a note that goes, deleted or ticked here or elsewhere, takes only its own row, so that
+//! what was listed beside it, found by its name, does not go with it, and a note changed
 //! elsewhere is drawn again where it stands.
 //!
 //! Where a note sits is kept, as it was in the original: a note opened under a row is placed

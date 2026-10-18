@@ -246,3 +246,102 @@ fn unticking_among_the_done_tasks_takes_the_row_the_list_would_no_longer_have() 
     assert_eq!(heads(&s), ["[x] Order oil"]);
     assert_eq!(s.selected().unwrap().id, "oil");
 }
+
+#[test]
+fn a_row_going_under_the_hands_stays_if_putting_it_back_brings_its_note_back() {
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Fix the gate");
+    edited(&mut s, "[ ] Fix the gate latch");
+    let gate = ticked(&s, "gate", 60, true);
+    s.absorb([gate]);
+    s.act(Action::Undo);
+    assert_eq!(field(&s).unwrap().0, "[ ] Fix the gate");
+    assert!(!s.notes.get("gate").unwrap().archived);
+    s.act(Action::Move(1));
+    assert_eq!(heads(&s).len(), 4);
+    assert_eq!(s.selected().unwrap().id, "oil");
+}
+
+#[test]
+fn a_head_typed_into_stays_in_hand_once_what_was_typed_is_written_out_until_it_is_put_back() {
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Fix the gate");
+    edited(&mut s, "[ ] Fix the gate latch");
+    s.act(Action::Keep);
+    let gate = ticked(&s, "gate", 60, true);
+    s.absorb([gate]);
+    assert_eq!(s.selected().unwrap().id, "gate");
+
+    // Put back, it is no longer being written in, and goes as an untouched row does.
+    select(&mut s, "[ ] Order oil");
+    edited(&mut s, "[ ] Order heating oil");
+    s.act(Action::Undo);
+    let oil = ticked(&s, "oil", 120, true);
+    s.absorb([oil]);
+    assert_eq!(s.selected().unwrap().id, "fence");
+}
+
+#[test]
+fn a_row_going_under_the_hands_goes_however_the_cursor_leaves_it() {
+    // Tapped away from, the cursor lands on the row tapped.
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Fix the gate");
+    edited(&mut s, "[ ] Fix the gate latch");
+    let gate = ticked(&s, "gate", 60, true);
+    s.absorb([gate]);
+    select(&mut s, "[ ] Mend the fence");
+    assert_eq!(
+        heads(&s),
+        ["[ ] Boiler service", "[ ] Order oil", "[ ] Mend the fence"]
+    );
+    assert_eq!(s.selected().unwrap().id, "fence");
+
+    // Enter opens a row under it, and the cursor stays in the new row.
+    select(&mut s, "[ ] Order oil");
+    edited(&mut s, "[ ] Order heating oil");
+    let oil = ticked(&s, "oil", 120, true);
+    s.absorb([oil]);
+    s.act(Action::Write);
+    assert_eq!(heads(&s), ["[ ] Boiler service", "", "[ ] Mend the fence"]);
+    assert_eq!(field(&s), Some((String::new(), true, false)));
+}
+
+#[test]
+fn a_note_written_done_here_is_not_taken_away_by_an_edit_from_elsewhere() {
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Boiler service");
+    s.act(Action::Write);
+    edited(&mut s, "[x] Paid the boiler bill");
+    s.act(Action::Move(1));
+    let id = s.rows[1].id.clone();
+    assert!(s.notes.get(&id).unwrap().archived, "done as it was written");
+    let paid = elsewhere(&s, &id, 60, |r| {
+        r.text = "[x] Paid the boiler bill in full".into()
+    });
+    s.absorb([paid]);
+    assert_eq!(heads(&s)[1], "[x] Paid the boiler bill in full");
+}
+
+#[test]
+fn a_note_written_from_the_line_and_taken_back_takes_only_its_row() {
+    let mut s = session();
+    tasks(&mut s);
+    select(&mut s, "[ ] Fix the gate");
+    s.absorb([theirs("shed", "[ ] Paint the shed", 60)]);
+    s.act(Action::Select(None));
+    add(&mut s, "[ ] Sweep the path");
+    select(&mut s, "[ ] Order oil");
+    s.absorb([theirs("roof", "[ ] Fix the roof tiles", 120)]);
+    select(&mut s, "[ ] Sweep the path");
+    s.act(Action::Undo);
+    assert!(!heads(&s).contains(&"[ ] Sweep the path"));
+    assert!(
+        !heads(&s).contains(&"[ ] Fix the roof tiles"),
+        "what arrived still waits for the line"
+    );
+    assert_eq!(s.selected().unwrap().head, "[ ] Paint the shed");
+}

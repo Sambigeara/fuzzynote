@@ -1468,6 +1468,7 @@ impl App {
         let relay = relay.clone();
         let heard: Vec<sync::Event> = link.from_relay.try_iter().collect();
         let verified = self.device.key_verified();
+        let on = under_cursor(&self.device.view());
         for event in &heard {
             match event {
                 sync::Event::Connected => {
@@ -1495,6 +1496,7 @@ impl App {
         if verified && !self.device.key_verified() {
             self.device.say("");
         }
+        self.read_from_start(on);
         self.not_empty_now();
         Ok(!heard.is_empty())
     }
@@ -1505,12 +1507,22 @@ impl App {
     fn look(&mut self) -> Result<bool> {
         let added = self.logs.load()?;
         let any = !added.is_empty();
+        let on = under_cursor(&self.device.view());
         for (log, lines) in added {
             let todo = self.device.added(&log, lines);
             self.carry_out(todo)?;
         }
+        self.read_from_start(on);
         self.not_empty_now();
         Ok(any)
+    }
+
+    /// A row the cursor was put on by what arrived, its row before having gone, reads from its
+    /// start as a row landed on by a key does.
+    fn read_from_start(&mut self, on: Option<String>) {
+        if under_cursor(&self.device.view()) != on {
+            self.row_left = None;
+        }
     }
 
     /// Takes back what an empty space said once a note has come from elsewhere, since a first
@@ -3552,6 +3564,36 @@ mod tests {
         let shot = screen(&mut app, 40, 8);
         assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
         assert_eq!(shot.cursor, (26, 1));
+        done(&space);
+    }
+
+    #[test]
+    fn a_row_the_cursor_is_put_on_by_what_arrives_reads_from_its_start() {
+        let (mut app, space) = app();
+        write(&mut app, LONG);
+        write(&mut app, "[ ] Order oil #house");
+        let (sent, tell) = link(&mut app);
+        let mut relay = Replica::new();
+        connect(&mut app, &mut relay, &sent, &tell);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Home, false);
+        screen(&mut app, 40, 8);
+        let oil = on_disk(&space)
+            .notes()
+            .records()
+            .find(|record| record.text.starts_with("[ ]"))
+            .unwrap()
+            .id
+            .clone();
+        let config = space.with_file_name("config");
+        let (beside, _) = store::Beside::open(&space, "main", &config, key(), None).unwrap();
+        beside
+            .tick(std::slice::from_ref(&oil), true, &mut Vec::new())
+            .unwrap();
+        assert!(app.look().unwrap());
+        assert_eq!(field(&app).unwrap(), LONG);
+        let shot = screen(&mut app, 40, 8);
+        assert_eq!(head_of(&shot.rows[1]), "the boiler pressure keeps…");
         done(&space);
     }
 

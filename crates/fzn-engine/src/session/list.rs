@@ -446,7 +446,7 @@ impl Session {
     /// Whether a listed note's row is to go: the note is deleted, or it was archived or brought
     /// back, or its row is going already, and the list made now would not have it. What the list
     /// would have is made once, into `listed`, however many notes ask.
-    fn goes(&self, id: &str, listed: &mut Option<HashSet<String>>) -> bool {
+    pub(super) fn goes(&self, id: &str, listed: &mut Option<HashSet<String>>) -> bool {
         let Some(row) = self.rows.iter().find(|r| r.id == id) else {
             return false;
         };

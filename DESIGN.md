@@ -2967,24 +2967,26 @@ the app now does is described above; an entry repeats it only where the reason n
   and it held back the news with the moves. Now the two are told apart. Nothing is put into the list
   or moved in it while the cursor walks it, so a note new from elsewhere still waits for the line.
   But a row whose note goes from the list, deleted, or ticked or archived where what is archived is
-  hidden, or brought back where only what is done is listed, is taken away where it stands, the
-  rest staying as they were, rows and order; and a row whose note changed elsewhere and still
-  belongs is drawn again as it now reads, ticked where what is archived is shown. Whether a ticked
-  or brought back note still belongs is whatever the list made now would say, so the done tasks
-  and the open ones, a line holding `[x]` or `[ ]`, and showing what is archived all answer it the
-  same way. An edit, here or elsewhere, never takes a row away, even one that leaves the note
-  without what the line holds: it waits for the list to be made again, as one typed here does. The
-  row under the cursor goes too, the cursor taking the row in its place as after a delete, and the
-  caret going to the end of that row's head, unless it is being written in, a head typed into in
-  this visit, a new note or a body open, when it stays under the hands as typed and goes once the
-  cursor leaves it, the arrow landing where it would have had the row gone already. A tick here, a
-  tick or a delete done again by redo, and a note written taken back by undo take their rows the
-  same way, so that one rule covers a row whose note goes, wherever it went. The cost is that a row
-  can go just as an arrow is pressed towards it, which then lands one row further on; that needs
-  another device to act in the same moment, and the row is seen to go. Weighed: making the whole
-  list again on any arrival, which reorders what the line ranks and puts new notes above the cursor;
-  and leaving the row under the cursor until the cursor leaves it whether or not it was being
-  written in, which leaves a note done elsewhere under the cursor with nothing to say why.
+  hidden, or brought back where only what is done is listed, is taken away where it stands, the rest
+  staying as they were, rows and order; and a row whose note changed elsewhere and still belongs is
+  drawn again as it now reads, ticked where what is archived is shown. Whether a ticked or brought
+  back note still belongs is whatever the list made now would say, so the done tasks and the open
+  ones, a line holding `[x]` or `[ ]`, and showing what is archived all answer it the same way. An
+  edit, here or elsewhere, never takes a row away, even one that leaves the note without what the
+  line holds: it waits for the list to be made again, as one typed here does. The row under the
+  cursor goes too, the cursor taking the row in its place as after a delete, and the caret going to
+  the end of that row's head, unless it is being written in, a head typed into in this visit and not
+  put back, a new note or a body open, when it stays under the hands as typed and goes once the
+  cursor leaves it, an arrow away from it landing where it would have had the row gone already,
+  unless what was written there has brought the note back. In the terminal a row the cursor is put
+  on this way reads from its start, as a row landed on by a key does. A tick here, a tick or a
+  delete done again by redo, and a note written taken back by undo take their rows the same way, so
+  that one rule covers a row whose note goes, wherever it went. The cost is that a row can go just
+  as an arrow is pressed towards it, which then lands one row further on; that needs another device
+  to act in the same moment, and the row is seen to go. Weighed: making the whole list again on any
+  arrival, which reorders what the line ranks and puts new notes above the cursor; and leaving the
+  row under the cursor until the cursor leaves it whether or not it was being written in, which
+  leaves a note done elsewhere under the cursor with nothing to say why.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
