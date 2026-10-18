@@ -733,12 +733,15 @@ on says so in one sentence. Tab goes in wherever the caret is, and Right at the 
 nothing. Shift-Tab is not bound. Ctrl-I is Tab, Ctrl-M Enter and Ctrl-[ Escape, as a terminal
 sends them unless asked to tell them apart, and where it is asked they are bound so. Up and
 Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and Ctrl-Down move the note under the
-cursor a row, the cursor with it. Ctrl-U and Ctrl-R undo and redo, Ctrl-L links or unlinks the note
-under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/ opens the URL, Ctrl-B shows
-scores. Ctrl-_ and Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which
-crossterm reads as Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the
-kitty flags Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and
-the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
+cursor a row, the cursor with it. Ctrl-U undoes and Ctrl-Y redoes, Ctrl-K links or unlinks the
+note under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/ opens the URL, Ctrl-B shows
+scores. Ctrl-Y and Ctrl-K are the page's keys for redo and link, and the footer names them,
+`^Y redo` and `^K link`, so that one set is learned for both faces; Ctrl-R and Ctrl-L, fzn's own,
+do the same (see "Redo, link and showing what is archived have keys on the page"). Ctrl-_ and
+Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which crossterm reads as
+Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the kitty flags
+Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and the head
+take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
 Ctrl-Backspace as Ctrl-W where the terminal tells it from Backspace. A paste goes into the line or
 the head at the caret as one change, its tabs and line
 breaks made spaces and the breaks at its ends dropped. Escape comes back a rung at a time: off the
@@ -910,8 +913,13 @@ or archives a note that is not one, as Ctrl-V does in the terminal, and leaves t
 the line it is Enter; Ctrl-U undoes, on the line and on a row, and in the sheet it is the editor's
 and never the browser's page source; Ctrl-C on a row copies its first URL or its head while nothing
 is selected, and with a selection is the browser's copy; Ctrl-/ on a row opens its URL; and Ctrl-[
-is Escape everywhere Escape is. Redo, link and showing what is archived stay words, since Ctrl-R,
-Ctrl-L and Ctrl-V are the browser's reload, address bar and paste. Ctrl with an arrow moves the note
+is Escape everywhere Escape is. Ctrl-R, Ctrl-L and Ctrl-V are the browser's reload, address bar and
+paste, so redo, link and showing what is archived have keys a browser lets a page have (see "Redo,
+link and showing what is archived have keys on the page"): Ctrl-Y redoes, on the line and on a row;
+Ctrl-K on a row links or unlinks the note, and does nothing on the line; and Ctrl-H on the line shows
+or hides what is archived, and does nothing on a row. Each is the page's wherever it does nothing,
+so that the browser's search and history never open from it, and in an open body all three are the
+editor's. Ctrl with an arrow moves the note
 under the cursor a row, PageUp and PageDown move the cursor by ten, and Backspace on an empty head
 takes the row away, all as in the terminal. Shift-Tab does nothing, so no key takes the focus off
 the page's text. The page is not marked as an application for assistive technology, which would stop
@@ -919,12 +927,12 @@ a screen reader reading the body beside the list as a document; the line and the
 fields, and that says enough. Every other thing that can be asked for is a word at the foot of the
 page, pressed or tapped, the footer of the terminal made pressable. Only what applies where the
 cursor is gets one, and a word a chord also asks for has the chord written after it, `tick ⇧↵`,
-`delete ^D`, `undo ^U`, in the word's own faint grey, a third of a letter off it, staying faint when
-the word goes ink under the pointer (see "A word shows its chord"). Only chords are written, never
-Enter, Tab, Escape or the arrows, nor Control with an arrow on a Mac, where it is the system's, and
-only where the pointer is fine and hovers: a touch screen's keyboard has no chords, so the phone's
-bar has none. No word has a tooltip. In an open body the chords are the editor's, so none is written
-there. The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds
+`delete ^D`, `undo ^U`, `link ^K`, in the word's own faint grey, a third of a letter off it, staying
+faint when the word goes ink under the pointer (see "A word shows its chord"). Only chords are
+written, never Enter, Tab, Escape or the arrows, nor Control with an arrow on a Mac, where it is
+the system's, and only where the pointer is fine and hovers: a touch screen's keyboard has no
+chords, so the phone's bar has none. No word has a tooltip. In an open body the chords are the
+editor's, so none is written there. The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds
 still"): the words never wrap; the way back (`back`, `up` or `done`) follows them and stays in sight
 when they do not fit; the rest scroll sideways, under a fade at each edge that hides words, by a
 wheel, a swipe or a trackpad, and go back to their start whenever they change or the cursor moves to
@@ -2677,7 +2685,9 @@ the app now does is described above; an entry repeats it only where the reason n
   of the browser's keys past the four down to redo and link. Vimium, which runs before the page,
   takes Escape and Ctrl-[ from a focused field and nothing else, so the page cannot see either while
   it is on; nothing the page can do changes that, and the README says to exclude the relay's address
-  from it.
+  from it. Revised 2026-10-18 by "Redo, link and showing what is archived have keys on the page":
+  redo, link and showing what is archived are no longer words alone, having Ctrl-Y, Ctrl-K and
+  Ctrl-H, and the terminal names Ctrl-Y and Ctrl-K for redo and link.
 
 - **A word shows its chord.** Decided 2026-10-17, at Sam's direction (a key visible at a glance
   where there is one, keeping the design minimal), revising Browser *Keys*, where no key was written
@@ -2848,6 +2858,37 @@ the app now does is described above; an entry repeats it only where the reason n
   typed into and taken back to its labels a letter at a time keeps the caret where the last letter
   went, as the page did, where the terminal had put it back after the box.
 
+- **Redo, link and showing what is archived have keys on the page.** Decided 2026-10-18, at Sam's
+  direction, revising "The page takes the terminal's chords where a browser lets it", where redo,
+  link and showing what is archived stayed words, and Terminal, where the footer named Ctrl-R and
+  Ctrl-L for redo and link; and settling the open question "Redo and link on the page", which it
+  takes off the list. Sam's feedback: the app is keyboard first, so nothing in it should need the
+  mouse, and its keys should be easy to guess and shown where they apply. On the page three words
+  in the foot had no key, and since the foot's words never take the focus, Tab always going in,
+  they could be pressed only with a pointer. Now Ctrl-Y redoes, on the line and on a row; Ctrl-K
+  on a row links the note to the one being looked around, or unlinks it, the foot's word saying
+  which, `link ^K` or `unlink ^K`, the action being the one link either way; and Ctrl-H on the line
+  shows or hides what is archived. The foot writes each after its word, as it writes `undo ^U`.
+  Each is swallowed where it does nothing, as Ctrl-O is on the line, so that the browser's own
+  Ctrl-K, its search, and Ctrl-H, its history, never open from the page. These chords because
+  Ctrl-R, Ctrl-L and Ctrl-V are the browser's reload, address bar and paste, and Ctrl-Y, Ctrl-K and
+  Ctrl-H are chords a browser lets a page have and that already mean nearly this: Ctrl-Y is redo
+  across Windows and Linux, Ctrl-K makes a link in Docs, Gmail and Notion, and Ctrl-H shows what is
+  hidden in GTK's file chooser and Nautilus. The terminal names the same keys for redo and link,
+  `^Y redo` and `^K link`, so that one set is learned for both faces, and Ctrl-R and Ctrl-L keep
+  working beside them, one action with two keys as Shift-Enter and Ctrl-V are (see "Shift-Enter
+  ticks, where it can be told from Enter"). Neither Ctrl-Y nor Ctrl-K was the terminal's line
+  editing. Showing archived stays Ctrl-V in the terminal, where it is the same key as archiving,
+  since Ctrl-H is Backspace in some terminals. In an open body the chords are the editor's, as
+  Ctrl-D and Ctrl-U are there, and vim mode's Ctrl-Y scrolls. On a Mac, Cocoa's text fields read
+  Ctrl-K, Ctrl-Y and Ctrl-H as Emacs's kill to the end of the line, yank and delete back, and the
+  page takes them from its line and its heads, as it already takes Ctrl-D and Ctrl-O there. Left as
+  they were: Enter, Tab and Escape unwritten (see "A word shows its chord"), Ctrl-U as undo, the
+  `vim` word, the passphrase's words, an open body's `delete` and `put back`, and `move up` and
+  `move down` on a Mac, which stay words there, Control with an arrow being the system's. Tmux
+  plugins that move between panes, vim-tmux-navigator among them, take Ctrl-K as well as Ctrl-L,
+  and the README says so.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -2890,10 +2931,6 @@ the app now does is described above; an entry repeats it only where the reason n
   answer once a name is someone the admin does not know.
 - `wss://` from the terminal, for a relay behind a proxy that has TLS. The page already takes `wss`
   when it was loaded over `https`. The first relay put behind such a proxy asks for it.
-- Redo and link on the page. Every other chord of the terminal's that a browser lets go is the
-  page's too (see "The page takes the terminal's chords where a browser lets it"); Ctrl-R and Ctrl-L
-  are the browser's reload and address bar, so redo and link are words, pressed or tapped. Daily
-  use of the page says whether either wants a key, and which.
 - The phone, which nobody has used the page on yet. Whether WebKit there sends a second tap beside a
   head where Chromium does: in Chromium's and WebKit's touch emulation that tap was taken into the
   head's text box as often as not until the page read the touch itself, and `body` in the bar is the

@@ -28,8 +28,8 @@
 // the line, out of the place. Control with an arrow moves the note on the row up or down the list.
 // Everything else is a word in the foot, moving a note included, and only what applies right now
 // gets one; a word a chord also asks for has the chord written after it, where there is a pointer
-// to read it with. The chords are the terminal's wherever a browser lets them go, so that the two
-// faces are one set of keys to learn.
+// to read it with. The chords are the terminal's wherever a browser lets them go, and where it
+// does not, the terminal names the page's, so that the two faces are one set of keys to learn.
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
 // are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
@@ -653,7 +653,7 @@ function keyFor(action) {
   // On a Mac Control with an arrow is the system's, so moving a note is its words alone there.
   if (name === 'shift') return mac ? '' : action.shift < 0 ? '^↑' : '^↓';
   const chords = { open: '^O', archive: '⇧↵', delete: '^D', copy: '^C', open_url: '^/',
-    undo: '^U' };
+    undo: '^U', redo: '^Y', link: '^K', show_archived: '^H' };
   return chords[name] ?? '';
 }
 
@@ -981,8 +981,12 @@ function atEmpty() {
 // deletes, or clears the line; Ctrl-O opens the body; Ctrl-U undoes, which costs only the
 // browser's page source; Ctrl-C copies the note's address or its head, but only while nothing is
 // selected, so that a selection is still copied as anywhere else; Ctrl-/ opens the note's address,
-// which no browser binds. Redo, link and showing what is archived stay words, since Ctrl-R,
-// Ctrl-L and Ctrl-V are a browser's reload, address bar and paste.
+// which no browser binds. Ctrl-R, Ctrl-L and Ctrl-V are a browser's reload, address bar and paste,
+// so redo, link and showing what is archived take keys a browser lets a page have: Ctrl-Y redoes,
+// Ctrl-K links or unlinks the note, as it makes a link in most editors, and Ctrl-H shows or hides
+// what is archived, as it shows what is hidden in a file chooser. Each is swallowed where it does
+// nothing, as Ctrl-O is on the line, so that the browser's search and history never open from the
+// page.
 function chord(key, onRow) {
   switch (key.toLowerCase()) {
     case 'd':
@@ -993,6 +997,17 @@ function chord(key, onRow) {
       return true;
     case 'u':
       undo();
+      return true;
+    case 'y':
+      undo('redo');
+      return true;
+    case 'k':
+      if (onRow) act('link');
+      return true;
+    case 'h':
+      if (!onRow && view.hints.some((hint) => named(hint.action) === 'show_archived')) {
+        act('show_archived');
+      }
       return true;
     case 'c':
       if (!onRow || !nothingSelected()) return false;
@@ -1011,11 +1026,11 @@ function nothingSelected() {
   return field ? field.selectionStart === field.selectionEnd : getSelection()?.type !== 'Range';
 }
 
-// An undo, which leaves the row under the cursor revealed when it put text back in its head (see
-// putBack).
-function undo() {
+// An undo or a redo, which leaves the row under the cursor revealed when it put text back in its
+// head (see putBack).
+function undo(which = 'undo') {
   const before = headsNow();
-  act('undo');
+  act(which);
   if (before && putBack(before)) reveal();
 }
 
@@ -1483,7 +1498,7 @@ function putBack(before) {
 function word(hint) {
   const name = named(hint.action);
   const run = () => {
-    if (name === 'undo') return undo();
+    if (name === 'undo' || name === 'redo') return undo(name);
     // A new note is asked for to be written in, so the keyboard comes for it, and it lands
     // revealed.
     if (name === 'write') wantsText = revealOnLanding = true;
@@ -2059,8 +2074,8 @@ function pressed(event) {
     return;
   }
   // The chords: on the line Ctrl-D clears it, and on a row it deletes the note; Ctrl-O on a row
-  // opens its body, and on the line does nothing; neither asks for the browser's bookmark or file
-  // dialog either way (see chord). Ctrl-[ is Escape.
+  // opens its body, and on the line does nothing; none asks for the browser's bookmark or file
+  // dialog, its search or its history, either way (see chord). Ctrl-[ is Escape.
   if (ctrlOnly(event) && event.key.length === 1 && event.key !== '[') {
     if (!chord(event.key, !onLine)) return;
     event.preventDefault();

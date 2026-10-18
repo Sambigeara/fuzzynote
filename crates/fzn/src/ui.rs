@@ -19,7 +19,9 @@
 //! line and a head are one line each and a tab typed would go in. A chord acts on the note where
 //! on the line it acts on the line, as it did in fzn: Ctrl-D deletes or clears, Ctrl-V archives,
 //! which ticks a task, or shows archived notes,
-//! and Ctrl-U puts a changed head back before it undoes anything else. Control with an arrow moves
+//! and Ctrl-U puts a changed head back before it undoes anything else. Ctrl-Y redoes and Ctrl-K
+//! links, the keys the page has for them, and fzn's own Ctrl-R and Ctrl-L still do too, so that
+//! one set of keys is learned for both faces. Control with an arrow moves
 //! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
 //! a time: off the row, off the text on the line, out of the place, and on an empty line outside
 //! any place two of them quit. The footer shows only the keys that apply where the cursor is.
@@ -235,8 +237,10 @@ fn meant(key: KeyEvent) -> (KeyCode, KeyModifiers) {
 /// and so do Ctrl-7 and Ctrl-_, since a terminal sends Ctrl-/ and Ctrl-_ as one byte that
 /// crossterm reads as Ctrl-7; under the kitty flags Ctrl-_ comes as Ctrl-Shift-minus. Backspace
 /// takes a row away only when its head is empty, as a new row with only its labels is while the
-/// caret is where it landed; with text in the head it is the caret's. Escape comes back a rung:
-/// off the row, then off the text on the line, then out of the place.
+/// caret is where it landed; with text in the head it is the caret's. Ctrl-Y and Ctrl-K redo and
+/// link, the page's keys for them, since Ctrl-R and Ctrl-L are the browser's there; fzn's own
+/// Ctrl-R and Ctrl-L do too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes back a rung: off the row,
+/// then off the text on the line, then out of the place.
 fn bound(
     code: KeyCode,
     modifiers: KeyModifiers,
@@ -264,8 +268,8 @@ fn bound(
         (KeyCode::Char('/' | '7' | '_'), true) if !on_line => Action::OpenUrl,
         (KeyCode::Char('-'), true) if shift && !on_line => Action::OpenUrl,
         (KeyCode::Char('u'), true) => Action::Undo,
-        (KeyCode::Char('r'), true) => Action::Redo,
-        (KeyCode::Char('l'), true) => Action::Link,
+        (KeyCode::Char('r' | 'y'), true) => Action::Redo,
+        (KeyCode::Char('l' | 'k'), true) => Action::Link,
         (KeyCode::Char('b'), true) => Action::ShowScores,
         (KeyCode::Up, true) if !on_line => Action::Shift(-1),
         (KeyCode::Down, true) if !on_line => Action::Shift(1),
@@ -285,7 +289,8 @@ struct Keys {
 
 /// The key that asks for an action, as the footer names it. Tick is Shift-Enter wherever the
 /// terminal can tell it from Enter; Ctrl-V, which ticks in every terminal, is then the key the
-/// footer leaves out.
+/// footer leaves out. Redo and link are named by the keys the page has for them, Ctrl-Y and
+/// Ctrl-K, so that the two faces show one set.
 fn key_for(action: &Action, keys: Keys) -> &'static str {
     match action {
         Action::Write => "Enter",
@@ -300,11 +305,11 @@ fn key_for(action: &Action, keys: Keys) -> &'static str {
         Action::Archive if keys.shift_enter => "⇧Enter",
         Action::ShowArchived | Action::Archive => "^V",
         Action::Delete => "^D",
-        Action::Link => "^L",
+        Action::Link => "^K",
         Action::Copy => "^C",
         Action::OpenUrl => "^/",
         Action::Undo => "^U",
-        Action::Redo => "^R",
+        Action::Redo => "^Y",
         Action::ShowScores => "^B",
         // Typing and the editor ask for the rest, not a key. A body is written in the editor here,
         // so opening one in place has no key either. Backspace on an empty row asks for Erase,
@@ -2505,7 +2510,7 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V archive  ^D delete  \
+            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
              ^C copy  ^/ open URL  ^U undo  Esc up"
         );
 
@@ -2519,14 +2524,14 @@ mod tests {
         let widest = keys(&app);
         assert_eq!(
             widest,
-            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V unarchive  ^D delete  \
-             ^C copy  ^/ open URL  ^U undo  ^R redo  Esc up"
+            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V unarchive  ^D delete  \
+             ^C copy  ^/ open URL  ^U undo  ^Y redo  Esc up"
         );
         assert!(widest.chars().count() <= 126, "{}", widest.chars().count());
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(
             keys(&app),
-            "Enter new note here  ↓ pick a note  ^V hide archived  ^U undo  ^R redo  Esc back"
+            "Enter new note here  ↓ pick a note  ^V hide archived  ^U undo  ^Y redo  Esc back"
         );
 
         // A new note offers the editor, and once it has text, everything a note offers, with
@@ -2536,7 +2541,7 @@ mod tests {
         type_in(&mut app, "x");
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  Tab go in  ^L unlink  ^V archive  ^D delete  \
+            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
              ^C copy  ^↓ move down  ^U put back  Esc up"
         );
         done(&space);
@@ -2586,6 +2591,55 @@ mod tests {
             Some(Action::OpenUrl),
             "Ctrl-_ as the kitty flags send it"
         );
+    }
+
+    #[test]
+    fn ctrl_y_redoes_as_ctrl_r_does() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        write(&mut app, "Bleed the radiators");
+        let written = || "Bleed the radiators".to_owned();
+        for redo in ['y', 'r'] {
+            chord(&mut app, 'u');
+            assert!(!heads(&app).contains(&written()), "{redo}: undone");
+            chord(&mut app, redo);
+            assert!(heads(&app).contains(&written()), "{redo}: redone");
+        }
+        done(&space);
+    }
+
+    #[test]
+    fn ctrl_k_links_and_unlinks_as_ctrl_l_does() {
+        let linked = |space: &Path| {
+            let store = on_disk(space);
+            let notes = store.notes();
+            let boiler = notes
+                .records()
+                .find(|r| r.text == "Boiler")
+                .unwrap()
+                .id
+                .clone();
+            let service = notes.records().find(|r| r.text == "Service the boiler");
+            service.unwrap().links.contains(&boiler)
+        };
+        let (mut app, space) = app();
+        write(&mut app, "Service the boiler");
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Tab, false);
+        type_in(&mut app, "service");
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(
+            field(&app).as_deref(),
+            Some("Service the boiler"),
+            "found in the place"
+        );
+        assert!(!linked(&space));
+        for (key, then) in [('k', true), ('k', false), ('l', true), ('l', false)] {
+            chord(&mut app, key);
+            assert_eq!(linked(&space), then, "{key}");
+        }
+        done(&space);
     }
 
     #[test]

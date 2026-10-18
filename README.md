@@ -59,7 +59,8 @@ Shift-Enter ticks the task you are on, or archives a note that is not a task, as
 fzn asks the terminal to tell Shift-Enter from Enter where it can: the kitty keyboard protocol,
 which Ghostty, foot, kitty, Alacritty, iTerm2 and others have. A terminal that cannot takes it as
 Enter, and the footer then says `^V tick`, since Ctrl-V works in every terminal. Ctrl-/ opens the
-first URL in the note you are on.
+first URL in the note you are on. Ctrl-Y redoes and Ctrl-K links, as on the page; fzn's older
+Ctrl-R and Ctrl-L still do too.
 
 Inside tmux, Shift-Enter reaches fzn when tmux is set to pass it on in the form fzn reads:
 
@@ -69,9 +70,9 @@ set -s extended-keys-format csi-u
 ```
 
 and the terminal outside sends it to tmux (kitty and Alacritty do not); fzn checks both settings
-and asks only then. A tmux plugin that binds Ctrl-L to move between panes, such as
-vim-tmux-navigator, keeps Ctrl-L (link) from fzn unless fzn is in its pattern
-(`@vim_navigator_pattern`).
+and asks only then. A tmux plugin that binds Ctrl-K and Ctrl-L to move between panes, such as
+vim-tmux-navigator, keeps both from fzn unless fzn is in its pattern (`@vim_navigator_pattern`);
+link is Ctrl-K or Ctrl-L, so without that it has no key there.
 
 A note is plain text: its first line is its head, and `#tag`, `@person`, dates written
 `2026-10-16` and URLs mean what they look like. For example:
@@ -154,9 +155,10 @@ the relay it was loaded from.
 
 The page takes the terminal's keys where a browser lets them go: Shift-Enter ticks, Ctrl-D deletes,
 Ctrl-O opens the body, Ctrl-U undoes, Ctrl-C copies the note when nothing is selected, Ctrl-/ opens
-its URL, and Ctrl-[ is Esc. Redo, link and showing what is archived are words in the foot, since
-Ctrl-R, Ctrl-L and Ctrl-V are the browser's. With a mouse a word in the foot that a chord also asks
-for has the chord written after it, `tick ⇧↵`, `delete ^D`; Enter, Tab, Esc and the arrows are not
+its URL, and Ctrl-[ is Esc. Ctrl-R, Ctrl-L and Ctrl-V are the browser's, so the page has Ctrl-Y
+for redo, Ctrl-K for link and Ctrl-H for showing what is archived, the terminal naming the same
+keys for redo and link. With a mouse a word in the foot that a chord also asks for has the chord
+written after it, `tick ⇧↵`, `delete ^D`, `link ^K`; Enter, Tab, Esc and the arrows are not
 written, nor Control with an arrow on a Mac, where it is the system's. The word `vim`, in the foot
 of an open body, turns vim mode on for the body in this browser; a touch screen does without.
 
