@@ -87,7 +87,10 @@
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
-//! is given it, so the session is only ever told what the line now reads. A face that is
+//! is given it, so the session is only ever told what the line now reads. Where the caret goes
+//! when something other than typing changes what it is in is the session's, since it is the one
+//! that changed it: it says where it put the caret, as a [`Caret`], and a face that worked that
+//! out for itself would be working it out a second time. A face that is
 //! reloaded under the person keeps where they were as the path's steps, and asks to be put back
 //! there, so the engine gives the path as steps and takes it back as an action.
 
@@ -272,6 +275,42 @@ pub enum Effect {
     Open(String),
 }
 
+/// Where the session put the caret, in characters, when it and not the person's typing changed
+/// what the caret is in: the line it changed, at the end; a head the cursor landed on, one the
+/// session changed under it, or one whose body opened or closed, at the end of the head, or in a
+/// new note with only its labels where they leave room. Typing never moves it, so where this says
+/// nothing a face keeps its caret where it was, as far as the text still reaches. An open body's
+/// caret is its editor's, so a body that stays open is not said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Caret {
+    pub line: Option<usize>,
+    /// In the head of the note under the cursor, or with its body just opened, in its text.
+    pub head: Option<usize>,
+}
+
+impl Caret {
+    /// This, with what was put after it put over it.
+    pub fn then(&mut self, after: Caret) {
+        self.line = after.line.or(self.line);
+        self.head = after.head.or(self.head);
+    }
+}
+
+/// What the caret is in, as an action or an arrival found it, so that what the session changed
+/// can be told afterwards.
+struct Spot {
+    line: String,
+    field: Option<Held>,
+}
+
+/// The note under the cursor, as far as the caret is concerned: which it is, its head, and
+/// whether its body was open. A change under the head is not a change to what the caret is in.
+struct Held {
+    id: String,
+    head: String,
+    whole: bool,
+}
+
 /// Something that can be asked for where the cursor is, and what to call it there. A face puts
 /// its own key or control beside the label.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -392,6 +431,8 @@ pub struct Session {
     stale: bool,
     /// What the action being carried out asks of the face.
     out: Vec<Effect>,
+    /// Where the session has put the caret since a face last took it.
+    caret: Caret,
     /// The line as it was read when the list was last made, which is whenever the line changes.
     parsed: Query,
     /// What the view says that is worked out from the rest, made once an action or an arrival
@@ -439,6 +480,7 @@ impl Session {
             field: None,
             stale: false,
             out: Vec::new(),
+            caret: Caret::default(),
             parsed: Query::default(),
             dates: Vec::new(),
             hints: Vec::new(),
@@ -461,15 +503,58 @@ impl Session {
         &self.device
     }
 
-    /// Does what was asked, and returns what the face has to do about it.
+    /// Does what was asked, and returns what the face has to do about it. Where it put the caret
+    /// is taken apart, with [`Session::take_caret`].
     pub fn act(&mut self, action: Action) -> Vec<Effect> {
         self.filling = false;
+        let typed = matches!(action, Action::Type(_) | Action::Edited(_));
+        let was = self.spot();
         if let Some(action) = self.on_field(action) {
             self.carry_out(action);
         }
         self.land();
         self.derive();
+        self.caret = if typed {
+            Caret::default()
+        } else {
+            self.placed(&was)
+        };
         std::mem::take(&mut self.out)
+    }
+
+    /// Where the session has put the caret since this was last asked, for the face to put its
+    /// own there. It is to be taken after every action and every arrival: an action says where the
+    /// caret is now, so it replaces what was left untaken before it.
+    pub fn take_caret(&mut self) -> Caret {
+        std::mem::take(&mut self.caret)
+    }
+
+    fn spot(&self) -> Spot {
+        Spot {
+            line: self.line.clone(),
+            field: self.field.as_ref().map(|field| Held {
+                id: field.id.clone(),
+                head: field.head().to_owned(),
+                whole: field.whole,
+            }),
+        }
+    }
+
+    /// Where the caret goes, from what it was in before, as [`Caret`] says.
+    fn placed(&self, was: &Spot) -> Caret {
+        let head = self.field.as_ref().and_then(|field| {
+            let moved = match &was.field {
+                Some(held) if held.id == field.id => {
+                    held.whole != field.whole || (!field.whole && held.head != field.head())
+                }
+                _ => true,
+            };
+            moved.then(|| field.home())
+        });
+        Caret {
+            line: (self.line != was.line).then(|| self.line.chars().count()),
+            head,
+        }
     }
 
     /// Works out what the view says that follows from the rest. Called whenever an action or an
@@ -526,6 +611,7 @@ impl Session {
     /// Says whether anything on show may have changed. A session's own versions, read back from
     /// where they were kept, are not news.
     pub fn absorb(&mut self, records: impl IntoIterator<Item = Record>) -> bool {
+        let was = self.spot();
         let mut changed = Vec::new();
         for record in records {
             let id = record.id.clone();
@@ -560,6 +646,8 @@ impl Session {
             self.status = format!("{} changed elsewhere", changed.len());
         }
         self.derive();
+        let placed = self.placed(&was);
+        self.caret.then(placed);
         true
     }
 

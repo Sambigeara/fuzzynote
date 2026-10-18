@@ -68,17 +68,32 @@ impl Writing {
             })
     }
 
+    /// Where the session puts the caret in the head: at its end, or in a new note with nothing in
+    /// it but its labels, where the writer's text goes.
+    pub(super) fn home(&self) -> usize {
+        if self.blank() {
+            self.start()
+        } else {
+            self.head().chars().count()
+        }
+    }
+
+    /// The head, the text's first line.
+    pub(super) fn head(&self) -> &str {
+        self.text.lines().next().unwrap_or("")
+    }
+
     /// Whether the head holds a word that saving it writes out as something else: `/task` as
     /// the box, or a date word as its date.
     pub(super) fn has_words(&self, today: Day) -> bool {
-        let head = self.text.lines().next().unwrap_or("");
+        let head = self.head();
         text::expand_words(head, today) != head
     }
 
     /// Nothing in the head but the label a new note opened with. Such a head is not written
     /// while the cursor is on it.
     fn head_empty(&self) -> bool {
-        self.bare(self.text.lines().next().unwrap_or(""))
+        self.bare(self.head())
     }
 
     /// Whether a text holds nothing but the labels the note opened with, or the start of them,

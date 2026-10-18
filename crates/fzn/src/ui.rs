@@ -7,12 +7,12 @@
 //!
 //! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and
 //! goes to the note it wrote or, with nothing on it, opens a new row at the top to write in, and
-//! Down moves onto the list. On a row, its head is the field: the caret lands at its end, or, in a
-//! new row that opens with the labels of the place, before them and after a task's box, and typing
-//! changes it and is written at once, as it was in fzn, with its date words written out when the
-//! arrows up and down, or Escape, leave it, or Enter, which writes them out and stays. Otherwise
-//! Enter opens a new note under it, so that a run of notes is Enter and typing; a new note left
-//! empty goes. Ctrl-O hands the note to your editor, which is where a body is written. Tab goes
+//! Down moves onto the list. On a row, its head is the field: the caret lands where the device puts
+//! it, at its end or, in a new row that opens with the labels of the place, before them and after a
+//! task's box, and typing changes it and is written at once, as it was in fzn, with its date words
+//! written out when the arrows up and down, or Escape, leave it, or Enter, which writes them out
+//! and stays. Otherwise Enter opens a new note under it, so that a run of notes is Enter and typing;
+//! a new note left empty goes. Ctrl-O hands the note to your editor, which is where a body is written. Tab goes
 //! in, wherever the caret is: on a row into its note, and on the line into the tag, person, day,
 //! box or note the line names. Right and Left are the caret's and nothing else. A paste is one
 //! change, made as if it were typed in one key, its tabs and line breaks made spaces, since the
@@ -74,7 +74,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use fzn_engine::{
-    Action, Device, Editing, Hint, Key, Moment, RELAY, Row, Todo, View, Weights, time,
+    Action, Caret, Device, Editing, Hint, Key, Moment, RELAY, Row, Todo, View, Weights, time,
 };
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -176,13 +176,11 @@ struct Relay {
     dial: Box<dyn FnMut() -> Link>,
 }
 
-/// What the act of a key is measured against: the line, the note under the cursor, whether it
-/// is a new one and what its head read, as they were before it.
+/// What a key is read against: the line it edits, and the note under the cursor before it, which
+/// says whether the cursor landed on another row.
 struct Before {
     line: String,
     on: Option<String>,
-    fresh: bool,
-    head: Option<String>,
 }
 
 impl Before {
@@ -190,8 +188,6 @@ impl Before {
         Self {
             line: view.line.to_owned(),
             on: under_cursor(view),
-            fresh: view.field.as_ref().and_then(|field| field.fresh).is_some(),
-            head: (view.field.as_ref()).map(|field| head_and_body(field.text).0.to_owned()),
         }
     }
 }
@@ -1394,49 +1390,46 @@ impl App {
 
     /// Acts as [`App::act`] does, with the view before it already taken.
     fn act_from(&mut self, before: Before, action: Action) -> Result<Flow> {
-        let Before {
-            line,
-            on: was_on,
-            fresh: was_fresh,
-            head: was_head,
-        } = before;
-        let wrote = action == Action::Write;
         let todo = self.device.act(action);
         let flow = self.carry_out(todo)?;
         let view = self.device.view();
-        // A line the device changed, as it does on the way into a note and out of one, has its
-        // cursor at the end, and so does the head of a row just landed on, and one whose words
-        // Enter wrote out, after what they became. A head put back or written in place keeps its
-        // caret where it was, if the head is still that long. A new row with only the labels it
-        // opened with, landed on or put back to them, has its caret where the device says, after
-        // a task's box and before the rest.
-        if view.line != line {
-            self.cursor = letters(view.line);
-        }
-        if let Some(field) = &view.field {
-            let head = head_and_body(field.text).0;
-            let end = letters(head);
-            let stayed = under_cursor(&view) == was_on;
-            let written_out = wrote && was_head.as_deref() != Some(head);
-            self.row_cursor = match field.fresh {
-                Some(start) if !(stayed && was_fresh) => letters_in(head, start),
-                _ if stayed && !written_out => self.row_cursor.min(end),
-                _ => end,
-            };
-            // A row landed on reads from its start until a key writes in it or moves its caret.
-            if !stayed {
-                self.row_left = None;
+        // The carets are where the device put them, or where they were, as far as the text still
+        // reaches: a line cleared by a key is the face's own edit, and the device says nothing.
+        self.cursor = self.cursor.min(letters(view.line));
+        match &view.field {
+            Some(field) => {
+                self.row_cursor = self.row_cursor.min(letters(head_and_body(field.text).0));
+                // A row landed on reads from its start until a key writes in it or moves its
+                // caret.
+                if under_cursor(&view) != before.on {
+                    self.row_left = None;
+                }
             }
-        } else {
-            self.row_left = None;
+            None => self.row_left = None,
         }
         Ok(flow)
+    }
+
+    /// Puts the carets where the device put them, which it counts in characters and the app in
+    /// letters as drawn.
+    fn put_caret(&mut self, caret: Caret) {
+        if caret == Caret::default() {
+            return;
+        }
+        let view = self.device.view();
+        if let Some(at) = caret.line {
+            self.cursor = letters_in(view.line, at);
+        }
+        if let (Some(at), Some(field)) = (caret.head, &view.field) {
+            self.row_cursor = letters_in(head_and_body(field.text).0, at);
+        }
     }
 
     /// Does what the device asks: what it asks of the directory first, then what is to go to
     /// the relay, then the rest.
     fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
         self.logs.keep(&todo, &mut self.slot)?;
+        self.put_caret(todo.caret);
         if let Some((_, link)) = &self.sync {
             // The relay is this window's only peer: its siblings read what it writes in the
             // directory, as it reads theirs.
@@ -4472,6 +4465,47 @@ mod tests {
             head.chars().count(),
             "the caret after the date"
         );
+        done(&space);
+    }
+
+    #[test]
+    fn a_head_changed_under_the_caret_has_it_where_the_device_put_it() {
+        let (mut app, space) = app();
+        write(&mut app, "[ ] Order oil #house");
+        press(&mut app, KeyCode::Down, false);
+        let end = "[ ] Order oil #house".len();
+        assert_eq!(app.row_cursor, end, "landed on, at the end");
+
+        // Put back, at the end of what it was, wherever the caret had gone.
+        for _ in 0..7 {
+            press(&mut app, KeyCode::Left, false);
+        }
+        type_in(&mut app, " heating");
+        assert_eq!(field(&app).unwrap(), "[ ] Order oil heating #house");
+        assert_eq!(app.row_cursor, "[ ] Order oil heating".len(), "typed in");
+        for _ in 0..10 {
+            press(&mut app, KeyCode::Left, false);
+        }
+        press(&mut app, KeyCode::Char('u'), true);
+        assert_eq!(field(&app).unwrap(), "[ ] Order oil #house");
+        assert_eq!(app.row_cursor, end);
+
+        // Ticked by a command beside the app, at the end of what it became.
+        let (sent, tell) = link(&mut app);
+        let mut relay = Replica::new();
+        connect(&mut app, &mut relay, &sent, &tell);
+        for _ in 0..7 {
+            press(&mut app, KeyCode::Left, false);
+        }
+        let oil = on_disk(&space).notes().records().next().unwrap().id.clone();
+        let config = space.with_file_name("config");
+        let (beside, _) = store::Beside::open(&space, "main", &config, key(), None).unwrap();
+        beside
+            .tick(std::slice::from_ref(&oil), true, &mut Vec::new())
+            .unwrap();
+        assert!(app.look().unwrap());
+        assert_eq!(field(&app).unwrap(), "[x] Order oil #house");
+        assert_eq!(app.row_cursor, end);
         done(&space);
     }
 }

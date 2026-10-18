@@ -341,7 +341,9 @@ const sheet = $('sheet');
 let failures = 0;
 function act(action) {
   if (!fzn || reloading) return;
-  if (named(action) === 'write') writeAsked = true;
+  // Typing leaves the caret where the person put it, as the engine does, so a caret it put before a
+  // key typed in the same frame is not put after it.
+  if (['type', 'edited'].includes(named(action))) placed = null;
   let todo;
   try {
     todo = fzn.act(JSON.stringify(action));
@@ -413,6 +415,10 @@ function carryOut(json) {
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
+  // Where the engine put the caret in the head, for the painting to put the box's there. Where it
+  // put it in the line needs nothing: the line is only set when the engine changed it, and setting
+  // it leaves the caret at the end, where the engine puts it.
+  if (todo.caret?.head != null) placed = todo.caret.head;
   look();
 }
 
@@ -667,9 +673,21 @@ const typing = () => [line, box, $('secret')].includes(document.activeElement) |
 // nobody asked for, leaving the page typing into nothing, or raises one under the hands; and a
 // focus given inside the press's own event is the only kind for which iOS raises one.
 let wantsText = false;
-// Enter was asked for since the last painting, which, on a row whose head has a word still to
-// write out, writes it out and stays: the caret then goes to the end, after what it became.
-let writeAsked = false;
+// Where the engine put the caret in the head since the last painting, in characters: when it, and
+// not the person's typing, changed what the caret is in, by landing on a row, writing out a word,
+// putting a head back, a version from elsewhere, or a body opening or closing. Otherwise the caret
+// stays where it was, as far as the text still reaches.
+let placed = null;
+
+// Where a count of characters, as the engine counts them, ends in a text, as the browser counts it.
+const unitsIn = (text, chars) => {
+  let at = 0;
+  for (const ch of text) {
+    if (chars-- <= 0) break;
+    at += ch.length;
+  }
+  return at;
+};
 const mayFocus = () => !coarse.matches || typing() || wantsText !== false;
 
 // On a touch screen the page is a frame the size of the visual viewport, the part of the screen
@@ -1323,12 +1341,10 @@ function paintRows() {
   for (const other of [box, editor?.dom]) if (other && other !== opened && other.parentElement === sheet) other.remove();
 
   // The box holds what the field says, set only when that differs from what it holds, so that the
-  // person's caret is left alone while they type. On landing, and when the body closes, the caret
-  // goes to the end of the head; when the body opens it stays where it was, at the end of the head,
-  // so that Down goes to the second line; otherwise it is kept where it was, as far as the text
-  // still reaches. A new row with only the labels it opened with has its caret where the engine
-  // says instead, after a task's box and before the rest, wherever it would go to the end, and when
-  // it is put back to them.
+  // person's caret is left alone while they type. The caret goes where the engine put it, which on
+  // landing, and when the body opens or closes, is the end of the head, so that Down in a body goes
+  // to the second line, and in a new row with only the labels it opened with is after a task's box
+  // and before the rest; otherwise it is kept where it was, as far as the text still reaches.
   if (field && boxIn && field.whole && editor) {
     box.classList.add('whole');
     // The editor is given a fresh state when the body opens, its caret where the box's would be,
@@ -1339,32 +1355,28 @@ function paintRows() {
     // the hands.
     const toggled = !wasWhole;
     const kept = (text) => text.replace(/[\r\n]+$/, '');
-    if (toggled) editor.open(field.text, field.fresh ?? headOf(field.text).length);
+    if (toggled) editor.open(field.text, placed != null ? unitsIn(field.text, placed) : headOf(field.text).length);
     else if (!hadEditor) editor.open(field.text, Math.min(from, field.text.length));
     else if (kept(editor.text()) !== kept(field.text)) editor.setText(field.text);
     if (takesFocus(editor.contentDOM)) editor.focus();
   } else if (field && boxIn) {
     box.classList.toggle('whole', field.whole);
     const want = boxText(field);
-    const toggled = field.whole !== wasWhole;
     const told = box.value !== want;
     if (told) {
       box.value = want;
       fit();
     }
     const end = box.value.length;
-    // A press on a head's words puts the caret where it landed. A row landed on reads from its
-    // start, whatever the box was scrolled to in the row before.
-    const at = field.fresh ?? (landed && typeof wantsText === 'number' ? Math.min(wantsText, end) : end);
+    // A press on a head's words puts the caret where it landed, but in a new row with only its
+    // labels, whose caret goes where the writer's text does. A row landed on reads from its start,
+    // whatever the box was scrolled to in the row before. A row read has its caret at the end,
+    // where its block is drawn (see placeReadingCaret), which is where the engine puts it when it
+    // changes the head under it, so that the first key types or moves from where the block was.
+    const pressed = landed && field.fresh == null && typeof wantsText === 'number';
+    const at = pressed ? Math.min(wantsText, end) : placed != null ? Math.min(unitsIn(want, placed), end) : null;
     if (landed) box.scrollLeft = 0;
-    // A row read has its caret at the end, where its block is drawn (see placeReadingCaret), so a
-    // head changed under it, by an undo, a redo or a version from elsewhere, puts the caret there
-    // too, and the first key types or moves from where the block was. A head whose words Enter
-    // wrote out has its caret at the end too, after what a date word became.
-    const read = told && !revealed && !field.whole;
-    const writtenOut = told && writeAsked && !field.whole;
-    if (landed || (toggled && !field.whole) || (told && field.fresh != null) || read || writtenOut)
-      box.setSelectionRange(at, at);
+    if (at != null) box.setSelectionRange(at, at);
     else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
     if (landed || told) edges();
     if (takesFocus(box)) box.focus({ preventScroll: true });
@@ -1372,7 +1384,7 @@ function paintRows() {
     line.focus({ preventScroll: true });
   }
   wantsText = false;
-  writeAsked = false;
+  placed = null;
   quiet = false;
 
   // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from

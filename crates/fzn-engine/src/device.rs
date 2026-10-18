@@ -47,7 +47,7 @@ use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
 use crate::seal::{Key, Opened, Seal, is_sealed};
-use crate::session::{Action, Effect, Given, Host, KeptStep, Session, View};
+use crate::session::{Action, Caret, Effect, Given, Host, KeptStep, Session, View};
 use crate::time::Moment;
 
 /// The relay, as every face numbers it. Siblings on the same machine are 1, 2, and so on.
@@ -107,6 +107,8 @@ pub struct Todo {
     pub copy: Option<String>,
     /// A URL to open.
     pub open: Option<String>,
+    /// Where the session put the caret, for the face to put its own there.
+    pub caret: Caret,
 }
 
 impl Todo {
@@ -122,6 +124,7 @@ impl Todo {
         self.editor = self.editor.take().or(after.editor);
         self.copy = self.copy.take().or(after.copy);
         self.open = self.open.take().or(after.open);
+        self.caret.then(after.caret);
     }
 }
 
@@ -243,6 +246,7 @@ impl Device {
         if !retired {
             let versions = self.read(&lines);
             self.session.absorb(versions);
+            todo.caret.then(self.session.take_caret());
         }
         todo
     }
@@ -297,7 +301,9 @@ impl Device {
             return Todo::default();
         }
         let effects = self.session.act(action);
-        self.todo(effects)
+        let mut todo = self.todo(effects);
+        todo.caret.then(self.session.take_caret());
+        todo
     }
 
     /// Ticks these tasks, or unticks them, as archiving each would, as [`Session::tick`] says,
@@ -659,6 +665,7 @@ impl Device {
                 Out::Keep { log, lines } => {
                     let versions = self.read(&lines);
                     self.session.absorb(versions);
+                    todo.caret.then(self.session.take_caret());
                     // A key that has just been found not to open the space is said so at
                     // once, and not only when a write is tried.
                     if !self.key_verified() {
@@ -1171,7 +1178,7 @@ mod tests {
         let json = serde_json::to_string(&Todo::default()).unwrap();
         assert_eq!(
             json,
-            r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null}"#
+            r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null,"caret":{"line":null,"head":null}}"#
         );
         let said = Todo {
             send: vec![Said {

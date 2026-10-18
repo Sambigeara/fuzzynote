@@ -7,6 +7,7 @@ use crate::time;
 use std::cell::Cell;
 
 mod apply;
+mod caret;
 mod field;
 mod forms;
 mod line;

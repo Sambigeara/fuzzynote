@@ -129,6 +129,12 @@ no network call, so the same code runs in a terminal, in a browser tab and in a 
 - Out: *effects*, which are what the face has to do about an action: keep this version, put this
   note in front of the person to edit, copy this, open this URL. The session has already done its
   own part, so an effect that fails costs a message and nothing else.
+- Out: where the session put the *caret*, whenever it and not the person's typing changed what the
+  caret is in: the line, the head under the cursor, which head that is, or whether its body is open.
+  A change under the head is not one. A face puts its own caret
+  there, and otherwise leaves it where it was, as far as the text still reaches; it never works out
+  for itself where the session meant it to go. This comes from an action and from versions arriving
+  alike, since a version from elsewhere can change the head under the caret.
 - Out: the *view*, which is everything there is to paint: the path, the line and what its date words
   and spans stand for, the rows with their reasons, each with the head it shows off the cursor and
   whether it is a task and ticked, where what a place only finds begins, where the cursor is, the
@@ -523,6 +529,13 @@ in the browser a sheet over the page that holds the whole note. Tab goes in. Rig
 caret's, on the line and in a head, and nothing else. Undo puts the head back as it was when the
 cursor landed, and otherwise takes back the last change, which for a row is the whole visit, one key
 for both. A chord acts on the note as it reads.
+
+The caret moves only when the person moves it or types, or when something else changes what it is
+in, and then the session says where it goes, the same in both faces: at the end of the head when the
+cursor lands on a row, when a body opens or closes, and when the head is changed under it, put back,
+undone, ticked, its words written out or a version arriving from elsewhere; where the writer's text
+goes in a new row with only its labels; and at the end of a line the session changed, on the way into
+a place and out of it or when the line is written. A body left open keeps its caret in its editor.
 
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
@@ -2810,6 +2823,30 @@ the app now does is described above; an entry repeats it only where the reason n
   typed in full, which would change the text under the hands mid-word, `/t` on its way to `/task` or
   `/thursday`, as "A date is text" ruled out; and staying only after `/task`, which would have made
   the date words the exception.
+
+- **The session says where the caret goes.** Decided 2026-10-18, at Sam's direction, after a review
+  of the faces against what had grown in them over two days, carrying on from "The view says what
+  both faces worked out". Where the caret goes when something other than typing changes what it is
+  in was a rule of the app, written once above under the cursor, and worked out twice, by guessing:
+  the terminal kept what the line, the note, its head and whether it was new had been before each
+  key and compared them after, and the page compared what its text box held with what the view said
+  and kept flags between paintings for what had been asked. Each new case was a guess in each face:
+  "Enter on a row writes out its words first" added a third, the terminal comparing heads and the
+  page remembering that Enter had been pressed, though the session knew it had written the words
+  out. Now the session says where it put the caret, in the line or in the head, whenever it changed
+  what the caret is in, and each face puts its own there and otherwise leaves it, as far as the text
+  reaches. It is said from an arrival as well as an action, and only for the head: a body changed
+  under it, from elsewhere or by the editor, leaves the caret where it was. The rule is tested once,
+  in the engine. What stays a face's is what only it knows: where a press on a head's words landed,
+  how a head reads before it is written in, and an open body's caret, which is its editor's. What
+  changes as it is used is one rule where there were cases: a head the session changes under a caret
+  the person had moved into it, put back, a tick, a version from elsewhere, the editor's text come
+  back with another head, words written out as the page is hidden or as a chord leaves the row, has
+  the caret at the end, where it had stayed where it was, as far as the text reached; on the page
+  that was only while the row was revealed, a row read already having it at the end. The end is
+  where landing puts it, and where the block is drawn on a row read. And in the terminal a new row
+  typed into and taken back to its labels a letter at a time keeps the caret where the last letter
+  went, as the page did, where the terminal had put it back after the box.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
