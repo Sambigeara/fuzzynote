@@ -27,8 +27,8 @@
 // and the arrows are the caret's; Escape comes back a rung at a time, off the row, off the text on
 // the line, out of the place. Control with an arrow moves the note on the row up or down the list.
 // Everything else is a word in the foot, moving a note included, and only what applies right now
-// gets one; a word a chord also asks for has the chord written after it, where there is a pointer
-// to read it with. The chords are the terminal's wherever a browser lets them go, and where it
+// gets one; a word a key also asks for has the key written after it, where there is a pointer to
+// read it with. The chords are the terminal's wherever a browser lets them go, and where it
 // does not, the terminal names the page's, so that the two faces are one set of keys to learn.
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
@@ -643,21 +643,6 @@ const readBody = (text, upTo) => (render ? render.body(text, upTo) : text);
 
 const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
 
-// The key written after a word in the foot, where a chord asks for it too, as the terminal writes
-// its chords. The four keys that are the app, Enter, Tab, Escape and the arrows, are not written:
-// they are the one sentence, and written on every row they would make the foot a dashboard. In an
-// open body the chords are the editor's, so none is claimed there.
-function keyFor(action) {
-  const name = named(action);
-  if (view?.field?.whole) return '';
-  // On a Mac Control with an arrow is the system's, so moving a note is its words alone there.
-  if (name === 'shift') return mac ? '' : action.shift < 0 ? '^↑' : '^↓';
-  const chords = { open: '^O', archive: '⇧↵', delete: '^D', copy: '^C', open_url: '^/',
-    undo: '^U', redo: '^Y', link: '^K', show_archived: '^H' };
-  return chords[name] ?? '';
-}
-
-
 const narrow = window.matchMedia('(max-width: 640px)');
 narrow.addEventListener('change', () => view && paintSoon());
 // A touch screen: a coarse pointer and nothing to hover with. A field with the focus there is a
@@ -994,37 +979,71 @@ function atEmpty() {
 // Ctrl-K links or unlinks the note, as it makes a link in most editors, and Ctrl-H shows or hides
 // what is archived, as it shows what is hidden in a file chooser. Each is swallowed where it does
 // nothing, as Ctrl-O is on the line, so that the browser's search and history never open from the
-// page.
+// page. The table is what each letter asks for of a row, and the foot writes a word's chord from
+// it (see keyFor), so that the letter written after a word is the letter that asks for it.
+const CHORDS = {
+  d: 'delete',
+  o: 'open',
+  u: 'undo',
+  y: 'redo',
+  k: 'link',
+  h: 'show_archived',
+  c: 'copy',
+  '/': 'open_url',
+};
 function chord(key, onRow) {
-  switch (key.toLowerCase()) {
-    case 'd':
+  const letter = key.toLowerCase();
+  const name = Object.hasOwn(CHORDS, letter) ? CHORDS[letter] : undefined;
+  switch (name) {
+    case undefined:
+      return false;
+    case 'delete':
       act(onRow ? 'delete' : { type: '' });
       return true;
-    case 'o':
-      if (onRow) act('open');
+    case 'undo':
+    case 'redo':
+      undo(name);
       return true;
-    case 'u':
-      undo();
+    case 'show_archived':
+      if (view.hints.some((hint) => named(hint.action) === name)) act(name);
       return true;
-    case 'y':
-      undo('redo');
-      return true;
-    case 'k':
-      if (onRow) act('link');
-      return true;
-    case 'h':
-      if (view.hints.some((hint) => named(hint.action) === 'show_archived')) act('show_archived');
-      return true;
-    case 'c':
+    case 'copy':
       if (!onRow || !nothingSelected()) return false;
-      act('copy');
-      return true;
-    case '/':
-      if (onRow) act('open_url');
+      act(name);
       return true;
     default:
-      return false;
+      if (onRow) act(name);
+      return true;
   }
+}
+
+// The key written after a word in the foot: the one that asks for the same where the cursor is,
+// in the head (see the box's keys), anywhere else (see pressed) or as a chord, named as the
+// terminal names its keys and in the same marks, `↵` and `⇧↵` as most keycaps print them. Every
+// word a key asks for has it, Enter, Tab and Escape as much as the chords, so that no word is left
+// to be guessed at. In an open body the chords are the editor's, so only the way out has a key:
+// Escape, or vim's quit where Escape is vim's alone.
+function keyFor(action) {
+  const name = named(action);
+  if (view?.field?.whole) return name === 'close' ? (editor?.vimOn ? ':q' : 'Esc') : '';
+  switch (name) {
+    case 'write':
+      return '↵';
+    case 'archive':
+      return '⇧↵';
+    case 'go_in':
+      return 'Tab';
+    // Escape's rungs that are words, off the row and out of the place; clearing the line between
+    // them is the line's cross.
+    case 'select':
+    case 'back':
+      return 'Esc';
+    // On a Mac Control with an arrow is the system's, so moving a note is its words alone there.
+    case 'shift':
+      return mac ? '' : action.shift < 0 ? '^↑' : '^↓';
+  }
+  const letter = Object.keys(CHORDS).find((key) => CHORDS[key] === name);
+  return letter ? `^${letter.toUpperCase()}` : '';
 }
 
 function nothingSelected() {
@@ -1432,9 +1451,11 @@ function paintHints() {
   // finds it without reading.
   const last = hints.length ? named(hints[hints.length - 1].action) : '';
   const way = ['back', 'select', 'close'].includes(last) ? hints.pop() : null;
-  set($('way'), JSON.stringify(way), () => (way ? [word(way)] : []));
+  // What a word's key is can change while the words do not, as vim's keys come and go.
+  const said = (hint) => [hint, keyFor(hint.action)];
+  set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
   const words = $('hints');
-  const changed = set(words, JSON.stringify([hints, vimWord]), () => {
+  const changed = set(words, JSON.stringify([hints.map(said), vimWord]), () => {
     const words = hints.map((hint) => word(hint));
     if (vimWord) {
       const button = el('button', 'word vim', vimWord);

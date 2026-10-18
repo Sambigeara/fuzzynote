@@ -728,7 +728,7 @@ The keys. A chord acts on the line when the cursor is there and on the note unde
 otherwise. Ctrl-D clears or deletes; Ctrl-V shows archived or archives, which ticks a task and is
 named `tick` there; the line's right-hand end says `archived shown` while they are. Shift-Enter on a
 row ticks or archives as Ctrl-V does wherever the terminal can be asked to tell it from Enter (see
-"Shift-Enter ticks, where it can be told from Enter"), and the footer then names it, `⇧Enter tick`,
+"Shift-Enter ticks, where it can be told from Enter"), and the footer then names it, `⇧↵ tick`,
 where otherwise it names Ctrl-V; on the line Shift-Enter is Enter. Ctrl-O opens the
 note in your editor, which is how a body is written here: in a file made new and readable only by
 its owner, in `$XDG_RUNTIME_DIR` or else in a directory of its own in the temporary directory that
@@ -942,21 +942,23 @@ text. The page is not marked as an application for assistive technology, which w
 reader reading the body beside the list as a document; the line and the head are text fields, and
 that says enough. Every other thing that can be asked for is a word at the foot of the page, pressed
 or tapped, the footer of the terminal made pressable. Only what applies where the cursor is gets
-one, and a word a chord also asks for has the chord written after it, `tick ⇧↵`, `delete ^D`,
-`undo ^U`, `link ^K`, in the word's own faint grey, a third of a letter off it, staying faint when
-the word goes ink under the pointer (see "A word shows its chord"). Only chords are written, never
-Enter, Tab, Escape or the arrows, nor Control with an arrow on a Mac, where it is the system's, and
-only where the pointer is fine and hovers: a touch screen's keyboard has no chords, so the phone's
-bar has none. No word has a tooltip. In an open body the chords are the editor's, so none is written
-there. The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds
-still"): the words never wrap; the way back (`back`, `up` or `done`) follows them and stays in sight
-when they do not fit; the rest scroll sideways, under a fade at each edge that hides words, by a
-wheel, a swipe or a trackpad, and go back to their start whenever they change or the cursor moves to
-another row. Wider than a phone the foot reaches from the column's left to the window's right
-margin, so that on a wide page the busiest rows' words run on under the pane rather than scroll. At
-a phone's width the words are a bar at the foot, each as tall as a thumb, with the way back pinned
-at its right; `move up` and `move down` there move the note. What was said floats above the words,
-at the column's right, taking no room, and nothing is drawn there when nothing is said.
+one, and a word a key also asks for has the key written after it, `new note ↵`, `go in Tab`,
+`tick ⇧↵`, `delete ^D`, `up Esc`, in the word's own faint grey, a third of a letter off it, staying
+faint when the word goes ink under the pointer (see "A word shows its chord" and "Every word shows
+its key"). Enter, Tab and Escape are written as the chords are; only Control with an arrow on a Mac,
+where it is the system's, is not, and keys are written only where the pointer is fine and hovers: a
+touch screen's keyboard has no chords, no Tab and no Escape, so the phone's bar has none. No word
+has a tooltip. In an open body the chords are the editor's, so only the way out has its key there,
+`done Esc`, or `done :q` with vim's keys, Escape being vim's alone. The foot is one line at every
+width, 3.25rem tall, and holds still (see "The foot holds still"): the words never wrap; the way
+back (`back`, `up` or `done`) follows them and stays in sight when they do not fit; the rest scroll
+sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad, and go back
+to their start whenever they change or the cursor moves to another row. Wider than a phone the foot
+reaches from the column's left to the window's right margin, so that on a wide page the busiest
+rows' words run on under the pane rather than scroll. At a phone's width the words are a bar at the
+foot, each as tall as a thumb, with the way back pinned at its right; `move up` and `move down`
+there move the note. What was said floats above the words, at the column's right, taking no room,
+and nothing is drawn there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A cross after it clears it when it has text, and a `›` after the cross, in the column of the
@@ -2549,7 +2551,8 @@ the app now does is described above; an entry repeats it only where the reason n
   when it is left: harmless, and seen at once. The footer says `⇧Enter tick` wherever the flag or
   mode 1 was turned on. Inside tmux that is a guess about the terminal outside it, which tmux passes
   Shift-Enter on from only if it sends one (kitty and Alacritty outside a `csi-u` tmux do not), and
-  Ctrl-V works in every case.
+  Ctrl-V works in every case. Revised 2026-10-18 by "Every word shows its key": the footer writes it
+  `⇧↵ tick`, as the page does.
 
 - **Vim's keys walk the list.** Decided 2026-10-17, at Sam's direction, as one design for both
   faces: the terminal's `vim = true` in its config, and the page's `vim` word, kept per browser,
@@ -2740,7 +2743,8 @@ the app now does is described above; an entry repeats it only where the reason n
   finds unless told; a `?` sheet, `?` being a letter in a field that always has the focus; and a
   `keys` word, which would be in the foot on every row. Revised 2026-10-17 by "The list's vim keys
   are taken out": no row writes vim's letters, so the foot writes chords alone, and the query is
-  where only chords are taken.
+  where only chords are taken. Revised 2026-10-18 by "Every word shows its key": Enter, Tab and
+  Escape are written as the chords are, and an open body's `done` has its key.
 
 - **Vim's normal mode has a caret, and Escape goes up.** Decided 2026-10-17, at Sam's direction, as
   one design for both faces, revising "Vim's keys walk the list" where Escape in normal mode did
@@ -2953,6 +2957,28 @@ the app now does is described above; an entry repeats it only where the reason n
   with a firmer underline, shown, and passed over for colour used sparingly; the blue everywhere,
   also on the resting page and in archived rows, which made the resting page busy; and links in
   bold, which would take the cursor's mark.
+
+- **Every word shows its key.** Decided 2026-10-18, at Sam's direction, revising "A word shows its
+  chord", where only chords were written and never Enter, Tab, Escape or the arrows. On a row the
+  page's foot read `new note here`, `body ^O`, `go in`, `archive ⇧↵`, `delete ^D`, `up`: half the
+  words with a key and half without, which reads as unfinished and leaves a word to be guessed at
+  among words that have taught the eye to look for one. That the four keys are the one sentence
+  holds for someone who knows the sentence, and the foot is for someone who does not yet. Now every
+  word a key asks for has it written after it: `new note ↵`, `write out ↵`, `go in Tab`, `up Esc`,
+  `back Esc`, and in an open body `done Esc`, or `done :q` with vim's keys, where Escape is vim's
+  alone. Moving the cursor is still no word, having the arrows and a tap, nor are clearing the line
+  and going in from it, which are its cross and its arrow; a word in an open body other than `done`
+  has no key, the chords there being the editor's. The terminal, which wrote Enter and Tab all
+  along, writes Enter as the page does, `↵ new note` and `⇧↵ tick` where it wrote `Enter new note`
+  and `⇧Enter tick`, so that the two faces show one set. The page's chords are one table, which both
+  says what each letter asks for and writes the key after its word, so that what a chord does and
+  what the foot says it does are one thing; the terminal's footer has its keys checked against its
+  key table by a test. That on the page every key written asks for what its word asks for was
+  checked in a browser on the line, in a place, on rows open and ticked, with a word to write out,
+  with a URL, typed into and in an open body with and without vim's keys; and the foot holds still,
+  52px and one line at 1400, 1000, 800, 700 and 390 pixels, with no key on the phone's bar. Weighed:
+  `Enter` in both faces, plainer in a terminal, but four letters more on every row of a foot that
+  has to hold to one line; and leaving the four keys unwritten, which is what this revises.
 
 - **A row whose note goes is taken away where it stands.** Decided 2026-10-18, at Sam's direction,
   revising "The head is a field whenever the cursor is on it", where the list held still for
