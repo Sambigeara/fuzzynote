@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/fzn-engine", "crates/fzn", "crates/fzn-web"]
 
 [workspace.package]
-version = "0.35.0"
+version = "0.36.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/Sambigeara/fuzzynote"
