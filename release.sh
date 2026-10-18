@@ -6,7 +6,7 @@
 #   sh release.sh --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
 #   sh release.sh --page
 #
-# dist/download/v0.34.0/fzn-TARGET.tar.gz is the binary with the licence and README, and
+# dist/download/v0.35.0/fzn-TARGET.tar.gz is the binary with the licence and README, and
 # beside it fzn-TARGET.tar.gz.sha256; --page adds fzn-web.tar.gz, the page as the relay serves
 # it, for anyone serving it some other way. dist/latest/download points at the version built.
 # SHA256SUMS at the version's root lists everything there. The version is the workspace's, in
