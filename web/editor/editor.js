@@ -26,7 +26,7 @@ import {
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
-import { highlighter, language, markdown } from './render.js';
+import { between, follows, highlighter, language, markdown } from './render.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -69,6 +69,44 @@ const codeInMonospace = ViewPlugin.define(
     },
   }),
   { decorations: (plugin) => plugin.lines },
+);
+
+// What the read makes a link is marked as one, as far as the view reaches: a link's or an image's
+// words when the address after them is one the page follows, and an address so followed standing
+// alone, bare, in angle brackets or in a link's definition. The highlighting cannot tell, since
+// markdown takes any words in brackets for a link, and `[draft]` or `www.example.org` would be
+// marked as links that lead nowhere. A link's brackets and its address stay faint, as marks.
+const linkMark = Decoration.mark({ class: 'hl-link' });
+const linkMarks = (view) => {
+  const marks = new RangeSetBuilder();
+  const { doc } = view.state;
+  syntaxTree(view.state).iterate({
+    ...view.viewport,
+    enter(ref) {
+      if (ref.name === 'Link' || ref.name === 'Image') {
+        const node = ref.node;
+        const [from, to] = between(node);
+        const url = node.getChildren('URL').find((after) => after.from > to);
+        const followed = url && follows(doc.sliceString(url.from, url.to));
+        if (followed && to > from) marks.add(from, to, linkMark);
+        return false;
+      }
+      if (ref.name !== 'URL' || !follows(doc.sliceString(ref.from, ref.to))) return;
+      marks.add(ref.from, ref.to, linkMark);
+    },
+  });
+  return marks.finish();
+};
+const linksMarked = ViewPlugin.define(
+  (view) => ({
+    marks: linkMarks(view),
+    update(u) {
+      if (u.docChanged || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+        this.marks = linkMarks(u.view);
+      }
+    },
+  }),
+  { decorations: (plugin) => plugin.marks },
 );
 
 let current = null;
@@ -145,6 +183,7 @@ export function mount(hooks, foot) {
     note,
     syntaxHighlighting(highlighter),
     codeInMonospace,
+    linksMarked,
     panels({ bottomContainer: foot }),
     drawSelection(),
     EditorView.lineWrapping,

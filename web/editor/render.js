@@ -41,26 +41,26 @@ const Bracketed = {
   ],
 };
 
-// An address standing alone, bare or in angle brackets, is what is read as a link, where the
-// address after a link's words is a mark, read only by following the link. Markdown tags the two
-// alike, so the one in a link, an image or a link's definition keeps the tag and the one standing
-// alone is given one of its own.
-const bare = Tag.define(t.url);
-const Addresses = { props: [styleTags({ 'Link/URL Image/URL LinkReference/URL': t.url, URL: bare })] };
+// An address standing alone, bare, in angle brackets or in a link's definition, is read as itself,
+// where the address after a link's words is a mark, read only by following the link. Markdown tags
+// the two alike, so the one in a link or an image keeps the tag, and is faint, and any other is
+// given one of its own that nothing styles. Which of them is a link the page will follow is the
+// editor's to mark, by what the read makes (see `follows`).
+const address = Tag.define();
+const Addresses = { props: [styleTags({ 'Link/URL Image/URL': t.url, URL: address })] };
 
 export const markdown = parser.configure([GFM, Bracketed, Addresses]);
 
-// How each kind of text looks: in the page's greys, with the one colour for what is read as a
-// link. Marks are faint, and so are code's punctuation and its comments, which slant too; what a
-// string, a number or a constant says is soft; headings, strong text, keywords and what a line
-// defines are heavier; a link is in the link's colour where it is words or an address standing
-// alone, and its brackets and the address after its words stay marks.
+// How each kind of text looks, in the page's greys. Marks are faint, and so are code's punctuation
+// and its comments, which slant too; what a string, a number or a constant says is soft; headings,
+// strong text, keywords and what a line defines are heavier. A link is not a kind of text here,
+// since markdown takes any words in brackets for one: the editor marks in the link's colour only
+// what the read makes a link.
 export const highlighter = tagHighlighter([
   {
     tag: [t.processingInstruction, t.contentSeparator, t.labelName, t.url, t.punctuation, t.meta, t.deleted],
     class: 'hl-faint',
   },
-  { tag: [t.link, bare], class: 'hl-link' },
   { tag: t.comment, class: 'hl-faint hl-slant' },
   { tag: [t.literal, t.atom, t.null, t.unit], class: 'hl-soft' },
   { tag: [t.heading, t.strong, t.keyword, t.definition(t.name)], class: 'hl-heavy' },
@@ -283,7 +283,7 @@ function anchor(node, text) {
     url = node.getChildren('URL').find((after) => after.from > end);
   }
   const address = url ? text.slice(url.from, url.to) : '';
-  if (!/^(?:https?:\/\/[^/?#\s]|mailto:\S)/i.test(address)) return null;
+  if (!follows(address)) return null;
   const a = el('a');
   a.href = address;
   a.target = '_blank';
@@ -294,8 +294,11 @@ function anchor(node, text) {
   return a;
 }
 
+// Whether the page follows an address: a whole one on the web, or one to mail.
+export const follows = (address) => /^(?:https?:\/\/[^/?#\s]|mailto:\S)/i.test(address);
+
 // Where a link's text, or an image's alt text, lies: between its brackets.
-const between = (node) => {
+export const between = (node) => {
   const [open, close] = node.getChildren('LinkMark');
   return [open.to, close.from];
 };

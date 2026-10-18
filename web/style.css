@@ -1,10 +1,11 @@
 /* fzn in a browser: one column and one cursor on a blank page.
  *
  * Paper, ink and two greys, so that the only thing in ink on the resting page is the caret, and
- * one colour, a muted blue, for a link, the one thing in a note's text that can be acted on. The column sits a little left of centre, so that a wide page has room beside it
- * for the body of what the cursor is on. The line sits a little above a third of the way down
- * and never moves, with a hairline under it; the margin above it is where the path goes. An open
- * body is a sheet over the page, which is dimmed behind it. What is already on the page never
+ * one colour, a muted blue, for a link, the one thing in a note's text that can be acted on. The
+ * column sits a little left of centre, so that a wide page has room beside it for the body of
+ * what the cursor is on. The line sits a little above a third of the way down and never moves,
+ * with a hairline under it; the margin above it is where the path goes. An open body is a sheet
+ * over the page, which is dimmed behind it. What is already on the page never
  * animates: only a row that is new fades in, and nothing translates, because a keystroke repaints
  * the list and anything still in flight when the next key lands makes the list swim. The states
  * the page can be in are classes on the body, set by the painter; this file is what each of them
@@ -520,6 +521,7 @@ button, input, textarea { font: inherit; color: inherit; }
   box-decoration-break: clone;
 }
 :is(#here, #pane) code:not(pre code) { color: var(--ink); }
+:is(#here, #pane) :is(.task.done, a) code:not(pre code) { color: inherit; }
 
 /* A link is the one thing in colour, a muted blue, since it is the one thing in a note's text that
    can be acted on. It is underlined too, so that colour is never its only mark, in a tint of its
@@ -583,8 +585,9 @@ body.resting .row .head a,
 .cm-editor .cm-line { padding: 0; }
 .cm-editor.cm-focused { outline: none; }
 .cm-editor .cm-cursorLayer, .cm-editor .cm-vimCursorLayer, .cm-editor .cm-fat-cursor { display: none; }
-.cm-editor .cm-selectionBackground,
-.cm-editor.cm-focused .cm-selectionBackground { background: var(--select); }
+/* The editor's own theme sets its selection by a longer selector, and puts its style after this
+   file, so the page's grey is set from the sheet, which outranks it. */
+#sheet .cm-editor .cm-selectionBackground { background: var(--select); }
 #caret.bar { border-radius: 1px; }
 /* Vim's prompt for a command sits at the foot of the sheet, under the text and never over it, in
    the foot's voice and under a hairline, as the line has one, rather than in a grey bar. */
@@ -601,17 +604,17 @@ body.resting .row .head a,
 
 /* Highlighting, the same in the body's editor and in code read, where it is set in ink: marks
    and punctuation faint, comments faint and slanting, what strings, numbers and constants say
-   soft, and headings, strong text, keywords and definitions heavier. In the editor a link's words,
-   and an address standing alone, are in the link's colour and underlined as a link read is, while
-   a link's brackets and address stay faint, as marks; code in a line lies on a wash, as it does
-   read. */
+   soft, and headings, strong text, keywords and definitions heavier. In the editor what the read
+   makes a link, a link's words or an address standing alone, is in the link's colour and
+   underlined as a link read is, while a link's brackets and address stay faint, as marks; code in
+   a line lies on a wash, as it does read. */
 .hl-heavy { font-weight: 600; }
 .hl-soft { color: var(--soft); }
 .hl-faint { color: var(--faint); }
 .hl-slant { font-style: italic; }
 .hl-mono { font-family: var(--mono); font-size: 0.9em; }
 .hl-struck { text-decoration: line-through; }
-.hl-link:not(.hl-faint) {
+.hl-link {
   color: var(--link);
   text-decoration-line: underline;
   text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
