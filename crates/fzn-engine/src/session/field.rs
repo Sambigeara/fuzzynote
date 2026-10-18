@@ -48,6 +48,12 @@ impl Writing {
         self.text.trim_end_matches(ends) != self.original.trim_end_matches(ends)
     }
 
+    /// Whether the person is writing in it: a new note, a body open, or a head typed into in
+    /// this visit. Such a field's row is not taken from under the hands.
+    pub(super) fn in_hand(&self) -> bool {
+        self.new || self.whole || self.differs()
+    }
+
     /// A new note with nothing in it but the label it opened with, which goes if it is left so.
     pub(super) fn blank(&self) -> bool {
         self.new && self.bare(&self.text)
@@ -461,6 +467,15 @@ impl Session {
     /// typed into is left as it reads, and is written past theirs at the next keystroke or when
     /// the cursor leaves.
     pub(super) fn land(&mut self) {
+        // A row kept under the hands while its note went goes once the cursor is off it.
+        if let Some(going) = self.going.clone()
+            && self.selected().is_none_or(|r| r.id != going)
+        {
+            self.going = None;
+            if let Some(at) = self.drop_row(&going) {
+                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
+            }
+        }
         let Some((id, head)) = self.selected().map(|r| (r.id.clone(), r.head.clone())) else {
             self.field = None;
             return;
@@ -688,7 +703,7 @@ impl Session {
     }
 
     /// Puts a row right where it stands, from the note as it is now held.
-    fn mend_row(&mut self, id: &str) {
+    pub(super) fn mend_row(&mut self, id: &str) {
         let Some(record) = self.notes.get(id) else {
             return;
         };

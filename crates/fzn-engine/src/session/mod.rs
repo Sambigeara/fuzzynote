@@ -75,9 +75,11 @@
 //! that undo takes back a visit and not a keystroke. A new note, opened at the top from an empty
 //! line or under the row the cursor is on, is written at its first letter, and left with nothing in
 //! it but the label it opened with, its row goes. The list holds still while the cursor walks it,
-//! so that the arrow that leaves a head lands where it was aimed, and is put in order when the
-//! cursor comes back to the line. A delete is the cursor's own act and takes only its row, so that
-//! what was listed beside the note, found by its name, does not go with it.
+//! nothing put into it or moved in it, so that the arrow that leaves a head lands where it was
+//! aimed, and is put in order when the cursor comes back to the line. But what changes shows at
+//! once: a row whose note goes, deleted or ticked here or elsewhere, takes only its row, so that
+//! what was listed beside the note, found by its name, does not go with it, and a note changed
+//! elsewhere is drawn again where it stands.
 //!
 //! Where a note sits is kept, as it was in the original: a note opened under a row is placed
 //! after it, one opened or written from the line at the top, and it stays there on every device.
@@ -429,6 +431,9 @@ pub struct Session {
     /// while the cursor was on the list. Put right when the cursor returns to the line, or when
     /// a chord rebuilds the list.
     stale: bool,
+    /// The row under the cursor, whose note went from the list while it was being written in:
+    /// it is not taken from under the hands, and goes once the cursor leaves it.
+    going: Option<String>,
     /// What the action being carried out asks of the face.
     out: Vec<Effect>,
     /// Where the session has put the caret since a face last took it.
@@ -479,6 +484,7 @@ impl Session {
             redo: Vec::new(),
             field: None,
             stale: false,
+            going: None,
             out: Vec::new(),
             caret: Caret::default(),
             parsed: Query::default(),
@@ -632,11 +638,14 @@ impl Session {
                 }
             }
         }
-        // The list holds still while the cursor walks it, so that a row does not move or vanish
-        // under it; what arrived is listed when the cursor comes back to the line. A version of
-        // the note under the cursor shows at once, if its head has not been changed here.
+        // The list holds still while the cursor walks it, so that nothing is put in or moved
+        // under it, and a note new from elsewhere is listed when the cursor comes back to the
+        // line. What changed shows at once: a row whose note went is taken away where it stands,
+        // and any other is drawn again. A version of the note under the cursor shows in its
+        // field, if its head has not been changed here.
         if self.cursor.is_some() {
             self.stale = true;
+            self.follow(&changed);
             self.land();
         } else {
             self.refresh(false);

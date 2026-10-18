@@ -4544,7 +4544,7 @@ mod tests {
         assert_eq!(field(&app).unwrap(), "[ ] Order oil #house");
         assert_eq!(app.row_cursor, end);
 
-        // Ticked by a command beside the app, at the end of what it became.
+        // Changed by a command beside the app, at the end of what it became.
         let (sent, tell) = link(&mut app);
         let mut relay = Replica::new();
         connect(&mut app, &mut relay, &sent, &tell);
@@ -4553,13 +4553,26 @@ mod tests {
         }
         let oil = on_disk(&space).notes().records().next().unwrap().id.clone();
         let config = space.with_file_name("config");
-        let (beside, _) = store::Beside::open(&space, "main", &config, key(), None).unwrap();
-        beside
+        let beside = || {
+            store::Beside::open(&space, "main", &config, key(), None)
+                .unwrap()
+                .0
+        };
+        let given = format!(r#"{{"id":"{oil}","text":"[ ] Order heating oil #house"}}"#);
+        beside()
+            .apply(store::given(&given).unwrap(), &mut Vec::new())
+            .unwrap();
+        assert!(app.look().unwrap());
+        assert_eq!(field(&app).unwrap(), "[ ] Order heating oil #house");
+        assert_eq!(app.row_cursor, "[ ] Order heating oil #house".len());
+
+        // Ticked by one, its row goes, and with no row left the caret is on the line.
+        beside()
             .tick(std::slice::from_ref(&oil), true, &mut Vec::new())
             .unwrap();
         assert!(app.look().unwrap());
-        assert_eq!(field(&app).unwrap(), "[x] Order oil #house");
-        assert_eq!(app.row_cursor, end);
+        assert_eq!(field(&app), None);
+        assert_eq!(app.device.view().cursor, None);
         done(&space);
     }
 }

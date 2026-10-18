@@ -19,19 +19,27 @@ impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
     /// line.
     pub(super) fn refresh(&mut self, reset: bool) {
-        let query = self.read_line();
-        let archived = self.archived_listed(&query);
-        (self.rows, self.finds_from) = match (self.path.is_empty(), query.ranks()) {
-            (false, _) => self.in_place(&query),
-            (true, true) => (self.found(&query, archived, FOUND_LIMIT), None),
-            (true, false) => (self.found(&query, archived, TOP_LIMIT), None),
-        };
-        self.parsed = query;
+        let (query, rows, finds_from) = self.made();
+        (self.rows, self.finds_from, self.parsed) = (rows, finds_from, query);
         self.stale = false;
+        self.going = None;
         let cursor = if reset { None } else { self.cursor };
         self.cursor = cursor
             .filter(|_| !self.rows.is_empty())
             .map(|i| i.min(self.rows.len() - 1));
+    }
+
+    /// The list as it would be made now from the line and the path: the line as read, the rows,
+    /// and the first row that only the line finds in a place.
+    fn made(&self) -> (Query, Vec<Row>, Option<String>) {
+        let query = self.read_line();
+        let archived = self.archived_listed(&query);
+        let (rows, finds_from) = match (self.path.is_empty(), query.ranks()) {
+            (false, _) => self.in_place(&query),
+            (true, true) => (self.found(&query, archived, FOUND_LIMIT), None),
+            (true, false) => (self.found(&query, archived, TOP_LIMIT), None),
+        };
+        (query, rows, finds_from)
     }
 
     /// The line as it is read here: inside the done tasks a span on it measures when notes were
@@ -389,6 +397,66 @@ impl Session {
         if self.cursor.is_none() {
             self.onto_line();
         }
+    }
+
+    /// Follows notes changed by something other than the typing under the cursor: a tick or a
+    /// delete here, a change undone or done again, or a version from elsewhere. A note's row goes
+    /// where it stands, as a deleted note's does, when the note is deleted, or when it was
+    /// archived or brought back and the list made now would not have it; the rest of the list
+    /// stays as it was, rows and order. Any other row is drawn again as its note now reads, since
+    /// an edit never moves a row. The row under the cursor goes with the cursor going to the row
+    /// that took its place, unless it is being written in, when it goes once the cursor leaves
+    /// it. Says whether a row went or is going.
+    pub(super) fn follow(&mut self, ids: &[String]) -> bool {
+        let mut listed = None;
+        let mut went = false;
+        for id in ids {
+            let goes = self.goes(id, &mut listed);
+            let under = self.selected().is_some_and(|r| &r.id == id);
+            // The row under the hands reads as its field does until the cursor leaves it.
+            let in_hand = under && self.field.as_ref().is_some_and(|f| f.in_hand());
+            if !in_hand {
+                self.mend_row(id);
+                if let (Some(row), Some(record)) = (
+                    self.rows.iter_mut().find(|r| &r.id == id),
+                    self.notes.get(id),
+                ) {
+                    row.archived = record.archived;
+                }
+            }
+            if !goes {
+                if self.going.as_ref() == Some(id) {
+                    self.going = None;
+                }
+                continue;
+            }
+            went = true;
+            if in_hand {
+                self.going = Some(id.clone());
+            } else if under {
+                self.field = None;
+                self.take_row(id);
+            } else if let Some(at) = self.drop_row(id) {
+                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
+            }
+        }
+        went
+    }
+
+    /// Whether a listed note's row is to go: the note is deleted, or it was archived or brought
+    /// back, or its row is going already, and the list made now would not have it. What the list
+    /// would have is made once, into `listed`, however many notes ask.
+    fn goes(&self, id: &str, listed: &mut Option<HashSet<String>>) -> bool {
+        let Some(row) = self.rows.iter().find(|r| r.id == id) else {
+            return false;
+        };
+        let Some(record) = self.notes.get(id) else {
+            return true;
+        };
+        (record.archived != row.archived || self.going.as_deref() == Some(id))
+            && !listed
+                .get_or_insert_with(|| self.made().1.into_iter().map(|r| r.id).collect())
+                .contains(id)
     }
 
     pub(super) fn selected(&self) -> Option<&Row> {

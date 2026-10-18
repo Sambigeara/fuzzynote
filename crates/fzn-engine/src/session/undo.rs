@@ -125,8 +125,9 @@ impl Session {
     /// written since, and taking back an edit leaves where the note has been moved. The notes
     /// are written in the order the change wrote them, not the reverse, since what was placed
     /// after the same note is put in order by when it was placed: a run put back after its note
-    /// last to first would come out the wrong way round. A delete done again takes only its row
-    /// away, as the delete did, and a cursor on that row goes to the row that took its place.
+    /// last to first would come out the wrong way round. A delete or a tick done again takes only
+    /// its row away, as it did the first time, and a cursor on that row goes to the row that took
+    /// its place.
     fn restore(&mut self, change: &Change, before: bool) {
         for (was, became) in change {
             let Some(held) = self.notes.version(&became.id).cloned() else {
@@ -159,20 +160,13 @@ impl Session {
             };
             self.write(record);
         }
-        // A delete done again leaves the list where it was, as it did the first time. The cursor
-        // moves only if it was on the row that goes, so that a redo asked from the line or from
-        // another row leaves it where it was.
-        if let [(Some(was), became)] = &change[..]
-            && !before
-            && became.deleted
-            && !was.deleted
-            && self.rows.iter().any(|r| r.id == became.id)
+        // A change that takes its note off the list, a delete or a tick done again or a note
+        // written taken back, leaves the rest of the list where it was, as a delete or a tick
+        // does the first time. The cursor moves only if it was on the row that goes, so that a
+        // redo asked from the line or from another row leaves it where it was.
+        if let [(_, became)] = &change[..]
+            && self.follow(std::slice::from_ref(&became.id))
         {
-            if self.selected().is_some_and(|r| r.id == became.id) {
-                self.take_row(&became.id);
-            } else if let Some(at) = self.drop_row(&became.id) {
-                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
-            }
             return;
         }
         self.refresh(false);
@@ -285,7 +279,8 @@ impl Session {
         })
     }
 
-    /// Archives the note under the cursor, or brings it back.
+    /// Archives the note under the cursor, or brings it back. A row the list would no longer have
+    /// goes where it stands and the rest stays, as a delete's does.
     pub(super) fn archive(&mut self) {
         let Some(record) = self.selected_record().cloned() else {
             return;
@@ -300,8 +295,7 @@ impl Session {
         }
         .into();
         self.commit(record);
-        self.refresh(false);
-        self.reselect(&id);
+        self.follow(&[id]);
     }
 
     /// A note archived, or brought back if it is archived, as the version to write, and for a

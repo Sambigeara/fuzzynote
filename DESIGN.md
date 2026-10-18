@@ -541,25 +541,30 @@ a place and out of it or when the line is written. A body left open keeps its ca
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
 whatever it names in brackets. Date words and `/task` are written out when the cursor leaves the
-row or Enter is pressed on it, a new row in a place has its labels from the start, and a body is kept when it closes. So
-Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or from any row, each note
-on every device as it is typed. A new row left with nothing in its head but what it opened with goes
-when the cursor leaves it, the arrow landing past where it was; one never typed into reaches neither
-the log nor the relay, and one typed into and cleared has its deletion written and leaves nothing to
-undo. Enter on such a row does nothing: there is already an empty row to write in. A head cleared to
-be typed again is not written while it is empty, and a note emptied is deleted when the cursor
-leaves it, or when an empty file comes back from the editor; undo brings it back. Backspace on a row
-with nothing in its head takes the row away and goes up to the row above, or onto the line, as it
-takes an empty line away in any editor; a note with a body stays, since the body is not in the head
-to see. A note stays where it was written, and an edit never moves it. The list holds still while
-the cursor walks it, so that the arrow that leaves a head lands where it was aimed, and what arrived
-from elsewhere meanwhile is listed when the cursor comes back to the line. A delete holds it still
-too: Ctrl-D, or `delete` in the page's foot, takes away only the row deleted, and the rest of the
-list stays as it was, rows and order, until it is next made for another reason, so that the notes
-listed only for what the deleted note said, found by its name, stay listed until then. The cursor
-goes to the row that took the deleted row's place, or to the row above when it was the last, or onto
-the line when no row is left; undo brings the note back where it was with the cursor on it. A note
-emptied and left goes the same way, the arrow landing past its row.
+row or Enter is pressed on it, a new row in a place has its labels from the start, and a body is
+kept when it closes. So Enter, type, Enter, type, Enter, type, Esc writes a list, from the line or
+from any row, each note on every device as it is typed. A new row left with nothing in its head but
+what it opened with goes when the cursor leaves it, the arrow landing past where it was; one never
+typed into reaches neither the log nor the relay, and one typed into and cleared has its deletion
+written and leaves nothing to undo. Enter on such a row does nothing: there is already an empty row
+to write in. A head cleared to be typed again is not written while it is empty, and a note emptied
+is deleted when the cursor leaves it, or when an empty file comes back from the editor; undo brings
+it back. Backspace on a row with nothing in its head takes the row away and goes up to the row
+above, or onto the line, as it takes an empty line away in any editor; a note with a body stays,
+since the body is not in the head to see. A note stays where it was written, and an edit never moves
+it. The list holds still while the cursor walks it: nothing is put into it or moved in it, so that
+the arrow that leaves a head lands where it was aimed, and a note new from elsewhere is listed when
+the cursor comes back to the line. What changes shows at once. A row whose note goes from the list,
+deleted, or ticked or archived where what is archived is hidden, is taken away where it stands,
+whether that was done here, by Ctrl-D or a tick or `delete` in the page's foot, or on another
+device; the rest of the list stays as it was, rows and order, until it is next made for another
+reason, so that the notes listed only for what the deleted note said, found by its name, stay listed
+until then. Any other note changed elsewhere has its row drawn again where it stands, as it now
+reads. The cursor on a row that goes goes to the row that took its place, or to the row above when
+it was the last, or onto the line when no row is left; undo brings the note back where it was with
+the cursor on it. A row being written in, a head typed into or a body open, is not taken from under
+the hands when its note goes elsewhere: it goes once the cursor leaves it. A note emptied and left
+goes the same way, the arrow landing past its row.
 
 ### The line
 The line has one grammar, read in the engine so that both faces have it: words find and everything
@@ -1343,7 +1348,10 @@ the app now does is described above; an entry repeats it only where the reason n
   2026-10-17 by "Vim's keys walk the list": with vim's keys turned on, a row walked to takes vim's
   letters as commands and is written in only once asked to. Revised 2026-10-17 by "The list's vim
   keys are taken out": a row walked to is a field again whatever the config or the browser says, the
-  list having one set of keys.
+  list having one set of keys. Revised 2026-10-18 by "A row whose note goes is taken away where it
+  stands": the list still has nothing put into it or moved in it while the cursor walks it, but a
+  row whose note goes from the list on another device goes at once, and one changed there is drawn
+  again.
 
 - **A new row opens under any row.** Decided 2026-10-14, with "Enter opens a row under; the body is
   Ctrl-O": not only at the top of the list, and an empty one goes from wherever it is when the
@@ -2445,7 +2453,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the row under it. Ticking is left as it was: a tick hides its row at once and the list is made
   again. What it does not do: the notes that linked to the deleted note keep their links, now to a
   deleted note, and from then on are found by their own words. What should become of them is an
-  open question.
+  open question. Revised 2026-10-18 by "A row whose note goes is taken away where it stands": a tick
+  takes only its row too, and so does a note ticked, archived or deleted on another device.
 
 - **`/task` is a way of typing the box.** Decided 2026-10-17, at Sam's direction, revising "A date
   is text, and `/fri` is a way of typing one" where it says there is no second expansion. The box is
@@ -2944,6 +2953,38 @@ the app now does is described above; an entry repeats it only where the reason n
   with a firmer underline, shown, and passed over for colour used sparingly; the blue everywhere,
   also on the resting page and in archived rows, which made the resting page busy; and links in
   bold, which would take the cursor's mark.
+
+- **A row whose note goes is taken away where it stands.** Decided 2026-10-18, at Sam's direction,
+  revising "The head is a field whenever the cursor is on it", where the list held still for
+  everything that arrived while the cursor walked it, and "A delete leaves the list where it was",
+  where a tick made the list again. With the cursor on a row, a note ticked on another device or by
+  a command beside the app stayed listed, the row under the cursor or any other, and nothing in the
+  list changed but the status, `1 changed elsewhere`: on a scratch relay both faces did the same, a
+  row ticked elsewhere staying and still looking open and a row edited elsewhere still reading as it
+  had, until the cursor came back to the line. A delete here already took only its own row and left
+  the rest in their order, which is what was wanted of an arrival too. Holding still was for the
+  cursor's sake, so that an arrow lands where it was aimed and a row does not move from under it,
+  and it held back the news with the moves. Now the two are told apart. Nothing is put into the list
+  or moved in it while the cursor walks it, so a note new from elsewhere still waits for the line.
+  But a row whose note goes from the list, deleted, or ticked or archived where what is archived is
+  hidden, or brought back where only what is done is listed, is taken away where it stands, the
+  rest staying as they were, rows and order; and a row whose note changed elsewhere and still
+  belongs is drawn again as it now reads, ticked where what is archived is shown. Whether a ticked
+  or brought back note still belongs is whatever the list made now would say, so the done tasks
+  and the open ones, a line holding `[x]` or `[ ]`, and showing what is archived all answer it the
+  same way. An edit, here or elsewhere, never takes a row away, even one that leaves the note
+  without what the line holds: it waits for the list to be made again, as one typed here does. The
+  row under the cursor goes too, the cursor taking the row in its place as after a delete, and the
+  caret going to the end of that row's head, unless it is being written in, a head typed into in
+  this visit, a new note or a body open, when it stays under the hands as typed and goes once the
+  cursor leaves it, the arrow landing where it would have had the row gone already. A tick here, a
+  tick or a delete done again by redo, and a note written taken back by undo take their rows the
+  same way, so that one rule covers a row whose note goes, wherever it went. The cost is that a row
+  can go just as an arrow is pressed towards it, which then lands one row further on; that needs
+  another device to act in the same moment, and the row is seen to go. Weighed: making the whole
+  list again on any arrival, which reorders what the line ranks and puts new notes above the cursor;
+  and leaving the row under the cursor until the cursor leaves it whether or not it was being
+  written in, which leaves a note done elsewhere under the cursor with nothing to say why.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

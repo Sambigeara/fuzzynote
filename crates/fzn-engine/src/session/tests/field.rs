@@ -271,30 +271,36 @@ fn a_note_emptied_in_place_is_deleted_and_undo_brings_it_back() {
 }
 
 #[test]
-fn a_note_gone_elsewhere_keeps_its_head_under_the_cursor_and_leaves_without_a_word() {
+fn a_note_gone_elsewhere_takes_its_row_away_and_one_being_written_in_keeps_its_head() {
     let mut s = session();
     put(&mut s, "house", "House", &[], 1_000);
     put(&mut s, "boiler", "Boiler", &[], 2_000);
-    assert_eq!(heads(&s), ["Boiler", "House"]);
-    s.act(Action::Move(2));
-    assert_eq!(s.selected().unwrap().head, "House");
+    put(&mut s, "garden", "a garden", &[], 3_000);
+    assert_eq!(heads(&s), ["a garden", "Boiler", "House"]);
+    select(&mut s, "House");
 
-    // Boiler is deleted elsewhere while the cursor walks the list, which holds still.
-    let mut gone = s.notes.get("boiler").unwrap().clone();
-    gone.deleted = true;
-    gone.stamp = Some(NOON.plus_secs(120));
-    gone.device = "other".into();
-    assert!(s.absorb([gone]));
-    assert_eq!(heads(&s), ["Boiler", "House"], "the list holds still");
+    // Boiler is deleted elsewhere while the cursor walks the list: only its row goes.
+    let gone = |s: &Session, id: &str, at: i64| Record {
+        deleted: true,
+        stamp: Some(NOON.plus_secs(at)),
+        device: "3f9a01c2".into(),
+        ..s.notes.get(id).unwrap().clone()
+    };
+    let boiler = gone(&s, "boiler", 120);
+    assert!(s.absorb([boiler]));
+    assert_eq!(heads(&s), ["a garden", "House"]);
+    assert_eq!(field(&s), Some(("House".into(), false, false)));
 
-    // Landing on the row that is left shows its head, not nothing; leaving it again, with
-    // nothing typed, says nothing, since nothing was lost.
-    s.say("");
+    // House, typed into, is deleted elsewhere: its head stays under the cursor as typed, and
+    // leaving it says that nothing was saved, and takes its row.
+    edited(&mut s, "House viewing");
+    let house = gone(&s, "house", 180);
+    s.absorb([house]);
+    assert_eq!(heads(&s), ["a garden", "House viewing"]);
+    assert_eq!(field(&s), Some(("House viewing".into(), false, false)));
     s.act(Action::Move(-1));
-    assert_eq!(field(&s), Some(("Boiler".into(), false, false)));
-    assert!(s.act(Action::Move(-1)).is_empty());
-    assert_eq!(s.status, "");
-    assert_eq!((s.cursor, heads(&s)), (None, vec!["House"]));
+    assert_eq!(s.status, "that note is gone, so nothing was saved");
+    assert_eq!((s.cursor, heads(&s)), (Some(0), vec!["a garden"]));
 }
 
 #[test]
