@@ -913,11 +913,12 @@ box.addEventListener('keydown', (event) => {
   if (event.isComposing || !view?.field) return;
   const plain = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
   if (!view.field.whole && !revealed && revealsOn(event)) reveal();
-  // The body is the box's own, but for Escape or Ctrl-[, which close it, and Ctrl-O and Ctrl-U,
-  // which are swallowed so that the browser's file dialog and its page source do not open in the
-  // middle of writing. Tab is a tab character in it, as it is in the editor that takes its place.
+  // The body is the box's own, but for Escape or Ctrl-[, which close it, and the chords swallowed
+  // so that the browser's file dialog, page source, search and history do not open in the middle
+  // of writing (see swallowedInBody). Tab is a tab character in it, as it is in the editor that
+  // takes its place.
   if (view.field.whole) {
-    if (ctrlOnly(event) && /^[ou]$/i.test(event.key)) return event.preventDefault();
+    if (swallowedInBody(event)) return event.preventDefault();
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       // Inserted as typing is, so that the browser's undo takes it back as it would a letter.
       if (!event.shiftKey) document.execCommand('insertText', false, '\t');
@@ -967,6 +968,13 @@ box.addEventListener('keydown', (event) => {
   follow();
 });
 
+// The chords an open body never lets reach the browser, though the editor may act on them first:
+// Ctrl-O and Ctrl-U, the file dialog and the page source, and away from a Mac Ctrl-H and Ctrl-K,
+// history and search. On a Mac those two are the text's own Emacs keys, delete back and kill, and
+// the browser binds them to nothing, so they are left to it. Ctrl-Y is the editor's, vim's scroll.
+const swallowedInBody = (event) =>
+  ctrlOnly(event) && (/^[ou]$/i.test(event.key) || (!mac && /^[hk]$/i.test(event.key)));
+
 // Whether a key is Escape: Escape itself, or Ctrl-[, which a terminal reads as Escape.
 const escapes = (event) => event.key === 'Escape' || (ctrlOnly(event) && event.key === '[');
 
@@ -1005,9 +1013,7 @@ function chord(key, onRow) {
       if (onRow) act('link');
       return true;
     case 'h':
-      if (!onRow && view.hints.some((hint) => named(hint.action) === 'show_archived')) {
-        act('show_archived');
-      }
+      if (view.hints.some((hint) => named(hint.action) === 'show_archived')) act('show_archived');
       return true;
     case 'c':
       if (!onRow || !nothingSelected()) return false;
@@ -1071,14 +1077,14 @@ function loadEditor() {
     (module) => {
       editor = module.mount(editorHooks, $('sheet-foot'));
       editor.setVim(vimOn);
-      // The sheet is the editor's but for Ctrl-O and Ctrl-U, which never reach the browser's file
-      // dialog and page source, from the text or from vim's prompt, Ctrl-U being the editor's
-      // own first, and Escape or Ctrl-[, which close it without vim's keys. With them Escape is
-      // vim's alone, since hands that press it twice to be sure of normal mode would close the
-      // note under themselves; `:q`, `ZZ` and the word in the foot close it.
+      // The sheet is the editor's but for the chords that never reach the browser, from the text
+      // or from vim's prompt, the editor having them first where it binds them, Ctrl-U among
+      // them (see swallowedInBody), and Escape or Ctrl-[, which close it without vim's keys. With
+      // them Escape is vim's alone, since hands that press it twice to be sure of normal mode
+      // would close the note under themselves; `:q`, `ZZ` and the word in the foot close it.
       buffer.addEventListener('keydown', (event) => {
         if (event.isComposing || editor.composing || !view?.field?.whole) return;
-        if (ctrlOnly(event) && /^[ou]$/i.test(event.key)) return event.preventDefault();
+        if (swallowedInBody(event)) return event.preventDefault();
         if (!escapes(event) || event.defaultPrevented || editor.vimOn) return;
         act('close');
         event.preventDefault();
@@ -1476,11 +1482,11 @@ hintsNode.addEventListener('wheel', (event) => {
 });
 window.addEventListener('resize', () => view && hintEdges());
 
-// An undo that put text back in the head under the cursor leaves the row revealed, as it was being
-// written; one that only moved the cursor, or put back no more than a task's box, as undoing a
-// tick does, leaves it read. What each head was is taken before the undo: the field's for the row
-// under the cursor, which the engine holds still, and the row's for the others, which the engine
-// trims, so both are compared trimmed.
+// An undo or a redo that put text back in the head under the cursor leaves the row revealed, as
+// it was being written; one that only moved the cursor, or put back no more than a task's box, as
+// undoing a tick does, leaves it read. What each head was is taken before it: the field's for the
+// row under the cursor, which the engine holds still, and the row's for the others, which the
+// engine trims, so both are compared trimmed.
 const unboxed = (head) => head.replace(/^\[[ xX]\] ?/, '');
 function headsNow() {
   const heads = new Map(view.rows.map((row) => [row.id, row.head]));

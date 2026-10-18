@@ -18,13 +18,13 @@
 //! change, made as if it were typed in one key, its tabs and line breaks made spaces, since the
 //! line and a head are one line each and a tab typed would go in. A chord acts on the note where
 //! on the line it acts on the line, as it did in fzn: Ctrl-D deletes or clears, Ctrl-V archives,
-//! which ticks a task, or shows archived notes,
-//! and Ctrl-U puts a changed head back before it undoes anything else. Ctrl-Y redoes and Ctrl-K
-//! links, the keys the page has for them, and fzn's own Ctrl-R and Ctrl-L still do too, so that
-//! one set of keys is learned for both faces. Control with an arrow moves
-//! the note under the cursor up or down a row, and the cursor with it. Escape comes back a rung at
-//! a time: off the row, off the text on the line, out of the place, and on an empty line outside
-//! any place two of them quit. The footer shows only the keys that apply where the cursor is.
+//! which ticks a task, or shows archived notes, and Ctrl-U puts a changed head back before it
+//! undoes anything else. Ctrl-Y redoes and Ctrl-K links, the keys the page has for them, and fzn's
+//! own Ctrl-R and Ctrl-L still do too, so that one set of keys is learned for both faces. Control
+//! with an arrow moves the note under the cursor up or down a row, and the cursor with it. Escape
+//! comes back a rung at a time: off the row, off the text on the line, out of the place, and on an
+//! empty line outside any place two of them quit. The footer shows only the keys that apply where
+//! the cursor is.
 //! Shift-Enter on a row ticks as Ctrl-V does, where the terminal can tell it from Enter.
 //!
 //! A terminal sends some keys alike unless it is asked to tell them apart: Shift-Enter is Enter,
@@ -239,8 +239,8 @@ fn meant(key: KeyEvent) -> (KeyCode, KeyModifiers) {
 /// takes a row away only when its head is empty, as a new row with only its labels is while the
 /// caret is where it landed; with text in the head it is the caret's. Ctrl-Y and Ctrl-K redo and
 /// link, the page's keys for them, since Ctrl-R and Ctrl-L are the browser's there; fzn's own
-/// Ctrl-R and Ctrl-L do too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes back a rung: off the row,
-/// then off the text on the line, then out of the place.
+/// Ctrl-R and Ctrl-L do too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes
+/// back a rung: off the row, then off the text on the line, then out of the place.
 fn bound(
     code: KeyCode,
     modifiers: KeyModifiers,
