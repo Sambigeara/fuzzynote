@@ -157,9 +157,10 @@ The page takes the terminal's keys where a browser lets them go: Shift-Enter tic
 Ctrl-O opens the body, Ctrl-U undoes, Ctrl-C copies the note when nothing is selected, Ctrl-/ opens
 its URL, and Ctrl-[ is Esc. Ctrl-R, Ctrl-L and Ctrl-V are the browser's, so the page has Ctrl-Y
 for redo, Ctrl-K for link and Ctrl-H for showing what is archived, the terminal naming the same
-keys for redo and link. With a mouse a word in the foot that a chord also asks for has the chord
-written after it, `tick ⇧↵`, `delete ^D`, `link ^K`; Enter, Tab, Esc and the arrows are not
-written, nor Control with an arrow on a Mac, where it is the system's. The word `vim`, in the foot
+keys for redo and link. With a mouse a word in the foot that a key also asks for has the key
+written after it, `new note ↵`, `go in Tab`, `tick ⇧↵`, `delete ^D`, `up Esc`; only Control with
+an arrow on a Mac, where it is the system's, is not written, and in an open body, whose chords are
+the editor's, only `done` has its key. The word `vim`, in the foot
 of an open body, turns vim mode on for the body in this browser; a touch screen does without.
 
 Vimium takes Esc and Ctrl-[ from the page before it sees them, and both are needed: Esc comes

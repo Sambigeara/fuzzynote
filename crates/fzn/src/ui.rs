@@ -290,10 +290,10 @@ struct Keys {
 /// The key that asks for an action, as the footer names it. Tick is Shift-Enter wherever the
 /// terminal can tell it from Enter; Ctrl-V, which ticks in every terminal, is then the key the
 /// footer leaves out. Redo and link are named by the keys the page has for them, Ctrl-Y and
-/// Ctrl-K, so that the two faces show one set.
+/// Ctrl-K, and Enter is written `↵` as the page writes it, so that the two faces show one set.
 fn key_for(action: &Action, keys: Keys) -> &'static str {
     match action {
-        Action::Write => "Enter",
+        Action::Write => "↵",
         Action::Editor => "^O",
         Action::GoIn => "Tab",
         Action::Move(_) => "↓",
@@ -302,7 +302,7 @@ fn key_for(action: &Action, keys: Keys) -> &'static str {
         Action::Select(_) | Action::Back | Action::Close => "Esc",
         // Clearing the line is the rung Escape takes while it has text; Ctrl-D is its second key.
         Action::Type(text) if text.is_empty() => "Esc",
-        Action::Archive if keys.shift_enter => "⇧Enter",
+        Action::Archive if keys.shift_enter => "⇧↵",
         Action::ShowArchived | Action::Archive => "^V",
         Action::Delete => "^D",
         Action::Link => "^K",
@@ -2443,8 +2443,8 @@ mod tests {
     fn named(key: &str) -> (KeyCode, KeyModifiers) {
         let ctrl = KeyModifiers::CONTROL;
         match key {
-            "Enter" => (KeyCode::Enter, KeyModifiers::NONE),
-            "⇧Enter" => (KeyCode::Enter, KeyModifiers::SHIFT),
+            "↵" => (KeyCode::Enter, KeyModifiers::NONE),
+            "⇧↵" => (KeyCode::Enter, KeyModifiers::SHIFT),
             "Esc" => (KeyCode::Esc, KeyModifiers::NONE),
             "↓" => (KeyCode::Down, KeyModifiers::NONE),
             "^↑" => (KeyCode::Up, ctrl),
@@ -2479,25 +2479,25 @@ mod tests {
         let (mut app, space) = app();
         assert_eq!(
             keys(&app),
-            "Enter new note  ^V show archived  Esc Esc quits",
+            "↵ new note  ^V show archived  Esc Esc quits",
             "nothing listed, so nothing to pick"
         );
         write(&mut app, "trainingapp");
         assert_eq!(
             keys(&app),
-            "Enter new note  ↓ pick a note  ^V show archived  ^U undo  Esc Esc quits"
+            "↵ new note  ↓ pick a note  ^V show archived  ^U undo  Esc Esc quits"
         );
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
+            "↵ new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
         );
 
         // Where the caret is in the head does not change what is on offer.
         press(&mut app, KeyCode::Left, false);
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
+            "↵ new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U undo  Esc up"
         );
         press(&mut app, KeyCode::Right, false);
         assert!(path(&app).is_empty(), "the caret moved");
@@ -2506,7 +2506,7 @@ mod tests {
         type_in(&mut app, "s");
         assert_eq!(
             keys(&app),
-            "Enter new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U put back  \
+            "↵ new note  ^O editor  Tab go in  ^V archive  ^D delete  ^C copy  ^U put back  \
              Esc up"
         );
         chord(&mut app, 'u');
@@ -2517,12 +2517,12 @@ mod tests {
         write(&mut app, "squat form video https://example.com/squat");
         assert_eq!(
             keys(&app),
-            "Enter new note here  ↓ pick a note  ^V show archived  ^U undo  Esc back"
+            "↵ new note here  ↓ pick a note  ^V show archived  ^U undo  Esc back"
         );
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
+            "↵ new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
              ^C copy  ^/ open URL  ^U undo  Esc up"
         );
 
@@ -2536,14 +2536,14 @@ mod tests {
         let widest = keys(&app);
         assert_eq!(
             widest,
-            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V unarchive  ^D delete  \
+            "↵ new note here  ^O editor  Tab go in  ^K unlink  ^V unarchive  ^D delete  \
              ^C copy  ^/ open URL  ^U undo  ^Y redo  Esc up"
         );
         assert!(widest.chars().count() <= 126, "{}", widest.chars().count());
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(
             keys(&app),
-            "Enter new note here  ↓ pick a note  ^V hide archived  ^U undo  ^Y redo  Esc back"
+            "↵ new note here  ↓ pick a note  ^V hide archived  ^U undo  ^Y redo  Esc back"
         );
 
         // A new note offers the editor, and once it has text, everything a note offers, with
@@ -2553,7 +2553,7 @@ mod tests {
         type_in(&mut app, "x");
         assert_eq!(
             keys(&app),
-            "Enter new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
+            "↵ new note here  ^O editor  Tab go in  ^K unlink  ^V archive  ^D delete  \
              ^C copy  ^↓ move down  ^U put back  Esc up"
         );
         done(&space);
@@ -2694,7 +2694,7 @@ mod tests {
         assert!(keys(&app).contains("^V tick"), "{}", keys(&app));
         for keyboard in [Keyboard::Kitty, Keyboard::Modified] {
             app.keyboard = Some(keyboard);
-            assert!(keys(&app).contains("⇧Enter tick"), "{}", keys(&app));
+            assert!(keys(&app).contains("⇧↵ tick"), "{}", keys(&app));
             assert!(!keys(&app).contains("^V"), "{}", keys(&app));
         }
         press(&mut app, KeyCode::Esc, false);
@@ -3977,7 +3977,7 @@ mod tests {
         assert!(shot.dim[6]);
         assert_eq!(shot.rows[8], " saved", "what the last thing asked for did");
         assert!(
-            shot.rows[9].starts_with(" Enter new note  ^O editor  Tab go in  ^V archive"),
+            shot.rows[9].starts_with(" ↵ new note  ^O editor  Tab go in  ^V archive"),
             "{:?}",
             shot.rows[9]
         );
@@ -4547,7 +4547,7 @@ mod tests {
         write(&mut app, "Boiler");
         press(&mut app, KeyCode::Down, false);
         type_in(&mut app, " /today");
-        assert!(keys(&app).starts_with("Enter write out"), "{}", keys(&app));
+        assert!(keys(&app).starts_with("↵ write out"), "{}", keys(&app));
         press(&mut app, KeyCode::Enter, false);
         let head = field(&app).unwrap();
         assert!(
