@@ -217,7 +217,9 @@ pub fn told(config: &Path, root: &Path, name: Option<&str>, token: &str) -> Stri
     let forms = format!(
         "  in config.toml:  relay = \"ws://{credential}@RELAY:{PORT}\"\n  \
          in a browser:    http://RELAY:{PORT}/#{credential}\n\
-         where RELAY is this relay's host as the devices reach it.\n"
+         where RELAY is this relay's host as the devices reach it. Behind a proxy that has TLS:\n  \
+         in config.toml:  relay = \"wss://{credential}@RELAY\"\n  \
+         in a browser:    https://RELAY/#{credential}\n"
     );
     match name {
         Some(name) => format!(
@@ -320,6 +322,14 @@ mod tests {
         );
         assert!(
             told.contains(&format!("http://RELAY:3960/#joe:{token}")),
+            "{told}"
+        );
+        assert!(
+            told.contains(&format!("relay = \"wss://joe:{token}@RELAY\"")),
+            "{told}"
+        );
+        assert!(
+            told.contains(&format!("https://RELAY/#joe:{token}")),
             "{told}"
         );
         assert!(told.contains("/var/lib/fzn/joe"), "{told}");

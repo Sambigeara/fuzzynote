@@ -95,11 +95,11 @@ token: fzn relay add NAME prints one for NAME's spaces, which live under NAME in
 root and are asked for as ws://NAME:TOKEN@host; fzn relay token prints one for the spaces at the
 root, which anyone who connects may make until then. Put the token in the relay's address on a
 device that makes spaces; a device that only opens spaces that exist needs none. The relay has
-no TLS, so let it listen only on a private network, or behind a proxy that has it. It also
-hands out the web app, which is built into
-fzn, so that a browser can open the relay's address and be one more device. With --web DIR it
-hands out the page in that directory instead, the web directory of this repository, which is
-how the page is worked on.
+no TLS, so let it listen only on a private network, or behind a proxy that has it, which the
+devices then name as wss://host, or wss://NAME:TOKEN@host. It also hands out the web app, which
+is built into fzn, so that a browser can open the relay's address and be one more device. With
+--web DIR it hands out the page in that directory instead, the web directory of this
+repository, which is how the page is worked on.
 
 If fzn says a log has forked, two machines have been writing under one writer id, usually
 because a space's directory was copied from one to the other. Nothing is lost, and nothing is

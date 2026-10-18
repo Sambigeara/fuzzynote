@@ -20,6 +20,11 @@ unicode-width = "0.2"
 # draws; it brings it in already.
 unicode-segmentation = "1"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+# TLS to a relay behind a proxy that has it, named as wss://. Its cryptography from ring, which
+# builds with a C compiler alone where rustls's default wants cmake as well; and the roots the
+# browsers trust built in, so a static binary trusts the same wherever it runs.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
 # Names the page in a directory given with --web, as the build names the one it carries. The
 # engine already brings it in.
 sha2.workspace = true
@@ -38,3 +43,5 @@ sha2.workspace = true
 [dev-dependencies]
 # For reading back what the relay sent gzipped.
 flate2 = "1"
+# A certificate of a test's own, for a relay behind TLS that the built-in roots do not know.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }

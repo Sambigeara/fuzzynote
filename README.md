@@ -145,7 +145,8 @@ and nobody can reach them.
 
 The relay has no TLS. On a private network the network encrypts the wire; anywhere else, put a
 proxy that has TLS in front of it, passing the websocket and its `Sec-WebSocket-Protocol` header
-through. Without either, the token and a space's first claim cross the wire as they are.
+through, and name the relay as `wss://joe:TOKEN@host` on the devices and `https://host/#joe:TOKEN`
+in a browser. Without either, the token and a space's first claim cross the wire as they are.
 
 ## Browser
 
