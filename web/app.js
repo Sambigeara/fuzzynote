@@ -1895,7 +1895,10 @@ function placeReadingCaret() {
   const shown = read.getBoundingClientRect();
   const last = lines[lines.length - 1] ?? shown;
   const cut = read.scrollWidth > read.clientWidth + 1;
-  const x = cut ? shown.right - wide : lines.length ? last.right : shown.left;
+  // The reading's end is the furthest right anything on its last line reaches, so that a head
+  // ending in code has the block after the code's wash rather than inside it.
+  const end = Math.max(...lines.filter((r) => r.bottom > last.top && r.top < last.bottom).map((r) => r.right));
+  const x = cut ? shown.right - wide : lines.length ? end : shown.left;
   const at = frame.getBoundingClientRect();
   const left = x - at.left - frame.clientLeft;
   const top = (last.top + last.bottom) / 2 - tall / 2 - at.top - frame.clientTop;

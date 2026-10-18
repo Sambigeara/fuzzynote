@@ -15,14 +15,15 @@
 // and the page is told when it does, to paint again.
 
 import { GFM, parser } from '@lezer/markdown';
-import { highlightTree, tagHighlighter, tags as t } from '@lezer/highlight';
+import { highlightTree, styleTags, Tag, tagHighlighter, tags as t } from '@lezer/highlight';
 import { StringStream } from '@codemirror/streamparser';
 
 // `[[Boiler]]` is how a link to a note is typed, which markdown would read as a link with no
-// address inside a pair of brackets. It is read whole, its brackets its marks.
+// address inside a pair of brackets. It is read whole, its brackets its marks, and its words are
+// not marked as a link's are, since a read does not make it one.
 const Bracketed = {
   defineNodes: [
-    { name: 'Bracketed', style: t.link },
+    { name: 'Bracketed' },
     { name: 'BracketMark', style: t.processingInstruction },
   ],
   parseInline: [
@@ -40,16 +41,26 @@ const Bracketed = {
   ],
 };
 
-export const markdown = parser.configure([GFM, Bracketed]);
+// An address standing alone, bare or in angle brackets, is what is read as a link, where the
+// address after a link's words is a mark, read only by following the link. Markdown tags the two
+// alike, so the one in a link, an image or a link's definition keeps the tag and the one standing
+// alone is given one of its own.
+const bare = Tag.define(t.url);
+const Addresses = { props: [styleTags({ 'Link/URL Image/URL LinkReference/URL': t.url, URL: bare })] };
 
-// How each kind of text looks, in the page's greys and never a colour. Marks are faint, and so
-// are code's punctuation and its comments, which slant too; what a string, a number or a constant
-// says is soft; headings, strong text, keywords and what a line defines are heavier.
+export const markdown = parser.configure([GFM, Bracketed, Addresses]);
+
+// How each kind of text looks: in the page's greys, with the one colour for what is read as a
+// link. Marks are faint, and so are code's punctuation and its comments, which slant too; what a
+// string, a number or a constant says is soft; headings, strong text, keywords and what a line
+// defines are heavier; a link is in the link's colour where it is words or an address standing
+// alone, and its brackets and the address after its words stay marks.
 export const highlighter = tagHighlighter([
   {
     tag: [t.processingInstruction, t.contentSeparator, t.labelName, t.url, t.punctuation, t.meta, t.deleted],
     class: 'hl-faint',
   },
+  { tag: [t.link, bare], class: 'hl-link' },
   { tag: t.comment, class: 'hl-faint hl-slant' },
   { tag: [t.literal, t.atom, t.null, t.unit], class: 'hl-soft' },
   { tag: [t.heading, t.strong, t.keyword, t.definition(t.name)], class: 'hl-heavy' },

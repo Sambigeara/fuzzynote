@@ -1,7 +1,7 @@
 /* fzn in a browser: one column and one cursor on a blank page.
  *
- * There is no colour: paper, ink and two greys, so that the only thing in ink on the resting page
- * is the caret. The column sits a little left of centre, so that a wide page has room beside it
+ * Paper, ink and two greys, so that the only thing in ink on the resting page is the caret, and
+ * one colour, a muted blue, for a link, the one thing in a note's text that can be acted on. The column sits a little left of centre, so that a wide page has room beside it
  * for the body of what the cursor is on. The line sits a little above a third of the way down
  * and never moves, with a hairline under it; the margin above it is where the path goes. An open
  * body is a sheet over the page, which is dimmed behind it. What is already on the page never
@@ -15,6 +15,7 @@
   --ink: #1b1a18;
   --soft: #625e58;
   --faint: #8e8980;
+  --link: #3a6a9a;
   --face: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --measure: 38rem;
@@ -45,6 +46,7 @@
     --ink: #e8e4dc;
     --soft: #a39d93;
     --faint: #6f6a62;
+    --link: #6a8dbb;
     --caret: rgb(232 228 220 / 0.42);
     --select: rgb(232 228 220 / 0.16);
     --rule: rgb(232 228 220 / 0.1);
@@ -444,10 +446,11 @@ button, input, textarea { font: inherit; color: inherit; }
   #pane-head .tick { cursor: default; border-color: var(--faint); }
 }
 
-/* A body read is rendered: blocks a little apart and none of them a box, headings set apart by
-   weight alone and in the type's one size, a quote and a table's head marked by a hairline, a
-   task's box drawn and never pressed, and code in ink with the editor's highlighting, so that
-   what would be copied out reads crisply. Paragraphs keep the lines they were written on. */
+/* A body read is rendered: blocks a little apart, headings set apart by weight alone and in the
+   type's one size, a quote and a table's head marked by a hairline, a task's box drawn and never
+   pressed, and code in ink with the editor's highlighting, so that what would be copied out reads
+   crisply, a block of it on a faint wash of ink, the one block that is a box. Paragraphs keep the
+   lines they were written on. */
 :is(#here, #pane) :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table, hr) { margin: 0.625em 0 0; }
 :is(#here, #pane) :is(h1, h2, h3, h4, h5, h6) { margin-top: 1em; }
 :is(#here, #pane) :is(:first-child, li > *) { margin-top: 0; }
@@ -489,31 +492,54 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 :is(#here, #pane) blockquote { margin-inline: 0; padding-left: 0.75em; border-left: 1px solid var(--rule); }
 :is(#here, #pane) hr { height: 0; border: 0; border-top: 1px solid var(--rule); }
-:is(#here, #pane) pre { white-space: pre-wrap; color: var(--ink); }
+:is(#here, #pane) pre {
+  white-space: pre-wrap;
+  color: var(--ink);
+  padding: 0.5em 0.75em;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+}
 :is(#here, #pane) table { display: block; overflow-x: auto; border-collapse: collapse; }
 :is(#here, #pane) :is(th, td) { padding: 0.125em 1.25em 0.125em 0; text-align: left; vertical-align: top; }
 :is(#here, #pane) th { border-bottom: 1px solid var(--rule); }
 
 /* A head reads its marks as a body does, and so does a note's step on the path, each in its one
    size: strong text and headings by weight, emphasis slanted, code in the monospace a tenth
-   smaller, struck text struck thin. */
+   smaller, struck text struck thin. Code in a line, in a row or a body read, lies on a wash of the
+   text's own colour, grey on grey, so that it reads as code and adds no colour; in a body read it
+   is in ink, as a block of code is. `pre code` is a block's, and a row's code is the head's own
+   child, so the wash is for code not in a block rather than code in a paragraph. */
 :is(#here, #pane, .head, #path) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
 :is(#here, #pane, .head, #path) code { font-family: var(--mono); font-size: 0.9em; }
 :is(#here, #pane, .head, #path) del { text-decoration: line-through; text-decoration-thickness: 1px; }
+:is(#here, #pane, .head) code:not(pre code) {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: color-mix(in oklab, currentColor 7%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+:is(#here, #pane) code:not(pre code) { color: var(--ink); }
 
-/* A link has no colour: it is in the colour of what it is in, underlined a pixel thin in a tint of
-   that colour and clear of the descenders, so that it reads as a link under ink, soft or faint
-   text alike, and in full when the pointer is on it. It is followed in a tab of its own, and the
-   cursor stays where it was. */
+/* A link is the one thing in colour, a muted blue, since it is the one thing in a note's text that
+   can be acted on. It is underlined too, so that colour is never its only mark, in a tint of its
+   own colour and clear of the descenders, and in full when the pointer is on it; it is never
+   heavier, since weight is the cursor's mark and strong text's. Where the text around it steps
+   back, faint on the resting page, soft on an archived row, faint in a done task, the link steps
+   back with it, its blue mixed toward that grey, so that the resting page stays calm. It is
+   followed in a tab of its own, and the cursor stays where it was. */
 a {
-  color: inherit;
+  color: var(--link);
   text-decoration-line: underline;
-  text-decoration-color: color-mix(in oklab, currentColor 38%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
+  text-decoration-thickness: max(1px, 0.07em);
+  text-underline-offset: 0.2em;
   text-decoration-skip-ink: auto;
 }
 a:hover { text-decoration-color: currentColor; }
+.row.archived .head a { color: color-mix(in oklab, var(--link) 70%, var(--soft)); }
+body.resting .row .head a,
+.task.done a { color: color-mix(in oklab, var(--link) 40%, var(--faint)); }
 
 /* A body open: a sheet over the column, the page dimmed slightly behind it, which holds the whole
    note at its natural weight and scrolls on its own. It is placed from the top and given its
@@ -575,16 +601,40 @@ a:hover { text-decoration-color: currentColor; }
 
 /* Highlighting, the same in the body's editor and in code read, where it is set in ink: marks
    and punctuation faint, comments faint and slanting, what strings, numbers and constants say
-   soft, and headings, strong text, keywords and definitions heavier. */
+   soft, and headings, strong text, keywords and definitions heavier. In the editor a link's words,
+   and an address standing alone, are in the link's colour and underlined as a link read is, while
+   a link's brackets and address stay faint, as marks; code in a line lies on a wash, as it does
+   read. */
 .hl-heavy { font-weight: 600; }
 .hl-soft { color: var(--soft); }
 .hl-faint { color: var(--faint); }
 .hl-slant { font-style: italic; }
 .hl-mono { font-family: var(--mono); font-size: 0.9em; }
 .hl-struck { text-decoration: line-through; }
+.hl-link:not(.hl-faint) {
+  color: var(--link);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
+  text-decoration-thickness: max(1px, 0.07em);
+  text-underline-offset: 0.2em;
+  text-decoration-skip-ink: auto;
+}
+.cm-line:not(.hl-code) .hl-mono {
+  border-radius: 2px;
+  background: color-mix(in oklab, currentColor 7%, transparent);
+}
 /* In the editor a block of code is in the monospace a line at a time, fences and all, on lines as
-   high as the others; what it holds is not made smaller again. */
-.cm-line.hl-code { font-family: var(--mono); font-size: 0.9em; line-height: calc(1.5 / 0.9); }
+   high as the others; what it holds is not made smaller again. Its lines lie on a band of ink as
+   faint as a block read has, drawn a little past the text on each side by a shadow, so that no
+   letter moves, and see-through, so that a selection shows under it. */
+.cm-line.hl-code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  line-height: calc(1.5 / 0.9);
+  --band: color-mix(in oklab, var(--ink) 5%, transparent);
+  background: var(--band);
+  box-shadow: -0.6em 0 0 var(--band), 0.6em 0 0 var(--band);
+}
 .hl-code .hl-mono { font-size: inherit; }
 
 /* Resting: the line empty, the cursor on it, nowhere gone into. The recent notes are faint heads

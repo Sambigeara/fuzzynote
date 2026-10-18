@@ -32,7 +32,8 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
   in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
   a little heavier, its caret at the end. Nothing else is highlighted and almost nothing else is
-  drawn: no borders, no counts, no colour. The body read is that of what the cursor is on, in a
+  drawn: no borders, no counts, and one colour, for a link, the one thing in a note's text that can
+  be acted on. The body read is that of what the cursor is on, in a
   place of its own apart from the list, never under a row or the line. What is not being asked for
   is not on the screen.
 - Archived is not forgotten. The list hides archived notes; the engine still remembers them.
@@ -849,8 +850,8 @@ and fifty more whenever the list is scrolled to within two rows of its end; a ne
 from what fits, and a row made because the list was scrolled or walked to it does not fade in. The
 path, in a place, is in the margin above the line, `main › Boiler`: the space's name and then each
 step, each a way back to it, the first to the top, a note's step read as its row is. The tab's title
-stays `fzn`, or `fzn · garden` in another space. No colour: paper, ink and two greys, light and dark
-by the system's preference. On a page at least 75rem wide the body of what the cursor is on is read
+stays `fzn`, or `fzn · garden` in another space. Paper, ink and two greys, and one colour, a muted
+blue, for a link, light and dark by the system's preference. On a page at least 75rem wide the body of what the cursor is on is read
 beside the list: the note under the cursor, and the whole of its head, above the body, when its row
 cuts it, or with the cursor on the line in a place the note you are in. It is rendered as markdown,
 in the soft grey, from the top of the first row's text, with no border, scrolled on its own and
@@ -894,9 +895,14 @@ typed; the row under the cursor reads the same until it is written in or the car
 is then its text box showing the source until the cursor leaves it. Tags, people and dates are not
 marked. Highlighting is in paper, ink and the two greys: keywords and definitions heavier, strings,
 numbers and constants soft, comments faint and slanted, punctuation and a diff's removed lines
-faint; code read is set in ink. A link is in the colour of what it is in, underlined a pixel thin in
-a tint of that colour and clear of the descenders, in full under the pointer; an address read as
-itself is shown without its scheme, `example.org/garden`, and whole under the pointer. A long body
+faint; code read is set in ink, a block of it on a faint wash of ink. Code in a line lies on a wash
+of the text's own colour, in a row and a body read, where it is in ink; in the sheet code in a line
+has the same wash and a block's lines a band of it. A link is in the link's blue, a step back toward
+the grey around it on the resting page, an archived row and a done task, and underlined in a tint of
+its colour, clear of the descenders, in full under the pointer, never heavier; in the sheet a link's
+words and an address standing alone are marked so, and a link's brackets and the address after its
+words stay faint, as marks; `[[Boiler]]` is unmarked there as it is read. An address read as itself
+is shown without its scheme, `example.org/garden`, and whole under the pointer. A long body
 is rendered at first only as far as it shows, its first 5,000 letters, and whole once the page is
 idle. A head is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://`
 or `mailto:`; nested past what the stack holds, a body is read as typed.
@@ -1364,7 +1370,8 @@ the app now does is described above; an entry repeats it only where the reason n
   to look; a sync light is the only thing on the page that is not text, and silence while it works
   says more. Revised 2026-10-15: the column sits left of centre ("A body is read apart from its
   row"). Revised 2026-10-17 by "A word shows its chord": the page's foot writes a word's chord after
-  it again, as plain grey text and never a badge.
+  it again, as plain grey text and never a badge. Revised 2026-10-18 by "A link is blue, and code has
+  a wash": the page has one colour, for a link.
 
 - **A head is kept as it is typed.** Decided 2026-10-14, at Sam's direction, replacing the call in
   "A note is written in place" that a version is written when the row closes, and with it that a new
@@ -1727,7 +1734,8 @@ the app now does is described above; an entry repeats it only where the reason n
   parsed when it holds a character that can begin one ("A head reads every inline mark a body
   does"), only the rows that can be seen are made ("Only the rows that can be seen are made"), and
   the relay sends the page compressed ("The relay carries the page; a directory stands in for it
-  while the page is worked on").
+  while the page is worked on"). Revised 2026-10-18 by "A link is blue, and code has a wash": code
+  in a line has a wash of the text's colour, in ink in a body read, and a block a wash of ink.
 
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A date
   typed as a search finds the notes that mention the day and the notes written on it" under Model,
@@ -2111,7 +2119,8 @@ the app now does is described above; an entry repeats it only where the reason n
   same reasons, and because a press on it would want to go into Boiler, which is the `›`'s job and a
   decision of its own. A head is parsed only if it holds a character that can begin a mark: measured
   over 10,000 invented notes, seven in ten of them marked, a marked head takes 7 µs to read, a plain
-  one nothing to speak of.
+  one nothing to speak of. Revised 2026-10-18 by "A link is blue, and code has a wash": a link is in
+  a muted blue, its underline a tint of that blue.
 
 - **The path is the browser's history.** Decided 2026-10-16, with the phone (Sam asked for the best
   that can be made there), on every width. A phone's back gesture, and a mouse's back button, are
@@ -2847,6 +2856,35 @@ the app now does is described above; an entry repeats it only where the reason n
   where landing puts it, and where the block is drawn on a row read. And in the terminal a new row
   typed into and taken back to its labels a letter at a time keeps the caret where the last letter
   went, as the page did, where the terminal had put it back after the box.
+
+- **A link is blue, and code has a wash.** Decided 2026-10-18, at Sam's direction, revising "One
+  cursor, no chrome", where the page had no accent at all; "A head reads every inline mark a body
+  does", where a link had no colour and the work was in making its underline quiet; and "A body's
+  markdown is rendered where it is read and styled where it is written", where a body read had no
+  block that was a box and only a block of code was set in ink. Sam asked for links that are
+  clearer, and for code, in a line and in a block, to have a slight background so it reads as code,
+  in the list and in the open body, keeping the app's calm, and agreed to bend the rule against
+  colour "a little bit. Used sparingly, it'll be useful". A link is the one thing in a note's text
+  that can be acted on, so it is the one thing given colour: a muted blue, `#3a6a9a` on light paper
+  and `#6a8dbb` on dark, 5.3:1 and 5.3:1 on paper and at least 4.9:1 on the sheet. It stays
+  underlined, in a tint of its blue a little firmer than before, so that colour is never its only
+  mark (WCAG 1.4.1). On light paper it is 3.1:1 from ink as well; on dark, 3:1 from ink and 4.5:1 on
+  the sheet cannot both be had, the room between them being empty, so readability won and the
+  underline carries the rest, the blue 2.7:1 from ink and plainly another hue. It is not bold, since
+  weight is the cursor's mark and strong text's. Where the text around it steps back, faint on the
+  resting page, soft on an archived row, faint in a done task, the link steps back with it, its blue
+  mixed toward that grey, so that the resting page stays as calm as it was. Code's wash is grey, the
+  text's own colour at a few percent, so it adds no colour; in a body read code in a line is in ink,
+  as a block is, and the block is on a wash of ink, the one block that is a box. The open body was
+  where links were least marked: a link's words were plain ink and a bare address was faint, as if
+  it were markup. Now a link's words and an address standing alone are in the blue and underlined,
+  while a link's brackets and the address after its words stay faint as marks; `[[Boiler]]`, which
+  had been tagged as a link in the editor and was never marked as one where read, is unmarked in
+  both. A head read under the cursor that ends in code has its block after the code's wash, not
+  inside it. The terminal is unchanged, in its own colours. Weighed: links in ink with a firmer
+  underline, shown, and passed over for colour used sparingly; the blue everywhere, also on the
+  resting page and in archived rows, which made the resting page busy; and links in bold, which
+  would take the cursor's mark.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
