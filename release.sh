@@ -68,7 +68,12 @@ for target in $targets; do
     case "$target" in
         # No cross gcc is needed: the musl targets carry their own startup files and
         # rust-lld links them, which is how fzn for the relay's machine has always been built.
-        aarch64-unknown-linux-musl) export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld ;;
+        # The little C that ring brings for TLS is compiled by clang, which targets either
+        # from any Linux, where a gcc for musl is rarely installed.
+        aarch64-unknown-linux-musl)
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+            export CC_aarch64_unknown_linux_musl=clang ;;
+        x86_64-unknown-linux-musl) export CC_x86_64_unknown_linux_musl=clang ;;
     esac
     cargo build --release --locked -p fzn --target "$target"
     name="fzn-$target"

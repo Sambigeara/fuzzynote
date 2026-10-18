@@ -18,8 +18,15 @@
 //! is not one is refused and not half read, and it goes no further than the handshake: offered
 //! as a subprotocol, never in the path, never in what the status row says, and never in an error,
 //! which names the address with what comes before its `@` left out.
+//!
+//! A relay has no TLS of its own, so one reached across a network that does not encrypt the wire
+//! sits behind a proxy that has it, and is named `wss://host`. The socket then goes under TLS, and
+//! the proxy's certificate is checked against the roots the browsers trust, which are built in so
+//! that a static binary trusts the same on any machine. A token in such an address crosses the
+//! network only inside it.
 
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,12 +34,16 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::names_a_log;
 use fzn_engine::{Device, RELAY, Todo};
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use tungstenite::ClientRequestBuilder;
 use tungstenite::http::Uri;
 use tungstenite::protocol::WebSocketConfig;
 
-use crate::wire::{GREETING, MESSAGE_MAX, PORT, VERSION, Wire};
+use crate::wire::{GREETING, MESSAGE_MAX, PORT, Stream, VERSION, Wire};
 
+/// The port of a relay named as `wss://` when none is given: the proxy's, as a browser would take.
+const TLS_PORT: u16 = 443;
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(30);
 /// How long a token is, in hex, as `fzn relay add` prints it.
@@ -69,16 +80,16 @@ pub struct Dial {
     pub name: Option<String>,
     /// What lets this device make a space on the relay.
     pub token: Option<String>,
+    /// Whether the socket goes under TLS, to a relay named as `wss://`.
+    pub tls: bool,
 }
 
 /// A relay's address as it is given, `ws://NAME:TOKEN@host:port`, `ws://TOKEN@host`,
-/// `ws://host:port`, `host:port` or `host`, as where to dial and as whom.
+/// `ws://host:port`, `host:port` or `host`, or any of those as `wss://` for a relay behind a
+/// proxy that has TLS, as where to dial and as whom.
 pub fn dial_of(relay: &str) -> Result<Dial> {
     let relay = relay.trim();
     let said = unnamed(relay);
-    if relay.starts_with("wss://") {
-        bail!("wss is not built yet: use ws:// over a network you trust");
-    }
     let not = || anyhow!("{said} is not the address of a relay");
     let uri: Uri = if relay.contains("://") {
         relay.parse()
@@ -86,8 +97,10 @@ pub fn dial_of(relay: &str) -> Result<Dial> {
         format!("ws://{relay}").parse()
     }
     .map_err(|_| not())?;
-    let whole =
-        uri.scheme_str() == Some("ws") && matches!(uri.path(), "" | "/") && uri.query().is_none();
+    let tls = uri.scheme_str() == Some("wss");
+    let whole = (tls || uri.scheme_str() == Some("ws"))
+        && matches!(uri.path(), "" | "/")
+        && uri.query().is_none();
     let authority = uri.authority().filter(|_| whole).ok_or_else(not)?;
     let host = authority.host();
     if host.is_empty() {
@@ -124,13 +137,17 @@ pub fn dial_of(relay: &str) -> Result<Dial> {
     }
     let port = authority.port_u16();
     Ok(Dial {
-        authority: format!("{host}:{}", port.unwrap_or(PORT)),
+        authority: format!(
+            "{host}:{}",
+            port.unwrap_or(if tls { TLS_PORT } else { PORT })
+        ),
         shown: match port {
             Some(port) => format!("{host}:{port}"),
             None => host.to_owned(),
         },
         name: name.map(str::to_owned),
         token,
+        tls,
     })
 }
 
@@ -142,6 +159,7 @@ impl std::fmt::Debug for Dial {
             .field("shown", &self.shown)
             .field("name", &self.name)
             .field("token", &self.token.as_ref().map(|_| "…"))
+            .field("tls", &self.tls)
             .finish()
     }
 }
@@ -208,7 +226,22 @@ pub fn dial(to: &Dial, space: &str) -> Result<Wire> {
         Some(name) => format!("/{VERSION}/{name}/{space}"),
         None => format!("/{VERSION}/{space}"),
     };
-    let uri: Uri = format!("ws://{authority}{path}").parse()?;
+    // Under TLS the address is said as it was given, which is what the proxy knows the relay by,
+    // and the certificate has to be for its host. The handshake is had as the greeting is.
+    let (stream, uri) = if to.tls {
+        let host = authority
+            .rsplit_once(':')
+            .map_or(authority.as_str(), |(host, _)| host);
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let checked = ServerName::try_from(host.to_owned())
+            .with_context(|| format!("{host} is not a name a certificate can be for"))?;
+        let tls = ClientConnection::new(trusted()?, checked)?;
+        let stream = Stream::Tls(Box::new(StreamOwned::new(tls, stream)));
+        (stream, format!("wss://{}{path}", to.shown))
+    } else {
+        (Stream::Plain(stream), format!("ws://{authority}{path}"))
+    };
+    let uri: Uri = uri.parse()?;
     let mut request = ClientRequestBuilder::new(uri);
     if let Some(token) = &to.token {
         request = request
@@ -221,6 +254,18 @@ pub fn dial(to: &Dial, space: &str) -> Result<Wire> {
     let (socket, _) = tungstenite::client::client_with_config(request, stream, Some(config))
         .map_err(|e| anyhow!("{e}"))?;
     Wire::new(socket)
+}
+
+/// What a relay behind a proxy with TLS is trusted by: the roots the browsers trust, as built in,
+/// and the protocol versions rustls takes to be safe.
+fn trusted() -> Result<Arc<ClientConfig>> {
+    let roots = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config =
+        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+    Ok(Arc::new(config))
 }
 
 /// Holds a connection to a relay for a space, for as long as the app keeps its end of the
@@ -446,8 +491,14 @@ mod tests {
         assert_eq!(authority("ws://10.0.0.2/").unwrap(), "10.0.0.2:3960");
         assert_eq!(authority("ws://[::1]").unwrap(), "[::1]:3960");
         assert_eq!(authority("[::1]:4000").unwrap(), "[::1]:4000");
-        assert!(authority("wss://nas.local").is_err());
+        assert_eq!(authority("wss://nas.local").unwrap(), "nas.local:443");
+        assert_eq!(
+            authority("wss://nas.local:8443/").unwrap(),
+            "nas.local:8443"
+        );
         assert!(authority("http://nas.local").is_err());
+        assert!(authority("https://nas.local").is_err());
+        assert!(authority("wss://nas.local/1/main").is_err());
         assert!(authority("ws://nas.local/1/main").is_err());
         assert!(authority("").is_err());
     }
@@ -462,6 +513,7 @@ mod tests {
                 shown: "nas.local:4000".into(),
                 name: Some("joe".into()),
                 token: Some(TOKEN.into()),
+                tls: false,
             }
         );
         assert!(!format!("{named:?}").contains(TOKEN), "nor printed");
@@ -496,14 +548,44 @@ mod tests {
                 "is not a name a relay knows",
             ),
             (
-                format!("wss://joe:{TOKEN}@nas.local"),
-                "wss is not built yet",
+                "wss://joe:3f9a@nas.local".to_owned(),
+                "a token is 32 hex characters",
             ),
         ] {
             let said = dial_of(&relay).unwrap_err().to_string();
             assert!(said.contains(why), "{said}");
             assert!(!said.contains(TOKEN) && !said.contains("3f9a@"), "{said}");
         }
+    }
+
+    #[test]
+    fn a_relay_behind_a_proxy_with_tls_is_given_as_wss_and_dialled_on_its_port() {
+        let named = dial_of(&format!("wss://joe:{TOKEN}@nas.local")).unwrap();
+        assert_eq!(
+            named,
+            Dial {
+                authority: "nas.local:443".into(),
+                shown: "nas.local".into(),
+                name: Some("joe".into()),
+                token: Some(TOKEN.into()),
+                tls: true,
+            }
+        );
+        assert!(!dial_of("nas.local").unwrap().tls);
+    }
+
+    #[test]
+    fn a_relay_named_as_wss_that_speaks_no_tls_is_given_up_on_and_hears_nothing_in_the_clear() {
+        let (address, asked) = refusing();
+        let to = dial_of(&format!("wss://joe:{TOKEN}@{address}")).unwrap();
+        let began = Instant::now();
+        let Err(why) = dial(&to, "main") else {
+            panic!("a relay with no TLS was dialled into as one with it");
+        };
+        assert!(began.elapsed() < GREETING, "{:?}: {why:#}", began.elapsed());
+        assert!(!format!("{why:#}").contains(TOKEN), "{why:#}");
+        let heard = asked.recv_timeout(GREETING).unwrap();
+        assert_eq!(heard, "", "the relay read a request: {heard}");
     }
 
     #[test]

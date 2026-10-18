@@ -53,7 +53,7 @@ use tungstenite::protocol::WebSocketConfig;
 use crate::names;
 use crate::system;
 use crate::web_files;
-use crate::wire::{GREETING, MESSAGE_MAX, VERSION, Wire};
+use crate::wire::{GREETING, MESSAGE_MAX, Stream, VERSION, Wire};
 
 /// The file whose lock says which process writes a space's directory.
 const LOCK_FILE: &str = ".lock";
@@ -970,7 +970,7 @@ fn serve(hub: &Hub, stream: TcpStream, greeting: Greeting) {
     // The greeting only takes note of what is asked for. Nothing is opened or made for it until
     // the device has shown it holds the space's key.
     let socket = tungstenite::accept_hdr_with_config(
-        stream,
+        Stream::Plain(stream),
         |request: &Request, mut response: Response| match asked_for(request.uri().path()) {
             Ok((name, space)) => {
                 let offered = offered(request);
@@ -1598,6 +1598,38 @@ pub(crate) mod tests {
             panic!("{first}");
         };
         assert!((system::now().ms - then.ms).abs() < 5_000, "{first}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_answers_a_close_and_ends_a_refusal_with_one_so_that_a_proxy_passes_it_on() {
+        let root = temp_dir();
+        let hub = root.join("relay");
+        fs::create_dir_all(&hub).unwrap();
+        let address = relay(&hub);
+
+        let mut done = Raw::knock(&address, "/1/main", None);
+        assert!(matches!(done.next(), Some(Message::Now(_))));
+        done.socket.close(None).unwrap();
+        let answered = loop {
+            match done.socket.read() {
+                Ok(Frame::Close(_)) => break true,
+                Ok(_) => {}
+                Err(_) => break false,
+            }
+        };
+        assert!(
+            answered,
+            "the relay dropped the socket without answering the close"
+        );
+
+        let mut turned = Raw::knock(&address, "/1/nobody/main", None);
+        assert_eq!(
+            turned.challenged().unwrap_err(),
+            "there is no nobody on this relay"
+        );
+        let ended = turned.socket.read();
+        assert!(matches!(ended, Ok(Frame::Close(_))), "{ended:?}");
         fs::remove_dir_all(&root).unwrap();
     }
 

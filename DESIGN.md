@@ -425,10 +425,13 @@ relay all run the same code.
   device that makes a space offers a token in its greeting, as the subprotocol `fzn.token.<hex>`
   beside `fzn`, and the relay says back `fzn` alone. A message is at most 8 MiB at either end, which
   only a single note larger than that could reach. Each end pings a quiet peer every fifteen seconds
-  and gives up on one silent for 45. A lost relay is dialled again, waiting twice as long each time
-  from a second up to half a minute, a connection that ends within a few seconds counting as one not
-  made, so that a device the relay refuses does not ask again every second; and a device says what
-  it holds whenever it connects, so nothing said while there was no connection needs keeping.
+  and gives up on one silent for 45, and either end that lets a connection go says so with a close,
+  or answers the peer's, since a proxy in front of a relay holds a socket dropped behind it open
+  for seconds and passes a close on at once. A lost relay is dialled again, waiting twice as long
+  each time from a second up to half a minute, a connection that ends within a few seconds
+  counting as one not made, so that a device the relay refuses does not ask again every second;
+  and a device says what it holds whenever it connects, so nothing said while there was no
+  connection needs keeping.
 - **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves every
   space under its root and keeps each as the same files a device keeps, sealed, and holds each
   space's lock alone, where clients share it, so nothing else writes them while it runs. It listens
@@ -455,9 +458,10 @@ relay all run the same code.
   file is ever lost. It keeps only the SHA-256 of each token, in its config directory as
   `relay/tenants/joe` and `relay/token`; whether a name is there is looked at on every connection
   and its token read whenever a space has no key yet, so a copy of its files gives no token and a
-  name given or taken away holds without a restart. It has no TLS, and the terminal refuses
-  `wss://`: on a private network the network encrypts the wire, and elsewhere a proxy in front of
-  the relay has to. What keeps a relay private is the key, which it never has; what keeps its disk
+  name given or taken away holds without a restart. It has no TLS of its own: on a private network
+  the network encrypts the wire, and elsewhere a proxy in front of the relay has to, and a device
+  then names the relay as `wss://` (see "The terminal speaks wss"). What keeps a relay private is
+  the key, which it never has; what keeps its disk
   is the token. It carries the page and hands it out on the same address, so a browser has one
   address to open (see "Where the page comes from" under Browser).
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with `--relay`.
@@ -477,7 +481,8 @@ relay all run the same code.
   nothing handed over, since the directory is the state. A keeper that hands the terminal to an
   editor lets the lease go first, since it hears and looks at nothing until the editor is done, and
   tries to take it back at its next look after. The address may carry a token,
-  `ws://joe:TOKEN@nas.local`, which is what lets a device make a space on the relay: it is read with
+  `ws://joe:TOKEN@nas.local`, or `wss://joe:TOKEN@nas.local` for a relay behind a proxy that has
+  TLS, which is what lets a device make a space on the relay: it is read with
   a URI parser, goes no further than the greeting (see "A connection"), and is never said, the
   status row naming the relay by its host alone. With no relay named, nothing leaves the machine.
 - **The engine is where sync and the app meet.** A *device* is a session and a replica joined in
@@ -503,7 +508,8 @@ relay all run the same code.
   log is forked compacts, taking a new id, and its header retires the forked name. Both machines do
   this, each from its own copy, so nothing either wrote is lost, and the relay ends up with two logs
   where it had one shared name.
-- Not covered yet: TLS, history beyond what compaction keeps, and two devices syncing with no relay
+- Not covered yet: TLS in the relay itself, which a proxy in front of it has instead, history
+  beyond what compaction keeps, and two devices syncing with no relay
   between them, which would each have to challenge the other. The header is taken on trust inside a
   space, and that is where it belongs: it is the one line a replica acts on, and it reaches a
   replica only from a device that proved the space's key, which holds every note in the space
@@ -3040,6 +3046,29 @@ the app now does is described above; an entry repeats it only where the reason n
   name's spaces apart in the browser's storage, which lets one browser hold two names but renames
   every kept thing for a case nobody has.
 
+- **The terminal speaks wss.** Decided 2026-10-18, at Sam's direction, closing the open question
+  on `wss://` from the terminal, which said the first relay put behind a proxy with TLS would ask
+  for it. Sam was moving his own spaces to the relay a second person uses, which is public and
+  reached only through its host's proxy, which speaks TLS and nothing else, so a terminal without
+  it could not sync there at all. A relay is named `wss://host`, with a name and a token as
+  before, and dialled on 443 unless a port is given. The socket goes under TLS before the
+  websocket's greeting, so a token crosses the network only inside it, and the proxy's
+  certificate is checked for the host as given against the roots the browsers trust, Mozilla's,
+  built in, so that a static binary trusts the same on any machine without finding where each
+  keeps its own. The TLS is rustls, with ring for its cryptography: rustls's default, aws-lc-rs,
+  wants cmake as well as a C compiler for every target, and ring only the compiler, clang for
+  both musl builds, which `release.sh` names. The relay is unchanged and still has no TLS: the
+  proxy in front has it, renews its own certificate, and is where the network is public. Behind
+  such a proxy a socket the relay dropped stayed open at the device's end for about five
+  seconds, so every command waited out its close and then said it had not synced, and a refused
+  device would have dialled again every six seconds instead of waiting longer each time; so
+  either end that lets a connection go now says so with a close, or answers the peer's, which a
+  proxy passes on at once. Weighed: OpenSSL through native-tls, which a static musl build cannot
+  carry; the system's roots, which a static binary would have to find on each machine; a plain
+  `ws://` port on the public relay, where the token, a space's one claim and every proof would
+  cross in the clear; and a tunnel such as the host's own proxy command, which would have to be
+  kept running beside the terminal.
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -3080,8 +3109,6 @@ the app now does is described above; an entry repeats it only where the reason n
 - Quotas. A name may make as many spaces, as large, as it likes; its token is the only bound. A
   quota per name, with a compaction always let through so that a full space can shrink, is the
   answer once a name is someone the admin does not know.
-- `wss://` from the terminal, for a relay behind a proxy that has TLS. The page already takes `wss`
-  when it was loaded over `https`. The first relay put behind such a proxy asks for it.
 - The phone, which nobody has used the page on yet. Whether WebKit there sends a second tap beside a
   head where Chromium does: in Chromium's and WebKit's touch emulation that tap was taken into the
   head's text box as often as not until the page read the touch itself, and `body` in the bar is the
