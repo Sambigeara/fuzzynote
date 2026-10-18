@@ -45,9 +45,12 @@ const el = (tag, cls, text) => {
   return node;
 };
 
-// A space is asked for by name: /?space=work. A name has to be a plain one.
-const asked = new URLSearchParams(location.search).get('space') || '';
-const space = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(asked) ? asked : 'main';
+// A space is asked for by name: /?space=work. A name has to be a plain one, as the name the spaces
+// are under does.
+const PLAIN = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/;
+const address = new URLSearchParams(location.search);
+const asked = address.get('space') || '';
+const space = PLAIN.test(asked) ? asked : 'main';
 const title = space === 'main' ? 'fzn' : `fzn · ${space}`;
 document.title = title;
 
@@ -82,13 +85,22 @@ function keep(name, value, where = local) {
 // alone. With a name the spaces are asked for under it.
 const TOKEN = 'fzn.token';
 const given = location.hash.match(/^#(?:([A-Za-z0-9_-][A-Za-z0-9._-]{0,63}):)?([0-9a-f]{32})$/);
-if (given) {
-  keep(TOKEN, given[1] ? `${given[1]}:${given[2]}` : given[2]);
-  history.replaceState(history.state, '', location.pathname + location.search);
-}
-const credential = kept(TOKEN) || '';
+if (given) keep(TOKEN, given[1] ? `${given[1]}:${given[2]}` : given[2]);
+// The name is said in the address as well, `?name=joe`, being no secret, since an address is all a
+// home-screen app is added with, and on iOS such an app keeps storage apart from Safari's and so
+// starts with no token: with the name it still asks for joe's spaces, which are there by then and
+// let it in on their key alone. What a browser keeps of a space is under the space's name and not
+// the name it is under, so a browser keeps to one name: one from the address is kept as a token's
+// is when the browser holds none, and the address says the name held, whatever it said before.
+const addressed = address.get('name') || '';
+if (!kept(TOKEN) && PLAIN.test(addressed)) keep(TOKEN, `${addressed}:`);
+const credential = kept(TOKEN) || (PLAIN.test(addressed) ? `${addressed}:` : '');
 const whose = credential.includes(':') ? credential.slice(0, credential.indexOf(':')) : '';
 const token = credential.slice(credential.indexOf(':') + 1);
+if (whose) address.set('name', whose);
+else address.delete('name');
+const query = address.toString();
+history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${given ? '' : location.hash}`);
 
 const hex = (bytes) =>
   [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');

@@ -810,8 +810,11 @@ line of a tab's log that the tab lost by closing, which the next tab to write th
 over: a fork. A relay that says who may make spaces on it gives a link with a token, `#joe:3f9a…`,
 or `#3f9a…` for its root, opened once: the page keeps the token for the browser and takes it off the
 address, asks for its spaces under the name, `/1/joe/main`, and offers the token as a subprotocol
-beside `fzn`, the one place a page can put a credential on a socket. A space that is there already
-is entered with its key alone. A refusal from the relay stays in the foot until a relay takes the
+beside `fzn`, the one place a page can put a credential on a socket. The name, being no secret, is
+said in the address as well, `?name=joe`, so that a page added to a home screen keeps it; a browser
+holding no name takes the one its address says, and one holding a name says that one, since what a
+browser keeps of a space is under the space's name alone (see "The page says its name in its
+address"). A space that is there already is entered with its key alone. A refusal from the relay stays in the foot until a relay takes the
 tab in, and a connection the relay ends at once does not shorten the wait before the next. The word
 `passphrase` in the foot types the passphrase again, and is there only in a space with no notes yet.
 A passphrase in doubt, a key that opens nothing here or one the relay refused that nothing here has
@@ -1051,7 +1054,7 @@ the keyboard as it was. The caret is drawn where the cursor is whether or not th
 still while it is down, and on a row not yet revealed at the end of its reading. There is no
 gesture of the app's own: tap, scroll and the system's back are the whole of it. A manifest and
 an icon let the page be added to a home screen as an app of its own, the browser's bars in the
-paper's colour, opening the space it was added from. The passphrase's field waits for a tap, with
+paper's colour, opening the space it was added from, under the name it was added under. The passphrase's field waits for a tap, with
 the resting caret at its start, the keyboard's key says `go`, and a word `open` under the sentence
 opens the space.
 
@@ -3013,6 +3016,29 @@ the app now does is described above; an entry repeats it only where the reason n
   arrival, which reorders what the line ranks and puts new notes above the cursor; and leaving the
   row under the cursor until the cursor leaves it whether or not it was being written in, which
   leaves a note done elsewhere under the cursor with nothing to say why.
+
+- **The page says its name in its address.** Decided 2026-10-18, at Sam's direction, revising "The
+  phone is a frame with a bar" where it says a home-screen app reaches a space under a name only
+  once the link with the token has been opened in it. A second person was to use fzn from an iPhone,
+  under a name on a relay of their own, the first someone with a name on a relay to add the page to
+  a home screen, which is when that decision said this would be settled. The name came to a browser
+  only in the link with the token, and the page took the link off its address as it kept the token,
+  so a page added to the home screen was added without the name; and on iOS a home-screen app keeps
+  storage apart from Safari's, so it held no token either, asked for its spaces at the relay's root,
+  and was refused there, or where the root was open made a space there of its own, beside the one
+  under the name. Now the address says the name, `?name=joe`, since a name is no secret and the
+  relay already refuses one it does not have: a page opened from the link writes it there as it
+  takes the token off, so the address added to the home screen carries it, and the app asks for
+  joe's spaces, which are there by then and let it in on their key alone. What a browser keeps of a
+  space, its key, its writers and its lines, is under the space's name and not the name it is under,
+  so a browser keeps to one name, or `joe/main` and another's `main` would share one store: a name
+  from the address is kept as a token's is when the browser holds none, and one that holds a name
+  says that one in its address, whatever the address said. Weighed: the name as a path,
+  `/joe/garden`, which reads better but has the relay route every page file under every name for
+  what a query already does; a token kept in the address, which puts a credential where the
+  browser's list of the pages visited and anyone looking at the screen can read it; and keeping each
+  name's spaces apart in the browser's storage, which lets one browser hold two names but renames
+  every kept thing for a case nobody has.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
