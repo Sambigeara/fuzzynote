@@ -30,6 +30,8 @@
 // gets one; a word a key also asks for has the key written after it, where there is a pointer to
 // read it with. The chords are the terminal's wherever a browser lets them go, and where it
 // does not, the terminal names the page's, so that the two faces are one set of keys to learn.
+// While a tag or a person is typed, what the space has that it starts floats under it, and Tab or
+// Enter takes the one marked (see paintOffer).
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
 // are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
@@ -427,10 +429,10 @@ function carryOut(json) {
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
-  // Where the engine put the caret in the head, for the painting to put the box's there. Where it
-  // put it in the line needs nothing: the line is only set when the engine changed it, and setting
-  // it leaves the caret at the end, where the engine puts it.
+  // Where the engine put the caret in the head, for the painting to put the box's there, and in the
+  // line, for the line to be given it as it is read (see look).
   if (todo.caret?.head != null) placed = todo.caret.head;
+  if (todo.caret?.line != null) placedLine = todo.caret.line;
   look();
 }
 
@@ -455,6 +457,13 @@ function look() {
   if (line.value !== view.line) {
     line.value = view.line;
     edges(line);
+  }
+  // Setting it leaves the caret at its end, where the engine puts it but for a word taken from
+  // what was offered, which puts it after the word.
+  if (placedLine != null) {
+    const at = unitsIn(line.value, placedLine);
+    if (line.selectionStart !== at || line.selectionEnd !== at) line.setSelectionRange(at, at);
+    placedLine = null;
   }
   if (!editor && view.field?.whole) loadEditor();
   if (place(view) !== was) safely();
@@ -679,6 +688,8 @@ let wantsText = false;
 // putting a head back, a version from elsewhere, or a body opening or closing. Otherwise the caret
 // stays where it was, as far as the text still reaches.
 let placed = null;
+// Where the engine put the caret in the line, in characters, until the line is next read.
+let placedLine = null;
 
 // Where a count of characters, as the engine counts them, ends in a text, as the browser counts it.
 const unitsIn = (text, chars) => {
@@ -689,6 +700,8 @@ const unitsIn = (text, chars) => {
   }
   return at;
 };
+// How many characters, as the engine counts them, the first `units` of a text hold.
+const charsIn = (text, units) => [...text.slice(0, units)].length;
 const mayFocus = () => !coarse.matches || typing() || wantsText !== false;
 
 // On a touch screen the page is a frame the size of the visual viewport, the part of the screen
@@ -882,6 +895,7 @@ box.addEventListener('input', () => {
   }
   const at = field.text.indexOf('\n');
   act({ edited: at < 0 ? box.value : `${box.value}\n${field.text.slice(at + 1)}` });
+  sayCaret(box);
 });
 
 // Whatever writes in the head reveals it before it lands, by a key or not: a paste, a cut, the
@@ -939,6 +953,7 @@ box.addEventListener('keydown', (event) => {
     event.preventDefault();
     return;
   }
+  if (onOffer(event, true)) return;
   switch (escapes(event) ? 'Escape' : event.key) {
     case 'ArrowDown':
     case 'ArrowUp':
@@ -1057,9 +1072,13 @@ function keyFor(action) {
     case 'archive':
       return '⇧↵';
     case 'go_in':
+    case 'take':
       return 'Tab';
+    case 'choose':
+      return '↑↓';
     // Escape's rungs, off the row, off the text on the line and out of the place, each a word as
-    // the way back; clearing the line is its cross as well.
+    // the way back, and closing what is offered; clearing the line is its cross as well.
+    case 'dismiss':
     case 'select':
     case 'type':
     case 'back':
@@ -1481,7 +1500,7 @@ function paintHints() {
   // bar, where a thumb finds it without reading, so that a way out of a place several steps deep
   // is one spot pressed again and again, clearing the line and then stepping out.
   const last = hints.length ? named(hints[hints.length - 1].action) : '';
-  const way = ['back', 'select', 'type', 'close'].includes(last) ? hints.pop() : null;
+  const way = ['back', 'select', 'type', 'close', 'dismiss'].includes(last) ? hints.pop() : null;
   // What a word's key is can change while the words do not, as vim's keys come and go.
   const said = (hint) => [hint, keyFor(hint.action)];
   set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
@@ -1766,10 +1785,14 @@ function paint() {
   if (whole && !wasWhole) sheet.scrollTop = 0;
   paintHints();
   paintFoot();
+  paintOffer();
   caretMoved();
 }
 
-line.addEventListener('input', () => act({ type: line.value }));
+line.addEventListener('input', () => {
+  act({ type: line.value });
+  sayCaret(line);
+});
 
 // A click on the line takes the cursor there, so that the engine's cursor follows the focus. An
 // open body has already been closed by then, by its blur.
@@ -1824,6 +1847,7 @@ const asMeasured = () => {
     field &&
     [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, faceOf(field),
       $('dates').textContent, view?.cursor, composing, field === document.activeElement, revealed,
+      view?.offer?.from,
       inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
         editor.composing, editor.dom.parentElement] : ''].join('\u0000')
   );
@@ -1905,7 +1929,16 @@ function placeCaret() {
   if (field && inEditor()) return placeEditorCaret();
   const read = field === box && !revealed && !!boxIn && !!view?.field && !view.field.whole;
   if (read && !composing && !document.body.classList.contains('locked')) return placeReadingCaret();
-  if (!shown) {
+  // While a word is composed the input method draws its own caret, and what is offered is still
+  // set under the word, so the word is measured all the same.
+  const offered =
+    !shown &&
+    composing &&
+    !!view?.offer &&
+    !view.field?.whole &&
+    field?.selectionStart === field?.selectionEnd &&
+    (field === box ? revealed : field === line && view.cursor == null);
+  if (!shown && !offered) {
     caret.hidden = true;
     caretWas = '';
     return;
@@ -1925,7 +1958,12 @@ function placeCaret() {
   const end = at >= text.length || text[at] === '\n';
   const letter = end ? '' : text.slice(at, lettersOf(text.slice(at, at + 16))[1] + at);
   const span = el('span', null, end ? '\u00a0' : letter);
-  mirror.replaceChildren(text.slice(0, at), span, text.slice(at + letter.length));
+  // The word something is offered for is measured in the same read, so that what is offered is
+  // set under its mark.
+  const from = view.offer && !view.field?.whole ? Math.min(unitsIn(text, view.offer.from), at) : -1;
+  const word = from >= 0 ? el('span', null, text.slice(from, at)) : null;
+  const before = word ? [text.slice(0, from), word] : [text.slice(0, at)];
+  mirror.replaceChildren(...before, span, text.slice(at + letter.length));
   const width = `${field.clientWidth - padding}px`;
   if (mirror.style.width !== width) mirror.style.width = width;
 
@@ -1945,7 +1983,17 @@ function placeCaret() {
   if (caret.parentElement !== parent) parent.append(caret);
   caret.classList.remove('bar');
   caret.classList.toggle('still', field !== document.activeElement);
-  showCaret(left, top, wide, tall);
+  if (shown) showCaret(left, top, wide, tall);
+  else {
+    caret.hidden = true;
+    caretWas = '';
+  }
+  if (word) {
+    const rect = field.getBoundingClientRect();
+    const y = rect.top - field.scrollTop + offsetTop - (tall - offsetHeight) / 2;
+    offerAt = { x: rect.left - field.scrollLeft + word.offsetLeft, above: y, below: y + tall };
+    placeOffer();
+  }
 }
 
 // A row not yet revealed is read, and its caret is a block at the end of the reading, or on its `…`
@@ -2041,6 +2089,99 @@ for (const field of [box, line]) {
   );
 }
 
+// What is offered for the tag or person the caret ends: a short list floating under the word, its
+// words starting under the word's mark, the one Tab takes marked as the cursor's row is. Its words
+// are painted with the rest; where it goes is measured with the caret, in the same read (see
+// placeCaret). It is under the word, or over it where under would reach the foot. A press on one
+// takes it, and leaves the focus in the field.
+const offerNode = $('offer');
+let offerAt = null;
+function paintOffer() {
+  const offer = view.offer;
+  offerNode.hidden = !offer;
+  if (!offer) {
+    offerAt = null;
+    return;
+  }
+  set(offerNode, JSON.stringify(offer.words), () =>
+    offer.words.map((word) => {
+      const li = el('li', null, word);
+      li.setAttribute('role', 'option');
+      return li;
+    }),
+  );
+  [...offerNode.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === offer.chosen)));
+  placeOffer();
+}
+function placeOffer() {
+  if (offerNode.hidden || !offerAt) return;
+  const tall = offerNode.offsetHeight;
+  const foot = $('foot').getBoundingClientRect().top;
+  const top = offerAt.below + tall <= foot || offerAt.above - tall < 0 ? offerAt.below : offerAt.above - tall;
+  const inset = parseFloat(getComputedStyle(offerNode).paddingLeft);
+  const left = Math.max(0, Math.min(offerAt.x - inset, innerWidth - offerNode.offsetWidth));
+  offerNode.style.left = `${left}px`;
+  offerNode.style.top = `${top}px`;
+}
+offerNode.addEventListener('mousedown', (event) => event.preventDefault());
+offerNode.addEventListener('click', (event) => {
+  const li = event.target.closest('li');
+  if (!li || !view?.offer) return;
+  act({ take: [...offerNode.children].indexOf(li) });
+  safely();
+  follow();
+});
+// A list scrolled under a head being written moves the head, and what is offered goes with it.
+list.addEventListener(
+  'scroll',
+  () => {
+    if (!view?.offer) return;
+    measured = null;
+    placeCaret();
+  },
+  { passive: true },
+);
+
+// Where the caret is, said to the engine in characters after typing in the line or a head, and
+// when it moves while something is offered, so that what completes the tag or person it ends is
+// offered, and closed once the caret leaves the word. A move to where the caret was last said is
+// not said again; typing always is, since what it typed closed what was offered, even when it
+// typed what was there already, as a composition committed or a paste of the same word does.
+let saidAt = '';
+function sayCaret(field, moved = false) {
+  if (field.selectionStart !== field.selectionEnd) return;
+  const at = charsIn(field.value, field.selectionStart);
+  const now = JSON.stringify([field === line, at, field.value]);
+  if (moved && now === saidAt) return;
+  saidAt = now;
+  act({ at });
+}
+const caretOffered = (field) => {
+  if (view?.offer && (field === line || field === box) && document.activeElement === field) sayCaret(field, true);
+};
+document.addEventListener('selectionchange', () => caretOffered(held));
+
+// While a word is offered for, Tab and Enter take the one chosen, the arrows up and down choose
+// another, and Escape closes it; every other key means what it always does. On a row Shift-Enter
+// still ticks; on the line it is Enter. Taking paints at once, so that the next key lands in the
+// text with the word in it.
+function onOffer(event, onRow) {
+  if (!view?.offer || event.isComposing || composing || event.keyCode === 229) return false;
+  const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+  let action = null;
+  if (escapes(event)) action = 'dismiss';
+  else if (plain && event.key === 'Tab' && !event.shiftKey) action = { take: null };
+  else if (plain && event.key === 'Enter' && !(event.shiftKey && onRow)) action = { take: null };
+  else if (plain && !event.shiftKey && event.key === 'ArrowDown') action = { choose: 1 };
+  else if (plain && !event.shiftKey && event.key === 'ArrowUp') action = { choose: -1 };
+  if (!action) return false;
+  event.preventDefault();
+  act(action);
+  if (named(action) === 'take') safely();
+  follow();
+  return true;
+}
+
 function showCaret(left, top, wide, tall) {
   caret.style.cssText = `left:${left}px;top:${top}px;width:${wide}px;height:${tall}px`;
   caret.hidden = false;
@@ -2090,7 +2231,9 @@ for (const field of [line, box]) {
   field.addEventListener('input', caretMoved);
   // Some browsers say a text field's selection changed to the field and not to the document.
   field.addEventListener('selectionchange', () => {
-    if (held === field) caretMoved();
+    if (held !== field) return;
+    caretMoved();
+    caretOffered(field);
   });
   field.addEventListener('compositionstart', () => {
     composing = true;
@@ -2136,6 +2279,7 @@ function pressed(event) {
   const onButton = event.target instanceof HTMLButtonElement;
   if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
   const onLine = view.cursor == null;
+  if (onOffer(event, !onLine)) return;
   // Tab goes into what the line names, from anywhere in its text, and the session says whether it
   // names anywhere. It never moves the focus, since the page's keys are fzn's while it has them,
   // and Shift-Tab is nothing for the same reason.

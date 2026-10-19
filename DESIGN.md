@@ -902,7 +902,11 @@ because the list was scrolled or walked to it does not fade in. The path, in a p
 margin above the line, `main › Boiler`: the space's name and then each step, each a way back to it,
 the first to the top, a note's step read as its row is. The tab's title stays `fzn`, or `fzn ·
 garden` in another space. Paper, ink and two greys, and one colour, a muted blue, for a link; light
-or dark by the system's preference. On a page at least 75rem wide the body of what the cursor is on
+or dark by the system's preference. What is offered for a tag or a person being typed floats under
+the word, from its mark, over the rows, or over the word where under would reach the foot: a small
+sheet, the sheet's paper and shadow with a hairline round it, its words soft and the one Tab takes
+in ink and heavier, as the head under the cursor is. On a page at least 75rem wide the body of what
+the cursor is on
 is read beside the list, 30rem wide and growing to 38rem past 100rem: the note under the cursor,
 and the whole of its head, above the body, when its row cuts it, or with the cursor on the line in a
 place the note you are in. It is rendered as
@@ -981,7 +985,10 @@ editor's, vim's scroll in vim mode, and Ctrl-K and Ctrl-H are the editor's where
 otherwise do nothing, never reaching the browser; on a Mac, where they are the text's own Emacs keys
 and the browser's nothing, they are left to the text. Ctrl with an arrow moves the note under the
 cursor a row, PageUp and PageDown move the cursor by ten, and Backspace on an empty head takes the
-row away, all as in the terminal. Shift-Tab does nothing, so no key takes the focus off the page's
+row away, all as in the terminal. While a tag or a person is offered, Tab and Enter take the one
+marked, Up and Down choose and Escape closes it, as in the terminal, Shift-Enter on a row still
+ticking, and the foot's words are `take Tab`, `choose ↑↓` and `close Esc`, closing being the way
+back. Shift-Tab does nothing, so no key takes the focus off the page's
 text. The page is not marked as an application for assistive technology, which would stop a screen
 reader reading the body beside the list as a document; the line and the head are text fields, and
 that says enough. Every other thing that can be asked for is a word at the foot of the page, pressed
@@ -1094,11 +1101,13 @@ is drawn a little larger than a letter, so that it reads at a glance, and sits o
 line with its middle on the middle of the capitals, as the font measures them, in a row and in a
 body read alike (see "A task's box sits by the font's measures"). The `›` at the end of the selected
 row goes into the note and the one after the line into what the line names; a link in a row opens
-and leaves the cursor where it was; the path is the way back, and so is the phone's own back
+and leaves the cursor where it was; a word offered is taken with a tap; the path is the way back,
+and so is the phone's own back
 gesture. The keyboard is the person's: the page moves the focus between fields while one has it, and
 otherwise gives it only for something that asked to write, a finger on a head's words, a key pressed
 on a keyboard joined to the device, or the word `new note`; no control takes the focus, on any
-width, so the words, the cross, the arrows and the path's steps act on where the cursor is and leave
+width, so the words, what is offered, the cross, the arrows and the path's steps act on where the
+cursor is and leave
 the keyboard as it was. The caret is drawn where the cursor is whether or not the keyboard is up,
 still while it is down, and on a row not yet revealed at the end of its reading. There is no
 gesture of the app's own: tap, scroll and the system's back are the whole of it. A manifest and

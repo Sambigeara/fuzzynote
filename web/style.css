@@ -658,6 +658,40 @@ body.resting #list {
 body.resting .row, body.resting .row .head { color: var(--faint); }
 body.resting .row .tail { display: none; }
 
+/* What is offered while a tag or a person is typed: a short list floating under the word, from
+   its mark, over the rows. It lies over text that would read through it, so it is a small sheet,
+   the sheet's paper and shadow with a hairline round it, the one surface beside the sheet. The
+   one Tab takes is heavier and in ink, as the head under the cursor is; the rest are soft. On a
+   touch screen each is a finger's height. */
+#offer {
+  position: fixed;
+  z-index: 2;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  list-style: none;
+  max-width: min(20rem, 100vw - 2 * var(--gutter));
+  border-radius: 6px;
+  background: var(--sheet);
+  box-shadow: 0 0 0 1px var(--rule), 0 0.5rem 1.5rem rgb(0 0 0 / 0.08);
+  font-size: var(--note-size);
+  line-height: 1.5;
+}
+#offer li {
+  padding: 0.125rem 0;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+#offer li[aria-selected="true"] { color: var(--ink); font-weight: 500; }
+@media (hover: hover) and (pointer: fine) {
+  #offer li:hover { color: var(--ink); }
+}
+@media (hover: none) and (pointer: coarse) {
+  #offer li { display: flex; align-items: center; min-height: 44px; }
+}
+
 /* The foot: words, not buttons with borders, and what just happened above them at the right. It
    is one line at every width and never changes height: the words never wrap, the way back follows
    them and stays in sight when they do not fit, the rest scrolling under a fade at each edge that
