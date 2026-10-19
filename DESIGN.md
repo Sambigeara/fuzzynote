@@ -663,13 +663,12 @@ a label as it is written: `#house`, `@joe`, `2026-10-16`, `[ ]`, `[x]`, and a no
 where it was gone into from: `#house › Boiler`, not `#house › Boiler #house`, and `Boiler`, not
 `# Boiler`.
 
-A row that is not under the cursor shows its head without the place's labels where they end it, when
-the note is a head only, since the place already says them: inside `#house`, `Order oil #house`
-reads `Order oil`. The place's labels are those gone into since the last note on the path, which a
+A row that is not under the cursor shows its head without the place's labels where they end it,
+whether or not the note has a body, since the place already says them: inside `#house`, `Order oil
+#house` reads `Order oil`. The place's labels are those gone into since the last note on the path, which a
 note written there would inherit; they come off in any order and any case, but only as whole words,
 `#House` for `#house` and not `#house,`. The box at the start stays; a head that would be left with
-nothing, or only its box, shows whole; a note with a body keeps its head whole, since that head is
-its name; and the row under the cursor shows its text as it is, in the terminal as the cursor lands
+nothing, or only its box, shows whole; and the row under the cursor shows its text as it is, in the terminal as the cursor lands
 and on the page once the row is written in or the caret is put in it (see "Writing in a row" under
 Browser). A label only typed on the line hides nothing. The engine says the head each row shows, so
 neither face carries the rule. A head is named without the labels that end it too, in a second tier:
@@ -2107,7 +2106,9 @@ the app now does is described above; an entry repeats it only where the reason n
   place, a note named only in the second tier is listed as named and gone into only if it carries
   the place's labels, since those are the rows that read so: inside `#house`, `order oil` goes into
   `Order oil #house` though `Order oil #garden` is called the same, and only the first says `its
-  name`. Without the second tier a row would read one thing and answer to another.
+  name`. Without the second tier a row would read one thing and answer to another. Revised
+  2026-10-19 by "A note with a body hides the place's labels too", which takes back the clause that
+  kept such a head whole.
 
 - **A face keeps the path as steps.** Decided 2026-10-16, at Sam's direction, revising "A tag is a
   place you can go into" where it left out remembering the path across restarts. A page is reloaded
@@ -3186,6 +3187,18 @@ the app now does is described above; an entry repeats it only where the reason n
   never pushed unasked. So the workflow publishes the release as the latest when a tag is pushed.
   A bad release is answered by the next patch tag, or by deleting it, which hands `latest` back to
   the one before. A run by hand still builds everything and publishes nothing.
+
+- **A note with a body hides the place's labels too.** Decided 2026-10-19, at Sam's direction,
+  reversing the clause of "A row hides the place's labels" (2026-10-16) that kept the head of a
+  note with a body whole, since that head is the note's name. Inside `#house` a note written out
+  under `Boiler service #house` still ended its row with the tag the path already says, beside rows
+  of head-only notes that did not, so the list read two ways and the row that was a document read
+  the noisier. The path said it too: gone into from `#house`, it read `#house › Boiler service
+  #house`, where the rule's own example is `#house › Boiler`. The reason given does not hold: the
+  head is still the note's name, and the second tier already names every note without the labels
+  that end its head, body or not, so typing what the row now reads still finds it and goes into
+  it. The row under the cursor shows its text as it is, as any row's does, and nothing else of the
+  rule changes.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

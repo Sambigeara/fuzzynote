@@ -70,7 +70,7 @@ fn the_box_stays_and_a_head_of_only_its_labels_shows_as_it_is() {
 }
 
 #[test]
-fn a_note_with_a_body_keeps_its_head_whole_in_a_place() {
+fn a_note_with_a_body_hides_the_places_labels_as_a_head_alone_does() {
     let mut s = session();
     put(
         &mut s,
@@ -79,10 +79,14 @@ fn a_note_with_a_body_keeps_its_head_whole_in_a_place() {
         &[],
         1_000,
     );
-    put(&mut s, "boiler", "Boiler\n#house", &[], 2_000);
+    put(&mut s, "pump", "Pump #house\n#garden", &[], 2_000);
+    put(&mut s, "boiler", "Boiler\n#house", &[], 3_000);
     go_to(&mut s, "#house");
-    assert_eq!(shown(&s, "Order oil #house"), None);
-    assert_eq!(shown(&s, "Boiler"), None);
+    assert_eq!(shown(&s, "Order oil #house"), Some("Order oil"));
+    assert_eq!(shown(&s, "Pump #house"), Some("Pump"));
+    assert_eq!(shown(&s, "Boiler"), None, "its label is in the body");
+    go_into(&mut s, "Order oil #house");
+    assert_eq!(path(&s), ["#house", "Order oil"]);
 }
 
 #[test]
@@ -250,14 +254,6 @@ fn a_head_of_only_labels_and_a_heading_mark_shows_as_it_is() {
     assert_eq!(shown(&s, "## Plans #house"), Some("## Plans"));
     go_into(&mut s, "## Plans #house");
     assert_eq!(path(&s), ["#house", "Plans"]);
-}
-
-#[test]
-fn a_body_of_only_tags_is_no_body_so_the_head_still_hides_the_place() {
-    let mut s = session();
-    put(&mut s, "oil", "Order oil #house\n#garden", &[], 1_000);
-    go_to(&mut s, "#house");
-    assert_eq!(shown(&s, "Order oil #house"), Some("Order oil"));
 }
 
 /// Whether the row with this head says it is named by the line.

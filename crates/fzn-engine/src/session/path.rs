@@ -106,20 +106,15 @@ fn is_label(word: &text::Labelled, label: &Label) -> bool {
 }
 
 /// A head as a row that is not under the cursor shows it in a place whose labels are these:
-/// with them taken off its end, in any order and any case, when the note is a head only and
-/// they end it. The place already says them. A note with a body keeps its head whole, since that
-/// head is its name; the box at the start stays, since it says what the row is; and a head of
-/// nothing but the labels, or the box and the labels, shows as it is, since a row of nothing
-/// says less than a row of its label, as does a heading mark with nothing after it. None when
-/// nothing is taken off.
+/// with them taken off its end, in any order and any case, when they end it, whether the note
+/// has a body or not. The place already says them. The box at the start stays, since it says
+/// what the row is; and a head of nothing but the labels, or the box and the labels, shows as it
+/// is, since a row of nothing says less than a row of its label, as does a heading mark with
+/// nothing after it. None when nothing is taken off.
 pub(super) fn head_shown<'a>(
     head: &str,
-    has_body: bool,
     labels: impl Iterator<Item = &'a Label> + Clone,
 ) -> Option<String> {
-    if has_body {
-        return None;
-    }
     let rest = text::without_end(head, |word| {
         text::label_word(word).is_some_and(|word| labels.clone().any(|l| is_label(&word, l)))
     });
@@ -281,8 +276,8 @@ impl Session {
 
     /// A head as a row that is not under the cursor shows it here, if that differs from the
     /// head: with the place's labels taken off its end, by [`head_shown`].
-    pub(super) fn shown(&self, head: &str, has_body: bool) -> Option<String> {
-        head_shown(head, has_body, self.labels_here().map(|(label, _)| label))
+    pub(super) fn shown(&self, head: &str) -> Option<String> {
+        head_shown(head, self.labels_here().map(|(label, _)| label))
     }
 
     /// Goes back to where a face kept you: each step from the top, as going in from the line
@@ -326,8 +321,7 @@ impl Session {
         let record = self.notes.get(id)?;
         let head = unmarked(record.head());
         let labels = self.labels_here().map(|(label, _)| label);
-        let has_body = text::has_body(&record.text);
-        Some(head_shown(head, has_body, labels).unwrap_or_else(|| head.to_owned()))
+        Some(head_shown(head, labels).unwrap_or_else(|| head.to_owned()))
     }
 
     /// The note being looked around: the last note on the path, if there is one. It is the

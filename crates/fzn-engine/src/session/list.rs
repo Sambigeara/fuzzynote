@@ -74,7 +74,7 @@ impl Session {
         Row {
             id: r.id.clone(),
             head: r.head().to_owned(),
-            shown: self.shown(r.head(), has_body),
+            shown: self.shown(r.head()),
             task: text::task(&r.text),
             archived: r.archived,
             has_body,
@@ -314,7 +314,7 @@ impl Session {
         Row {
             id: hit.note.id.clone(),
             head: hit.note.head().to_owned(),
-            shown: self.shown(hit.note.head(), has_body),
+            shown: self.shown(hit.note.head()),
             task: text::task(&hit.note.text),
             archived: hit.note.archived,
             has_body,

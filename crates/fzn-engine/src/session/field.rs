@@ -728,7 +728,7 @@ impl Session {
         let body = text::has_body(&record.text);
         let (head, shown, links) = (
             record.head().to_owned(),
-            self.shown(record.head(), body),
+            self.shown(record.head()),
             self.link_heads(record),
         );
         let task = text::task(&record.text);
