@@ -450,8 +450,12 @@ function look() {
   const was = place(view);
   view = JSON.parse(fzn.view());
   // The line is the person's while they type. It is only set when the engine has changed it, as
-  // it does on the way into a note and out of one, and when the line is written.
-  if (line.value !== view.line) line.value = view.line;
+  // it does on the way into a note and out of one, and when the line is written; its fades are
+  // then those of what it holds.
+  if (line.value !== view.line) {
+    line.value = view.line;
+    edges(line);
+  }
   if (!editor && view.field?.whole) loadEditor();
   if (place(view) !== was) safely();
   else paintSoon();
@@ -1926,10 +1930,11 @@ function placeCaret() {
   if (mirror.style.width !== width) mirror.style.width = width;
 
   // The read. The block is the height of the line, centred on the letter as the line's own leading
-  // is, and never narrower than a third of a letter, so that it is still a block over an i. A head
-  // being written on one line is scrolled to the caret before the field's place is taken.
+  // is, and never narrower than a third of a letter, so that it is still a block over an i. The
+  // line, and a head being written on one line, is scrolled to the caret before the field's place
+  // is taken.
   const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = span;
-  if (field === box && style.whiteSpace === 'pre') sidescroll(offsetLeft, size);
+  if (field === line || (field === box && style.whiteSpace === 'pre')) sidescroll(field, offsetLeft, size);
   const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
   const tall = parseFloat(style.lineHeight) || offsetHeight;
   const wide = end ? 0.55 * size : Math.max(offsetWidth, 0.35 * size);
@@ -1978,56 +1983,63 @@ function placeReadingCaret() {
   showCaret(left, top, wide, tall);
 }
 
-// A head being written is one line, and scrolls sideways under the caret as any one-line field
-// does: the text moves only when the caret would come within five letters of an edge, as vim's
-// sidescrolloff keeps them, which a browser honouring the box's scroll-padding does for itself and
-// this does for every browser. A press on the words that revealed the row keeps the letter pressed
-// under the pointer, however much longer the source is than the reading was, as far as the five
-// letters allow: a letter pressed by an edge, on the `…` or past where the box ends on the cursor,
-// a row read off the cursor running further right than its box, is brought in by as much as it
-// takes to be clear of the fade. Each edge that hides text fades. What it writes is kept, so that
-// the scroll it causes is not taken for one the browser made.
+// A head being written is one line, and so is the line, and each scrolls sideways under the caret
+// as any one-line field does: the text moves only when the caret would come within five letters of
+// an edge, as vim's sidescrolloff keeps them, which a browser honouring the fields' scroll-padding
+// does for itself and this does for every browser. The page scrolls the field in the same read as
+// it measures the caret, so that the block drawn and the letter typed cannot be a letter apart, as
+// they were on the line while Chromium scrolled it after the caret had been measured. A press on
+// the words that revealed a row keeps the letter pressed under the pointer, however much longer the
+// source is than the reading was, as far as the five letters allow: a letter pressed by an edge, on
+// the `…` or past where the box ends on the cursor, a row read off the cursor running further right
+// than its box, is brought in by as much as it takes to be clear of the fade. Each edge that hides
+// text fades. What it writes is kept, so that the scroll it causes is not taken for one the browser
+// made.
 let pressedAt = null;
-let wrote = null;
-function sidescroll(x, size) {
-  const room = box.clientWidth;
-  const max = box.scrollWidth - room;
+const wrote = new Map();
+function sidescroll(field, x, size) {
+  const room = field.clientWidth;
+  const max = field.scrollWidth - room;
   const context = Math.min(2.5 * size, room / 2);
-  let to = pressedAt != null ? x - (pressedAt - box.getBoundingClientRect().left) : box.scrollLeft;
+  const pressed = field === box && pressedAt != null;
+  let to = pressed ? x - (pressedAt - box.getBoundingClientRect().left) : field.scrollLeft;
   to = Math.min(Math.max(to, x - room + context), x - context);
   // A pixel or two from an end is the end: the reading and the box can differ by less than a
   // pixel, and a head scrolled by one would fade its first letters.
   to = Math.max(0, Math.min(max, Math.round(to)));
   if (to <= 2) to = 0;
   else if (to >= max - 2) to = max;
-  if (Math.abs(to - box.scrollLeft) > 1) {
-    box.scrollLeft = to;
-    wrote = box.scrollLeft;
+  if (Math.abs(to - field.scrollLeft) > 1) {
+    field.scrollLeft = to;
+    wrote.set(field, field.scrollLeft);
   }
-  edges();
+  edges(field);
 }
-function edges() {
-  const sideways = !box.classList.contains('whole') && getComputedStyle(box).whiteSpace === 'pre';
-  const over = box.scrollWidth - box.clientWidth;
-  box.classList.toggle('before', sideways && box.scrollLeft > 1);
-  box.classList.toggle('after', sideways && box.scrollLeft < over - 1);
+// The line is always one line; the box is one while a head is written, and not in the sheet.
+function edges(field = box) {
+  const along =
+    field === line || (!box.classList.contains('whole') && getComputedStyle(box).whiteSpace === 'pre');
+  const over = field.scrollWidth - field.clientWidth;
+  field.classList.toggle('before', along && field.scrollLeft > 1);
+  field.classList.toggle('after', along && field.scrollLeft < over - 1);
 }
-// A scroll the browser makes itself, as a paste or a composition running past an edge does, moves
-// the fades and the caret with it; one sidescroll made has placed the caret already.
-box.addEventListener(
-  'scroll',
-  () => {
-    edges();
-    if (wrote != null && Math.abs(box.scrollLeft - wrote) <= 1) {
-      wrote = null;
-      return;
-    }
-    wrote = null;
-    measured = null;
-    placeCaret();
-  },
-  { passive: true },
-);
+// A scroll the browser makes itself, as a paste or a composition running past an edge does, or
+// Chromium bringing the line's caret into sight after a key, moves the fades and the caret with
+// it; one sidescroll made has placed the caret already.
+for (const field of [box, line]) {
+  field.addEventListener(
+    'scroll',
+    () => {
+      edges(field);
+      const was = wrote.get(field);
+      wrote.delete(field);
+      if (was != null && Math.abs(field.scrollLeft - was) <= 1) return;
+      measured = null;
+      placeCaret();
+    },
+    { passive: true },
+  );
+}
 
 function showCaret(left, top, wide, tall) {
   caret.style.cssText = `left:${left}px;top:${top}px;width:${wide}px;height:${tall}px`;
@@ -2095,6 +2107,8 @@ document.addEventListener('selectionchange', () => {
 });
 window.addEventListener('resize', () => {
   placeCaret();
+  // The line's fades follow its width even while its caret is not drawn, as on a row.
+  edges(line);
   clampHere();
   // Whether the head under the cursor is cut, and so read beside the list, follows the width.
   if (view && wide.matches) paintSoon();
