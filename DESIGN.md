@@ -855,8 +855,9 @@ build up, the entries stepped into from there carrying it, and it is not reloade
 a reload made within a minute of the last.
 
 *The page.* One column, a little left of centre, with a third of the room beside it on its left,
-text left-aligned, and the line a little above a third of the way down, where it stays: it does not
-move when you type or when results arrive. A faint hairline under the line sets it apart from the
+38rem wide until the page is 100rem wide and growing past that to 50rem; text left-aligned, and
+the line a little above a third of the way down, where it stays: it does not move when you type or
+when results arrive. A faint hairline under the line sets it apart from the
 rows. The blank page is the caret and, under it in faint grey, the heads at the top of the list
 fading out by the eighth; at a phone's width they run the list's height, faded at its foot as the
 list is, and scroll, since a phone has no arrows to walk onto the rest. As you type, what is found
@@ -871,8 +872,9 @@ margin above the line, `main › Boiler`: the space's name and then each step, e
 the first to the top, a note's step read as its row is. The tab's title stays `fzn`, or `fzn ·
 garden` in another space. Paper, ink and two greys, and one colour, a muted blue, for a link; light
 or dark by the system's preference. On a page at least 75rem wide the body of what the cursor is on
-is read beside the list: the note under the cursor, and the whole of its head, above the body, when
-its row cuts it, or with the cursor on the line in a place the note you are in. It is rendered as
+is read beside the list, 30rem wide and growing to 38rem past 100rem: the note under the cursor,
+and the whole of its head, above the body, when its row cuts it, or with the cursor on the line in a
+place the note you are in. It is rendered as
 markdown, in the soft grey, from the top of the first row's text, with no border, scrolled on its
 own and faded at its foot as the list is. A narrower page has no room for it: a note's body, and the
 whole of a head its row cuts, are read there by opening it, and the note you are in is read above
@@ -1680,7 +1682,8 @@ the app now does is described above; an entry repeats it only where the reason n
   of the text and a second place to look, read unasked even with the cursor on the line; this one
   says nothing until the cursor is on a note and is the one place a body is read, so that reasoning
   stands for what it was about. The view's `preview`, the note that panel read, had been read by no
-  face since, and went.
+  face since, and went. Revised 2026-10-19 by "A wide page widens the column": past a page 100rem
+  wide the column and the body beside it widen.
 
 - **The body read is that of what the cursor is on.** Decided 2026-10-15, at Sam's direction,
   revising the entry above, where the note you are in stayed under the path, and the Terminal
@@ -3140,6 +3143,15 @@ the app now does is described above; an entry repeats it only where the reason n
   on the line's scroll, which mends the lag but not the date word, where no scroll happens, and
   leaves the line to the browser's own scroll, which hugs the edge, with no fades, a second rule
   beside the head's.
+
+- **A wide page widens the column.** Decided 2026-10-19, at Sam's direction. On a wide monitor the
+  column and the body beside it used little over half the width: at 2048 pixels, about 71 of
+  128rem. A row is one line, so a narrow column cuts heads that the width could show. A head is not
+  prose, so the measure that keeps prose readable is kept by the caps instead: the body beside the
+  list stops at 38rem, and the column, and the sheet an opened body is read in, which follows it,
+  at 50rem. The shape is as it was, one column left of centre with a third of the room on its left
+  and the body beside it, and nothing is new on the page. Below a page 100rem wide nothing changes,
+  so a laptop and a phone are as they were.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

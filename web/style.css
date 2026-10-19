@@ -19,7 +19,12 @@
   --link: #3a6a9a;
   --face: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
-  --measure: 38rem;
+  /* The column's width: 38rem, until a page is 100rem wide, and past that it takes a little of the
+     spare room, to 50rem, since a row is one line and a narrow column cuts heads a wide monitor
+     could show. A head is not prose, but the cap keeps a body opened in the sheet readable. */
+  --measure: clamp(38rem, 38rem + (100vw - 100rem) * 0.3, 50rem);
+  /* The body beside the list grows with the page as the column does, and less, since it is prose. */
+  --pane: clamp(30rem, 30rem + (100vw - 100rem) * 0.2, 38rem);
   --gutter: clamp(1rem, 4vw, 2rem);
   --gap: 0.875rem;
   --above: clamp(3.5rem, 26vh, 15rem);
@@ -435,7 +440,7 @@ button, input, textarea { font: inherit; color: inherit; }
     top: calc(1rem + (var(--row) - 1.5em) / 2);
     bottom: 0;
     left: calc(100% + 3rem);
-    width: min(30rem, (100vw - var(--measure)) * 2 / 3 - 3rem - var(--gutter));
+    width: min(var(--pane), (100vw - var(--measure)) * 2 / 3 - 3rem - var(--gutter));
     overflow-y: auto;
     padding-bottom: calc(2 * var(--row));
     scrollbar-width: none;
