@@ -784,7 +784,8 @@ the head at the caret as one change, its tabs and line
 breaks made spaces and the breaks at its ends dropped. Escape comes back a rung at a time: off the
 row, writing out its date words, off the text on the line, out of the place, and twice on an empty
 line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing
-out the head first.
+out the head first. While a tag or a person is offered, Tab and Enter take the one in bold, Up and
+Down choose and Escape closes it; Shift-Enter on a row still ticks.
 
 The screen is flat: no borders, no boxes, the terminal's own colours. Everything is measured in the
 columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
@@ -805,7 +806,11 @@ caret; then it scrolls sideways under the caret as a one-line field does, moving
 comes within five columns of an edge, as vim's `sidescrolloff` keeps them, and each edge that hides
 text shows `…`. Once the cursor leaves it, it reads from its start again. The tail follows the head
 as far as it fits, cut with `…` as off the cursor, and the line scrolls as the head does once
-written in. The foot of the list is kept for the body of what the cursor is on: the note on its row,
+written in. What is offered for a tag or a person being typed is set on the rows under the line or
+the row being written, or on those above it where the list ends too soon, from the column of the
+word's mark, each of its rows cleared from edge to edge as a shell clears the rows under its prompt,
+and the one Tab takes is bold. The foot of the list is kept for the body of what the cursor is on:
+the note on its row,
 and a head its row cuts, whole, above the body; and on the line in a place the note you are in. It
 is a row of nothing, then up to five rows of the body, dimmed, set in two columns from the rows'
 text and cut with a `…` when it goes on. The rows are kept whatever the note holds, on a row and on
@@ -813,7 +818,8 @@ the line in a place alike, so walking the list never changes how much of it is s
 outside a place the list has the whole height. On a short screen they shrink, keeping the list at
 least half its room, and go when fewer than two would be left. One dim footer row names the chords
 that apply where the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`,
-`Esc back` or `Esc up`, or `Esc Esc quits` where there is none. A narrow terminal loses chords from
+`Esc back` or `Esc up`, or `Esc Esc quits` where there is none, and while something is offered only
+`Tab take  ↑↓ choose  Esc close`. A narrow terminal loses chords from
 the middle, never the first or the way back. A status row above it exists only while there is
 something to say, each key clearing what the one before said, and where the body has its rows it
 takes the last of them, so that the list keeps its height. Nothing says how many notes there are or

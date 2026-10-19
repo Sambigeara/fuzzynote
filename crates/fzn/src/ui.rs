@@ -25,7 +25,10 @@
 //! under the cursor up or down a row, and the cursor with it. Escape comes back a rung at a time:
 //! off the row, off the text on the line, out of the place, and on an empty line outside any place
 //! two of them quit. The footer shows only the keys that apply where the cursor is. Shift-Enter on
-//! a row ticks as Ctrl-V does, where the terminal can tell it from Enter.
+//! a row ticks as Ctrl-V does, where the terminal can tell it from Enter. While a tag or a person
+//! is typed, what the space has that it starts is offered on the rows under it, and Tab or Enter
+//! takes the bold one; the device is told where the caret is after each key that types, since
+//! whether anything is offered is its to decide.
 //!
 //! A terminal sends some keys alike unless it is asked to tell them apart: Shift-Enter is Enter,
 //! and in some it is lost altogether. So where the terminal says it has the kitty keyboard
@@ -240,19 +243,26 @@ fn meant(key: KeyEvent) -> (KeyCode, KeyModifiers) {
 /// caret is where it landed; with text in the head it is the caret's. Ctrl-Y and Ctrl-K redo and
 /// link, the page's keys for them, since Ctrl-R and Ctrl-L are the browser's there; fzn's own
 /// Ctrl-R and Ctrl-L do too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes
-/// back a rung: off the row, then off the text on the line, then out of the place.
+/// back a rung: off the row, then off the text on the line, then out of the place. While a word is
+/// `offered` for, Tab and Enter take the one chosen, Up and Down choose another, and Escape closes
+/// it, which is its rung; Shift-Enter on a row still ticks, and every other key is as it was.
 fn bound(
     code: KeyCode,
     modifiers: KeyModifiers,
     place: Place,
     zoomed: bool,
     empty: bool,
+    offered: bool,
 ) -> Option<Action> {
     let on_line = place == Place::Line;
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     Some(match (code, ctrl) {
         (KeyCode::Enter, false) if shift && !on_line => Action::Archive,
+        (KeyCode::Enter, false) | (KeyCode::Tab, _) if offered => Action::Take(None),
+        (KeyCode::Up, false) if offered => Action::Choose(-1),
+        (KeyCode::Down, false) if offered => Action::Choose(1),
+        (KeyCode::Esc, _) if offered => Action::Dismiss,
         (KeyCode::Enter, _) => Action::Write,
         (KeyCode::Tab, _) => Action::GoIn,
         (KeyCode::Backspace, _) if !on_line && empty => Action::Erase,
@@ -339,7 +349,7 @@ fn keyed(hints: &[Hint], keys: Keys) -> Vec<&Hint> {
 /// Whether an action is one of Escape's rungs back: off the row, off the text, out of the place.
 fn comes_back(action: &Action) -> bool {
     match action {
-        Action::Select(None) | Action::Back => true,
+        Action::Select(None) | Action::Back | Action::Dismiss => true,
         Action::Type(text) => text.is_empty(),
         _ => false,
     }
@@ -440,6 +450,15 @@ fn spliced(line: &str, cursor: usize, text: &str) -> (String, usize) {
 /// How many letters as drawn, grapheme clusters, the text holds.
 fn letters(s: &str) -> usize {
     s.graphemes(true).count()
+}
+
+/// How many characters the first `letters` letters as drawn of the text hold, for a place the
+/// session is told in characters.
+fn chars_in(s: &str, letters: usize) -> usize {
+    s.graphemes(true)
+        .take(letters)
+        .map(|g| g.chars().count())
+        .sum()
 }
 
 /// How many letters as drawn the first `chars` characters of the text make, for a place the
@@ -1114,6 +1133,49 @@ fn paint(frame: &mut Frame, y: usize, x: usize, line: Line) {
     }
 }
 
+/// Paints the words offered for the word the caret ends, one to a row from `x`, the column of
+/// its mark, on the rows under the caret's, or on those above it where they would pass `bottom`,
+/// the end of the list. Each of those rows is cleared from edge to edge, as a shell clears the
+/// rows under its prompt for what completes a word, so that no row of the list is read through
+/// it, and the one Tab takes is bold, as the row under the cursor is. Never the footer's row.
+fn paint_offer(
+    frame: &mut Frame,
+    words: &[String],
+    chosen: usize,
+    (x, y): (usize, usize),
+    bottom: usize,
+) {
+    let area = frame.area();
+    let (width, height) = (usize::from(area.width), usize::from(area.height));
+    let widest = words.iter().map(|w| w.width()).max().unwrap_or(0);
+    let x = x.min(width.saturating_sub(widest + 1));
+    let top = if y + words.len() < bottom || y < words.len() {
+        y + 1
+    } else {
+        y - words.len()
+    };
+    for (k, word) in words.iter().enumerate() {
+        let row = top + k;
+        let Ok(at) = u16::try_from(row) else {
+            break;
+        };
+        if row + 1 >= height {
+            break;
+        }
+        frame.render_widget(
+            ratatui::widgets::Clear,
+            Rect::new(area.x, area.y + at, area.width, 1),
+        );
+        let word = Span::raw(fit(word, width.saturating_sub(x + 1)));
+        paint(
+            frame,
+            row,
+            x,
+            Line::from(if k == chosen { word.bold() } else { word }),
+        );
+    }
+}
+
 /// Paints text dimmed so that it ends a column short of the right edge, as dates and the state
 /// of things are.
 fn paint_right(frame: &mut Frame, y: usize, text: &str) {
@@ -1278,12 +1340,20 @@ impl App {
         let (code, modifiers) = meant(key);
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
         let escaped = std::mem::take(&mut self.escaped);
-        // What the key acts on is read from this view, so that it costs two views and not five.
-        let (zoomed, before, field, (place, empty)) = {
+        // What the key acts on is read from this view, so that it costs two views and not five, and
+        // a key that types one more, to say where the caret went.
+        let (zoomed, offered, before, field, (place, empty)) = {
             let view = self.device.view();
             let field = view.field.as_ref().map(|field| field.text.to_owned());
             let caret = self.caret(&view);
-            (!view.path.is_empty(), Before::of(&view), field, caret)
+            let offered = view.offer.is_some();
+            (
+                !view.path.is_empty(),
+                offered,
+                Before::of(&view),
+                field,
+                caret,
+            )
         };
         let line = before.line.clone();
         // Each key clears what the one before it said, so the status row says only what this
@@ -1295,7 +1365,7 @@ impl App {
             }
             return Ok(Flow::Quit);
         }
-        if let Some(action) = bound(code, modifiers, place, zoomed, empty) {
+        if let Some(action) = bound(code, modifiers, place, zoomed, empty, offered) {
             return self.act_from(before, action);
         }
         match code {
@@ -1324,9 +1394,16 @@ impl App {
                             Some(body) => format!("{to}\n{body}"),
                             None => to,
                         };
-                        return self.act_from(before, Action::Edited(text));
+                        let flow = self.act_from(before, Action::Edited(text))?;
+                        self.tell_caret()?;
+                        return Ok(flow);
                     }
-                    Some((_, cursor)) => self.row_cursor = cursor,
+                    Some((_, cursor)) => {
+                        self.row_cursor = cursor;
+                        if offered {
+                            self.tell_caret()?;
+                        }
+                    }
                     None => {}
                 }
             }
@@ -1335,9 +1412,15 @@ impl App {
                 Some((to, cursor)) if to != line => {
                     let flow = self.act_from(before, Action::Type(to))?;
                     self.cursor = cursor;
+                    self.tell_caret()?;
                     return Ok(flow);
                 }
-                Some((_, cursor)) => self.cursor = cursor,
+                Some((_, cursor)) => {
+                    self.cursor = cursor;
+                    if offered {
+                        self.tell_caret()?;
+                    }
+                }
                 None => {}
             },
         }
@@ -1366,13 +1449,27 @@ impl App {
             };
             self.row_cursor = cursor;
             self.row_left = Some(self.row_left.unwrap_or(0));
-            self.act(Action::Edited(text))
+            let flow = self.act(Action::Edited(text))?;
+            self.tell_caret()?;
+            Ok(flow)
         } else {
             let (to, cursor) = spliced(view.line, self.cursor, &text);
             let flow = self.act(Action::Type(to))?;
             self.cursor = cursor;
+            self.tell_caret()?;
             Ok(flow)
         }
+    }
+
+    /// Tells the device where the caret is, in characters, in the text the cursor is in, so that
+    /// what completes the tag or person it ends can be offered.
+    fn tell_caret(&mut self) -> Result<Flow> {
+        let view = self.device.view();
+        let at = match &view.field {
+            Some(field) => chars_in(head_and_body(field.text).0, self.row_cursor),
+            None => chars_in(view.line, self.cursor),
+        };
+        self.act(Action::At(at))
     }
 
     /// Where the cursor is, and whether the text it is in, the head of its row or the line, is
@@ -1722,6 +1819,22 @@ impl App {
                 }
                 None => {}
             }
+        }
+
+        // What is offered for the word the caret ends is drawn over the rows under it, its words
+        // starting under the word's mark, so that what was typed reads over what it completes.
+        if let (Some(offer), Some((x, y))) = (view.offer, cursor) {
+            let (text, caret) = match &view.field {
+                Some(field) => (head_and_body(field.text).0, self.row_cursor),
+                None => (view.line, self.cursor),
+            };
+            let typed: String = text
+                .chars()
+                .take(chars_in(text, caret))
+                .skip(offer.from)
+                .collect();
+            let mark = x.saturating_sub(typed.width()).max(1);
+            paint_offer(frame, &offer.words, offer.chosen, (mark, y), bottom);
         }
 
         if let Some(status) = status {
@@ -2158,6 +2271,126 @@ mod tests {
         done(&space);
     }
 
+    /// Food on two notes and the fox on one, written from the line.
+    fn tagged(app: &mut App) {
+        write(app, "Bake bread #food");
+        write(app, "Leek soup #food");
+        write(app, "A den under the shed #fox");
+    }
+
+    /// What is offered, as the device has it.
+    fn offered(app: &App) -> Option<(Vec<String>, usize)> {
+        app.device
+            .view()
+            .offer
+            .map(|offer| (offer.words.clone(), offer.chosen))
+    }
+
+    #[test]
+    fn a_tag_typed_on_the_line_is_offered_under_its_mark_and_tab_takes_the_bold_one() {
+        let (mut app, space) = app();
+        tagged(&mut app);
+        type_in(&mut app, "#fo");
+        assert_eq!(
+            offered(&app),
+            Some((vec!["#food".into(), "#fox".into()], 0))
+        );
+        let shot = screen(&mut app, 60, 12);
+        assert_eq!(shot.rows[0], ">#fo");
+        assert_eq!(shot.rows[1], " #food", "under the mark, the row cleared");
+        assert_eq!(shot.rows[2], " #fox");
+        assert!(shot.bold[1] && !shot.bold[2], "the one Tab takes is bold");
+        assert_eq!(shot.cursor, (4, 0), "the caret stays on the line");
+        assert_eq!(shot.rows[11], " Tab take  ↑↓ choose  Esc close");
+
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(line(&app), "#food ");
+        assert_eq!(app.cursor, 6, "after the space");
+        assert_eq!(offered(&app), None);
+        let shot = screen(&mut app, 60, 12);
+        assert!(
+            shot.rows[1].starts_with(" Leek soup #food"),
+            "{:?}",
+            shot.rows
+        );
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(path(&app), ["#food"], "and the next Tab goes in");
+        done(&space);
+    }
+
+    #[test]
+    fn the_arrows_choose_what_is_offered_enter_takes_it_and_escape_closes_it_alone() {
+        let (mut app, space) = app();
+        tagged(&mut app);
+        type_in(&mut app, "#fo");
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(offered(&app).unwrap().1, 1, "stopping at the last");
+        assert!(!on_note(&app), "the cursor stays on the line");
+        let shot = screen(&mut app, 60, 12);
+        assert!(!shot.bold[1] && shot.bold[2]);
+        press(&mut app, KeyCode::Up, false);
+        assert_eq!(offered(&app).unwrap().1, 0);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Enter, false);
+        assert_eq!(line(&app), "#fox ", "Enter takes it and writes nothing");
+        assert_eq!(heads(&app), ["A den under the shed #fox"]);
+
+        type_in(&mut app, "#fo");
+        press(&mut app, KeyCode::Esc, false);
+        assert_eq!(offered(&app), None);
+        assert_eq!(
+            line(&app),
+            "#fox #fo",
+            "Escape closes it and does nothing else"
+        );
+        assert!(!app.escaped);
+        press(&mut app, KeyCode::Down, false);
+        assert!(on_note(&app), "closed, the arrows are the list's again");
+        done(&space);
+    }
+
+    #[test]
+    fn the_footer_while_a_word_is_offered_names_only_taking_choosing_and_closing() {
+        let (mut app, space) = app();
+        tagged(&mut app);
+        type_in(&mut app, "#f");
+        assert_eq!(keys(&app), "Tab take  ↑↓ choose  Esc close");
+        press(&mut app, KeyCode::Left, false);
+        assert_eq!(
+            offered(&app),
+            None,
+            "the caret moved off the end of the word"
+        );
+        press(&mut app, KeyCode::Right, false);
+        assert_eq!(offered(&app), None, "and back opens nothing");
+        assert!(keys(&app).ends_with("Esc clear"), "{}", keys(&app));
+        done(&space);
+    }
+
+    #[test]
+    fn a_tag_typed_into_a_head_is_offered_under_the_row_and_taken_into_the_head() {
+        let (mut app, space) = app();
+        tagged(&mut app);
+        write(&mut app, "Pond walk");
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(field(&app).as_deref(), Some("Pond walk"));
+        type_in(&mut app, " #fo");
+        let shot = screen(&mut app, 60, 12);
+        assert!(
+            shot.rows[1].starts_with(" Pond walk #fo  "),
+            "{:?}",
+            shot.rows
+        );
+        assert_eq!(shot.rows[2], format!("{}#food", " ".repeat(11)));
+        assert!(shot.rows[3].ends_with("#fox"), "{:?}", shot.rows);
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(field(&app).as_deref(), Some("Pond walk #food "));
+        assert_eq!(app.row_cursor, 16);
+        assert!(path(&app).is_empty(), "taking is not going in");
+        done(&space);
+    }
+
     #[test]
     fn escape_on_the_line_clears_it_then_steps_back_and_only_then_says_it_would_quit() {
         let (mut app, space) = app();
@@ -2449,7 +2682,7 @@ mod tests {
             "↵" => (KeyCode::Enter, KeyModifiers::NONE),
             "⇧↵" => (KeyCode::Enter, KeyModifiers::SHIFT),
             "Esc" => (KeyCode::Esc, KeyModifiers::NONE),
-            "↓" => (KeyCode::Down, KeyModifiers::NONE),
+            "↓" | "↑↓" => (KeyCode::Down, KeyModifiers::NONE),
             "^↑" => (KeyCode::Up, ctrl),
             "^↓" => (KeyCode::Down, ctrl),
             "Tab" => (KeyCode::Tab, KeyModifiers::NONE),
@@ -2467,11 +2700,12 @@ mod tests {
         let view = app.device.view();
         let zoomed = !view.path.is_empty();
         let (place, empty) = app.caret(&view);
+        let offered = view.offer.is_some();
         let now = app.keys_here();
         for hint in keyed(view.hints, now) {
             let key = key_for(&hint.action, now);
             let (code, modifiers) = named(key);
-            let asked = bound(code, modifiers, place, zoomed, empty);
+            let asked = bound(code, modifiers, place, zoomed, empty, offered);
             assert_eq!(asked.as_ref(), Some(&hint.action), "{key} {}", hint.label);
         }
         footer(view.hints, now, usize::MAX)
@@ -2596,13 +2830,13 @@ mod tests {
     fn ctrl_slash_opens_a_url_and_so_do_ctrl_seven_and_ctrl_underscore_which_is_how_it_arrives() {
         let ctrl = KeyModifiers::CONTROL;
         for c in ['/', '7', '_'] {
-            let on = |place| bound(KeyCode::Char(c), ctrl, place, false, false);
+            let on = |place| bound(KeyCode::Char(c), ctrl, place, false, false, false);
             assert_eq!(on(Place::Row), Some(Action::OpenUrl), "{c}");
             assert_eq!(on(Place::Line), None, "{c}");
         }
         let shifted = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
         assert_eq!(
-            bound(KeyCode::Char('-'), shifted, Place::Row, false, false),
+            bound(KeyCode::Char('-'), shifted, Place::Row, false, false, false),
             Some(Action::OpenUrl),
             "Ctrl-_ as the kitty flags send it"
         );
@@ -2660,7 +2894,7 @@ mod tests {
     #[test]
     fn shift_enter_on_a_row_ticks_as_ctrl_v_does_and_on_the_line_is_enter() {
         let shift = KeyModifiers::SHIFT;
-        let on = |place| bound(KeyCode::Enter, shift, place, false, false);
+        let on = |place| bound(KeyCode::Enter, shift, place, false, false, false);
         assert_eq!(on(Place::Row), Some(Action::Archive));
         assert_eq!(on(Place::Line), Some(Action::Write));
 
