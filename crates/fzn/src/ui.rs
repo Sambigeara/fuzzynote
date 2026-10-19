@@ -1616,7 +1616,9 @@ impl App {
         let (shown, at, left) =
             sidescrolled(view.line, self.cursor, room, Some(self.line_left), BESIDE);
         self.line_left = left.unwrap_or(0);
-        paint(frame, y, 0, Line::from(PROMPT).dim());
+        // The mark alone is dim: a line styled whole would dim every cell to the edge, the text
+        // painted over it too.
+        paint(frame, y, 0, Line::from(PROMPT.dim()));
         paint(frame, y, 1, Line::from(shown));
         paint_right(frame, y, &right);
         if view.cursor.is_none() {
@@ -3929,6 +3931,26 @@ mod tests {
             .map(|r| r.text.clone())
             .collect();
         assert_eq!(texts, ["Boiler pressure"]);
+        done(&space);
+    }
+
+    #[test]
+    fn the_lines_mark_is_dim_and_what_is_typed_after_it_is_not() {
+        use ratatui::style::Modifier;
+        let (mut app, space) = app();
+        type_in(&mut app, "boiler");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 6)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), ">");
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
+        for x in 1..7 {
+            assert!(
+                !buffer[(x, 0)].modifier.contains(Modifier::DIM),
+                "column {x}"
+            );
+        }
         done(&space);
     }
 
