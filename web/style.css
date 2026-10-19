@@ -366,17 +366,18 @@ button, input, textarea { font: inherit; color: inherit; }
   resize: none;
   overflow: hidden;
   line-height: 1.5;
-  scroll-padding-inline: 2.5em;
 }
-.box.before {
+/* The line scrolls sideways under its caret as a head being written does, and fades as it does. */
+#line, .box { scroll-padding-inline: 2.5em; }
+#line.before, .box.before {
   mask-image: linear-gradient(to right, transparent, #000 1.5em);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em);
 }
-.box.after {
+#line.after, .box.after {
   mask-image: linear-gradient(to left, transparent, #000 1.5em);
   -webkit-mask-image: linear-gradient(to left, transparent, #000 1.5em);
 }
-.box.before.after {
+#line.before.after, .box.before.after {
   mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em),
     transparent);

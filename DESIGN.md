@@ -974,11 +974,16 @@ there move the note. What was said floats above the words, at the column's right
 and nothing is drawn there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
-it. A cross after it clears it when it has text, and a `›` after the cross, in the column of the
-selected row's, goes into what it names when it names somewhere. Each keeps its place while it is
-not there, so that neither moves the other, or the dates, by coming or going. Since the arrow is on
-the line, going in is not also a word in the foot; clearing is, being Escape's next rung, which the
-foot always ends with (see *Keys*).
+it. A line longer than its field scrolls sideways under the caret as a head being written does (see
+*Writing in a row*), keeping five letters' room to an edge and fading an edge that hides text, by
+the page in the same read as it draws the caret, so that the drawn caret is where the letter goes,
+and the text moves only with the caret: a wheel or a swipe on the line while its caret is drawn does
+not scroll it. The terminal's line scrolls as its head does, so the faces agree. A cross after it
+clears it when it has text, and a `›` after the cross, in the column of the selected row's, goes
+into what it names when it names somewhere. Each keeps its place while it is not there, so that
+neither moves the other, or the dates, by coming or going. Since the arrow is on the line, going in
+is not also a word in the foot; clearing is, being Escape's next rung, which the foot always ends
+with (see *Keys*).
 
 *Writing in a row.* The head of the row the cursor is on is a text box, with the day its note was
 written at the end of its row, a caret's width off the head, or at the end of its tail at a phone's
@@ -3114,6 +3119,27 @@ the app now does is described above; an entry repeats it only where the reason n
   blank page is the point. Weighed: the fade by the fifth row with a scroll, which still shows two
   or three notes before it fades; and the fade by the eighth as on wider pages, which at a phone's
   width is four or five wrapped notes and still hides the rest.
+
+- **The line scrolls as a head does.** Decided 2026-10-19, at Sam's report, extending to the line
+  what "A row is one line, and a long head is read beside it" gave a head being written. On a line
+  longer than its field, in Chromium, a letter typed put the page's caret one letter right of where
+  the next would go, and it stayed there until Backspace. The caret was measured on the line's
+  input, before Chromium scrolled the field to show its own caret, and was not measured again when
+  it did, since nothing it is measured for had changed. And a date word typed on a long line, whose
+  `→ …` narrows the line, left it unscrolled, the text read from its start and the caret drawn far
+  past the line's end, since a field made narrower is not scrolled by the browser at all. Now the
+  page scrolls the line as it does the box, in the same read as it measures the caret, so that the
+  two cannot disagree: the text moves only when the caret would come within five letters of an
+  edge, an edge that hides text fades, and a scroll the browser makes of the line anyway places the
+  caret again, which also means a wheel or a swipe on the line comes back to the caret, as the box
+  never scrolled by one either. One rule holds for both fields, and in both faces, since the
+  terminal's line already scrolled as its head does. In headless Chromium the drawn caret was 12px
+  right of the real one after every letter before and is within a pixel of it after, through a
+  burst of keys, Backspace, a date word, a paste and a composition, with the line, the dates, the
+  cross and the arrow where they were at 1400, 1000 and 390 pixels. Weighed: only measuring again
+  on the line's scroll, which mends the lag but not the date word, where no scroll happens, and
+  leaves the line to the browser's own scroll, which hugs the edge, with no fades, a second rule
+  beside the head's.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
