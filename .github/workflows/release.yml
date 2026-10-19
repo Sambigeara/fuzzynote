@@ -1,10 +1,11 @@
 # Builds a release when a tag v* is pushed: the page once, the binary for each platform with
-# the page built in, and a draft release on GitHub with the archives, their checksums and
-# install.sh. The draft is published by hand, after a look; install.sh sees only what is
-# published. Run by hand (workflow_dispatch), on any branch or tag, it builds everything and
-# drafts nothing, which is the rehearsal: the archives are left as the run's artifacts. What
-# each job runs is release.sh, the same script a release built by hand runs, so the two cannot
-# drift.
+# the page built in, and a release on GitHub with the archives, their checksums and install.sh,
+# published as the latest, so that install.sh installs it at once. The tag is the decision to
+# release; each binary has been run on its platform before anything is published, and a build
+# that fails publishes nothing. Run by hand (workflow_dispatch), on any branch or tag, it builds
+# everything and publishes nothing, which is the rehearsal: the archives are left as the run's
+# artifacts. What each job runs is release.sh, the same script a release built by hand runs, so
+# the two cannot drift.
 #
 # Every action is pinned to a commit, with its version beside it, since a moved tag could
 # change the binaries; and nothing is restored from a cache, which a run on another ref could
@@ -130,14 +131,14 @@ jobs:
           path: dist/download
           if-no-files-found: error
 
-      # Only for a pushed tag: a run by hand drafts nothing, whatever ref it was started on.
-      - name: Draft the release
+      # Only for a pushed tag: a run by hand publishes nothing, whatever ref it was started on.
+      - name: Publish the release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --draft --verify-tag --title "fzn ${TAG#v}" \
+          gh release create "$TAG" --latest --verify-tag --title "fzn ${TAG#v}" \
             --repo "$GITHUB_REPOSITORY" \
             --notes "Install with \`curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh | sh\`" \
             dist/download/"$TAG"/* install.sh

@@ -2013,7 +2013,8 @@ the app now does is described above; an entry repeats it only where the reason n
   a keystroke runs. Not cargo-dist, which generates ten times the lines for the same three builds
   and an installer with a receipt and an updater; not signatures yet, since attestations need an
   enterprise plan on a private repository and minisign a key to keep: a signed tag and the sums are
-  what there is. Intel Macs and Windows are left out until someone has one.
+  what there is. Intel Macs and Windows are left out until someone has one. Revised 2026-10-19 by
+  "A tag publishes its release": the workflow publishes the release it builds, and no draft waits.
 
 - **Tab goes in.** Decided 2026-10-16, at Sam's direction, reversing the part of "Enter edits, the
   arrow goes in" (2026-10-14) that made Right the key that goes in and rejected Tab, and with it the
@@ -3173,6 +3174,18 @@ the app now does is described above; an entry repeats it only where the reason n
   so there is no new word to learn. A note that is only labels can still be written, in a row. Left
   as they are: Enter on a line that names a note still writes it, since that line may be a draft;
   Tab on a row headed only by labels still goes into that note, since it is a note.
+
+- **A tag publishes its release.** Decided 2026-10-19, at Sam's direction, reversing the part of "A
+  release is one static binary that a script fetches" (2026-10-16) that made the workflow draft a
+  release to be published by hand after a look. The first release showed the look had nothing to
+  find that the workflow had not already checked: each binary is run on its own platform before
+  the release is made, the job that makes it waits for every platform, so a build that fails
+  publishes nothing, and `install.sh` checks every archive against its sum. Meanwhile the draft was
+  a second key to turn after the tag, and until it was turned `latest` still led to the release
+  before, so `curl | sh` installed the old build. The tag is already the deliberate act, and it is
+  never pushed unasked. So the workflow publishes the release as the latest when a tag is pushed.
+  A bad release is answered by the next patch tag, or by deleting it, which hands `latest` back to
+  the one before. A run by hand still builds everything and publishes nothing.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

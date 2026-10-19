@@ -39,8 +39,8 @@ into a test and never commit anything taken from them.
 
 ## Working rules
 - Commit only when asked. Never push unless asked.
-- A release is a tag `v<version>` equal to the workspace version; the workflow drafts it and Sam
-  publishes it. Tagging and publishing are never done unasked.
+- A release is a tag `v<version>` equal to the workspace version; the workflow builds it and
+  publishes it as the latest. Tagging is never done unasked, since a tag is a release.
 - Verification is all four of:
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
