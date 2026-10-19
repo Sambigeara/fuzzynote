@@ -201,8 +201,14 @@ impl Session {
     /// now if it starts with a ticked box, and puts the cursor on it: it is the
     /// note most likely to be gone on with, and Enter there opens a row under it. With nothing on
     /// the line, opens a new note at the top of the list to be written in place. A note's link is
-    /// not in its text, and a new row has the labels in its head from the start.
+    /// not in its text, and a new row has the labels in its head from the start. A line of labels
+    /// and nothing else is the name of a place, not a note: it is gone into as Tab goes, and
+    /// never written, and where Tab would go nowhere nothing happens.
     pub(super) fn write_line(&mut self) {
+        if self.parsed.only_labels() {
+            self.go_in_from_line();
+            return;
+        }
         let today = self.today();
         let text = text::expand_words(self.line.trim(), today);
         if text.is_empty() {

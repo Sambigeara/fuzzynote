@@ -151,8 +151,10 @@ pub enum Action {
     Shift(i64),
     /// Turn the line into a note, linked to the note being looked around, and put the cursor on
     /// it. With nothing on the line, open a new note at the top of the list to write in place.
-    /// On a row, write out its date words and open a new note under it to write in place; or,
-    /// if its head has a date word or `/task` still to write out, write those out and stay.
+    /// A line of labels and nothing else is never written: it is gone into as `GoIn` goes, and
+    /// nothing happens where `GoIn` would go nowhere. On a row, write out its date words and open
+    /// a new note under it to write in place; or, if its head has a date word or `/task` still to
+    /// write out, write those out and stay.
     Write,
     /// Go into the note under the cursor. On the line, go into what the line names: each tag,
     /// person or day of a line of nothing else, one after another, or else the one note it is the
@@ -509,6 +511,12 @@ impl Session {
         &self.device
     }
 
+    /// Whether Write would go in rather than write: the cursor is on a line of labels and
+    /// nothing else, which is the name of a place and is gone into as Tab goes.
+    pub(crate) fn write_goes_in(&self) -> bool {
+        self.selected().is_none() && self.parsed.only_labels()
+    }
+
     /// Does what was asked, and returns what the face has to do about it. Where it put the caret
     /// is taken apart, with [`Session::take_caret`].
     pub fn act(&mut self, action: Action) -> Vec<Effect> {
@@ -802,7 +810,10 @@ impl Session {
                     (false, false) => "write",
                     (false, true) => "write here",
                 };
-                offer(Action::Write, label);
+                // A line of labels alone is gone into by Write, so only going in is offered.
+                if !self.write_goes_in() {
+                    offer(Action::Write, label);
+                }
                 if !self.places_named().is_empty() {
                     offer(Action::GoIn, "go in");
                 }

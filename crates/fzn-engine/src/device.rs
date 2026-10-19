@@ -294,7 +294,9 @@ impl Device {
         let gated = if self.session.unwritten() {
             !matches!(action, Action::Undo | Action::ShowScores)
         } else {
-            action.writes()
+            // Write on a line of labels alone goes in as Tab does and writes nothing, so it
+            // goes in whatever the key.
+            action.writes() && !(action == Action::Write && self.session.write_goes_in())
         };
         if gated && !self.key_verified() {
             self.session.say(WRONG_KEY);
@@ -1572,6 +1574,35 @@ mod tests {
             "{} {todo:?}",
             status(&a)
         );
+    }
+
+    #[test]
+    fn enter_on_a_line_of_labels_goes_in_when_the_key_is_not_verified() {
+        let mut a = device("dev-a");
+        let lines: Vec<String> = write(&mut a, "Boiler").keep.remove(0).lines;
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        b.load("dev-x", vec![plain("x-1", "Order oil #house", 100)]);
+        b.load("dev-a", lines);
+        assert!(!b.key_verified());
+
+        // Going in writes nothing, so it is not refused, as Tab is not.
+        b.say("");
+        b.act(Action::Type("#house".into()));
+        assert!(b.act(Action::Write).keep.is_empty());
+        assert_eq!(b.view().path, ["#house"]);
+        assert_ne!(status(&b), WRONG_KEY);
+
+        // A line with words on it would be written, so it is refused as before.
+        b.act(Action::Back);
+        b.act(Action::Type("Order oil #house".into()));
+        assert_eq!(b.act(Action::Write), Todo::default());
+        assert_eq!(status(&b), WRONG_KEY);
+        assert!(b.view().path.is_empty());
     }
 
     #[test]

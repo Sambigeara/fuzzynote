@@ -201,7 +201,7 @@ impl Session {
     /// each: a place already on the path is gone back to, and any other is gone into. The
     /// line was a search for where it leads, so it clears, and comes back on the way out of the
     /// first place it went into; one that only went back stays as it is.
-    fn go_in_from_line(&mut self) {
+    pub(super) fn go_in_from_line(&mut self) {
         let places = self.places_named();
         if places.is_empty() {
             return;

@@ -1092,18 +1092,104 @@ fn the_task_word_on_the_line_holds_the_open_tasks_goes_in_as_the_box_and_writes_
     assert_eq!(s.notes.get(&new).unwrap().text, "[ ] Bleed the radiators");
     assert!(!s.notes.get(&new).unwrap().archived);
     s.act(Action::Select(None));
-    // Alone it writes what `[ ]` alone does: a note that is only the box.
+    // Alone it is the label `[ ]` alone is, so Enter goes into the open tasks as Tab does and
+    // writes nothing.
+    let before = s.notes.len();
     add(&mut s, "/task");
-    let new = s.selected().unwrap().id.clone();
-    assert_eq!(s.notes.get(&new).unwrap().text, "[ ]");
-    s.act(Action::Select(None));
+    assert_eq!(path(&s), ["[ ]"]);
+    assert_eq!(s.notes.len(), before);
+    s.act(Action::Back);
+    clear(&mut s);
     add(&mut s, "[ ]");
-    let new = s.selected().unwrap().id.clone();
-    assert_eq!(s.notes.get(&new).unwrap().text, "[ ]");
+    assert_eq!(path(&s), ["[ ]"]);
+    assert_eq!(s.notes.len(), before);
+    s.act(Action::Back);
 
     // `/t` is the start of date words too, and is neither.
     s.act(Action::Select(None));
     clear(&mut s);
     type_in(&mut s, "/t");
     assert!(s.view().dates.is_empty());
+}
+
+/// Two notes under `#house #boiler`, with the cursor back on an empty line.
+fn house_and_boiler(s: &mut Session) {
+    put(
+        s,
+        "radiators",
+        "Bleed the radiators #house #boiler",
+        &[],
+        1_000,
+    );
+    put(s, "oil", "Order oil #house #boiler", &[], 2_000);
+    s.act(Action::Select(None));
+    clear(s);
+}
+
+#[test]
+fn enter_on_a_line_of_labels_goes_into_them_as_tab_does() {
+    let mut s = session();
+    house_and_boiler(&mut s);
+    let before = s.notes.len();
+    add(&mut s, "#house #boiler");
+    assert_eq!(path(&s), ["#house", "#boiler"]);
+    assert_eq!(s.line, "");
+    assert_eq!(s.notes.len(), before, "nothing was written");
+    assert_eq!(heads(&s).len(), 2);
+}
+
+#[test]
+fn enter_on_a_line_of_labels_that_names_nowhere_writes_nothing() {
+    let mut s = session();
+    house_and_boiler(&mut s);
+    let before = s.notes.len();
+    add(&mut s, "#house");
+    assert_eq!(path(&s), ["#house"]);
+    add(&mut s, "#house");
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(s.notes.len(), before);
+    s.act(Action::Back);
+    clear(&mut s);
+    add(&mut s, "[ ] [x]");
+    assert_eq!(s.notes.len(), before);
+}
+
+#[test]
+fn inside_a_place_enter_on_a_label_goes_into_it_too() {
+    let mut s = session();
+    house_and_boiler(&mut s);
+    add(&mut s, "#house");
+    add(&mut s, "#boiler");
+    assert_eq!(path(&s), ["#house", "#boiler"]);
+}
+
+#[test]
+fn the_line_of_labels_offers_going_in_and_not_writing() {
+    let mut s = session();
+    house_and_boiler(&mut s);
+    type_in(&mut s, "#house #boiler");
+    let offered: Vec<Action> = s.view().hints.iter().map(|h| h.action.clone()).collect();
+    assert!(offered.contains(&Action::GoIn));
+    assert!(!offered.contains(&Action::Write));
+}
+
+#[test]
+fn a_line_with_words_spans_or_phrases_as_well_as_labels_is_still_written_by_enter() {
+    let mut s = session();
+    house_and_boiler(&mut s);
+    for line in [
+        "#house ..",
+        "#house 2026-10-01..",
+        "#house \"oil\"",
+        "#house ~oil",
+        "#house a",
+        "Order oil #house",
+    ] {
+        s.act(Action::Select(None));
+        clear(&mut s);
+        let before = s.notes.len();
+        add(&mut s, line);
+        assert_eq!(s.notes.len(), before + 1, "{line} is written");
+        assert!(path(&s).is_empty(), "{line} goes nowhere");
+    }
 }

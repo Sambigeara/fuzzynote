@@ -523,8 +523,10 @@ It is in one of two places, the line or the head of a row, and typing goes to th
 
 On the line, typing finds. Enter with text writes the line as a note and takes the cursor to it, the
 caret at the end of its head; Enter with nothing on the line opens a new row at the top of the list,
-its head the field. Down moves onto the list. Tab goes into what the line names, wherever the caret
-is, and Esc clears it, or on an empty line comes back (see "Zoom and places").
+its head the field. A line of labels and nothing else is not written: Enter goes into it as Tab
+does, and does nothing where Tab does nothing. Down moves onto the list. Tab goes into what the line
+names, wherever the caret is, and Esc clears it, or on an empty line comes back (see "Zoom and
+places").
 
 On a row, the head is the field and typing changes it, with the caret landing at its end, and each
 change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typed, as an editor's
@@ -629,7 +631,8 @@ nothing to rank by and no span are in the space's order, so they can be moved as
 empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
 reads: quotes, `~` and spans stay as typed, date words are written out, after a span's dots too,
 and `/task` is written as the box at the start of the head, so that `Bleed the radiators /task`
-writes `[ ] Bleed the radiators`.
+writes `[ ] Bleed the radiators`. A line of labels alone is the exception: it is the name of a
+place, and Enter goes into it as Tab does and writes nothing.
 Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
 asks for the done tasks.
 
@@ -1395,7 +1398,8 @@ the app now does is described above; an entry repeats it only where the reason n
   Sam's direction, as the original's did, the caret at the end of its head. The note just written is
   the one most likely to be gone on with, and Enter there opens a row under it, so a run of notes
   starts from the line as it does from any row; left on the line, the cursor had nothing to say
-  where the note went.
+  where the note went. Revised 2026-10-19 by "Enter on a line of labels goes in": a line of labels
+  and nothing else is not written, and Enter goes into it as Tab does.
 
 - **One cursor, no chrome.** Decided 2026-10-14, at Sam's direction, replacing the first page and
   the bordered terminal. The page had a header with a path, a prompt glyph, an underlined input, a
@@ -2497,7 +2501,9 @@ the app now does is described above; an entry repeats it only where the reason n
   `[ ]` typed another way, and the line says `→ [ ]` beside it; `/task` alone and Enter writes what
   `[ ]` alone does, a note that is only the box. It is still one trigger per job, each read where it
   is read, so there is still no general slash-command system. Revised 2026-10-17 by "Enter on a row
-  writes out its words first": on a row, Enter writes the word out as the box and stays.
+  writes out its words first": on a row, Enter writes the word out as the box and stays. Revised
+  2026-10-19 by "Enter on a line of labels goes in": `/task` alone and Enter, like `[ ]` alone, goes
+  into the open tasks as Tab does, and writes nothing.
 
 - **The row under the cursor reads until it is written in.** Decided 2026-10-17, at Sam's direction,
   revising "A head reads every inline mark a body does" where it says the row under the cursor is
@@ -3152,6 +3158,21 @@ the app now does is described above; an entry repeats it only where the reason n
   at 50rem. The shape is as it was, one column left of centre with a third of the room on its left
   and the body beside it, and nothing is new on the page. Below a page 100rem wide nothing changes,
   so a laptop and a phone are as they were.
+
+- **Enter on a line of labels goes in.** Decided 2026-10-19, at Sam's direction, revising "Enter
+  with text on the line takes the cursor to the note it wrote" and "`/task` is a way of typing the
+  box", where `/task` alone and Enter wrote a note that is only the box. A line of labels alone is
+  the name of a place, and a note of nothing but labels says nothing. A hand that has typed a
+  place's labels and reaches for Enter wants the place, as Enter takes the completion in a picker.
+  What Enter wrote instead was a note kept on every device and, gone into, a place of its own named
+  by the labels with nothing in it: `#house #boiler` and Enter, then Tab on the row it wrote, was one
+  step reading `#house #boiler`, where Tab from the line reads `#house › #boiler`. Now Enter on a
+  line of tags, people, days and boxes and nothing else goes into them one after another as Tab
+  does, and does nothing where Tab does nothing, as `#house` typed inside `#house` or `[ ] [x]`. On
+  such a line the foot offers only going in, `Tab go in`, and on the page the `›` after the line,
+  so there is no new word to learn. A note that is only labels can still be written, in a row. Left
+  as they are: Enter on a line that names a note still writes it, since that line may be a draft;
+  Tab on a row headed only by labels still goes into that note, since it is a note.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
