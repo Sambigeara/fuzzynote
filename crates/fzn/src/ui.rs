@@ -299,7 +299,9 @@ fn key_for(action: &Action, keys: Keys) -> &'static str {
         Action::Move(_) => "↓",
         Action::Shift(by) if *by < 0 => "^↑",
         Action::Shift(_) => "^↓",
-        Action::Select(_) | Action::Back | Action::Close => "Esc",
+        Action::Select(_) | Action::Back | Action::Close | Action::Dismiss => "Esc",
+        Action::Take(_) => "Tab",
+        Action::Choose(_) => "↑↓",
         // Clearing the line is the rung Escape takes while it has text; Ctrl-D is its second key.
         Action::Type(text) if text.is_empty() => "Esc",
         Action::Archive if keys.shift_enter => "⇧↵",
@@ -321,7 +323,8 @@ fn key_for(action: &Action, keys: Keys) -> &'static str {
         | Action::Save { .. }
         | Action::Keep
         | Action::Erase
-        | Action::Restore(_) => "",
+        | Action::Restore(_)
+        | Action::At(_) => "",
     }
 }
 

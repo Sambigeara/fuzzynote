@@ -8,7 +8,7 @@ use crate::note::Note;
 use crate::query::{Hold, Query};
 use crate::score::{self, Candidates, Context, Label, QueryLabel, Reason, Scorer, Weights};
 use crate::text::{self, Facts};
-use crate::time::Day;
+use crate::time::{Day, Moment};
 
 struct Doc {
     note: Note,
@@ -679,6 +679,48 @@ impl Engine {
                 })
             })
             .collect()
+    }
+
+    /// The tags or the people that `start` starts, as they are written with their mark, at most
+    /// `limit`: those carried by the most notes first, then those carried by the note written
+    /// last, then in order. The note `besides` names is not counted, since it is the one being
+    /// written and its word is the one still being typed. An archived note still carries what it
+    /// says, so it counts.
+    pub(crate) fn labels_starting(
+        &self,
+        start: &Label,
+        besides: Option<&str>,
+        limit: usize,
+    ) -> Vec<String> {
+        let besides = besides.and_then(|id| self.by_id.get(id).copied());
+        let mut found: Vec<(usize, Option<Moment>, String)> = self
+            .index
+            .labels_starting(start)
+            .filter_map(|(label, docs)| {
+                let written = match label {
+                    Label::Tag(tag) => format!("#{tag}"),
+                    Label::Mention(who) => format!("@{who}"),
+                    _ => return None,
+                };
+                let mut carried = 0;
+                let mut last = None;
+                for &d in docs.iter().filter(|&&d| Some(d) != besides) {
+                    carried += 1;
+                    let created = self.docs[d as usize]
+                        .as_ref()
+                        .and_then(|doc| doc.note.created);
+                    last = last.max(created);
+                }
+                (carried > 0).then_some((carried, last, written))
+            })
+            .collect();
+        found.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.cmp(&a.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        found.truncate(limit);
+        found.into_iter().map(|(_, _, written)| written).collect()
     }
 
     /// The note's most distinctive terms, ignoring ones no other note shares.

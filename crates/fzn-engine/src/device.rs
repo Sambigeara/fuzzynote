@@ -292,11 +292,20 @@ impl Device {
         // head was written as it was typed before the key was found wrong: one line, under the
         // key every line this device has written is already under.
         let gated = if self.session.unwritten() {
-            !matches!(action, Action::Undo | Action::ShowScores)
+            !matches!(
+                action,
+                Action::Undo
+                    | Action::ShowScores
+                    | Action::At(_)
+                    | Action::Choose(_)
+                    | Action::Dismiss
+            )
         } else {
-            // Write on a line of labels alone goes in as Tab does and writes nothing, so it
-            // goes in whatever the key.
-            action.writes() && !(action == Action::Write && self.session.write_goes_in())
+            // Write on a line of labels alone goes in as Tab does and writes nothing, and a word
+            // taken on the line changes only the line, so either goes ahead whatever the key.
+            action.writes()
+                && !(action == Action::Write && self.session.write_goes_in())
+                && !(matches!(action, Action::Take(_)) && self.session.on_line())
         };
         if gated && !self.key_verified() {
             self.session.say(WRONG_KEY);
@@ -1603,6 +1612,33 @@ mod tests {
         assert_eq!(b.act(Action::Write), Todo::default());
         assert_eq!(status(&b), WRONG_KEY);
         assert!(b.view().path.is_empty());
+    }
+
+    #[test]
+    fn a_word_offered_on_the_line_is_taken_when_the_key_is_not_verified() {
+        let mut a = device("dev-a");
+        let lines: Vec<String> = write(&mut a, "Boiler").keep.remove(0).lines;
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        b.load("dev-x", vec![plain("x-1", "Order oil #house", 100)]);
+        b.load("dev-x", vec![plain("x-2", "Paint the hall #hall", 200)]);
+        b.load("dev-a", lines);
+        assert!(!b.key_verified());
+
+        // Taking it changes only the line, so it is not refused, as typing is not.
+        b.say("");
+        b.act(Action::Type("#h".into()));
+        b.act(Action::At(2));
+        assert!(b.view().offer.is_some());
+        let todo = b.act(Action::Take(None));
+        assert!(todo.keep.is_empty());
+        assert_eq!(b.view().line, "#hall ");
+        assert_eq!(todo.caret.line, Some(6));
+        assert_ne!(status(&b), WRONG_KEY);
     }
 
     #[test]

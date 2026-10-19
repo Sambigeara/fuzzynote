@@ -25,17 +25,19 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
 - Ergonomics is a primary goal, and it has two halves: nothing visible ever waits, and there is
   almost nothing to remember. The whole app fits in one sentence: type to find, or into the row you
   are on to change it; Enter writes the line, or opens a new row under the one you are on; Ctrl-O
-  opens the body; Tab goes in, from a head into its note and from the line into what the line names;
-  Esc clears the line, or comes back; and where you are is what you are talking about. Every other
-  key is maintenance, and the footer shows only the ones that apply right now. A key is justified by
-  the flow it sits in, never inherited. No key means something by the key before it.
+  opens the body; Tab goes in, from a head into its note and from the line into what the line names,
+  or takes the tag or person offered as one is typed; Esc clears the line, or comes back; and where
+  you are is what you are talking about. Every other key is maintenance, and the footer shows only
+  the ones that apply right now. A key is justified by the flow it sits in, never inherited. No key
+  means something by the key before it.
 - One cursor. There is exactly one on the screen and it moves: the caret on the line, or the caret
   in the head of the row the cursor is on, or on a row not yet written in that head itself, read and
   a little heavier, its caret at the end. Nothing else is highlighted and almost nothing else is
   drawn: no borders, no counts, and one colour, for a link, the one thing in a note's text that can
-  be acted on. The body read is that of what the cursor is on, in a
-  place of its own apart from the list, never under a row or the line. What is not being asked for
-  is not on the screen.
+  be acted on. While a tag or a person is typed, what completes it is drawn under the word, the one
+  thing laid over the rest, and the one a key takes is marked as the cursor's head is. The body read
+  is that of what the cursor is on, in a place of its own apart from the list, never under a row or
+  the line. What is not being asked for is not on the screen.
 - Archived is not forgotten. The list hides archived notes; the engine still remembers them.
 
 ## What stays from the original fzn (the soul)
@@ -114,9 +116,10 @@ no network call, so the same code runs in a terminal, in a browser tab and in a 
 
 **Session.** What a face drives, one per person per space. Three things go in and two come out.
 - In: an *action*, which is what was asked for and never which key asked: the line now reads this,
-  move the cursor, write the line, go into a note or a label, step back, archive, delete, link,
-  undo, the text of a note as it was edited, keep the note as it stands, go back to a path a face
-  kept. An action that does not apply where the cursor is does nothing.
+  the caret is here in it, move the cursor, write the line, go into a note or a label, step back,
+  archive, delete, link, undo, the text of a note as it was edited, keep the note as it stands, go
+  back to a path a face kept, take what is offered. An action that does not apply where the cursor
+  is does nothing.
 - In: versions of notes written elsewhere, by another device or another writer on this one.
 - In: notes given from outside, each as a line of `fzn query` has it, changed or not, and a line
   with no id as a new note at the top: written by the app's own rules, the text as the editor saves
@@ -132,17 +135,19 @@ no network call, so the same code runs in a terminal, in a browser tab and in a 
   own part, so an effect that fails costs a message and nothing else.
 - Out: where the session put the *caret*, whenever it and not the person's typing changed what the
   caret is in: the line, the head under the cursor, which head that is, or whether its body is open.
-  A change under the head is not one. A face puts its own caret
-  there, and otherwise leaves it where it was, as far as the text still reaches; it never works out
-  for itself where the session meant it to go. This comes from an action and from versions arriving
-  alike, since a version from elsewhere can change the head under the caret.
+  A change under the head is not one. A word taken from what is offered is, and the caret goes after
+  it. A face puts its own caret there, and otherwise leaves it where it was, as far as the text
+  still reaches; it never works out for itself where the session meant it to go. This comes from
+  an action and from versions arriving alike, since a version from elsewhere can change the head
+  under the caret.
 - Out: the *view*, which is everything there is to paint: the path, the line and what its date words
   and spans stand for, the rows with their reasons, each with the head it shows off the cursor and
   whether it is a task and ticked, where what a place only finds begins, where the cursor is, the
   note under it as it is being written and when it was written, the note you are in, what just
-  happened, and what can be asked for where the cursor is, each with what to call it there. A face
-  puts its own key or button beside each. What the view says is worked out once an action or an
-  arrival is done with, so a face may ask for it as often as it paints.
+  happened, what is offered for the tag or person the caret ends, and what can be asked for where
+  the cursor is, each with what to call it there. A face puts its own key or button beside each.
+  What the view says is worked out once an action or an arrival is done with, so a face may ask for
+  it as often as it paints.
 - Out, when a face asks: the path as *steps*, for a face about to be reloaded under the person to
   keep and give back, `[{"note":"…","search":"boi"},{"label":"#house","search":"#house"}]`: each
   note by its id and each label as it was typed, with the search each was found with. Given back,
@@ -543,8 +548,25 @@ The caret moves only when the person moves it or types, or when something else c
 in, and then the session says where it goes, the same in both faces: at the end of the head when the
 cursor lands on a row, when a body opens or closes, and when the head is changed under it, put back,
 undone, ticked, its words written out or a version arriving from elsewhere; where the writer's text
-goes in a new row with only its labels; and at the end of a line the session changed, on the way into
-a place and out of it or when the line is written. A body left open keeps its caret in its editor.
+goes in a new row with only its labels; at the end of a line the session changed, on the way into a
+place and out of it or when the line is written; and after a word taken from what is offered. A body
+left open keeps its caret in its editor.
+
+While a tag or a person is typed, on the line or in the head of a row, the tags or the people of the
+space that start with it are offered under it, at most five: those carried by the most notes first,
+then those on the note written last, then by name, archived notes counting, each written as the
+index holds it, `#food` or `@joe`. It opens when typing leaves the caret at the end of a word that
+starts with `#` or `@`, with a letter after the mark, and something other than the word itself
+starts with it; for this, and nothing else, a face says where the caret is after typing, and when it
+moves while something is offered. Tab or Enter takes the one marked, the first until Up or Down
+chooses another, stopping at either end: the word becomes it with a space after it and the caret
+after the space, so `#fo` Tab Tab goes into `#food`. Escape closes it and does nothing else, and it
+stays closed until the word is typed into again. Anything else closes it: a space or anything else
+that ends the word, the caret moved off its end, the cursor leaving, a body opening, an undo, or the
+text under it changed from elsewhere. More letters, or letters taken back, offer again; taking the
+mark closes it. While it is open the foot offers only taking, choosing and closing, and every other
+key means what it always does. An open body is offered nothing (see "The tags a word starts are
+offered as it is typed").
 
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
@@ -587,8 +609,9 @@ all, and none of it changes how the words rank.
 - `#tag`, `@person` and a day hold: the note carries the tag or the person, or is of the day, by
   mentioning it or by having been written on it. The last thing typed holds every tag or person it
   is the start of until whitespace follows it, `#ho` holding `#house` and `#hosting`, so the list
-  does not empty mid-word. The name rule reads a label typed as the words it says, since a head says
-  its tags as words: `oil tank #house` names the note headed `Oil tank #house`.
+  does not empty mid-word, and they are offered under it (see "The cursor, in both faces"). The name
+  rule reads a label typed as the words it says, since a head says its tags as words: `oil tank
+  #house` names the note headed `Oil tank #house`.
 - `[ ]` holds the open tasks, the notes headed `[ ]` and not archived, and the rest of the line
   still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. `[x]`
   holds the done tasks, the notes headed `[x]`, archived or not; typing it is asking for them, so
@@ -3199,6 +3222,50 @@ the app now does is described above; an entry repeats it only where the reason n
   that end its head, body or not, so typing what the row now reads still finds it and goes into
   it. The row under the cursor shows its text as it is, as any row's does, and nothing else of the
   rule changes.
+
+- **The tags a word starts are offered as it is typed.** Decided 2026-10-19, at Sam's direction,
+  revising the Principles' "One cursor" and "One cursor, no chrome" (2026-10-14), where nothing but
+  the cursor was marked and nothing was laid over the list. A tag or a person is typed from memory,
+  and memory spells it more than one way: `#food` one week and `#foods` the next are two places. The
+  line held every tag `#fo` starts while it was typed, but showed only what they found, never what
+  `#fo` could be. Now, on the line and in a head being written, the tags or the people of the space
+  that the word starts are offered under it, at most five, the one a key takes marked as the
+  cursor's head is, and Tab takes it. A dim hint of the one most carried, `→ #food`, set where the
+  line says a date word's date and taken by Tab, was weighed first, and Sam rejected it as
+  unergonomic. A short list under the word is what a shell, Slack, Obsidian and every
+  editor show, so the hand knows it already; it is the chrome "almost no chrome" leaves room for,
+  and it goes as the word does. It opens only when typing leaves the caret at the end of a word that
+  starts with `#` or `@`, with a letter after the mark, and something other than the word itself
+  starts with it, so a tag typed whole offers nothing; a caret walked onto a word never opens it,
+  and one Escape closed stays closed until the word is typed into again, so it never comes back
+  unasked. Anything else asked for closes it, and so do the caret leaving the end of the word and
+  the text under it changing from elsewhere. Tab takes it, as "Tab goes in" said a shell takes a
+  completion: the word becomes the one offered with a space after it, the caret after the space, so
+  that `#fo` Tab Tab goes into `#food`. Enter takes it too and does nothing else, as Slack, Obsidian
+  and VS Code take a completion on Enter, and the next Enter goes into a line of labels as before.
+  Up and Down choose and stop at the first and the last, as the list stops at its ends, rather than
+  wrap round, which would be one more thing to know. While it is open those keys mean what it shows,
+  which "No key means something by the key before it" allows: what they mean is in sight, under the
+  word and in the foot, which offers only taking, choosing and closing, closing being Escape's rung.
+  The session decides all of it, so that the faces cannot differ, though it had only ever been told
+  what the line reads: a face now says where the caret is after typing, `{"at":3}`, and when the
+  caret moves while something is offered, and asks with `{"take":null}`, or `{"take":1}` for the one
+  tapped, `{"choose":1}` and `"dismiss"`, each bound to keys of its own. The view says what is
+  offered, `{"words":["#food","#fox"],"chosen":0,"from":0}`, `from` being where the word's mark is.
+  The words are ranked by how many notes carry them, then by the newest note carrying them, then by
+  name, and written as the index holds them, lowercased, which is how the line already matches them;
+  archived notes count, since they still say what they say, and the note being written does not,
+  since its word is the one being typed. They come from the index's labels in order, the walk `#fo`
+  on the line already makes, and nothing is kept between keys: a word costs the notes carrying a tag
+  it starts, 13µs for one letter over 10,000 notes, measured natively. The cap of five, archived
+  notes counting and Enter taking are defaults Sam may change. In the terminal the words are set on
+  the rows under the caret's, from the column of the word's mark, each row cleared from edge to edge
+  as a shell clears the rows under its prompt, the one Tab takes in bold and no border; on the page
+  they float under the word on a small sheet, the sheet's paper and shadow with a hairline, the one
+  Tab takes in ink and heavier, and a tap takes one. An open body is offered nothing for now: in the
+  terminal it is your editor, and the page's CodeMirror has a completion of its own, which would be
+  a design of its own; use decides. Weighed: the dim hint, rejected; wrapping arrows; leaving Enter
+  to write; and offering every tag the word starts, which at one letter is more than can be read.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
