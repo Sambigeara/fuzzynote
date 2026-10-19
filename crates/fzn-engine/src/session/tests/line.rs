@@ -896,6 +896,11 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         (Action::Move(-1), r#"{"move":-1}"#),
         (Action::Select(None), r#"{"select":null}"#),
         (Action::Select(Some(3)), r#"{"select":3}"#),
+        (Action::At(3), r#"{"at":3}"#),
+        (Action::Take(None), r#"{"take":null}"#),
+        (Action::Take(Some(1)), r#"{"take":1}"#),
+        (Action::Choose(-1), r#"{"choose":-1}"#),
+        (Action::Dismiss, r#""dismiss""#),
         (
             Action::Restore(vec![
                 KeptStep::Note {
@@ -935,6 +940,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     assert_eq!(view["finds_from"], serde_json::Value::Null);
     assert_eq!(view["notes"], 1);
     assert_eq!(view["here"], serde_json::Value::Null);
+    assert_eq!(view["offer"], serde_json::Value::Null);
     assert_eq!(
         view["field"],
         serde_json::json!({
@@ -991,6 +997,7 @@ fn only_the_actions_that_can_change_a_note_write() {
         Action::Link,
         Action::Undo,
         Action::Redo,
+        Action::Take(None),
     ];
     let reads = [
         Action::Type("boiler".into()),
@@ -1003,6 +1010,9 @@ fn only_the_actions_that_can_change_a_note_write() {
         Action::ShowArchived,
         Action::ShowScores,
         Action::Restore(Vec::new()),
+        Action::At(3),
+        Action::Choose(1),
+        Action::Dismiss,
     ];
     for action in writes {
         assert!(action.writes(), "{action:?}");

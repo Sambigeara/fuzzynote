@@ -12,6 +12,7 @@ mod field;
 mod forms;
 mod going;
 mod line;
+mod offer;
 mod order;
 mod places;
 mod restore;

@@ -184,10 +184,18 @@ impl Index {
     /// The notes carrying a label that `start` starts, each list sorted: every tag or person
     /// whose name starts with its name, or for any other label the label itself.
     pub fn docs_starting<'a>(&'a self, start: &'a Label) -> impl Iterator<Item = &'a [DocId]> {
+        self.labels_starting(start).map(|(_, docs)| docs)
+    }
+
+    /// The labels that `start` starts, in order, each with the notes carrying it, sorted.
+    pub fn labels_starting<'a>(
+        &'a self,
+        start: &'a Label,
+    ) -> impl Iterator<Item = (&'a Label, &'a [DocId])> {
         self.labels
             .range(start..)
             .take_while(move |(label, _)| label.starts_with(start))
-            .map(|(_, docs)| docs.as_slice())
+            .map(|(label, docs)| (label, docs.as_slice()))
     }
 
     /// Every vocabulary term starting with `prefix`, in alphabetical order.

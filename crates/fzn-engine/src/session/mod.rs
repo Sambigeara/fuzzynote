@@ -89,7 +89,9 @@
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
-//! is given it, so the session is only ever told what the line now reads. Where the caret goes
+//! is given it, so the session is told what the line now reads, and after typing where the caret
+//! is in it, since what completes a tag or a person being typed is offered only at the end of the
+//! word, and what is offered is the app's to decide (see `offer`). Where the caret goes
 //! when something other than typing changes what it is in is the session's, since it is the one
 //! that changed it: it says where it put the caret, as a [`Caret`], and a face that worked that
 //! out for itself would be working it out a second time. A face that is
@@ -108,11 +110,13 @@ use crate::time::{Day, Moment};
 mod apply;
 mod field;
 mod list;
+mod offer;
 mod path;
 mod undo;
 
 pub use apply::Given;
 use field::Writing;
+pub use offer::Offer;
 use path::Step;
 use undo::Change;
 
@@ -209,6 +213,20 @@ pub enum Action {
     /// from the line, passing over a note that has gone, a label that is not one, and a place
     /// already on the path. The line clears, and the cursor is on it.
     Restore(Vec<KeptStep>),
+    /// The caret is here, in characters, in what the cursor is in: the line, or the head of the
+    /// note under the cursor. A face says it after typing, so that the tags or people the word
+    /// it ends starts are offered, and when the caret moves while something is offered, which
+    /// closes it unless the caret is still at the end of the word. A caret moved while nothing
+    /// is offered changes nothing, so a face need not say it then.
+    At(usize),
+    /// Take a word offered, in place of the word the caret ends, with a space after it: the one
+    /// chosen, or the one at this place in what is offered.
+    Take(Option<usize>),
+    /// Choose the word offered this many after the one chosen, or before it, stopping at the
+    /// first and the last.
+    Choose(i64),
+    /// Close what is offered, and do nothing else. It stays closed until the word is typed into.
+    Dismiss,
 }
 
 /// A step of the path as a face keeps it across a reload: the note gone into, by its id, or the
@@ -249,7 +267,8 @@ impl Action {
             | Action::Link
             | Action::Shift(_)
             | Action::Undo
-            | Action::Redo => true,
+            | Action::Redo
+            | Action::Take(_) => true,
             Action::Type(_)
             | Action::Move(_)
             | Action::Select(_)
@@ -259,7 +278,10 @@ impl Action {
             | Action::OpenUrl
             | Action::ShowArchived
             | Action::ShowScores
-            | Action::Restore(_) => false,
+            | Action::Restore(_)
+            | Action::At(_)
+            | Action::Choose(_)
+            | Action::Dismiss => false,
         }
     }
 }
@@ -280,7 +302,8 @@ pub enum Effect {
 }
 
 /// Where the session put the caret, in characters, when it and not the person's typing changed
-/// what the caret is in: the line it changed, at the end; a head the cursor landed on, one the
+/// what the caret is in: the line it changed, at the end, or after a word taken from what was
+/// offered, wherever that was in the line or the head; a head the cursor landed on, one the
 /// session changed under it, or one whose body opened or closed, at the end of the head, or in a
 /// new note with only its labels where they leave room. Typing never moves it, so where this says
 /// nothing a face keeps its caret where it was, as far as the text still reaches. An open body's
@@ -406,6 +429,8 @@ pub struct View<'a> {
     pub here: Option<Here<'a>>,
     /// The note under the cursor as it is being written, if the cursor is on a row.
     pub field: Option<Field<'a>>,
+    /// What is offered to complete the tag or person the caret ends, while it is offered.
+    pub offer: Option<&'a Offer>,
 }
 
 /// One person at one space. Create one per face.
@@ -454,6 +479,11 @@ pub struct Session {
     /// The session held no notes when it opened and nothing has been asked of it yet, so what
     /// arrives is the space filling it, from as many logs as it has, and not news.
     filling: bool,
+    /// What is offered to complete the tag or person the caret ends, while it is offered.
+    offer: Option<Offer>,
+    /// The last thing asked was typing, so that where the face says the caret is next is
+    /// offered for.
+    typed: bool,
 }
 
 impl Session {
@@ -495,6 +525,8 @@ impl Session {
             count: 0,
             finds_from: None,
             filling,
+            offer: None,
+            typed: false,
         };
         session.refresh(true);
         session.derive();
@@ -517,21 +549,41 @@ impl Session {
         self.selected().is_none() && self.parsed.only_labels()
     }
 
+    /// Whether the cursor is on the line, where a word taken changes only the line.
+    pub(crate) fn on_line(&self) -> bool {
+        self.field.is_none()
+    }
+
     /// Does what was asked, and returns what the face has to do about it. Where it put the caret
     /// is taken apart, with [`Session::take_caret`].
     pub fn act(&mut self, action: Action) -> Vec<Effect> {
         self.filling = false;
         let typed = matches!(action, Action::Type(_) | Action::Edited(_));
+        // What is offered lasts only while the face says where the caret is or chooses among it:
+        // anything else asked for closes it, typing too, which offers again once the face says
+        // where the caret has gone.
+        let offer = self.offer.take();
+        let after_typing = std::mem::replace(&mut self.typed, typed);
         let was = self.spot();
-        if let Some(action) = self.on_field(action) {
-            self.carry_out(action);
+        let mut taken = None;
+        match action {
+            Action::At(at) => self.offer = self.offered_at(at, offer, after_typing),
+            Action::Choose(by) => self.offer = offer.map(|offer| offer.chosen_by(by)),
+            Action::Take(which) => taken = offer.and_then(|offer| self.take(offer, which)),
+            Action::Dismiss => {}
+            action => {
+                if let Some(action) = self.on_field(action) {
+                    self.carry_out(action);
+                }
+            }
         }
         self.land();
         self.derive();
-        self.caret = if typed {
-            Caret::default()
-        } else {
-            self.placed(&was)
+        // A word taken puts the caret after it, where it was taken, and not at the end.
+        self.caret = match taken {
+            Some(caret) => caret,
+            None if typed => Caret::default(),
+            None => self.placed(&was),
         };
         std::mem::take(&mut self.out)
     }
@@ -618,6 +670,8 @@ impl Session {
             }
             Action::ShowScores => self.show_scores = !self.show_scores,
             Action::Restore(steps) => self.restore_path(steps),
+            // What is offered is the act's, before anything else is done.
+            Action::At(_) | Action::Take(_) | Action::Choose(_) | Action::Dismiss => {}
         }
     }
 
@@ -662,8 +716,14 @@ impl Session {
         if !self.filling {
             self.status = format!("{} changed elsewhere", changed.len());
         }
-        self.derive();
+        // What is offered was for the text as it was typed: a change to it from elsewhere, or
+        // the cursor taken off it, closes it.
         let placed = self.placed(&was);
+        let on = |field: Option<&str>| field == self.field.as_ref().map(|f| f.id.as_str());
+        if placed != Caret::default() || !on(was.field.as_ref().map(|held| held.id.as_str())) {
+            self.offer = None;
+        }
+        self.derive();
         self.caret.then(placed);
         true
     }
@@ -721,6 +781,7 @@ impl Session {
                 whole: field.whole,
                 created: self.notes.get(&field.id).and_then(|r| r.created),
             }),
+            offer: self.offer.as_ref(),
         }
     }
 
@@ -731,6 +792,24 @@ impl Session {
 
     /// What can be asked for where the cursor is. The way back is always last.
     fn hints(&self) -> Vec<Hint> {
+        // While a word is offered for, only what is about the offer applies, and closing it is
+        // the way back.
+        if self.offer.is_some() {
+            return vec![
+                Hint {
+                    action: Action::Take(None),
+                    label: "take",
+                },
+                Hint {
+                    action: Action::Choose(1),
+                    label: "choose",
+                },
+                Hint {
+                    action: Action::Dismiss,
+                    label: "close",
+                },
+            ];
+        }
         let zoomed = !self.path.is_empty();
         let mut hints = Vec::new();
         let mut offer = |action, label| hints.push(Hint { action, label });
