@@ -949,9 +949,9 @@ has steps; nothing else is done to the history until the browser says it has gon
 out and in again settles where the keys left it. A step in pushes inside the gesture that made it.
 Forward has nothing to go into and is gone back from at once.
 
-*Markdown.* A body is rendered where it is only read, and in the sheet every line but the one being
-written reads the same way (see "A line of the open body reads until it is written in"); the note
-stays plain text, and neither the engine nor the terminal reads markdown. Read, a body shows
+*Markdown.* A body is rendered where it is only read, and in the sheet everything but the span the
+selection touches reads the same way (see "A body's marks show only in the span being written"); the
+note stays plain text, and neither the engine nor the terminal reads markdown. Read, a body shows
 headings, paragraphs keeping the lines they were written on, lists, tasks as a drawn box, ticked and
 faint when done and never pressed, quotes, rules, tables with their columns aligned, code
 highlighted by its language, and in a line emphasis, strong text, code, strikethrough and links,
@@ -976,12 +976,12 @@ colour, clear of the descenders, in full under the pointer, never heavier. In th
 read makes a link is marked so and nothing else: a link's or an image's words whose address the page
 follows, and such an address standing alone, bare, in angle brackets or in a link's definition, but
 not `[draft]`, a link by reference or `www.example.org`, which read as typed; a link's brackets, its
-title and the address after its words stay as they were, faint or soft, on the line being written
-and go on the lines that read; `[[Boiler]]` is unmarked there as it is read. An address read as
-itself is shown without its scheme, `example.org/garden`, and whole under the pointer. A long body
-is rendered at first only as far as it shows, its first 5,000 letters, and whole once the page is
-idle. A head is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://`
-or `mailto:`; nested past what the stack holds, a body is read as typed.
+title and the address after its words stay as they were, faint or soft, in a link the selection
+touches and go in any other; `[[Boiler]]` is unmarked there as it is read. An address read as itself
+is shown without its scheme, `example.org/garden`, and whole under the pointer. A long body is
+rendered at first only as far as it shows, its first 5,000 letters, and whole once the page is idle.
+A head is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or
+`mailto:`; nested past what the stack holds, a body is read as typed.
 
 *Keys.* The four that are the app are the same, type, Enter, Escape and the arrows, and Tab goes in,
 as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page
@@ -1081,12 +1081,11 @@ of sight writes what it holds. The words in the foot stay above the dimming, sin
 the note. There is no second editor: the sheet is the body's editor, for a long document too, and
 with it shut the head is written in its row. While the body is open the sheet holds a CodeMirror
 editor, fetched after the first pause in keys once the page has painted, or when a body opens if
-that is sooner: on the line being written the markdown styled where it stands, the marks in the
-faint grey and the text in ink, headings and strong text heavier, emphasis slanted, code in the
-monospace, and every other line read as the body beside the list reads, its marks hidden and a
-task's box drawn but never pressed, until it is written in or the caret is put in it, while Up,
-Down, the pages and vim's `j` and `k` walk past showing none (see "A line of the open body reads
-until it is written in"); soft wrap, step undo, a grey selection, and vim mode for the body, for the
+that is sooner: the body read as the body beside the list reads, its marks hidden and a task's box
+drawn but never pressed, but for the span the selection touches, which shows its marks where they
+stand, the marks in the faint grey and the text in ink, headings and strong text heavier, emphasis
+slanted, code in the monospace (see "A body's marks show only in the span being written"); soft
+wrap, step undo, a grey selection, and vim mode for the body, for the
 browser that asked for it with the word `vim` in the foot of an open body, once the editor has
 loaded, which a touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k`
 move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a
@@ -1846,6 +1845,8 @@ the app now does is described above; an entry repeats it only where the reason n
   in a line has a wash of the text's colour, in ink in a body read, and a block a wash of ink.
   Revised 2026-10-20 by "A line of the open body reads until it is written in", which reverses the
   sheet's styled source: only the line being written shows its marks, and every other line reads.
+  Revised 2026-10-20 by "A body's marks show only in the span being written": only the span the
+  selection touches shows its marks.
 
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A date
   typed as a search finds the notes that mention the day and the notes written on it" under Model,
@@ -2612,7 +2613,9 @@ the app now does is described above; an entry repeats it only where the reason n
   rows are read and revealed alike in every browser. Revised 2026-10-17 by "The row read shows its
   caret": on the page a row read has the block at the end of its reading, or on its `…`. Revised
   2026-10-20 by "A line of the open body reads until it is written in": the open body's lines follow
-  this rule a line at a time, where the head of an open body was unchanged.
+  this rule a line at a time, where the head of an open body was unchanged. Revised 2026-10-20 by "A
+  body's marks show only in the span being written": the open body shows marks by span instead, and
+  a row keeps this rule.
 
 - **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
   revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
@@ -3396,6 +3399,51 @@ the app now does is described above; an entry repeats it only where the reason n
   line by the key that starts it, before it begins, and by its start when no key comes first;
   Chromium's simulated composition lands whole, but a real input method, fcitx5 on Linux or a
   phone's keyboard, is untested (see Open questions).
+  Revised 2026-10-20 by "A body's marks show only in the span being written": the open body shows
+  marks by span, and none of the telling a walk from a write above remains.
+
+- **A body's marks show only in the span being written.** Decided 2026-10-20, at Sam's direction
+  after trying it, revising "A line of the open body reads until it is written in". In use the line
+  rule was more trouble than it saved: Left, Right or a letter flipped the whole line to its source,
+  every address on it appearing at once and the line rewrapping round a single letter, and the
+  machinery that told a walk from a write, keys named one by one, Up, Down, the pages and vim's `j`
+  and `k` marked as walks, a pointer followed until it was let go and a pen's press told from a
+  mouse's, is where the review found its bugs. Now a span of the open body shows its marks as typed
+  while the selection touches it, at either edge, by any of its ranges, vim's visual mode included,
+  and reads again once nothing touches it, however the caret came there: emphasis, strong text,
+  strikethrough and code show their marks, a link its brackets and its address, an address standing
+  alone its scheme, an autolink its angle brackets and an escape its backslash. A heading shows its
+  `#`, a quote its `>` and a rule its `---` while the caret is on its line, a quote's line giving up
+  its rule while it shows its mark. A list item's lead, from the start of its line, its indent
+  counting, to the space after its mark or after a task's box, is one span, so that a caret at the
+  start of an item, where Down from the start of a line lands, shows `- [ ]` and where a letter will
+  go. A fence shows its backticks while the caret is anywhere in its block, its lines keeping their
+  band and their height. What reads is as it was, and a box drawn in the sheet still does not tick
+  on a tap. It is how SilverBullet and Obsidian show theirs, so the hand may know it already, and it
+  is one rule where the line's needed a list of inputs. A hidden mark always lies inside its span,
+  so a caret at either side of one touches the span and shows it: no caret stops beside a mark it
+  cannot see, and hidden marks that touch need no longer be made one. What it costs: walking moves
+  text again, but only within the span the caret lands in. Down landing in a link's words shows its
+  address, and the paragraph measured grew a line, 25.5px, as it does; vim's `j` and `k` find their
+  column on the line as it reads, and a span they land in opens beside the caret, which keeps its
+  place in the text rather than on the screen; typing just past a closing mark closes its span, and
+  the text moves back by the mark. A press holds the reading still until it is released, so text
+  never moves under a held pointer and a click with a tremor still places the caret; the span opens
+  once it is released, and a drag opens what it selected when it ends. A mark opening or closing
+  beside a composition would redraw what an input method is writing, so while a composition is under
+  way the marks hold still, moved only with the text, and are read again once it ends, at the next
+  update or at one the editor is given when an input method ends it without changing the text. In
+  Chromium's simulated composition at a span's edge the marks held, and without the hold they closed
+  mid-composition, though the text landed whole either way; a real input method, fcitx5 on Linux or
+  a phone's keyboard, where the editor uses EditContext, is still untested. Measured in headless
+  Chromium over 34 checks: every line reads with the caret off it, a plain line walked onto changes
+  nothing, a line the caret is not on never changes but for a block's fences, and a press, a pen and
+  a tap open only the span they land in. Reading what is in view takes 0.09 ms a caret move over a
+  body of 5,300 words, and the editor is 1.2 KB smaller than under the line rule, 4.1 KB larger,
+  1.4 KB gzipped, than before either. Weighed: the line rule, tried and dropped; showing a row's
+  marks by span too, left for a decision of its own, since a row is a text box under its reading and
+  would have to become an editor. The press is held as `codemirror-live-markdown` holds one,
+  followed only from its press to its release.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -3484,11 +3532,11 @@ the app now does is described above; an entry repeats it only where the reason n
 - Whether a cut head on a page too narrow to read it beside the list wants more than `body` to read
   it whole, and whether a head being written on a phone should stop growing its row (see "A row is
   one line, and a long head is read beside it"); use decides.
-- Whether a composition begun on a line of the open body that reads lands whole through a real input
-  method, fcitx5 on Linux or a phone's keyboard, which composes every word and where the editor uses
-  EditContext. The line is shown by the key that starts it, before the composition begins, and
-  Chromium's simulated composition lands whole; use decides (see "A line of the open body reads
-  until it is written in").
+- Whether a composition through a real input method, fcitx5 on Linux or a phone's keyboard, which
+  composes every word and where the editor uses EditContext, lands whole beside a span's marks in
+  the open body. The marks hold still while a composition is under way and are read again once it
+  ends, and Chromium's simulated composition lands whole; use decides (see "A body's marks show only
+  in the span being written").
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

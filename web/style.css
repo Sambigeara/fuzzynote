@@ -648,7 +648,7 @@ body.resting .row .head a,
 }
 .hl-code .hl-mono { font-size: inherit; }
 
-/* In the open body a line not being written reads as the body beside the list reads (see
+/* In the open body what the selection does not touch reads as the body beside the list reads (see
    reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
    dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
    Nothing here makes a line taller or shorter than it is written. */

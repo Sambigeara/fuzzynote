@@ -7,10 +7,10 @@
 // is made afresh each time a body opens, so the step undo belongs to one visit; after that the
 // engine's undo is the only one.
 //
-// The text is markdown, kept as typed. The line being written shows it as typed, its marks
-// styled, and every other line reads as the body beside the list reads (see reading.js), so that
-// walking the body moves no text. The parser, the highlighting and the languages of code are the
-// page's reading of markdown, imported from it, so that a body written and a body read look alike.
+// The text is markdown, kept as typed. It reads as the body beside the list reads, and the span
+// the selection touches shows its marks as typed, styled (see reading.js). The parser, the
+// highlighting and the languages of code are the page's reading of markdown, imported from it, so
+// that a body written and a body read look alike.
 //
 // Vim's Ex commands are its own, global to the module, so they reach whichever page mounted the
 // view last. In vim a write stays and a quit goes; here a version is written when the body
@@ -20,17 +20,14 @@
 
 import { Annotation, Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, drawSelection, keymap, panels } from '@codemirror/view';
-import {
-  cursorLineDown, cursorLineUp, cursorPageDown, cursorPageUp, history, indentWithTab, insertNewline, redo,
-  standardKeymap, undo,
-} from '@codemirror/commands';
+import { history, indentWithTab, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
 import {
   Language, ParseContext, StreamLanguage, defineLanguageFacet, syntaxHighlighting, syntaxTree,
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { between, follows, highlighter, language, markdown } from './render.js';
-import { readWhereNotWritten, walk, walks, writtenChanged } from './reading.js';
+import { readWhereNotWritten, readingMoved } from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -133,10 +130,8 @@ Vim.mapCommand('ZQ', 'action', 'fznDiscard', {}, { context: 'normal' });
 // whole lines. Otherwise they step as gj does, by the lines as laid out, held to the column on
 // screen where the steps began, and stop at the first or last. The motion is mapped in normal and
 // visual mode only, so that after an operator j and k keep their own line-wise motion and dj still
-// takes two whole lines. A count typed before them is the motion's repeat. They walk, so a line
-// they reach reads until it is written in (see reading.js).
+// takes two whole lines. A count typed before them is the motion's repeat.
 const shown = (cm, head, args, state) => {
-  walk();
   const steady = state.lastMotion === shown;
   if (state.visualLine) {
     const ch = steady ? state.lastHPos : head.ch;
@@ -175,13 +170,9 @@ export function mount(hooks, foot) {
     // Enter is a newline and no more, with or without Shift. Ctrl-O does nothing here, so that
     // it never reaches the browser's file dialog. Tab indents and Shift-Tab takes the indent back,
     // as in any editor, rather than moving the focus off the page's text: Escape, `:q` or the word
-    // in the foot is the way out. Up, Down and the pages walk, and show no line as they reach it.
+    // in the foot is the way out.
     keymap.of([
       { key: 'Enter', run: insertNewline, shift: insertNewline },
-      { key: 'ArrowUp', run: walks(cursorLineUp), preventDefault: true },
-      { key: 'ArrowDown', run: walks(cursorLineDown), preventDefault: true },
-      { key: 'PageUp', run: walks(cursorPageUp) },
-      { key: 'PageDown', run: walks(cursorPageDown) },
       { key: 'Ctrl-o', run: () => true },
       indentWithTab,
       { key: 'Mod-z', run: undo },
@@ -208,7 +199,7 @@ export function mount(hooks, foot) {
     EditorView.updateListener.of((u) => {
       const typed = u.docChanged && !u.transactions.some((tr) => tr.annotation(fromPage));
       if (typed) hooks.onChange(u.state.doc.toString());
-      if (u.selectionSet || u.docChanged || u.focusChanged || writtenChanged(u)) hooks.onSelection();
+      if (u.selectionSet || u.docChanged || u.focusChanged || readingMoved(u)) hooks.onSelection();
     }),
     EditorView.domEventHandlers({ blur: (event) => hooks.onBlur(event), focus: () => hooks.onFocus() }),
   ];
