@@ -16,7 +16,7 @@
 // Nothing here changes the text. Decorations hide marks and draw in their place, so the note, its
 // undo, a copy and a paste are the source. Only marks are hidden, never words, and each only within
 // its own line, since a decoration given by a plugin may not cover a line break. A line read is as
-// high as written but for what its marks take once wrapped, a heading keeping its size and a
+// high as written but for what its marks take once wrapped, a heading's size being its line's and a
 // fence's line its band. Tables and what a block of code holds stay as they are styled, being read
 // best as typed, and raw HTML, a link's definition and `[[Boiler]]` stay as typed, as they are
 // read. A box drawn here is not pressed: a press on it puts the caret beside it, as a press
@@ -71,6 +71,7 @@ const ticked = Decoration.replace({ widget: new Box(true) });
 const quoteLine = Decoration.line({ class: 'md-quote' });
 const ruleLine = Decoration.line({ class: 'md-rule' });
 const doneLine = Decoration.line({ class: 'md-done' });
+const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `md-h${n}` }));
 const SCHEME = /^(?:https?:\/\/|mailto:)/i;
 // The marks a span of text holds, by the kind of span.
 const MARK = {
@@ -104,8 +105,10 @@ function reading(view) {
         const name = ref.name;
         const node = ref.node;
         // A heading's mark goes with the space after it, and a closing one alone, unless the caret
-        // is on its line; what is marked in its words is a span of its own.
+        // is on its line; what is marked in its words is a span of its own. Its size is its line's,
+        // given whether or not the mark shows, so that showing the mark changes no height.
         if (/^ATXHeading\d$/.test(name)) {
+          mark(ref.from, headingLines[Number(name.slice(-1)) - 1]);
           if (touchedLine(ref.from)) return;
           const [first, ...rest] = node.getChildren('HeaderMark');
           if (first) {
@@ -114,6 +117,10 @@ function reading(view) {
             hide(first.from, end);
           }
           for (const closing of rest) hide(closing.from, closing.to);
+          return;
+        }
+        if (name === 'SetextHeading1' || name === 'SetextHeading2') {
+          mark(ref.from, headingLines[Number(name.slice(-1)) - 1]);
           return;
         }
         if (name in MARK) {

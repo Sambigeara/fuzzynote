@@ -1052,53 +1052,53 @@ it, where the box's caret is and where the terminal puts its cursor: the box is 
 holding the focus whenever it would, showing nothing. A key that would change the head (a letter,
 Backspace, Delete) or move the caret in it (Left, Right, Home, End, and their Shift and word forms),
 a paste, a cut, dictation, a composition starting, a selection made in it, or a press on its words
-reveals it: the reading goes,
-the box shows the text as typed, and what revealed it lands as it would have, a letter at the end
-and Left one before it. Up, Down, the pages, Tab, Enter, Escape and the chords do not, since they
-leave the row or act on the note as a whole. It stays revealed until the cursor leaves the row. A
-new row, from Enter or from the line, starts revealed, being written, as does the note Enter writes
-from the line, a row an undo put text back in other than a task's box alone, and a row whose head
-changed in place, from elsewhere, while it was read. Revealed, the box is one line too, wider than a
-phone's, a field that scrolls sideways under the caret: the text moves only when the caret would
-come within 2.5em, about five letters, of an edge, by the box's `scroll-padding-inline` where a
-browser honours it for the caret and by the page in every browser, and an edge that hides text
-fades. A letter, End or a paste at the end slides the text to show the end; Home moves nothing; a
-press on the words keeps the letter pressed under the pointer, the source scrolled so that a link's
-word stays where it was read, unless the letter is within five letters of an edge or past where the
-box ends, when it comes in that far; and the text stays put until the caret moves. On a wide page
-the pane shows the whole head as it is typed. Left, the row reads from its start again, its scroll
-forgotten, as an address bar's is. At a phone's width the box wraps as the head read does, and a
-head being written grows its row as it wraps. A drag from the words, not from a task's box, reveals
-the row and selects, and past an edge that hides text scrolls the box towards the pointer as it is
-held there; the middle and right buttons anywhere on the head reveal it with the caret under the
-pointer and act on the box. Enter opens a new row under it; Ctrl-O, or `body` in the foot, opens the
-whole note in the sheet, a bounded overlay over the column with the page dimmed slightly behind it,
-which scrolls on its own, and in it Enter is a line break, Tab indents and Shift-Tab takes the
-indent back, the arrows move within it, and Esc closes it back onto the head. Leaving it for
-anywhere else on the page closes it, and a press on another row goes there; a press in its own
-margin, or on its row behind it, does not, and nor does leaving the window, though the tab going out
-of sight writes what it holds. The words in the foot stay above the dimming, since they are about
-the note. There is no second editor: the sheet is the body's editor, for a long document too, and
-with it shut the head is written in its row. While the body is open the sheet holds a CodeMirror
-editor, fetched after the first pause in keys once the page has painted, or when a body opens if
-that is sooner: the body read as the body beside the list reads, its marks hidden and a task's box
-drawn but never pressed, but for the span the selection touches, which shows its marks where they
-stand, the marks in the faint grey and the text in ink, headings and strong text heavier, emphasis
-slanted, code in the monospace (see "A body's marks show only in the span being written"); soft
-wrap, step undo, a grey selection, and vim mode for the body, for the
-browser that asked for it with the word `vim` in the foot of an open body, once the editor has
-loaded, which a touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k`
-move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a
-line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the
-word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and stays,
-scrolled where it was. The page's caret is drawn from the editor's coordinates, a block in normal
-and visual mode and a bar in insert mode. Vim's prompt for a command is at the foot of the sheet,
-under the text and a hairline. The head stays an ordinary field. Until the editor has loaded, and if
-it never does, the sheet holds a plain text area. The `editor` the engine offers is not shown here.
-At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
-it is open; a wider touch screen keeps it in the column, sized from the frame. On a touch screen it
-opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
-open, and `done`, the back gesture, or a tap on the page beside it closes it.
+reveals it: the reading goes, the box shows the text as typed, and what revealed it lands as it
+would have, a letter at the end and Left one before it. Up, Down, the pages, Tab, Enter, Escape and
+the chords do not, since they leave the row or act on the note as a whole. It stays revealed until
+the cursor leaves the row. A new row, from Enter or from the line, starts revealed, being written,
+as does the note Enter writes from the line, a row an undo put text back in other than a task's box
+alone, and a row whose head changed in place, from elsewhere, while it was read. Revealed, the box
+is one line too, wider than a phone's, a field that scrolls sideways under the caret: the text moves
+only when the caret would come within 2.5em, about five letters, of an edge, by the box's
+`scroll-padding-inline` where a browser honours it for the caret and by the page in every browser,
+and an edge that hides text fades. A letter, End or a paste at the end slides the text to show the
+end; Home moves nothing; a press on the words keeps the letter pressed under the pointer, the source
+scrolled so that a link's word stays where it was read, unless the letter is within five letters of
+an edge or past where the box ends, when it comes in that far; and the text stays put until the
+caret moves. On a wide page the pane shows the whole head as it is typed. Left, the row reads from
+its start again, its scroll forgotten, as an address bar's is. At a phone's width the box wraps as
+the head read does, and a head being written grows its row as it wraps. A drag from the words, not
+from a task's box, reveals the row and selects, and past an edge that hides text scrolls the box
+towards the pointer as it is held there; the middle and right buttons anywhere on the head reveal it
+with the caret under the pointer and act on the box. Enter opens a new row under it; Ctrl-O, or
+`body` in the foot, opens the whole note in the sheet, a bounded overlay over the column with the
+page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break, Tab
+indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
+the head. Leaving it for anywhere else on the page closes it, and a press on another row goes there;
+a press in its own margin, or on its row behind it, does not, and nor does leaving the window,
+though the tab going out of sight writes what it holds. The words in the foot stay above the
+dimming, since they are about the note. There is no second editor: the sheet is the body's editor,
+for a long document too, and with it shut the head is written in its row. While the body is open the
+sheet holds a CodeMirror editor, fetched after the first pause in keys once the page has painted, or
+when a body opens if that is sooner: the body read as the body beside the list reads, its marks
+hidden and a task's box drawn but never pressed, but for the span the selection touches, which shows
+its marks where they stand, the marks in the faint grey and the text in ink, headings and strong
+text heavier, the first three levels of heading larger, emphasis slanted, code in the monospace (see
+"A body's marks show only in the span being written"); soft wrap, step undo, a grey selection, and
+vim mode for the body, for the browser that asked for it with the word `vim` in the foot of an open
+body, once the editor has loaded, which a touch screen, whose keyboard has no Escape, is not
+offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's
+long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`,
+`:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back first,
+and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the editor's
+coordinates, a block in normal and visual mode and a bar in insert mode. Vim's prompt for a command
+is at the foot of the sheet, under the text and a hairline. The head stays an ordinary field. Until
+the editor has loaded, and if it never does, the sheet holds a plain text area. The `editor` the
+engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and
+the bar the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from
+the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
+the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
+closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -1478,6 +1478,7 @@ the app now does is described above; an entry repeats it only where the reason n
   it again, as plain grey text and never a badge. Revised 2026-10-18 by "A link is blue, and code
   has a wash": the page has one colour, for a link. Revised 2026-10-18 by "On a phone the resting
   list runs the screen": at a phone's width the resting heads run the list's height and scroll.
+  Revised 2026-10-20 by "A body's headings are sized by their level".
 
 - **A head is kept as it is typed.** Decided 2026-10-14, at Sam's direction, replacing the call in
   "A note is written in place" that a version is written when the row closes, and with it that a new
@@ -1846,7 +1847,8 @@ the app now does is described above; an entry repeats it only where the reason n
   Revised 2026-10-20 by "A line of the open body reads until it is written in", which reverses the
   sheet's styled source: only the line being written shows its marks, and every other line reads.
   Revised 2026-10-20 by "A body's marks show only in the span being written": only the span the
-  selection touches shows its marks.
+  selection touches shows its marks. Revised 2026-10-20 by "A body's headings are sized by their
+  level": a body sizes its first three levels.
 
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A date
   typed as a search finds the notes that mention the day and the notes written on it" under Model,
@@ -3398,9 +3400,10 @@ the app now does is described above; an entry repeats it only where the reason n
   ticks; and a fence's lines keep their band, empty, rather than going. A composition is shown its
   line by the key that starts it, before it begins, and by its start when no key comes first;
   Chromium's simulated composition lands whole, but a real input method, fcitx5 on Linux or a
-  phone's keyboard, is untested (see Open questions).
-  Revised 2026-10-20 by "A body's marks show only in the span being written": the open body shows
-  marks by span, and none of the telling a walk from a write above remains.
+  phone's keyboard, is untested (see Open questions). Revised 2026-10-20 by "A body's marks show
+  only in the span being written": the open body shows marks by span, and none of the telling a walk
+  from a write above remains. Revised 2026-10-20 by "A body's headings are sized by their level": a
+  body sizes its first three levels.
 
 - **A body's marks show only in the span being written.** Decided 2026-10-20, at Sam's direction
   after trying it, revising "A line of the open body reads until it is written in". In use the line
@@ -3444,6 +3447,19 @@ the app now does is described above; an entry repeats it only where the reason n
   marks by span too, left for a decision of its own, since a row is a text box under its reading and
   would have to become an editor. The press is held as `codemirror-live-markdown` holds one,
   followed only from its press to its release.
+
+- **A body's headings are sized by their level.** Decided 2026-10-20, at Sam's direction, revising
+  "A body's markdown is rendered where it is read and styled where it is written" where headings
+  were set apart by weight and not size so that every line was as high as the next, and "One cursor,
+  no chrome" where the page kept the system's sans at three sizes. In a body, in the sheet and read
+  beside the list, `#` is set at one and a half times the text, `##` at 1.3 and `###` at 1.15; the
+  three below stay the text's size and are set apart by weight as before. Equal lines had mattered
+  while a whole line opened as it was written; since marks show only in the span being written, a
+  heading's size belongs to its line, so the caret entering it shows its `#` and changes no height,
+  and walking past it changes nothing. A row and a step on the path keep every heading at the text's
+  size, since a row is one line and the list holds still. Weighed: sizing all six levels, which at
+  the small end is a size too few eyes tell apart; and sizing rows as well, which would make a row
+  whose head is a heading taller than the rest.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

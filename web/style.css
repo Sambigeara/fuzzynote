@@ -453,11 +453,11 @@ button, input, textarea { font: inherit; color: inherit; }
   #pane-head .tick { cursor: default; border-color: var(--faint); }
 }
 
-/* A body read is rendered: blocks a little apart, headings set apart by weight alone and in the
-   type's one size, a quote and a table's head marked by a hairline, a task's box drawn and never
-   pressed, and code in ink with the editor's highlighting, so that what would be copied out reads
-   crisply, a block of it on a faint wash of ink, the one block that is a box. Paragraphs keep the
-   lines they were written on. */
+/* A body read is rendered: blocks a little apart, headings set apart by weight and the first three
+   levels by size too, a quote and a table's head marked by a hairline, a task's box drawn and
+   never pressed, and code in ink with the editor's highlighting, so that what would be copied out
+   reads crisply, a block of it on a faint wash of ink, the one block that is a box. Paragraphs
+   keep the lines they were written on. */
 :is(#here, #pane) :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table, hr) { margin: 0.625em 0 0; }
 :is(#here, #pane) :is(h1, h2, h3, h4, h5, h6) { margin-top: 1em; }
 :is(#here, #pane) :is(:first-child, li > *) { margin-top: 0; }
@@ -513,12 +513,16 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) th { border-bottom: 1px solid var(--rule); }
 
 /* A head reads its marks as a body does, and so does a note's step on the path, each in its one
-   size: strong text and headings by weight, emphasis slanted, code in the monospace a tenth
-   smaller, struck text struck thin. Code in a line, in a row or a body read, lies on a wash of the
-   text's own colour, grey on grey, so that it reads as code and adds no colour; in a body read it
-   is in ink, as a block of code is. `pre code` is a block's, and a row's code is the head's own
-   child, so the wash is for code not in a block rather than code in a paragraph. */
+   size, every heading at the text's: strong text and headings by weight, emphasis slanted, code in
+   the monospace a tenth smaller, struck text struck thin. Code in a line, in a row or a body read,
+   lies on a wash of the text's own colour, grey on grey, so that it reads as code and adds no
+   colour; in a body read it is in ink, as a block of code is. `pre code` is a block's, and a row's
+   code is the head's own child, so the wash is for code not in a block rather than code in a
+   paragraph. */
 :is(#here, #pane, .head, #path) :is(h1, h2, h3, h4, h5, h6, th, strong) { font-size: inherit; font-weight: 600; }
+:is(#here, #pane) h1 { font-size: 1.5em; }
+:is(#here, #pane) h2 { font-size: 1.3em; }
+:is(#here, #pane) h3 { font-size: 1.15em; }
 :is(#here, #pane, .head, #path) code { font-family: var(--mono); font-size: 0.9em; }
 :is(#here, #pane, .head, #path) del { text-decoration: line-through; text-decoration-thickness: 1px; }
 :is(#here, #pane, .head) code:not(pre code) {
@@ -651,7 +655,11 @@ body.resting .row .head a,
 /* In the open body what the selection does not touch reads as the body beside the list reads (see
    reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
    dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
-   Nothing here makes a line taller or shorter than it is written. */
+   Nothing here makes a line taller or shorter than it is written; a heading's first three levels
+   are sized on their line, mark shown or not. */
+.cm-editor .cm-line.md-h1 { font-size: 1.5em; }
+.cm-editor .cm-line.md-h2 { font-size: 1.3em; }
+.cm-editor .cm-line.md-h3 { font-size: 1.15em; }
 .cm-editor .cm-line.md-quote { padding-left: 0.75em; border-left: 1px solid var(--rule); }
 .cm-editor .cm-line.md-rule {
   background: linear-gradient(var(--rule), var(--rule)) center / 100% 1px no-repeat;
