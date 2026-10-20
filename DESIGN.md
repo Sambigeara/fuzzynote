@@ -949,37 +949,39 @@ has steps; nothing else is done to the history until the browser says it has gon
 out and in again settles where the keys left it. A step in pushes inside the gesture that made it.
 Forward has nothing to go into and is gone back from at once.
 
-*Markdown.* A body is rendered where it is only read and styled where it is written; the note stays
-plain text, and neither the engine nor the terminal reads markdown. Read, a body shows headings,
-paragraphs keeping the lines they were written on, lists, tasks as a drawn box, ticked and faint
-when done and never pressed, quotes, rules, tables with their columns aligned, code highlighted by
-its language, and in a line emphasis, strong text, code, strikethrough and links, built as nodes and
-never as markup. A link goes only to a whole address, `http://` or `https://` and a host, or
-`mailto:` and someone, in a tab of its own and with no referrer, since a browser takes `http:boiler`
-as a path on the relay; any other address, a link by reference, raw HTML, an entity such as `&amp;`,
-and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an image is never loaded but is
-a link reading its alt text. A row's head reads as one line of the same markdown, so that a line
-reads one way in the list and beside it: emphasis, strong text, code, strikethrough, links, bare and
-bracketed addresses, an image as a link reading its alt text, escapes read and a leading heading
-mark dropped, and a line that would be another kind of block, a list item or a quote, shown as
-typed; the row under the cursor reads the same until it is written in or the caret is put in it, and
-is then its text box showing the source until the cursor leaves it. Tags, people and dates are not
-marked. Highlighting is in paper, ink and the two greys: keywords and definitions heavier, strings,
-numbers and constants soft, comments faint and slanted, punctuation and a diff's removed lines
-faint; code read is set in ink, a block of it on a faint wash of ink. Code in a line lies on a wash
-of the text's own colour, in a row and a body read, where it is in ink, except in a done task or a
-link, whose colour it keeps; in the sheet code in a line has the same wash and a block's lines a
-band of it. A link is in the link's blue, a step back toward the grey around it on the resting page,
-an archived row and a done task, and underlined in a tint of its colour, clear of the descenders, in
-full under the pointer, never heavier. In the sheet what the read makes a link is marked so and
-nothing else: a link's or an image's words whose address the page follows, and such an address
-standing alone, bare, in angle brackets or in a link's definition, but not `[draft]`, a link by
-reference or `www.example.org`, which read as typed; a link's brackets, its title and the address
-after its words stay as they were, faint or soft, and `[[Boiler]]` is unmarked there as it is read.
-An address read as itself is shown without its scheme, `example.org/garden`, and whole under the
-pointer. A long body is rendered at first only as far as it shows, its first 5,000 letters, and
-whole once the page is idle. A head is parsed only if it holds a character that can begin a mark,
-``* _ ` ~ \ [ <``, `://` or `mailto:`; nested past what the stack holds, a body is read as typed.
+*Markdown.* A body is rendered where it is only read, and in the sheet every line but the one being
+written reads the same way (see "A line of the open body reads until it is written in"); the note
+stays plain text, and neither the engine nor the terminal reads markdown. Read, a body shows
+headings, paragraphs keeping the lines they were written on, lists, tasks as a drawn box, ticked and
+faint when done and never pressed, quotes, rules, tables with their columns aligned, code
+highlighted by its language, and in a line emphasis, strong text, code, strikethrough and links,
+built as nodes and never as markup. A link goes only to a whole address, `http://` or `https://` and
+a host, or `mailto:` and someone, in a tab of its own and with no referrer, since a browser takes
+`http:boiler` as a path on the relay; any other address, a link by reference, raw HTML, an entity
+such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an image is
+never loaded but is a link reading its alt text. A row's head reads as one line of the same
+markdown, so that a line reads one way in the list and beside it: emphasis, strong text, code,
+strikethrough, links, bare and bracketed addresses, an image as a link reading its alt text, escapes
+read and a leading heading mark dropped, and a line that would be another kind of block, a list item
+or a quote, shown as typed; the row under the cursor reads the same until it is written in or the
+caret is put in it, and is then its text box showing the source until the cursor leaves it. Tags,
+people and dates are not marked. Highlighting is in paper, ink and the two greys: keywords and
+definitions heavier, strings, numbers and constants soft, comments faint and slanted, punctuation
+and a diff's removed lines faint; code read is set in ink, a block of it on a faint wash of ink.
+Code in a line lies on a wash of the text's own colour, in a row and a body read, where it is in
+ink, except in a done task or a link, whose colour it keeps; in the sheet code in a line has the
+same wash and a block's lines a band of it. A link is in the link's blue, a step back toward the
+grey around it on the resting page, an archived row and a done task, and underlined in a tint of its
+colour, clear of the descenders, in full under the pointer, never heavier. In the sheet what the
+read makes a link is marked so and nothing else: a link's or an image's words whose address the page
+follows, and such an address standing alone, bare, in angle brackets or in a link's definition, but
+not `[draft]`, a link by reference or `www.example.org`, which read as typed; a link's brackets, its
+title and the address after its words stay as they were, faint or soft, on the line being written
+and go on the lines that read; `[[Boiler]]` is unmarked there as it is read. An address read as
+itself is shown without its scheme, `example.org/garden`, and whole under the pointer. A long body
+is rendered at first only as far as it shows, its first 5,000 letters, and whole once the page is
+idle. A head is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://`
+or `mailto:`; nested past what the stack holds, a body is read as typed.
 
 *Keys.* The four that are the app are the same, type, Enter, Escape and the arrows, and Tab goes in,
 as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page
@@ -1079,9 +1081,12 @@ of sight writes what it holds. The words in the foot stay above the dimming, sin
 the note. There is no second editor: the sheet is the body's editor, for a long document too, and
 with it shut the head is written in its row. While the body is open the sheet holds a CodeMirror
 editor, fetched after the first pause in keys once the page has painted, or when a body opens if
-that is sooner: the markdown styled where it stands with every mark in sight, the marks in the faint
-grey and the text in ink, headings and strong text heavier, emphasis slanted, code in the monospace,
-soft wrap, step undo, a grey selection, and vim mode for the body, for the
+that is sooner: on the line being written the markdown styled where it stands, the marks in the
+faint grey and the text in ink, headings and strong text heavier, emphasis slanted, code in the
+monospace, and every other line read as the body beside the list reads, its marks hidden and a
+task's box drawn but never pressed, until it is written in or the caret is put in it, while Up,
+Down, the pages and vim's `j` and `k` walk past showing none (see "A line of the open body reads
+until it is written in"); soft wrap, step undo, a grey selection, and vim mode for the body, for the
 browser that asked for it with the word `vim` in the foot of an open body, once the editor has
 loaded, which a touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k`
 move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a
@@ -1839,6 +1844,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the relay sends the page compressed ("The relay carries the page; a directory stands in for it
   while the page is worked on"). Revised 2026-10-18 by "A link is blue, and code has a wash": code
   in a line has a wash of the text's colour, in ink in a body read, and a block a wash of ink.
+  Revised 2026-10-20 by "A line of the open body reads until it is written in", which reverses the
+  sheet's styled source: only the line being written shows its marks, and every other line reads.
 
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A date
   typed as a search finds the notes that mention the day and the notes written on it" under Model,
@@ -2603,7 +2610,9 @@ the app now does is described above; an entry repeats it only where the reason n
   up": in normal mode its motions reveal it too, the row staying in normal mode and read-only.
   Revised 2026-10-17 by "The list's vim keys are taken out": the list has no normal mode, so its
   rows are read and revealed alike in every browser. Revised 2026-10-17 by "The row read shows its
-  caret": on the page a row read has the block at the end of its reading, or on its `…`.
+  caret": on the page a row read has the block at the end of its reading, or on its `…`. Revised
+  2026-10-20 by "A line of the open body reads until it is written in": the open body's lines follow
+  this rule a line at a time, where the head of an open body was unchanged.
 
 - **Shift-Enter ticks, where it can be told from Enter.** Decided 2026-10-17, at Sam's direction,
   revising "Enter edits, the arrow goes in" (2026-10-14) where it held Shift-Enter back as plain
@@ -3333,6 +3342,61 @@ the app now does is described above; an entry repeats it only where the reason n
   rather than text; and leaving out days, boxes and spans, which nobody has asked for, so `!/task`
   and `!2026-10-16` are plain text.
 
+- **A line of the open body reads until it is written in.** Decided 2026-10-20, at Sam's direction,
+  reversing the sheet's half of "A body's markdown is rendered where it is read and styled where it
+  is written", where the sheet was styled source with every mark in sight, chosen over a live
+  preview, and extending "The row under the cursor reads until it is written in" from a row to the
+  lines of a body. Sam asked for an open body formatted as a row is, a quote showing as a quote
+  where the caret is not. A body was read rendered only beside the list, on a page 75rem wide, and
+  above the line in a place, so on a phone and on any narrower page a body was only ever seen whole
+  as its source. Now every line of the open body reads as the body beside the list reads: emphasis,
+  strong text, code and strikethrough without their marks, a link the page follows as its words, an
+  address standing alone without its scheme or its angle brackets, an escape read, a heading without
+  its `#`, a quote ruled down its left without its `>`, a bullet as a dot, a task's item as its box,
+  ticked and faint when done, a rule drawn through its line, and a fence's backticks gone from its
+  band. A table, what a block of code holds, a list's numbers, raw HTML, a link's definition,
+  `[[Boiler]]` and a link the page would not follow stay as typed and styled. A line shows its
+  source once it is written in or the caret is put in it, by what reveals a row: a letter,
+  Backspace, Delete, a paste, a cut, dictation, a composition, Left, Right, Home and End, vim's
+  motions along the line, a selection, which shows every line it covers, and a press or a tap, which
+  shows its line only once the pointer is let go, so that nothing moves under a pointer held down or
+  dragging. Up, Down, the pages and vim's `j` and `k` walk: the line they reach reads, and the caret
+  is drawn on it where the eye was. A move to another line by anything else reads that line too,
+  vim's `w` past a line's end or `G` among them. A change from elsewhere, or the engine's, shows the
+  caret's line, as it reveals a row. A line stays shown until the caret leaves it, and a body opens
+  with none shown. Each reason for styled source was weighed again. Every character stayed where it
+  was typed, so nothing moved as the caret walked: a preview that shows the caret's line as it
+  arrives, as Obsidian's and Bear's do, measured in headless Chromium, moved a paragraph holding a
+  link down a whole line, 24px, each time the caret walked onto it and back as it left, and moved
+  the letter under a press 62px from where it was read; under the row's rule walking moves nothing,
+  and text moves only when it is written in, as a row's already does. Vim's motions went over
+  exactly what was shown: they still do on the line being written, and `j` and `k` already go by the
+  lines as shown, now as they read, where showing a line on arrival put the caret 9 to 14px off its
+  column on a task's line. The page's caret needed nothing new: it still needs nothing, since a
+  hidden mark's place is where its neighbours meet. Headings set apart by weight and not size, every
+  line as high as the next, stand, and are why a line keeps its height whether it reads or is
+  written. It is the rule the hands already know from the list, so it adds nothing to remember, and
+  like the rest of the page's markdown it is the page's alone: the terminal's body is your editor.
+  Weighed: showing the caret's line as it arrives, which moves text under a caret that is only
+  walking and wants `j` and `k` to measure again once the line has opened; showing marks span by
+  span as Obsidian does, which moves the rest of a line at each step into or out of a mark and
+  redraws beside a composition as a `*` is typed, the input methods' known trouble in CodeMirror;
+  and a full preview with tables and code blocks drawn as widgets, which changes heights as the
+  caret enters them, wants each widget mapped back to its source for a press and for vim, and must
+  come from a state field, since a plugin's decorations may not change the layout. The packages that
+  make such previews for CodeMirror were read: `@retronav/ixora`, `codemirror-live-markdown`,
+  `codemirror-markdown-hybrid`, `@prosemark/core` and `ink-mde`. Each takes
+  `@codemirror/lang-markdown`, the 233 KB this page turned down, some bring
+  `@codemirror/language-data`, marked or KaTeX, one renders markdown as markup, and all show marks
+  by span or by line as the caret arrives. So it is written here, `web/editor/reading.js`, on the
+  parse the editor already has: the editor grows by 5 KB, 1.9 KB gzipped, and reading what is in
+  view takes about 0.14 ms a caret move over a body of 5,300 words. Defaults Sam may change: a box
+  drawn in the sheet does not tick on a tap, which shows its line as any tap does, where a row's box
+  ticks; and a fence's lines keep their band, empty, rather than going. A composition is shown its
+  line by the key that starts it, before it begins, and by its start when no key comes first;
+  Chromium's simulated composition lands whole, but a real input method, fcitx5 on Linux or a
+  phone's keyboard, is untested (see Open questions).
+
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
   cheaper to load. Likely per note with a space-level index document; building the text CRDT
@@ -3420,6 +3484,11 @@ the app now does is described above; an entry repeats it only where the reason n
 - Whether a cut head on a page too narrow to read it beside the list wants more than `body` to read
   it whole, and whether a head being written on a phone should stop growing its row (see "A row is
   one line, and a long head is read beside it"); use decides.
+- Whether a composition begun on a line of the open body that reads lands whole through a real input
+  method, fcitx5 on Linux or a phone's keyboard, which composes every word and where the editor uses
+  EditContext. The line is shown by the key that starts it, before the composition begins, and
+  Chromium's simulated composition lands whole; use decides (see "A line of the open body reads
+  until it is written in").
 - Name. `fzn` stays unless something better appears.
 
 ## Milestones

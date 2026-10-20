@@ -465,7 +465,7 @@ button, input, textarea { font: inherit; color: inherit; }
 :is(#here, #pane) :is(ul, ol) { padding-left: 1.25em; }
 :is(#here, #pane) li::marker { color: var(--faint); }
 :is(#here, #pane) li:has(> .task) { list-style: none; }
-.task > .check {
+.task > .check, .md-check {
   position: relative;
   display: inline-block;
   width: 0.9em;
@@ -474,19 +474,21 @@ button, input, textarea { font: inherit; color: inherit; }
   border: 1px solid var(--faint);
   border-radius: 2px;
 }
+/* In the open body the box stands where its item's marks were, not hung in the margin. */
+.md-check { margin: 0 0.4em 0 0; }
 /* A task's box sits on its head's first line, its middle on the middle of the capitals, as the
    font measures them, in a row and in a body read alike. `middle` puts the box's middle half an
    x-height over the baseline whatever an engine makes of an empty box's own baseline, which for a
    button differs between engines, and the offset raises it to half the capitals' height. */
-.tick, .task > .check {
+.tick, .task > .check, .md-check {
   vertical-align: middle;
   top: calc(0.5ex - 0.5cap);
 }
 @supports not (top: 1cap) {
-  .tick, .task > .check { top: -0.1em; }
+  .tick, .task > .check, .md-check { top: -0.1em; }
 }
 .task.done { color: var(--faint); }
-.task.done > .check::after {
+.task.done > .check::after, .md-check.done::after {
   content: "";
   position: absolute;
   left: 0.25em;
@@ -645,6 +647,17 @@ body.resting .row .head a,
   box-shadow: -0.6em 0 0 var(--band), 0.6em 0 0 var(--band);
 }
 .hl-code .hl-mono { font-size: inherit; }
+
+/* In the open body a line not being written reads as the body beside the list reads (see
+   reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
+   dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
+   Nothing here makes a line taller or shorter than it is written. */
+.cm-editor .cm-line.md-quote { padding-left: 0.75em; border-left: 1px solid var(--rule); }
+.cm-editor .cm-line.md-rule {
+  background: linear-gradient(var(--rule), var(--rule)) center / 100% 1px no-repeat;
+}
+.cm-editor .cm-line.md-done { color: var(--faint); }
+.md-bullet { color: var(--faint); }
 
 /* Resting: the line empty, the cursor on it, nowhere gone into. The recent notes are faint heads
    that fade into the paper by the eighth row, and the list does not scroll: the rest are all still
