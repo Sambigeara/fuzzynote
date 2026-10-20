@@ -128,9 +128,9 @@ button, input, textarea { font: inherit; color: inherit; }
   caret-color: var(--ink);
 }
 
-/* The caret in the line and in the box is drawn by the page, as #caret below; the browser's own
-   line is hidden there, and kept only for the passphrase. */
-#line, .box { caret-color: transparent; }
+/* The caret in the line and in the editor is drawn by the page, as #caret below; the browser's
+   own line is hidden there, and kept only for the passphrase. */
+#line { caret-color: transparent; }
 
 /* A soft block over the letter the caret is before, the height of the line, in ink thin enough
    that the letter reads through it. It breathes rather than blinks, and the page restarts its
@@ -293,7 +293,7 @@ button, input, textarea { font: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
 }
 
-.row.archived .head { color: var(--soft); }
+.row.archived :is(.head, .edit) { color: var(--soft); }
 
 /* A task's box at the start of its head, drawn as a body read draws one, a little larger, and
    pressed to tick the task where it reads. Round it is room for a pointer, and on a touch screen
@@ -345,56 +345,28 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .chev:hover { color: var(--ink); }
 
-/* The cursor on a row is its head a little heavier: read, with no caret, until the row is
-   written in, and then the caret in the text box the head is. A row is one line wherever the
-   cursor is, so that walking and writing move nothing under it: a head longer than its row is cut
-   with a `…` on the cursor as off it, and is read whole where the body is read. Written in, the
-   box is one line too, a field that scrolls sideways under the caret, keeping a few letters in
-   sight beyond it and fading at an edge that hides text. It keeps its spaces as typed, and so does
-   the head read over it, so that the two line up. */
-.row[aria-current="true"] .head,
-.box {
-  font-weight: 500;
-  white-space: pre;
-}
-.box {
-  flex: 1 1 0;
-  min-width: 0;
-  display: block;
-  height: 1.5em;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  outline: none;
-  background: transparent;
-  resize: none;
-  overflow: hidden;
-  line-height: 1.5;
-}
+/* The cursor on a row is its head a little heavier, the caret in it, and the head the editor's,
+   reading as it does off the cursor but for the span the caret touches. A row is one line wherever
+   the cursor is, so that walking and writing move nothing under it: a head longer than its row is
+   cut with a `…` off the cursor, and is read whole where the body is read; on the cursor it is a
+   field that scrolls sideways under the caret, keeping a few letters in sight beyond it and fading
+   at an edge that hides text. It keeps its spaces as typed. */
+.row[aria-current="true"] :is(.head, .edit) { font-weight: 500; }
+.row[aria-current="true"] .head { white-space: pre; }
 /* The line scrolls sideways under its caret as a head being written does, and fades as it does. */
-#line, .box { scroll-padding-inline: 2.5em; }
-#line.before, .box.before {
+#line { scroll-padding-inline: 2.5em; }
+#line.before, .edit.before > .cm-editor {
   mask-image: linear-gradient(to right, transparent, #000 1.5em);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em);
 }
-#line.after, .box.after {
+#line.after, .edit.after > .cm-editor {
   mask-image: linear-gradient(to left, transparent, #000 1.5em);
   -webkit-mask-image: linear-gradient(to left, transparent, #000 1.5em);
 }
-#line.before.after, .box.before.after {
+#line.before.after, .edit.before.after > .cm-editor {
   mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em),
     transparent);
-}
-/* The whole note, in the sheet, wraps and is as tall as its text. */
-.box.whole {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  height: auto;
-  field-sizing: content;
-  mask-image: none;
-  -webkit-mask-image: none;
 }
 /* Wider than a phone the row under the cursor's date stands a caret's width further off its head,
    so that the caret at the end of a head that fills the row does not touch it. */
@@ -404,24 +376,23 @@ button, input, textarea { font: inherit; color: inherit; }
 /* A body behind the row under the cursor, whose tail, where the mark is off the cursor, is not
    there. */
 .row .mark { flex: none; color: var(--faint); font-size: var(--meta-size); }
-/* The box of the row under the cursor is held in a frame of its own. Until the row is written in,
-   the head as read is laid over it in the frame and takes the room, and the box is under it, the
-   frame's size, showing nothing and taking no presses, but keeping the focus; revealed, the box is
-   the frame's alone. The two are in the same face and measure, so that a row whose text reads as
-   it is typed does not move by a pixel when it is revealed. */
+/* The editor in the row under the cursor is held in a frame of its own, the room the head has, and
+   is in the head's face and measure, so that the row reads on the cursor letter for letter as it
+   read off it: one line that scrolls only as the caret asks, a heading at the row's weight, and
+   code on its wash with the room round it a code read has. */
 .edit {
   position: relative;
   flex: 1 1 0;
   min-width: 0;
 }
-.edit > .box { width: 100%; }
-.edit > .head { position: relative; z-index: 1; display: block; }
-.edit.veiled > .box {
-  position: absolute;
-  inset: 0;
-  height: 100%;
-  opacity: 0;
-  pointer-events: none;
+.edit > .cm-editor { width: 100%; }
+.edit .cm-editor .cm-scroller { overflow: hidden; }
+.edit .hl-heading { font-weight: inherit; }
+.edit .hl-mono {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 /* The head being written in has the row to itself; the tail comes back when the cursor leaves. */
 .row[aria-current="true"] .tail { display: none; }
@@ -551,7 +522,7 @@ a {
   text-decoration-skip-ink: auto;
 }
 a:hover { text-decoration-color: currentColor; }
-.row.archived .head a { color: color-mix(in oklab, var(--link) 70%, var(--soft)); }
+.row.archived :is(.head a, .edit .hl-link) { color: color-mix(in oklab, var(--link) 70%, var(--soft)); }
 body.resting .row .head a,
 .task.done a { color: color-mix(in oklab, var(--link) 40%, var(--faint)); }
 
@@ -583,23 +554,21 @@ body.resting .row .head a,
   scrollbar-color: var(--rule) transparent;
   padding: 0 var(--sheet-pad) 0.5rem;
 }
-#sheet > :is(.box, .cm-editor) { width: 100%; min-height: 100%; }
-.box.whole { font-weight: 400; }
+#sheet > .cm-editor { width: 100%; min-height: 100%; }
 #foot { position: relative; z-index: 3; }
 
-/* Once it has loaded, the open body is an editor rather than the box. It sits in the sheet as the
-   box does, in the same face, size and leading, so that the text does not move by a pixel when it
-   takes over; the rules are prefixed to outrank the stylesheet the editor brings. The page's caret
-   is the only caret, so the editor's own cursors are hidden, and a selection is a grey. In vim's
-   insert mode the caret is a bar, as a terminal shows it, and a block otherwise. */
+/* The editor, a head in its row or the open body in the sheet, is in the face, size and leading of
+   what holds it; the rules are prefixed to outrank the stylesheet the editor brings. The page's
+   caret is the only caret, so the editor's own cursors are hidden, and a selection is a grey. In
+   vim's insert mode the caret is a bar, as a terminal shows it, and a block otherwise. */
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
 .cm-editor.cm-focused { outline: none; }
 .cm-editor .cm-cursorLayer, .cm-editor .cm-vimCursorLayer, .cm-editor .cm-fat-cursor { display: none; }
 /* The editor's own theme sets its selection by a longer selector, and puts its style after this
-   file, so the page's grey is set from the sheet, which outranks it. */
-#sheet .cm-editor .cm-selectionBackground { background: var(--select); }
+   file, so the page's grey is set from the sheet and the list, which outrank it. */
+:is(#sheet, #list) .cm-editor .cm-selectionBackground { background: var(--select); }
 #caret.bar { border-radius: 1px; }
 /* Vim's prompt for a command sits at the foot of the sheet, under the text and never over it, in
    the foot's voice and under a hairline, as the line has one, rather than in a grey bar. */
@@ -625,7 +594,7 @@ body.resting .row .head a,
 .hl-faint { color: var(--faint); }
 .hl-slant { font-style: italic; }
 .hl-mono { font-family: var(--mono); font-size: 0.9em; }
-.hl-struck { text-decoration: line-through; }
+.hl-struck { text-decoration: line-through; text-decoration-thickness: 1px; }
 .hl-link {
   color: var(--link);
   text-decoration-line: underline;
@@ -656,10 +625,10 @@ body.resting .row .head a,
    reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
    dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
    Nothing here makes a line taller or shorter than it is written; a heading's first three levels
-   are sized on their line, mark shown or not. */
-.cm-editor .cm-line.md-h1 { font-size: 1.5em; }
-.cm-editor .cm-line.md-h2 { font-size: 1.3em; }
-.cm-editor .cm-line.md-h3 { font-size: 1.15em; }
+   are sized on their line, mark shown or not, in a body and never in a row. */
+#sheet .cm-line.md-h1 { font-size: 1.5em; }
+#sheet .cm-line.md-h2 { font-size: 1.3em; }
+#sheet .cm-line.md-h3 { font-size: 1.15em; }
 .cm-editor .cm-line.md-quote { padding-left: 0.75em; border-left: 1px solid var(--rule); }
 .cm-editor .cm-line.md-rule {
   background: linear-gradient(var(--rule), var(--rule)) center / 100% 1px no-repeat;
@@ -878,14 +847,11 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   .head, .edit { flex: 1 1 100%; }
   .row .head { white-space: normal; overflow-wrap: anywhere; }
   .row[aria-current="true"] .head,
-  .box:not(.whole) {
+  .edit .cm-content {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    height: auto;
-    field-sizing: content;
-    mask-image: none;
-    -webkit-mask-image: none;
   }
+  .edit .cm-content { flex-shrink: 1; }
   .tail { order: 1; flex: 1 1 0; }
   .row[aria-current="true"] .tail { display: block; }
   .row time { order: 2; margin-left: auto; }
@@ -1008,7 +974,7 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   /* A long press on a row is not a text selection: the row is a thing, and the head under the
      cursor is the one text in it to select in. */
   .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-  .box { -webkit-user-select: text; user-select: text; }
+  .edit .cm-content { -webkit-user-select: text; user-select: text; }
   /* A thumb's room round a task's box grows into the margin before it, and stops at the space
      after it, short of the head's first letter, so that a tap meant to write never ticks. It is
      measured from inside the box's border, so the border's two pixels are given back. */

@@ -7,7 +7,7 @@
 # (cargo install wasm-bindgen-cli --version 0.2.129). The build is --locked, so a Cargo.lock that
 # no longer matches the manifests is said here rather than quietly rewritten.
 #
-# The page's reading of markdown and the body's editor are built apart, by web/editor/build.sh,
+# The page's reading of markdown and the note's editor are built apart, by web/editor/build.sh,
 # which needs npm, into web/vendor, which is committed. They are built again only by running
 # that on purpose; CI checks that the committed ones are what it makes.
 set -e

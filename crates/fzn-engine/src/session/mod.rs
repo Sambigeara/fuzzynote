@@ -353,8 +353,9 @@ pub struct Row {
     pub head: String,
     /// The head as the row shows it when the cursor is not on it, where that differs from the
     /// head: in a place, with the place's labels taken off its end, when the note is a head only
-    /// and they end it. None when it reads as it is. The row under the cursor shows its text as
-    /// it is, whatever this says.
+    /// and they end it. None when it reads as it is. In the terminal the row under the cursor
+    /// shows its text as it is, whatever this says; the page's reads without them until its caret
+    /// goes into them.
     pub shown: Option<String>,
     /// Whether the note is a task, and if it is, whether its box is ticked. A task's head starts
     /// with its box, `[ ]` or `[x]`, so a face that draws the box takes the head's first three

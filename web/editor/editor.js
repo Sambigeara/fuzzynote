@@ -1,16 +1,19 @@
-// The body's editor: CodeMirror, with vim's keys when this browser has asked for them.
+// The note's editor: CodeMirror, holding the head of the row under the cursor, or the whole note
+// while its body is open, with vim's keys there when this browser has asked for them.
 //
-// It is a plain-text editor and nothing more. The page owns everything else: when a body opens
-// and closes, what the engine is told, where the focus goes and the caret, which the page draws
-// itself from the coordinates asked for here. So this is one view, made once and put in the
-// page's sheet whenever a body opens, and a handful of plain functions the page calls. Its state
-// is made afresh each time a body opens, so the step undo belongs to one visit; after that the
+// It is a plain-text editor and nothing more. The page owns everything else: where the editor is,
+// what the engine is told, which key asks the session for what, where the focus goes and the
+// caret, which the page draws itself from the coordinates asked for here. So this is one view,
+// made once and moved, as the cursor moves, into the row it lands on and into the page's sheet
+// whenever a body opens, and a handful of plain functions the page calls. Its state is made afresh
+// each time it lands or a body opens or closes. A head is one line, with no undo of its own, since
+// the engine's undo puts a head back; a body has step undo for the one visit, and after that the
 // engine's undo is the only one.
 //
-// The text is markdown, kept as typed. It reads as the body beside the list reads, and the span
-// the selection touches shows its marks as typed, styled (see reading.js). The parser, the
-// highlighting and the languages of code are the page's reading of markdown, imported from it, so
-// that a body written and a body read look alike.
+// The text is markdown, kept as typed. A head reads as its row reads off the cursor and a body as
+// the body beside the list reads, and in either the span the selection touches shows its marks as
+// typed, styled (see reading.js). The parsers, the highlighting and the languages of code are the
+// page's reading of markdown, imported from it, so that a note written and a note read look alike.
 //
 // Vim's Ex commands are its own, global to the module, so they reach whichever page mounted the
 // view last. In vim a write stays and a quit goes; here a version is written when the body
@@ -18,7 +21,7 @@
 // prompt for a command is a panel, which the editor would stick to the foot of whatever scrolls
 // it, over the text; it goes in the element the page gives for it instead, under the text.
 
-import { Annotation, Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, drawSelection, keymap, panels } from '@codemirror/view';
 import { history, indentWithTab, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
 import {
@@ -26,8 +29,8 @@ import {
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
-import { between, follows, highlighter, language, markdown } from './render.js';
-import { readWhereNotWritten, readingMoved } from './reading.js';
+import { between, follows, highlighter, language, line, markdown } from './render.js';
+import { asHead, fromPage, readEnd, readWhereNotWritten, readingMoved } from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -40,6 +43,25 @@ const codeParser = (info) => {
   return streams.get(found);
 };
 const note = new Language(defineLanguageFacet(), markdown.configure(parseCode({ codeParser })), [], 'markdown');
+// A head is read as a line alone, as its row reads it.
+const headLine = new Language(defineLanguageFacet(), line, [], 'markdown');
+
+// A head is one line: a newline pasted, dropped or dictated into it becomes a space rather than a
+// body nobody sees, and the caret goes after what came in.
+const oneLine = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.newDoc.lines === 1) return tr;
+  const changes = [];
+  tr.changes.iterChanges((from, to, _from, _to, inserted) =>
+    changes.push({ from, to, insert: inserted.toString().replace(/\n+/g, ' ') }),
+  );
+  const set = tr.startState.changes(changes);
+  return {
+    changes: set,
+    selection: tr.startState.selection.map(set, 1),
+    scrollIntoView: true,
+    userEvent: tr.annotation(Transaction.userEvent),
+  };
+});
 
 // A block of code is set in the monospace a line at a time, fences and all, as far as the view
 // reaches. The highlighting cannot give it the face, since a language's own starts afresh inside
@@ -157,38 +179,20 @@ for (const context of ['normal', 'visual']) {
   Vim.mapCommand('k', 'motion', 'fznShown', { forward: false }, { context });
 }
 
-// A change the page makes is not one to tell the page about.
-const fromPage = Annotation.define();
-
 export function mount(hooks, foot) {
   current = hooks;
   const vimSlot = new Compartment();
   let vimWanted = false;
+  let whole = false;
   const vimKeys = () => (vimWanted ? [vim({ status: false })] : []);
-  const extensions = () => [
-    vimSlot.of(vimKeys()),
-    // Enter is a newline and no more, with or without Shift. Ctrl-O does nothing here, so that
-    // it never reaches the browser's file dialog. Tab indents and Shift-Tab takes the indent back,
-    // as in any editor, rather than moving the focus off the page's text: Escape, `:q` or the word
-    // in the foot is the way out.
-    keymap.of([
-      { key: 'Enter', run: insertNewline, shift: insertNewline },
-      { key: 'Ctrl-o', run: () => true },
-      indentWithTab,
-      { key: 'Mod-z', run: undo },
-      { key: 'Mod-y', mac: 'Mod-Shift-z', run: redo },
-      { key: 'Mod-Shift-z', run: redo },
-      ...standardKeymap,
-    ]),
-    history(),
-    note,
+  // What a head and a body share: the reading, the highlighting, the links marked, the grey
+  // selection under the page's caret, and what the page is told.
+  const shared = [
     syntaxHighlighting(highlighter),
     codeInMonospace,
     linksMarked,
     readWhereNotWritten,
-    panels({ bottomContainer: foot }),
     drawSelection(),
-    EditorView.lineWrapping,
     EditorView.contentAttributes.of({
       autocapitalize: 'sentences',
       autocorrect: 'on',
@@ -203,7 +207,40 @@ export function mount(hooks, foot) {
     }),
     EditorView.domEventHandlers({ blur: (event) => hooks.onBlur(event), focus: () => hooks.onFocus() }),
   ];
-  const view = new EditorView({ state: EditorState.create({ extensions: extensions() }) });
+  // A body wraps, and its keys are an editor's: Enter is a newline and no more, with or without
+  // Shift. Ctrl-O does nothing here, so that it never reaches the browser's file dialog. Tab
+  // indents and Shift-Tab takes the indent back, as in any editor, rather than moving the focus off
+  // the page's text: Escape, `:q` or the word in the foot is the way out.
+  const body = () => [
+    vimSlot.of(vimKeys()),
+    keymap.of([
+      { key: 'Enter', run: insertNewline, shift: insertNewline },
+      { key: 'Ctrl-o', run: () => true },
+      indentWithTab,
+      { key: 'Mod-z', run: undo },
+      { key: 'Mod-y', mac: 'Mod-Shift-z', run: redo },
+      { key: 'Mod-Shift-z', run: redo },
+      ...standardKeymap,
+    ]),
+    history(),
+    note,
+    panels({ bottomContainer: foot }),
+    EditorView.lineWrapping,
+    ...shared,
+  ];
+  // A head is one line, which scrolls sideways under the caret keeping five letters beside it. Its
+  // keys are the page's but for those that write in it or move its caret, which are an editor's,
+  // and it has no undo of its own, since the engine's undo puts a head back.
+  const head = (hidden, margin) => [
+    keymap.of(standardKeymap),
+    headLine,
+    oneLine,
+    asHead.of({ hidden }),
+    EditorView.cursorScrollMargin.of({ x: margin, y: 5 }),
+    EditorView.contentAttributes.of({ 'aria-multiline': 'false' }),
+    ...shared,
+  ];
+  const view = new EditorView();
 
   // The vim adapter is made again whenever its plugin is, on every new state, and the mode is
   // heard from whichever adapter there is now.
@@ -223,22 +260,51 @@ export function mount(hooks, foot) {
   return {
     dom: view.dom,
     contentDOM: view.contentDOM,
-    open(text, at) {
-      view.setState(
-        EditorState.create({ doc: text, selection: EditorSelection.cursor(at), extensions: extensions() }),
-      );
+    scrollDOM: view.scrollDOM,
+    // A head, given the place's labels its row reads without, with the caret at `at` or where what
+    // it reads ends, whichever is sooner. It is opened where it is to be shown, whose letters say
+    // how wide five of them are.
+    openHead(text, at, hidden = '') {
+      whole = false;
+      const margin = 2.5 * (parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16);
+      const state = EditorState.create({ doc: text, extensions: head(hidden, margin) });
+      view.setState(state.update({ selection: EditorSelection.cursor(Math.min(at, readEnd(state))) }).state);
+    },
+    // The whole note, with the caret at `at`.
+    openBody(text, at) {
+      whole = true;
+      view.setState(EditorState.create({ doc: text, selection: EditorSelection.cursor(at), extensions: body() }));
       listen();
     },
-    // What the page puts in is not a step of the person's to undo.
-    setText(text) {
-      const head = Math.min(view.state.selection.main.head, text.length);
+    get whole() {
+      return whole;
+    },
+    // What the page puts in is not a step of the person's to undo. The caret stays where it was,
+    // as far as the text reaches, or goes where the page puts it, in a head no further than what
+    // the head reads.
+    setText(text, at = null) {
+      const changes = view.state.doc.toString() === text ? [] : { from: 0, to: view.state.doc.length, insert: text };
+      const end = at == null ? text.length : readEnd(view.state.update({ changes }).state);
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: text },
-        selection: EditorSelection.cursor(head),
+        changes,
+        selection: EditorSelection.cursor(Math.min(at ?? view.state.selection.main.head, end)),
         annotations: [fromPage.of(true), Transaction.addToHistory.of(false)],
       });
     },
+    // Puts back a selection the page kept, which is the person's, so that the span it touches
+    // shows its marks as it did before the page took it away.
+    select({ anchor, head }) {
+      const end = view.state.doc.length;
+      view.dispatch({ selection: EditorSelection.single(Math.min(anchor, end), Math.min(head, end)) });
+    },
+    // Puts the caret where a press landed, as a press in the editor would.
+    placeAt(x, y) {
+      const at = view.posAtCoords({ x, y });
+      if (at != null) view.dispatch({ selection: EditorSelection.cursor(at), userEvent: 'select.pointer' });
+    },
     text: () => view.state.doc.toString(),
+    // A head as its row reads it, without the place's labels while they end it.
+    reads: () => view.state.doc.sliceString(0, readEnd(view.state)),
     selection: () => ({ anchor: view.state.selection.main.anchor, head: view.state.selection.main.head }),
     focus: () => view.focus(),
     get hasFocus() {
@@ -263,9 +329,11 @@ export function mount(hooks, foot) {
       }
       return { empty, rect, right, mode: mode() };
     },
+    // Where a position is, for what is offered under a word.
+    coordsAt: (pos) => view.coordsAtPos(pos, 1),
     setVim(on) {
       vimWanted = on;
-      view.dispatch({ effects: vimSlot.reconfigure(vimKeys()) });
+      if (whole) view.dispatch({ effects: vimSlot.reconfigure(vimKeys()) });
       listen();
     },
     get vimOn() {

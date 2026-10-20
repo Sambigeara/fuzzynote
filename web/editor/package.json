@@ -1,7 +1,7 @@
 {
   "name": "fzn-editor",
   "private": true,
-  "description": "The page's reading of markdown and the body's editor for the fzn page, bundled into web/vendor by build.sh",
+  "description": "The page's reading of markdown and the note's editor for the fzn page, bundled into web/vendor by build.sh",
   "dependencies": {
     "@codemirror/commands": "6.11.1",
     "@codemirror/language": "6.13.1",

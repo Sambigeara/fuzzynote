@@ -1,10 +1,10 @@
 // The page's reading of markdown: a body rendered where it is only read, a row's head read as a
-// line of the same markdown, and the highlighting that the body's editor shares.
+// line of the same markdown, and the parsers and the highlighting that the editor shares.
 //
-// The note stays plain text; this is how the page reads it. It is fetched as the page starts and
-// never waited for, so it is kept small: Lezer's markdown parser with GitHub's tables, tasks,
-// strikethrough and bare addresses, and the highlighter, which the editor imports from here so
-// that what is written and what is read look alike. A body is built as nodes, never as markup,
+// The note stays plain text; this is how the page reads it. It is fetched as the page starts, and
+// kept small: Lezer's markdown parser with GitHub's tables, tasks, strikethrough and bare
+// addresses, and the highlighter, which the editor imports from here with the parsers so that what
+// is written and what is read look alike. A body is built as nodes, never as markup,
 // so nothing a note says becomes part of the page, and nothing in it reaches outside the page by
 // being read: a link goes only to the web or to mail and opens apart from the page, and an image
 // is a link reading its alt text, never loaded. What has no address the page will follow, raw
@@ -19,12 +19,13 @@ import { highlightTree, styleTags, Tag, tagHighlighter, tags as t } from '@lezer
 import { StringStream } from '@codemirror/streamparser';
 
 // `[[Boiler]]` is how a link to a note is typed, which markdown would read as a link with no
-// address inside a pair of brackets. It is read whole, its brackets its marks, and its words are
-// not marked as a link's are, since a read does not make it one.
+// address inside a pair of brackets. It is read whole and as typed, brackets and all, where it is
+// written as where it is read, and its words are not marked as a link's are, since a read does
+// not make it one.
 const Bracketed = {
   defineNodes: [
     { name: 'Bracketed' },
-    { name: 'BracketMark', style: t.processingInstruction },
+    { name: 'BracketMark' },
   ],
   parseInline: [
     {
@@ -53,7 +54,8 @@ export const markdown = parser.configure([GFM, Bracketed, Addresses]);
 
 // How each kind of text looks, in the page's greys. Marks are faint, and so are code's punctuation
 // and its comments, which slant too; what a string, a number or a constant says is soft; headings,
-// strong text, keywords and what a line defines are heavier. A link is not a kind of text here,
+// strong text, keywords and what a line defines are heavier, a heading by a class of its own as
+// well, since a row's head reads a heading at the row's weight. A link is not a kind of text here,
 // since markdown takes any words in brackets for one: the editor marks in the link's colour only
 // what the read makes a link.
 export const highlighter = tagHighlighter([
@@ -63,7 +65,8 @@ export const highlighter = tagHighlighter([
   },
   { tag: t.comment, class: 'hl-faint hl-slant' },
   { tag: [t.literal, t.atom, t.null, t.unit], class: 'hl-soft' },
-  { tag: [t.heading, t.strong, t.keyword, t.definition(t.name)], class: 'hl-heavy' },
+  { tag: t.heading, class: 'hl-heavy hl-heading' },
+  { tag: [t.strong, t.keyword, t.definition(t.name)], class: 'hl-heavy' },
   { tag: t.emphasis, class: 'hl-slant' },
   { tag: t.monospace, class: 'hl-mono' },
   { tag: t.strikethrough, class: 'hl-struck' },
@@ -120,17 +123,24 @@ export function language(info) {
 // A row's head reads as one line of markdown, as a body's paragraph does, so that the same line
 // reads one way beside the list and in it: emphasis, strong text, code, strikethrough, links and
 // bare addresses rendered, a leading heading mark dropped, and whatever a body shows as typed shown
-// as typed here too. A line that would be a block of another kind, a list item, a quote, a fence,
-// stays as typed, since a head is not a block. A head with no character that can begin a mark is
-// not parsed: most heads are plain, and a list paints hundreds of them when the line is cleared.
+// as typed here too. A head is not a block, so it is parsed as a line alone, by a parser that knows
+// no block but a paragraph and a heading: a list item's mark, a quote's or a fence's is a word of
+// it. The head of the row under the cursor is parsed by the same, in the editor, so that the two
+// read alike. A head with no character that can begin a mark is not parsed: most heads are plain,
+// and a list paints hundreds of them when the line is cleared.
+export const line = markdown.configure({
+  remove: [
+    'LinkReference', 'IndentedCode', 'FencedCode', 'Blockquote', 'HorizontalRule', 'BulletList',
+    'OrderedList', 'HTMLBlock', 'SetextHeading', 'Table', 'TaskList',
+  ],
+});
 const MARKED = /[*_`~\\[<]|:\/\/|mailto:/i;
 const HEADING = /^#{1,6}[ \t]+(?=\S)/;
 export function head(text) {
   if (!MARKED.test(text)) return text.replace(HEADING, '');
-  const block = markdown.parse(text).topNode.firstChild;
+  const block = line.parse(text).topNode.firstChild;
   if (!block) return text;
-  const heading = /^ATXHeading\d$/.test(block.name);
-  if (block.name !== 'Paragraph' && !heading) return text;
+  const heading = block.name !== 'Paragraph';
   const from = heading ? (block.getChild('HeaderMark')?.to ?? block.from) : block.from;
   const out = inline(block, from, block.to, text, document.createDocumentFragment());
   // The space after a heading's mark is text to the parser, and the row does not want it.

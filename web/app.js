@@ -6,17 +6,16 @@
 // on the space, and somewhere to keep lines between visits.
 //
 // There is one cursor on the page and it moves. On the line it is the caret, and typing finds. Down
-// puts it on a row, whose head is a text box with the caret at its end, so typing there changes the
+// puts it on a row, whose head is the editor with the caret at its end, so typing there changes the
 // head and nothing has to be pressed to begin or to keep it: the engine writes each change as it is
-// typed. The row reads as it did, its marks rendered and the caret a block at the end of the
-// reading, until it is written in or the caret is put in it, and only then shows the text as typed
-// (see reveal), so that walking the list moves no text. Enter with text on the line writes it and
-// puts the box in the note it wrote. Enter on a row opens a new note under it, its empty head the
-// box, so that Enter, type, Enter, type writes notes in a run, as the original's Enter did, unless
-// its head has `/task` or a date word still to write out, which Enter writes out first. Ctrl-O
-// opens the body, the original's chord for it, in the sheet: a bounded overlay over the dimmed
-// page, scrolled on its own, where the box holds the whole note, or an editor takes its place once
-// one has been fetched (see loadEditor). The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
+// typed. The head reads as the row read off the cursor, but for the span the caret touches, which
+// shows its marks as typed, as an open body does (see the editor), so that walking the list moves
+// no text. Enter with text on the line writes it and puts the editor in the note it wrote. Enter
+// on a row opens a new note under it, its empty head the editor's, so that Enter, type, Enter, type
+// writes notes in a run, as the original's Enter did, unless its head has `/task` or a date word
+// still to write out, which Enter writes out first. Ctrl-O opens the body, the original's chord for
+// it, in the sheet: a bounded overlay over the dimmed page, scrolled on its own, where the editor
+// holds the whole note. The arrows stay inside it, and Escape closes it, or with vim's keys `:q`;
 // leaving it for anywhere else on the page closes it too. Touch has no chord: a tap beside a head's
 // words puts the cursor on the note and a second there opens it, and a tap on the words writes in
 // the head with the caret under the finger. A body is never shown under its row. On a wide page the
@@ -429,8 +428,8 @@ function carryOut(json) {
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
-  // Where the engine put the caret in the head, for the painting to put the box's there, and in the
-  // line, for the line to be given it as it is read (see look).
+  // Where the engine put the caret in the head, for the painting to put the editor's there, and in
+  // the line, for the line to be given it as it is read (see look).
   if (todo.caret?.head != null) placed = todo.caret.head;
   if (todo.caret?.line != null) placedLine = todo.caret.line;
   look();
@@ -465,7 +464,6 @@ function look() {
     if (line.selectionStart !== at || line.selectionEnd !== at) line.setSelectionRange(at, at);
     placedLine = null;
   }
-  if (!editor && view.field?.whole) loadEditor();
   if (place(view) !== was) safely();
   else paintSoon();
   keepHistory();
@@ -629,26 +627,22 @@ const bodyOf = (text) => {
   return at < 0 ? '' : text.slice(at + 1).replace(/^\s*\n/, '').replace(/\s+$/, '');
 };
 
-// The page's reading of markdown, a module of its own fetched as the page starts and never waited
-// for. With it a body read beside the list or above the line is rendered, and a row's head shows
-// its links as links; until it is here, and for good if it cannot be fetched, both read as they
-// were typed. What it paints is painted again when it arrives, and when a language arrives for
-// code it showed plain, which `readings` counts.
+// The page's reading of markdown and the note's editor, modules of their own, fetched as the page
+// starts, beside the engine, and waited for before anything is painted, since the head of the row
+// under the cursor is the editor's and the first row the cursor lands on reads as it did (see
+// start). A body read is painted again when a language arrives for code it showed plain, which
+// `readings` counts.
+const modules = Promise.all([import('./vendor/render.js'), import('./vendor/editor.js')]);
 let render = null;
 let readings = 0;
 const reread = () => {
   readings++;
   paintSoon();
 };
-import('./vendor/render.js').then((module) => {
-  render = module;
-  render.onLanguage(reread);
-  reread();
-}, () => {});
 // A task's head starts with its box, as the engine says it does, and the box is drawn, as a body
 // read draws one, and ticks the task when it is pressed (see tick); the rest of the head reads as
 // any head does. The box is the head's first three letters and the space after them, as `task`
-// on the engine's row says, and how much of the text it was is kept for placing the caret.
+// on the engine's row says.
 const readHead = (text, task) => {
   const head = el('span', 'head');
   if (task != null) {
@@ -656,15 +650,13 @@ const readHead = (text, task) => {
     button.type = 'button';
     button.tabIndex = -1;
     button.setAttribute('aria-label', task ? 'Untick' : 'Tick');
-    const cut = text[3] === ' ' ? 4 : 3;
-    head.dataset.boxed = cut;
     head.append(button);
-    text = text.slice(cut);
+    text = text.slice(text[3] === ' ' ? 4 : 3);
   }
-  head.append(render ? render.head(text) : text);
+  head.append(render.head(text));
   return head;
 };
-const readBody = (text, upTo) => (render ? render.body(text, upTo) : text);
+const readBody = (text, upTo) => render.body(text, upTo);
 
 const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
 
@@ -674,11 +666,10 @@ narrow.addEventListener('change', () => view && paintSoon());
 // keyboard up.
 const coarse = window.matchMedia('(hover: none) and (pointer: coarse)');
 const mac = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? '');
-const typing = () => [line, box, $('secret')].includes(document.activeElement) || !!editor?.hasFocus;
+const typing = () => [line, $('secret')].includes(document.activeElement) || !!editor?.hasFocus;
 // The keyboard there is the person's: the page moves the focus while a field has it, and
 // otherwise only for a press that asked to write, which sets this until the painting that
-// follows has given the field the focus: true, or where in the head a press on its words landed,
-// which may be 0. A key pressed asks to write too: on a touch screen it is
+// follows has given the field the focus. A key pressed asks to write too: on a touch screen it is
 // a keyboard joined to the device, and raises nothing. A phone shows no keyboard for a focus
 // nobody asked for, leaving the page typing into nothing, or raises one under the hands; and a
 // focus given inside the press's own event is the only kind for which iOS raises one.
@@ -729,7 +720,7 @@ function reframe() {
     unscroll();
     placeCaret();
     // The head being written stays above the keyboard as it comes up.
-    if (document.activeElement === box && !view?.field?.whole) box.scrollIntoView({ block: 'nearest' });
+    if (editor?.hasFocus && !editor.whole) editor.dom.scrollIntoView({ block: 'nearest' });
   });
 }
 
@@ -780,67 +771,23 @@ function clampHere() {
 // The rows on the page by note id.
 const rows = new Map();
 
-// The text box that the head of the row under the cursor becomes. There is one, made once, and it
-// is moved into whichever row the cursor lands on, so that it is never replaced while the cursor
-// stays: it keeps the person's caret and what they have typed. On a head it holds the first line
-// of the note; with the body open it is moved into the sheet and holds the whole note, until the
-// editor has arrived and takes its place there. `quiet` is set while the painter moves it about,
-// so that a blur it causes is not taken for the person leaving.
-const box = el('textarea', 'box');
-box.rows = 1;
-box.spellcheck = false;
-box.autocapitalize = 'sentences';
-box.setAttribute('aria-label', 'The note under the cursor');
-box.setAttribute('enterkeyhint', 'enter');
-let boxIn = null;
+// The editor: the head of the row under the cursor, and the whole note while its body is open in
+// the sheet. There is one, made as the page starts (see start), and it is moved into whichever row
+// the cursor lands on, its state made afresh there with the caret where the engine put it, and into
+// the sheet when a body opens, so that it is never replaced while the cursor stays: it keeps the
+// person's caret and what they have typed. `editorIn` is the row it is in. `quiet` is set while
+// the painter moves it about, so that a blur it causes is not taken for the person leaving.
+let editor = null;
+let editorIn = null;
 let quiet = false;
-// Set while the box is being left for somewhere else, so that the painting that follows does not
-// take the focus back.
+// Set while the editor is being left for somewhere else, so that the painting that follows does
+// not take the focus back.
 let leaving = false;
+let vimOn = kept('fzn.vim') === 'on';
 
-// The row under the cursor reads as it does off the cursor, its marks rendered and a place's
-// labels hidden, until it is written in or the caret is put in it: walking the list with the
-// arrows turned every row it passed to its raw text and back, so that text moved under a cursor
-// that was only moving. Until then the box is in the row all the same, with the focus whenever it
-// would have it, so that typing, a composition and a phone's keyboard behave as they always have,
-// but it is laid under the head as read and shows nothing, no text and no caret; the first thing
-// that writes in it or moves its caret takes the reading away and leaves the box, the event
-// landing in it as it would have. `revealed` says which it is for the row the box is in, and is
-// set again as the cursor lands on a row: a new row, being written, starts revealed. So does a row
-// whose landing `revealOnLanding` asks to be written in: one pressed on its words, whose caret goes
-// where the press landed, and the note Enter wrote from the line, whose head is still being typed.
-let revealed = false;
-let revealOnLanding = false;
-
-// The keys that reveal the row: those that would change its head and those that move the caret
-// within it. Everything else that can be pressed on a row leaves it, or acts on the note as a
-// whole, and reads it as it was: Up, Down, the pages, Tab, Enter in any of its forms, Escape and
-// the chords. A key is a reveal only by being named here, so that one given a meaning later is not
-// a reveal by accident. What the keys miss, a paste, a cut, dictation, a composition, a selection,
-// is caught where it lands (see reveal's listeners).
-const CARET_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
-const revealsOn = (event) =>
-  CARET_KEYS.has(event.key) ||
-  event.key === 'Backspace' ||
-  event.key === 'Delete' ||
-  (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
-
-// Takes the reading off the row under the cursor and shows the box under it, which is where it was
-// all along, so that nothing moves but the marks.
-function reveal() {
-  if (revealed || !boxIn) return;
-  revealed = true;
-  const edit = box.parentElement;
-  if (edit?.classList.contains('edit')) {
-    edit.classList.remove('veiled');
-    edit.querySelector(':scope > .head')?.remove();
-  }
-  placeCaret();
-}
-
-// The letters of a head, where each starts in its text and then where the text ends, which is the
-// end a caret can be at: a letter is what Left and Right step over, a whole grapheme, an emoji or
-// a letter and its accent, and never half a surrogate pair.
+// The letters of a text, where each starts in it and then where it ends, which is the end a caret
+// can be at: a letter is what Left and Right step over, a whole grapheme, an emoji or a letter and
+// its accent, and never half a surrogate pair.
 const graphemes = window.Intl?.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
 function lettersOf(text) {
   const starts = [];
@@ -850,72 +797,73 @@ function lettersOf(text) {
   return starts;
 }
 
-// Reveals the row with the caret at a place in its head, for a press on its words: the focus is
-// given here, inside the press, since that is the only focus for which iOS raises a keyboard. The
-// letter pressed stays under the pointer, at `x`, as the marks open round it (see sidescroll).
-function revealAt(at, x = null) {
-  reveal();
-  box.focus({ preventScroll: true });
-  const to = Math.min(at, box.value.length);
-  pressedAt = x;
-  box.setSelectionRange(to, to);
-  measured = null;
-  caretMoved();
-  pressedAt = null;
-}
-
 const headOf = (text) => {
   const at = text.indexOf('\n');
   return at < 0 ? text : text.slice(0, at);
 };
 
-// What the box should hold for the field as it now is.
-const boxText = (field) => (field.whole ? field.text : headOf(field.text));
+// The place's labels a row reads without, as the engine says: what its head says past what it
+// shows. The head of the row under the cursor reads without them too, until the caret goes into
+// them (see the editor's openHead).
+const hiddenOf = (row) =>
+  row?.shown != null && row.head.startsWith(row.shown) ? row.head.slice(row.shown.length) : '';
 
-// Where it wraps, in the sheet and at a phone's width, its size follows its text: by the browser
-// where it can, and otherwise from the number of lines, each counted 72 letters wide, since
-// measuring would cost the keystroke. Elsewhere it is one line high whatever it holds.
-const sizes = CSS.supports?.('field-sizing', 'content');
-function fit() {
-  if (!sizes) box.rows = box.value.split('\n').reduce((n, part) => n + 1 + Math.floor(part.length / 72), 0);
-}
-
-// On a head the engine is told the note with the head as typed and the rest as it was; with the
-// body open, the whole of what the box holds.
-box.addEventListener('input', () => {
-  fit();
-  const field = view?.field;
-  if (!field) return;
-  if (field.whole) return act({ edited: box.value });
-  // A head is one line: a newline pasted into it becomes a space rather than a body nobody sees.
-  if (/[\r\n]/.test(box.value)) {
-    const at = box.selectionStart;
-    box.value = box.value.replace(/[\r\n]+/g, ' ');
-    box.setSelectionRange(at, at);
-  }
-  const at = field.text.indexOf('\n');
-  act({ edited: at < 0 ? box.value : `${box.value}\n${field.text.slice(at + 1)}` });
-  sayCaret(box);
-});
-
-// Whatever writes in the head reveals it before it lands, by a key or not: a paste, a cut, the
-// browser's own undo, dictation, and a composition as it starts. So does a selection made in it.
-// In the sheet the box is the body's, and writing there reveals nothing in the row.
-const revealHere = () => {
-  if (!view?.field?.whole) reveal();
+// On a head the engine is told the note with the head as typed and the rest as it was, and where
+// the caret is after typing, for what is offered; with the body open, the whole of what the editor
+// holds. The caret is read once the editor has finished with a change, and in a head a move while
+// something is offered is said, so that it closes once the caret leaves the word.
+const editorHooks = {
+  onChange: (text) => {
+    const field = view?.field;
+    if (!field) return;
+    if (field.whole) return act({ edited: text });
+    const at = field.text.indexOf('\n');
+    act({ edited: at < 0 ? text : `${text}\n${field.text.slice(at + 1)}` });
+    sayCaret(editor.contentDOM, text, editor.selection());
+  },
+  onSelection: () => {
+    queueMicrotask(placeCaret);
+    if (!view?.offer || !editor.hasFocus || editor.whole) return;
+    sayCaret(editor.contentDOM, editor.text(), editor.selection(), true);
+  },
+  onMode: () => queueMicrotask(caretMoved),
+  onFocus: () => {
+    held = editor.contentDOM;
+    if (!quiet) caretMoved();
+  },
+  // Going to vim's prompt for a command, at the foot of the sheet, is not leaving, and leftFor
+  // knows it. Nor is a blur the editor causes itself by taking its content out of the page for a
+  // moment, as the vim keys do to end a composition after a dead key, or the painter does in
+  // moving it to another row.
+  onBlur: (event) => {
+    if (held === editor.contentDOM) held = null;
+    placeCaret();
+    if (!event.target.isConnected) return;
+    leftFor(event);
+  },
+  // Vim's write keeps the body as it stands and stays; its quits close it, and the one with a
+  // bang first puts the note back as it was when the cursor landed on it. Each is done once vim
+  // has finished with the key that asked for it, since vim goes on with the editor after its
+  // command, and closing makes the editor's state afresh, vim gone from it: an Enter in vim's
+  // prompt would be left to land in the head as a space.
+  onEx: (what) =>
+    queueMicrotask(() => {
+      if (what === 'write') keepOpen();
+      else {
+        // Put back is asked for only when the engine offers it, since on a body that has not
+        // changed undo would take back the last version written instead, which may be another
+        // note's.
+        if (what === 'discard' && view.hints.some((hint) => named(hint.action) === 'undo')) act('undo');
+        act('close');
+      }
+      follow();
+    }),
 };
-box.addEventListener('beforeinput', revealHere);
-box.addEventListener('compositionstart', revealHere);
-document.addEventListener('selectionchange', () => {
-  if (!revealed && !quiet && held === box && box.selectionStart !== box.selectionEnd) revealHere();
-});
 
 // Leaving an open body for somewhere else on the page closes it, writing it if it changed.
 // Leaving the window does not: the body is there, still open, when the person comes back. Leaving
 // a head does nothing: the field stays the cursor's, and a click on the line or a row says where
 // the cursor goes.
-box.addEventListener('blur', (event) => leftFor(event));
-
 function leftFor(event) {
   if (quiet || !view?.field?.whole) return;
   const to = event.relatedTarget;
@@ -933,45 +881,31 @@ function leftFor(event) {
   }
 }
 
-box.addEventListener('keydown', (event) => {
-  if (event.isComposing || !view?.field) return;
+// The keys of a head, heard before the editor hears them. Those that leave the row or act on the
+// note as a whole are the session's: Up, Down and the pages move the cursor and Control with an
+// arrow the note, Tab goes in from anywhere in the head, Enter writes, Shift-Enter ticks the task
+// or archives the note, as Ctrl-V does in the terminal, Escape leaves the row, Backspace on an
+// empty head takes the row away, undo and redo are the engine's, which puts a head back as it was
+// when the cursor landed, and so are the chords. Shift-Tab is nothing: the focus never leaves the
+// field by a key. The rest, the letters and the keys that move the caret or select, are the
+// editor's, as in any one-line field.
+function keyInHead(event) {
+  if (event.isComposing || !view?.field || editor.whole) return;
+  if (onOffer(event, true)) return event.stopPropagation();
   const plain = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
-  if (!view.field.whole && !revealed && revealsOn(event)) reveal();
-  // The body is the box's own, but for Escape or Ctrl-[, which close it, and the chords swallowed
-  // so that the browser's file dialog, page source, search and history do not open in the middle
-  // of writing (see swallowedInBody). Tab is a tab character in it, as it is in the editor that
-  // takes its place.
-  if (view.field.whole) {
-    if (swallowedInBody(event)) return event.preventDefault();
-    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      // Inserted as typing is, so that the browser's undo takes it back as it would a letter.
-      if (!event.shiftKey) document.execCommand('insertText', false, '\t');
-      return event.preventDefault();
-    }
-    if (!escapes(event)) return;
-    act('close');
-    event.preventDefault();
-    return;
-  }
-  if (onOffer(event, true)) return;
   switch (escapes(event) ? 'Escape' : event.key) {
     case 'ArrowDown':
     case 'ArrowUp':
     case 'PageDown':
     case 'PageUp':
-      // Control with an arrow moves the note, and the cursor with it.
       if (ctrlOnly(event) && event.key.startsWith('Arrow')) act({ shift: event.key === 'ArrowUp' ? -1 : 1 });
       else if (plain) act({ move: { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[event.key] });
       else return;
       break;
-    // Tab goes into the note from anywhere in its head, and the arrows are the caret's. Shift-Tab
-    // is nothing: the focus never leaves the field by a key.
     case 'Tab':
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (!event.shiftKey) act('go_in');
       break;
-    // Shift-Enter ticks the task, or archives the note, as Ctrl-V does in the terminal, and leaves
-    // the row read as it was.
     case 'Enter':
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       act(event.shiftKey ? 'archive' : 'write');
@@ -986,11 +920,31 @@ box.addEventListener('keydown', (event) => {
     case 'Escape':
       act({ select: null });
       break;
+    // An editor's undo, Ctrl-Z or on a Mac Cmd-Z, and with Shift its redo.
+    case 'z':
+    case 'Z':
+      if (event.altKey || !(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+      act(event.shiftKey ? 'redo' : 'undo');
+      break;
     default:
       if (!ctrlOnly(event) || !chord(event.key, true)) return;
   }
   event.preventDefault();
+  event.stopPropagation();
   follow();
+}
+
+// An open body is the editor's but for the chords that never reach the browser, from the text or
+// from vim's prompt, the editor having them first where it binds them, Ctrl-U among them (see
+// swallowedInBody), and Escape or Ctrl-[, which close it without vim's keys. With them Escape is
+// vim's alone, since hands that press it twice to be sure of normal mode would close the note
+// under themselves; `:q`, `ZZ` and the word in the foot close it.
+buffer.addEventListener('keydown', (event) => {
+  if (event.isComposing || editor?.composing || !view?.field?.whole) return;
+  if (swallowedInBody(event)) return event.preventDefault();
+  if (!escapes(event) || event.defaultPrevented || editor.vimOn) return;
+  act('close');
+  event.preventDefault();
 });
 
 // The chords an open body never lets reach the browser, though the editor may act on them first:
@@ -1005,8 +959,9 @@ const escapes = (event) => event.key === 'Escape' || (ctrlOnly(event) && event.k
 
 // Whether the caret is where Backspace takes an empty head away.
 function atEmpty() {
-  const at = view.field.fresh ?? (box.value === '' ? 0 : -1);
-  return box.selectionStart === at && box.selectionEnd === at;
+  const at = view.field.fresh ?? (editor.text() === '' ? 0 : -1);
+  const { anchor, head } = editor.selection();
+  return anchor === at && head === at;
 }
 
 // The chords with Control alone that ask for something of the note under the cursor, or of the
@@ -1042,7 +997,7 @@ function chord(key, onRow) {
       return true;
     case 'undo':
     case 'redo':
-      undo(name);
+      act(name);
       return true;
     case 'show_archived':
       if (view.hints.some((hint) => named(hint.action) === name)) act(name);
@@ -1058,7 +1013,7 @@ function chord(key, onRow) {
 }
 
 // The key written after a word in the foot: the one that asks for the same where the cursor is,
-// in the head (see the box's keys), anywhere else (see pressed) or as a chord, named as the
+// in the head (see keyInHead), anywhere else (see pressed) or as a chord, named as the
 // terminal names its keys and in the same marks, `↵` and `⇧↵` as most keycaps print them. Every
 // word a key asks for has it, Enter, Tab and Escape as much as the chords, so that no word is left
 // to be guessed at. In an open body the chords are the editor's, so only the way out has a key:
@@ -1092,107 +1047,23 @@ function keyFor(action) {
 }
 
 function nothingSelected() {
-  const field = [box, line].find((it) => it === document.activeElement);
-  return field ? field.selectionStart === field.selectionEnd : getSelection()?.type !== 'Range';
+  if (editor?.hasFocus) return editor.selection().anchor === editor.selection().head;
+  if (document.activeElement === line) return line.selectionStart === line.selectionEnd;
+  return getSelection()?.type !== 'Range';
 }
 
-// An undo or a redo, which leaves the row under the cursor revealed when it put text back in its
-// head (see putBack).
-function undo(which = 'undo') {
-  const before = headsNow();
-  act(which);
-  if (before && putBack(before)) reveal();
-}
-
-// The focus goes where the cursor is: the box when it is on a row, the line when it is not.
+// The focus goes where the cursor is: the editor when it is on a row, the line when it is not.
 function follow() {
   if (!view || !mayFocus()) return;
-  if (view.cursor != null && boxIn && view.field?.whole && editor) {
-    if (document.activeElement !== editor.contentDOM) editor.focus();
+  if (view.cursor != null && editorIn) {
+    if (!editor.hasFocus) editor.focus();
     return;
   }
-  const target = view.cursor != null && boxIn ? box : line;
-  if (document.activeElement !== target) target.focus({ preventScroll: true });
+  if (document.activeElement !== line) line.focus({ preventScroll: true });
 }
-
-// The body's editor, which takes the box's place while a body is open. It is a module of its own,
-// CodeMirror with vim's keys, fetched once the person has paused, no key for a little under two
-// seconds after the first paint, and then when the page is idle; or at once if a body opens first.
-// Never at first paint. Asking for it when the cursor first reached a row ran its 60 to 100 ms of
-// evaluation just as the person began to walk the list, and asking at the first idle moment ran it
-// on the first letters of a search typed as the page opened: an idle main thread is not a pause.
-// Until it is here, and for good if it cannot be fetched, the box is the body as it always was.
-let editor = null;
-let editorSoon = null;
-let vimOn = kept('fzn.vim') === 'on';
 
 const soon = (task, timeout) =>
   window.requestIdleCallback ? requestIdleCallback(() => task(), timeout && { timeout }) : setTimeout(task, 1500);
-
-let pause = 0;
-function prefetchOnPause() {
-  if (editorSoon) return document.removeEventListener('keydown', prefetchOnPause, true);
-  clearTimeout(pause);
-  pause = setTimeout(() => soon(loadEditor, 8000), 1750);
-}
-
-function loadEditor() {
-  editorSoon ??= import('./vendor/editor.js').then(
-    (module) => {
-      editor = module.mount(editorHooks, $('sheet-foot'));
-      editor.setVim(vimOn);
-      // The sheet is the editor's but for the chords that never reach the browser, from the text
-      // or from vim's prompt, the editor having them first where it binds them, Ctrl-U among
-      // them (see swallowedInBody), and Escape or Ctrl-[, which close it without vim's keys. With
-      // them Escape is vim's alone, since hands that press it twice to be sure of normal mode
-      // would close the note under themselves; `:q`, `ZZ` and the word in the foot close it.
-      buffer.addEventListener('keydown', (event) => {
-        if (event.isComposing || editor.composing || !view?.field?.whole) return;
-        if (swallowedInBody(event)) return event.preventDefault();
-        if (!escapes(event) || event.defaultPrevented || editor.vimOn) return;
-        act('close');
-        event.preventDefault();
-      });
-      paintSoon();
-    },
-    () => {},
-  );
-}
-
-const editorHooks = {
-  onChange: (text) => {
-    if (view?.field?.whole) act({ edited: text });
-  },
-  // The caret is read once the editor has finished with the change.
-  onSelection: () => queueMicrotask(caretMoved),
-  onMode: () => queueMicrotask(caretMoved),
-  onFocus: () => {
-    held = editor.contentDOM;
-    if (!quiet) caretMoved();
-  },
-  // Going to vim's prompt for a command, at the foot of the sheet, is not leaving, and leftFor
-  // knows it. Nor is a blur the editor causes itself by taking its content out of the page for a
-  // moment, as the vim keys do to end a composition after a dead key.
-  onBlur: (event) => {
-    if (held === editor.contentDOM) held = null;
-    placeCaret();
-    if (!event.target.isConnected) return;
-    leftFor(event);
-  },
-  // Vim's write keeps the body as it stands and stays; its quits close it, and the one with a
-  // bang first puts the note back as it was when the cursor landed on it.
-  onEx: (what) => {
-    if (what === 'write') keepOpen();
-    else {
-      // Put back is asked for only when the engine offers it, since on a body that has not
-      // changed undo would take back the last version written instead, which may be another
-      // note's.
-      if (what === 'discard' && view.hints.some((hint) => named(hint.action) === 'undo')) act('undo');
-      act('close');
-    }
-    follow();
-  },
-};
 
 // Writes an open body as it stands and leaves it open, for vim's `:w`: the engine keeps the field
 // and stays, so the editor is left as it is, its caret, scroll and step undo with it.
@@ -1203,13 +1074,12 @@ function keepOpen() {
 function rowKey(row, selected, apart) {
   const field = selected ? view.field : null;
   return JSON.stringify([
-    // The head of the row under the cursor is the box's, so it is left out here: a row is not
-    // filled again, taking the box out and putting it back, for a letter typed into it. With the
-    // body open in the sheet the row reads its head as it is being written. Nor is its date in
+    // The head of the row under the cursor is the editor's, so it is left out here: a row is not
+    // filled again, taking the editor out and putting it back, for a letter typed into it. With
+    // the body open in the sheet the row reads its head as it is being written. Nor is its date in
     // the key, which a new note's first letter gives it: the date is set in place, since filling
-    // the row would take the box out under a composition the first letter began.
+    // the row would take the editor out under a composition the first letter began.
     field && !field.whole ? null : field ? headOf(field.text) : row.shown ?? row.head,
-    !!render,
     row.task, row.links, row.reasons, row.archived, row.has_body, apart, selected,
     view.scores_shown ? row.score : null,
   ]);
@@ -1230,44 +1100,17 @@ function dateRow(li) {
   } else if (time.textContent !== text) time.textContent = text;
 }
 
-// The head as read, laid over the box of the row under the cursor until the row is revealed, and
-// set in place, so that the box under it is not taken out of the row and put back: it would lose
-// the focus, and a composition the first letter began. It reads as the row would off the cursor.
-function veil(li, row) {
-  const edit = li.querySelector(':scope > .main > .edit');
-  if (!edit) return;
-  // The engine holds the cursor's row still, so a head changed in place, from elsewhere or by the
-  // engine, is the field's and not yet the row's. It is shown as it now is, revealed, since a key
-  // or a press would land against that text and not the reading's. The row's head is trimmed, as
-  // the engine reads a head, and the field's is the text as typed, spaces and all, so the two are
-  // compared trimmed.
-  const now = headOf(view.field.text);
-  if (now.trim() !== row.head) reveal();
-  edit.classList.toggle('veiled', !revealed);
-  const read = edit.querySelector(':scope > .head');
-  if (revealed) return read?.remove();
-  const key = JSON.stringify([now, row.shown ?? row.head, row.task, readings, !!render]);
-  if (read?.dataset.reads === key) return;
-  const head = readHead(row.shown ?? row.head, row.task);
-  head.dataset.reads = key;
-  // The box under it, which keeps its label, is what a screen reader reads.
-  head.setAttribute('aria-hidden', 'true');
-  if (read) read.replaceWith(head);
-  else edit.prepend(head);
-}
-
 function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  // Off the cursor a row reads as the engine shows it, without the place's labels at its end. Under
-  // it the box is held in a frame of its own, which the head as read is laid in over it (see veil).
-  const head = field ? headOf(field.text) : row.shown ?? row.head;
+  // Off the cursor a row reads as the engine shows it, without the place's labels at its end. On
+  // it the head is the editor's, held in a frame of its own, which reads it the same way.
   if (field && !field.whole) {
     const edit = el('div', 'edit');
-    edit.append(box);
+    edit.append(editor.dom);
     main.append(edit);
-  } else main.append(readHead(head, row.task));
+  } else main.append(readHead(field ? headOf(field.text) : row.shown ?? row.head, row.task));
   const tail = el('span', 'tail');
   if (row.archived) tail.append(el('span', null, 'archived'));
   if (row.has_body) tail.append(el('span', null, '¶'));
@@ -1336,24 +1179,18 @@ const takesFocus = (field) =>
 function paintRows() {
   const field = view.field;
   const fieldId = view.cursor != null && field ? view.rows[view.cursor]?.id ?? null : null;
-  const [from, to] = [box.selectionStart, box.selectionEnd];
-  // The box's class says whether the field was the whole note last time, whichever of the two
-  // held it.
-  const wasWhole = box.classList.contains('whole');
-  const hadEditor = !!editor?.dom.isConnected;
+  const wasWhole = editor.whole;
   wasTyping = typing();
   quiet = true;
 
-  // The cursor has left the row the box was in: that row goes back to being read.
-  const landed = fieldId !== boxIn;
-  if (landed) revealed = field?.fresh != null || revealOnLanding;
-  if (landed && boxIn) {
-    const left = rows.get(boxIn);
+  // The cursor has left the row the editor was in: that row goes back to being read.
+  const landed = fieldId !== editorIn;
+  if (landed && editorIn) {
+    const left = rows.get(editorIn);
     if (left) left.dataset.k = '';
-    box.remove();
-    editor?.dom.remove();
+    editor.dom.remove();
   }
-  boxIn = fieldId;
+  editorIn = fieldId;
 
   const asking = JSON.stringify([view.line, view.path]);
   const anew = asking !== listFor;
@@ -1388,7 +1225,7 @@ function paintRows() {
     }
     const selected = i === view.cursor;
     // The row under the cursor is the list's current one, to the eye and to a screen reader alike;
-    // its head is a text box, which an option of a listbox could not hold.
+    // its head is a text field, which an option of a listbox could not hold.
     if (selected && !li.hasAttribute('aria-current')) li.setAttribute('aria-current', 'true');
     else if (!selected && li.hasAttribute('aria-current')) li.removeAttribute('aria-current');
     // In a place, what the line finds in it is set apart from what it only finds there, where the
@@ -1403,69 +1240,48 @@ function paintRows() {
       li.dataset.k = k;
       fill(li, row, selected);
     }
-    if (selected) {
-      dateRow(li);
-      veil(li, row);
-    }
+    if (selected) dateRow(li);
     return li;
   });
 
   listed = new Set(view.rows.map((row) => row.id));
 
   // Rows are put in order by moving only those that are out of it. A node that is moved is taken
-  // out and put back, which would restart its fade and drop the focus of the box.
+  // out and put back, which would restart its fade and drop the focus of the editor.
   let at = list.firstChild;
   for (const li of wanted) {
     if (li === at) at = at.nextSibling;
     else list.insertBefore(li, at);
   }
 
-  // An open body is the sheet's: the editor once it has arrived, and the box until then. Neither
-  // is left there once the body has closed, when the box is back in its row.
-  const opened = field && boxIn && field.whole ? (editor ? editor.dom : box) : null;
-  if (opened && opened.parentElement !== sheet) sheet.prepend(opened);
-  for (const other of [box, editor?.dom]) if (other && other !== opened && other.parentElement === sheet) other.remove();
+  // An open body is the sheet's, and a head the row's, where fill put the editor; with the cursor
+  // on the line it is nowhere.
+  if (field && editorIn && field.whole && editor.dom.parentElement !== sheet) sheet.prepend(editor.dom);
+  else if (!(field && editorIn) && editor.dom.isConnected) editor.dom.remove();
 
-  // The box holds what the field says, set only when that differs from what it holds, so that the
-  // person's caret is left alone while they type. The caret goes where the engine put it, which on
-  // landing, and when the body opens or closes, is the end of the head, so that Down in a body goes
-  // to the second line, and in a new row with only the labels it opened with is after a task's box
-  // and before the rest; otherwise it is kept where it was, as far as the text still reaches.
-  if (field && boxIn && field.whole && editor) {
-    box.classList.add('whole');
-    // The editor is given a fresh state when the body opens, its caret where the box's would be,
-    // and when it takes over from the box, with the box's caret. Otherwise it is told the text only
-    // when the engine's differs from it: put back, a date word expanded, a version from elsewhere.
-    // A newline just made at the end is not a difference, as it is not one to the engine, which
-    // keeps the note without it: told the kept text, the editor would take the new line away under
-    // the hands.
-    const toggled = !wasWhole;
-    const kept = (text) => text.replace(/[\r\n]+$/, '');
-    if (toggled) editor.open(field.text, placed != null ? unitsIn(field.text, placed) : headOf(field.text).length);
-    else if (!hadEditor) editor.open(field.text, Math.min(from, field.text.length));
-    else if (kept(editor.text()) !== kept(field.text)) editor.setText(field.text);
+  // The editor holds what the field says. Landing on a row, and a body opening or closing, make
+  // its state afresh, with the caret where the engine put it, which is the end of the head, so that
+  // Down in a body goes to the second line, and in a new row with only the labels it opened with is
+  // after a task's box and before the rest; a row landed on reads from its start, whatever the row
+  // before was scrolled to. Otherwise it is told the text only when the engine's differs from it,
+  // put back, a date word expanded, a version from elsewhere, and the caret only when the engine
+  // put it, so that the person's caret is left alone while they type.
+  if (field && editorIn) {
+    const text = field.whole ? field.text : headOf(field.text);
+    const to = placed != null ? unitsIn(text, placed) : null;
+    if (field.whole) {
+      // A newline just made at the end of a body is not a difference, as it is not one to the
+      // engine, which keeps the note without it: told the kept text, the editor would take the new
+      // line away under the hands.
+      const kept = (body) => body.replace(/[\r\n]+$/, '');
+      if (!wasWhole || landed) editor.openBody(text, to ?? headOf(text).length);
+      else if (kept(editor.text()) !== kept(text)) editor.setText(text);
+    } else if (landed || wasWhole) {
+      editor.scrollDOM.scrollLeft = 0;
+      editor.openHead(text, to ?? text.length, hiddenOf(view.rows[view.cursor]));
+      headEdges();
+    } else if (editor.text() !== text || to != null) editor.setText(text, to);
     if (takesFocus(editor.contentDOM)) editor.focus();
-  } else if (field && boxIn) {
-    box.classList.toggle('whole', field.whole);
-    const want = boxText(field);
-    const told = box.value !== want;
-    if (told) {
-      box.value = want;
-      fit();
-    }
-    const end = box.value.length;
-    // A press on a head's words puts the caret where it landed, but in a new row with only its
-    // labels, whose caret goes where the writer's text does. A row landed on reads from its start,
-    // whatever the box was scrolled to in the row before. A row read has its caret at the end,
-    // where its block is drawn (see placeReadingCaret), which is where the engine puts it when it
-    // changes the head under it, so that the first key types or moves from where the block was.
-    const pressed = landed && field.fresh == null && typeof wantsText === 'number';
-    const at = pressed ? Math.min(wantsText, end) : placed != null ? Math.min(unitsIn(want, placed), end) : null;
-    if (landed) box.scrollLeft = 0;
-    if (at != null) box.setSelectionRange(at, at);
-    else box.setSelectionRange(Math.min(from, end), Math.min(to, end));
-    if (landed || told) edges();
-    if (takesFocus(box)) box.focus({ preventScroll: true });
   } else if (takesFocus(line)) {
     line.focus({ preventScroll: true });
   }
@@ -1553,38 +1369,12 @@ hintsNode.addEventListener('wheel', (event) => {
 });
 window.addEventListener('resize', () => view && hintEdges());
 
-// An undo or a redo that put text back in the head under the cursor leaves the row revealed, as
-// it was being written; one that only moved the cursor, or put back no more than a task's box, as
-// undoing a tick does, leaves it read. What each head was is taken before it: the field's for the
-// row under the cursor, which the engine holds still, and the row's for the others, which the
-// engine trims, so both are compared trimmed.
-const unboxed = (head) => head.replace(/^\[[ xX]\] ?/, '');
-function headsNow() {
-  const heads = new Map(view.rows.map((row) => [row.id, row.head]));
-  if (boxIn && view.field && !view.field.whole) heads.set(boxIn, headOf(view.field.text));
-  return heads;
-}
-function putBack(before) {
-  if (!boxIn || !view.field || view.field.whole || !before.has(boxIn)) return false;
-  return unboxed(before.get(boxIn).trim()) !== unboxed(headOf(view.field.text).trim());
-}
-
 // A word in the foot, with the key that asks for the same written after it, which the stylesheet
 // shows only where there is a pointer to read it with. A word does what its key does, after which
-// the focus follows the cursor.
+// the focus follows the cursor. A new note is asked for to be written in, so the keyboard comes for
+// it.
 function word(hint) {
   const name = named(hint.action);
-  const run = () => {
-    if (name === 'undo' || name === 'redo') return undo(name);
-    // A new note is asked for to be written in, so the keyboard comes for it, and it lands
-    // revealed.
-    if (name === 'write') wantsText = revealOnLanding = true;
-    try {
-      act(hint.action);
-    } finally {
-      revealOnLanding = false;
-    }
-  };
   const button = el('button', 'word', hint.label);
   button.type = 'button';
   const key = keyFor(hint.action);
@@ -1595,7 +1385,8 @@ function word(hint) {
   }
   button.onclick = () => {
     try {
-      run();
+      if (name === 'write') wantsText = true;
+      act(hint.action);
     } finally {
       follow();
       wantsText = false;
@@ -1645,7 +1436,7 @@ function paintFoot() {
 }
 
 const readStep = (text) => {
-  const read = render ? render.head(text) : text;
+  const read = render.head(text);
   if (typeof read !== 'string') for (const a of read.querySelectorAll('a')) a.replaceWith(...a.childNodes);
   return read;
 };
@@ -1663,7 +1454,7 @@ function paintPath() {
   // note's step reads as its row does, its marks rendered and its heading's mark dropped, and a
   // link in it reads as its text, since a step is a button and a link inside one would be a second
   // thing to press. On a narrow screen a long path gives up its middle.
-  set(path, JSON.stringify([view.path, narrow.matches, !!render]), () => {
+  set(path, JSON.stringify([view.path, narrow.matches]), () => {
     const steps = [space, ...view.path];
     const parts = [];
     steps.forEach((head, depth) => {
@@ -1689,7 +1480,7 @@ const GLANCE = 5000;
 function paintBody(node, says) {
   const key = `${readings} ${says}`;
   if (!set(node, key, () => [readBody(says, GLANCE)])) return false;
-  if (render && says.length > GLANCE) {
+  if (says.length > GLANCE) {
     soon(() => {
       if (node.dataset.shows === key) node.replaceChildren(readBody(says));
     });
@@ -1719,20 +1510,17 @@ function paintPane() {
   }
 }
 
+// The head as its row reads it, as it is typed: its box drawn while it begins with one, as the
+// engine reads a box, and a place's labels left off while they end it.
 function paintPaneHead() {
   const field = view.field;
-  const row = wide.matches && field && !field.whole && boxIn ? rows.get(boxIn) : null;
-  const read = row && !revealed ? row.querySelector('.edit > .head') : null;
-  const cut = row && (read ? read.scrollWidth > read.clientWidth + 1 : box.scrollWidth > box.clientWidth + 1);
+  const scroll = editor.scrollDOM;
+  const cut = wide.matches && field && !field.whole && editorIn && scroll.scrollWidth > scroll.clientWidth + 1;
   paneHead.hidden = !cut;
   if (!cut) return set(paneHead, '', () => []);
-  const listed = view.rows[view.cursor];
-  // Read, it is the row's reading; written in, the head as typed, its box drawn while it still
-  // begins with one.
-  const text = revealed ? headOf(field.text) : (listed.shown ?? listed.head);
-  const boxed = /^\[[ xX]\](?: |$)/.test(text);
-  const task = revealed ? (listed.task != null && boxed ? /^\[[xX]\]/.test(text) : null) : listed.task;
-  set(paneHead, JSON.stringify([text, task, readings, !!render]), () => [readWhole(text, task)]);
+  const text = editor.reads();
+  const task = /^\[[ x]\]/.test(text) ? text[1] === 'x' : null;
+  set(paneHead, JSON.stringify([text, task]), () => [readWhole(text, task)]);
 }
 
 // A head read whole, its marks rendered and a task's box drawn, which is never pressed.
@@ -1744,7 +1532,7 @@ function readWhole(text, task) {
     head.append(drawn);
     text = text.slice(text[3] === ' ' ? 4 : 3);
   }
-  head.append(render ? render.head(text) : text);
+  head.append(render.head(text));
   return head;
 }
 
@@ -1791,7 +1579,7 @@ function paint() {
 
 line.addEventListener('input', () => {
   act({ type: line.value });
-  sayCaret(line);
+  sayCaret(line, line.value, lineCaret());
 });
 
 // A click on the line takes the cursor there, so that the engine's cursor follows the focus. An
@@ -1805,9 +1593,10 @@ line.addEventListener('focus', () => {
 // the text, and it is a shape that can be given to someone else: another person's caret, one day,
 // would be the same block in another tint.
 //
-// Where it goes is measured in a copy of the field, never seen: the text up to the caret, the
-// letter at the caret in a span, and the rest. That is one read of the layout, made here and
-// nowhere else, so the painting of the rows stays free of it.
+// In the editor, a head's or a body's, it is drawn from the editor's coordinates. On the line it
+// is measured in a copy of the field, never seen: the text up to the caret, the letter at the caret
+// in a span, and the rest. That is one read of the layout, made here and nowhere else, so the
+// painting of the rows stays free of it.
 const caret = el('div');
 caret.id = 'caret';
 caret.hidden = true;
@@ -1825,35 +1614,34 @@ const COPIED = [
 let held = null;
 let composing = false;
 let caretWas = '';
-// What the caret was last measured for. The block is a child of the field's own parent, so rows
-// that move above it carry it with them; it is measured again only when something in the field
-// has changed: its text, its selection, its row, its weight, or the dates that take width from
-// the line. An event that changes none of it, such as the selection set again by the painter, is
-// not measured twice.
+// What the line's caret was last measured for. The block is a child of the field's own parent;
+// it is measured again only when something in the field has changed: its text, its selection, its
+// weight, or the dates that take width from the line. An event that changes none of it, such as
+// the selection set again by the painter, is not measured twice. The editor's is placed again at
+// every change it makes, the reading's included, since a mark opening or closing moves the letters
+// round the caret.
 let measured = null;
-const inEditor = () => !!editor && held === editor.contentDOM;
+const inEditor = (field) => !!editor && field === editor.contentDOM;
 // On a touch screen the caret is drawn where the cursor is whether or not the keyboard is up, still
 // rather than breathing, so that the blank page has its cursor before a finger asks for the
-// keyboard: in the box when the cursor is on a row, and on the line otherwise. A field without the
+// keyboard: in the head when the cursor is on a row, and on the line otherwise. A field without the
 // focus keeps the selection last set in it, which the painter sets as the cursor lands.
 const restingField = () =>
   coarse.matches && view && !view.field?.whole && !document.body.classList.contains('locked')
-    ? (view.cursor != null && boxIn ? box : line)
+    ? (view.cursor != null && editorIn ? editor.contentDOM : line)
     : null;
 const caretField = () => (held && held === document.activeElement ? held : restingField());
 const asMeasured = () => {
   const field = caretField();
   return (
     field &&
-    [field, field.selectionStart, field.selectionEnd, field.value, field.parentElement, faceOf(field),
-      $('dates').textContent, view?.cursor, composing, field === document.activeElement, revealed,
-      view?.offer?.from,
-      inEditor() ? [editor.text().length, editor.selection().anchor, editor.selection().head, editor.mode,
-        editor.composing, editor.dom.parentElement] : ''].join('\u0000')
+    !inEditor(field) &&
+    [field, field.selectionStart, field.selectionEnd, field.value, faceOf(field), $('dates').textContent,
+      view?.cursor, composing, field === document.activeElement, view?.offer?.from].join('\u0000')
   );
 };
 const caretMoved = () => {
-  if (asMeasured() !== measured) placeCaret();
+  if (inEditor(caretField()) || asMeasured() !== measured) placeCaret();
 };
 
 // The mirror is given the field's face, when the field, its class or the window's width has
@@ -1864,34 +1652,12 @@ function dress(field) {
   if (mirror.dataset.face !== face) {
     mirror.dataset.face = face;
     for (const name of COPIED) mirror.style[name] = style[name];
-    mirror.style.whiteSpace = field === box ? style.whiteSpace : 'pre';
-    mirror.style.overflowWrap = field === box ? style.overflowWrap : 'normal';
+    mirror.style.whiteSpace = 'pre';
   }
   return style;
 }
 // A field's class but for the fades at its edges, which change nothing that is measured.
 const faceOf = (field) => field.className.replace(/ (before|after)\b/g, '');
-
-// Where the lines of a field's words are on the screen, measured in the mirror, whose box lies
-// over the field's as the caret's measure has it.
-function wordsOf(field) {
-  const style = dress(field);
-  const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  mirror.style.width = `${field.clientWidth - padding}px`;
-  const words = document.createTextNode(field.value);
-  mirror.replaceChildren(words);
-  const range = document.createRange();
-  range.selectNodeContents(words);
-  const from = mirror.getBoundingClientRect();
-  const to = field.getBoundingClientRect();
-  const [dx, dy] = [to.left - from.left - field.scrollLeft, to.top - from.top - field.scrollTop];
-  return [...range.getClientRects()].map((r) => ({
-    left: r.left + dx,
-    right: r.right + dx,
-    top: r.top + dy,
-    bottom: r.bottom + dy,
-  }));
-}
 
 // On a touch screen the passphrase's field waits for a tap with the caret resting at its start, so
 // that the page asking for it is not a hairline under a grey sentence.
@@ -1916,28 +1682,24 @@ function placeCaret() {
     return;
   }
   const field = caretField();
+  if (inEditor(field)) return placeEditorCaret();
   const shown =
     field &&
     view &&
     !composing &&
     !document.body.classList.contains('locked') &&
     field.selectionStart === field.selectionEnd &&
-    // A row not yet revealed has its caret drawn on the head as read, which is over the box (see
-    // placeReadingCaret). In the sheet the box is the body's, revealed or not.
-    (field === box ? revealed || !!view.field?.whole : view.cursor == null);
+    view.cursor == null;
   measured = asMeasured();
-  if (field && inEditor()) return placeEditorCaret();
-  const read = field === box && !revealed && !!boxIn && !!view?.field && !view.field.whole;
-  if (read && !composing && !document.body.classList.contains('locked')) return placeReadingCaret();
   // While a word is composed the input method draws its own caret, and what is offered is still
   // set under the word, so the word is measured all the same.
   const offered =
     !shown &&
     composing &&
     !!view?.offer &&
-    !view.field?.whole &&
-    field?.selectionStart === field?.selectionEnd &&
-    (field === box ? revealed : field === line && view.cursor == null);
+    field === line &&
+    view.cursor == null &&
+    field.selectionStart === field.selectionEnd;
   if (!shown && !offered) {
     caret.hidden = true;
     caretWas = '';
@@ -1951,16 +1713,15 @@ function placeCaret() {
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
   const at = field.selectionStart;
   const text = field.value;
-  // At the end of the text, or of a line in it, there is no letter, so the block is a little over
-  // half a letter wide, measured on a no-break space, which wraps with the line's last word rather
-  // than hanging past the end of a full line as a space does. Otherwise it is over the whole letter
-  // after the caret, an emoji or a letter and its accent.
-  const end = at >= text.length || text[at] === '\n';
+  // At the end of the text there is no letter, so the block is a little over half a letter wide,
+  // measured on a no-break space. Otherwise it is over the whole letter after the caret, an emoji
+  // or a letter and its accent.
+  const end = at >= text.length;
   const letter = end ? '' : text.slice(at, lettersOf(text.slice(at, at + 16))[1] + at);
   const span = el('span', null, end ? '\u00a0' : letter);
   // The word something is offered for is measured in the same read, so that what is offered is
   // set under its mark.
-  const from = view.offer && !view.field?.whole ? Math.min(unitsIn(text, view.offer.from), at) : -1;
+  const from = view.offer ? Math.min(unitsIn(text, view.offer.from), at) : -1;
   const word = from >= 0 ? el('span', null, text.slice(from, at)) : null;
   const before = word ? [text.slice(0, from), word] : [text.slice(0, at)];
   mirror.replaceChildren(...before, span, text.slice(at + letter.length));
@@ -1969,10 +1730,9 @@ function placeCaret() {
 
   // The read. The block is the height of the line, centred on the letter as the line's own leading
   // is, and never narrower than a third of a letter, so that it is still a block over an i. The
-  // line, and a head being written on one line, is scrolled to the caret before the field's place
-  // is taken.
+  // line is scrolled to the caret before the field's place is taken.
   const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = span;
-  if (field === line || (field === box && style.whiteSpace === 'pre')) sidescroll(field, offsetLeft, size);
+  if (field === line) sidescroll(field, offsetLeft, size);
   const [fieldLeft, fieldTop] = [field.offsetLeft - field.scrollLeft, field.offsetTop - field.scrollTop];
   const tall = parseFloat(style.lineHeight) || offsetHeight;
   const wide = end ? 0.55 * size : Math.max(offsetWidth, 0.35 * size);
@@ -1996,64 +1756,21 @@ function placeCaret() {
   }
 }
 
-// A row not yet revealed is read, and its caret is a block at the end of the reading, or on its `…`
-// where the row cuts it, where the terminal puts its cursor and where the box's caret is (see
-// paintRows), so that the first key types or moves from where the block was. It is measured on
-// the reading, which is what is shown, the size of the block at the end of a head being written.
-function placeReadingCaret() {
-  const frame = box.parentElement;
-  const read = frame?.querySelector(':scope > .head');
-  if (!read) {
-    caret.hidden = true;
-    caretWas = '';
-    return;
-  }
-  const size = parseFloat(getComputedStyle(box).fontSize);
-  const tall = parseFloat(getComputedStyle(box).lineHeight) || 1.5 * size;
-  const wide = 0.55 * size;
-  const words = document.createRange();
-  words.selectNodeContents(read);
-  const lines = [...words.getClientRects()].filter((r) => r.width || r.height);
-  const shown = read.getBoundingClientRect();
-  const last = lines[lines.length - 1] ?? shown;
-  const cut = read.scrollWidth > read.clientWidth + 1;
-  // The reading's end is the furthest right anything on its last line reaches, so that a head
-  // ending in code has the block after the code's wash rather than inside it.
-  const onLast = lines.filter((r) => r.bottom > last.top && r.top < last.bottom);
-  const end = Math.max(...onLast.map((r) => r.right));
-  const x = cut ? shown.right - wide : lines.length ? end : shown.left;
-  const at = frame.getBoundingClientRect();
-  const left = x - at.left - frame.clientLeft;
-  const top = (last.top + last.bottom) / 2 - tall / 2 - at.top - frame.clientTop;
-  if (caret.parentElement !== frame) frame.append(caret);
-  caret.classList.remove('bar');
-  caret.classList.toggle('still', box !== document.activeElement);
-  showCaret(left, top, wide, tall);
-}
-
-// A head being written is one line, and so is the line, and each scrolls sideways under the caret
-// as any one-line field does: the text moves only when the caret would come within five letters of
-// an edge, as vim's sidescrolloff keeps them, which a browser honouring the fields' scroll-padding
-// does for itself and this does for every browser. The page scrolls the field in the same read as
-// it measures the caret, so that the block drawn and the letter typed cannot be a letter apart, as
-// they were on the line while Chromium scrolled it after the caret had been measured. A press on
-// the words that revealed a row keeps the letter pressed under the pointer, however much longer the
-// source is than the reading was, as far as the five letters allow: a letter pressed by an edge, on
-// the `…` or past where the box ends on the cursor, a row read off the cursor running further right
-// than its box, is brought in by as much as it takes to be clear of the fade. Each edge that hides
-// text fades. What it writes is kept, so that the scroll it causes is not taken for one the browser
-// made.
-let pressedAt = null;
+// The line is one line, and scrolls sideways under the caret as any one-line field does, and as a
+// head in its row does in the editor: the text moves only when the caret would come within five
+// letters of an edge, as vim's sidescrolloff keeps them, which a browser honouring the line's
+// scroll-padding does for itself and this does for every browser. The page scrolls the line in the
+// same read as it measures the caret, so that the block drawn and the letter typed cannot be a
+// letter apart, as they were while Chromium scrolled it after the caret had been measured. What it
+// writes is kept, so that the scroll it causes is not taken for one the browser made.
 const wrote = new Map();
 function sidescroll(field, x, size) {
   const room = field.clientWidth;
   const max = field.scrollWidth - room;
   const context = Math.min(2.5 * size, room / 2);
-  const pressed = field === box && pressedAt != null;
-  let to = pressed ? x - (pressedAt - box.getBoundingClientRect().left) : field.scrollLeft;
-  to = Math.min(Math.max(to, x - room + context), x - context);
-  // A pixel or two from an end is the end: the reading and the box can differ by less than a
-  // pixel, and a head scrolled by one would fade its first letters.
+  let to = Math.min(Math.max(field.scrollLeft, x - room + context), x - context);
+  // A pixel or two from an end is the end, where a line scrolled by one would fade its first
+  // letters.
   to = Math.max(0, Math.min(max, Math.round(to)));
   if (to <= 2) to = 0;
   else if (to >= max - 2) to = max;
@@ -2063,30 +1780,37 @@ function sidescroll(field, x, size) {
   }
   edges(field);
 }
-// The line is always one line; the box is one while a head is written, and not in the sheet.
-function edges(field = box) {
-  const along =
-    field === line || (!box.classList.contains('whole') && getComputedStyle(box).whiteSpace === 'pre');
+// Each edge of a one-line field that hides text fades: the line's, and a head's in its row, whose
+// editor scrolls and is faded as a whole by its frame's classes.
+function edges(field, faded = field) {
   const over = field.scrollWidth - field.clientWidth;
-  field.classList.toggle('before', along && field.scrollLeft > 1);
-  field.classList.toggle('after', along && field.scrollLeft < over - 1);
+  faded.classList.toggle('before', field.scrollLeft > 1);
+  faded.classList.toggle('after', field.scrollLeft < over - 1);
 }
 // A scroll the browser makes itself, as a paste or a composition running past an edge does, or
 // Chromium bringing the line's caret into sight after a key, moves the fades and the caret with
-// it; one sidescroll made has placed the caret already.
-for (const field of [box, line]) {
-  field.addEventListener(
-    'scroll',
-    () => {
-      edges(field);
-      const was = wrote.get(field);
-      wrote.delete(field);
-      if (was != null && Math.abs(field.scrollLeft - was) <= 1) return;
-      measured = null;
-      placeCaret();
-    },
-    { passive: true },
-  );
+// it; one sidescroll made has placed the caret already. A head's is the editor's, made as it keeps
+// its caret in sight.
+line.addEventListener(
+  'scroll',
+  () => {
+    edges(line);
+    const was = wrote.get(line);
+    wrote.delete(line);
+    if (was != null && Math.abs(line.scrollLeft - was) <= 1) return;
+    measured = null;
+    placeCaret();
+  },
+  { passive: true },
+);
+function headScrolled() {
+  headEdges();
+  placeCaret();
+}
+// A head's fades are its frame's, the editor keeping its own element's classes to itself.
+function headEdges() {
+  const frame = editor.dom.parentElement;
+  if (frame?.classList.contains('edit')) edges(editor.scrollDOM, frame);
 }
 
 // What is offered for the tag or person the caret ends: a short list floating under the word, its
@@ -2148,25 +1872,26 @@ list.addEventListener(
 // not said again; typing always is, since what it typed closed what was offered, even when it
 // typed what was there already, as a composition committed or a paste of the same word does.
 let saidAt = '';
-function sayCaret(field, moved = false) {
-  if (field.selectionStart !== field.selectionEnd) return;
-  const at = charsIn(field.value, field.selectionStart);
-  const now = JSON.stringify([field === line, at, field.value]);
+function sayCaret(field, text, { anchor, head }, moved = false) {
+  if (anchor !== head) return;
+  const at = charsIn(text, head);
+  const now = JSON.stringify([field === line, at, text]);
   if (moved && now === saidAt) return;
   saidAt = now;
   act({ at });
 }
-const caretOffered = (field) => {
-  if (view?.offer && (field === line || field === box) && document.activeElement === field) sayCaret(field, true);
+const lineCaret = () => ({ anchor: line.selectionStart, head: line.selectionEnd });
+const caretOffered = () => {
+  if (view?.offer && document.activeElement === line) sayCaret(line, line.value, lineCaret(), true);
 };
-document.addEventListener('selectionchange', () => caretOffered(held));
+document.addEventListener('selectionchange', caretOffered);
 
 // While a word is offered for, Tab and Enter take the one chosen, the arrows up and down choose
 // another, and Escape closes it; every other key means what it always does. On a row Shift-Enter
 // still ticks; on the line it is Enter. Taking paints at once, so that the next key lands in the
 // text with the word in it.
 function onOffer(event, onRow) {
-  if (!view?.offer || event.isComposing || composing || event.keyCode === 229) return false;
+  if (!view?.offer || event.isComposing || composing || editor?.composing || event.keyCode === 229) return false;
   const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
   let action = null;
   if (escapes(event)) action = 'dismiss';
@@ -2192,66 +1917,81 @@ function showCaret(left, top, wide, tall) {
 }
 
 // In the editor there is no copy to measure: the editor says where the caret is and where the
-// letter after it ends. The block is sized and centred as it is in the box. In vim's insert mode
-// it is a bar at the caret, as a terminal draws vim's. The editor is in the sheet, which scrolls,
-// so the block is placed in what the sheet scrolls and moves with the text.
+// letter after it ends. The block is sized and centred as it is on the line. In vim's insert mode
+// it is a bar at the caret, as a terminal draws vim's. The block is placed in the editor's frame,
+// what the sheet scrolls or the head's frame in its row, so that it moves with the text. A head
+// longer than its row reads from its start as the cursor lands, its caret at the end, past the
+// edge: the block is at the edge until the caret is brought into sight, where the terminal draws
+// its cursor on the row's `…`. What is offered for a word in a head is set under the word, from
+// its mark, while a composition is under way too.
 function placeEditorCaret() {
   const c = editor.caret();
   const parent = editor.dom.parentElement;
-  if (!view || !parent || !c.empty || !c.rect || composing || editor.composing) {
+  const head = !!view?.field && !editor.whole;
+  const style = getComputedStyle(editor.contentDOM);
+  const tall = parseFloat(style.lineHeight) || 1.5 * parseFloat(style.fontSize);
+  if (head && parent && view.offer) {
+    const mark = editor.coordsAt(Math.min(unitsIn(editor.text(), view.offer.from), editor.selection().head));
+    if (mark) {
+      const y = mark.top - (tall - (mark.bottom - mark.top)) / 2;
+      offerAt = { x: mark.left, above: y, below: y + tall };
+      placeOffer();
+    }
+  }
+  if (!view || !parent || !c.empty || !c.rect || editor.composing) {
     caret.hidden = true;
     caretWas = '';
     return;
   }
-  const style = getComputedStyle(editor.contentDOM);
   const size = parseFloat(style.fontSize);
-  const tall = parseFloat(style.lineHeight) || c.rect.bottom - c.rect.top;
   const bar = c.mode === 'insert';
   const letter = c.right ? c.right.left - c.rect.left : 0;
   const wide = bar ? 2 : c.right ? Math.max(letter, 0.35 * size) : 0.55 * size;
   const frame = parent.getBoundingClientRect();
   const inset = bar ? 1 : c.right ? (wide - letter) / 2 : 0;
-  const left = c.rect.left - frame.left - parent.clientLeft + parent.scrollLeft - inset;
+  let x = c.rect.left - inset;
+  if (head) x = Math.min(x, editor.scrollDOM.getBoundingClientRect().right - wide);
+  const left = x - frame.left - parent.clientLeft + parent.scrollLeft;
   const top =
     c.rect.top - frame.top - parent.clientTop + parent.scrollTop - (tall - (c.rect.bottom - c.rect.top)) / 2;
   if (caret.parentElement !== parent) parent.append(caret);
   caret.classList.toggle('bar', bar);
+  caret.classList.toggle('still', document.activeElement !== editor.contentDOM);
   showCaret(left, top, wide, tall);
 }
 
-for (const field of [line, box]) {
-  field.addEventListener('focus', () => {
-    held = field;
-    if (!quiet) caretMoved();
-  });
-  field.addEventListener('blur', () => {
-    if (held === field) held = null;
-    placeCaret();
-  });
-  field.addEventListener('input', caretMoved);
-  // Some browsers say a text field's selection changed to the field and not to the document.
-  field.addEventListener('selectionchange', () => {
-    if (held !== field) return;
-    caretMoved();
-    caretOffered(field);
-  });
-  field.addEventListener('compositionstart', () => {
-    composing = true;
-    placeCaret();
-  });
-  field.addEventListener('compositionend', () => {
-    composing = false;
-    placeCaret();
-  });
-}
+line.addEventListener('focus', () => {
+  held = line;
+  if (!quiet) caretMoved();
+});
+line.addEventListener('blur', () => {
+  if (held === line) held = null;
+  placeCaret();
+});
+line.addEventListener('input', caretMoved);
+// Some browsers say a text field's selection changed to the field and not to the document.
+line.addEventListener('selectionchange', () => {
+  if (held !== line) return;
+  caretMoved();
+  caretOffered();
+});
+line.addEventListener('compositionstart', () => {
+  composing = true;
+  placeCaret();
+});
+line.addEventListener('compositionend', () => {
+  composing = false;
+  placeCaret();
+});
 for (const moment of ['focus', 'blur', 'input']) secret.addEventListener(moment, () => placeCaret());
 document.addEventListener('selectionchange', () => {
   if (held && document.activeElement === held) caretMoved();
 });
 window.addEventListener('resize', () => {
   placeCaret();
-  // The line's fades follow its width even while its caret is not drawn, as on a row.
+  // The fades of the line and of a head follow their width even while no caret is drawn there.
   edges(line);
+  if (editor) headEdges();
   clampHere();
   // Whether the head under the cursor is cut, and so read beside the list, follows the width.
   if (view && wide.matches) paintSoon();
@@ -2259,7 +1999,7 @@ window.addEventListener('resize', () => {
 
 const ctrlOnly = (event) => event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey;
 
-// The keys, wherever the focus has got to but the box and the sheet, which have their own. A key
+// The keys, wherever the focus has got to but the editor and the sheet, which have their own. A key
 // that closes the sheet takes what it was pressed in out of the page, so the sheet is looked for
 // on the way the key came rather than round where it was pressed. Typing goes to the field the
 // cursor is in, so a letter pressed on a word in the foot takes the focus there before it lands.
@@ -2275,7 +2015,8 @@ document.addEventListener('keydown', (event) => {
 
 function pressed(event) {
   if (event.isComposing || !view || !fzn) return;
-  if (event.target === box || event.composedPath().includes(buffer)) return;
+  const path = event.composedPath();
+  if (path.includes(buffer) || path.includes(editor?.dom)) return;
   const onButton = event.target instanceof HTMLButtonElement;
   if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
   const onLine = view.cursor == null;
@@ -2324,19 +2065,9 @@ function pressed(event) {
     case 'PageUp':
       act({ move: -10 });
       break;
-    // The note Enter writes from the line is still being written, so it lands revealed. On a row
-    // Shift-Enter ticks; on the line it is Enter.
+    // On a row Shift-Enter ticks; on the line it is Enter.
     case 'Enter':
-      if (event.shiftKey && !onLine) {
-        act('archive');
-        break;
-      }
-      revealOnLanding = onLine;
-      try {
-        act('write');
-      } finally {
-        revealOnLanding = false;
-      }
+      act(event.shiftKey && !onLine ? 'archive' : 'write');
       break;
     // Off the row, then off the text on the line, then out of the place.
     case 'Escape':
@@ -2365,7 +2096,7 @@ $('go-in').onclick = () => {
 // the body is not closed by the press and opened again by the tap; so does a press in the sheet
 // around the text. A press anywhere else leaves the sheet, and closes it.
 list.addEventListener('mousedown', (event) => {
-  if (view?.field?.whole && event.target.closest('.row')?.dataset.id === boxIn) event.preventDefault();
+  if (view?.field?.whole && event.target.closest('.row')?.dataset.id === editorIn) event.preventDefault();
 });
 buffer.addEventListener('mousedown', (event) => {
   if (event.target === buffer || event.target === sheet) event.preventDefault();
@@ -2375,7 +2106,7 @@ buffer.addEventListener('mousedown', (event) => {
 // behind it, or on a word in the foot, does not, as on a desktop.
 document.addEventListener('mousedown', (event) => {
   if (!coarse.matches || !view?.field?.whole || event.target.closest('#buffer, #foot')) return;
-  if (event.target.closest('.row')?.dataset.id === boxIn) return;
+  if (event.target.closest('.row')?.dataset.id === editorIn) return;
   leaving = true;
   try {
     act('close');
@@ -2388,46 +2119,15 @@ document.addEventListener('mousedown', (event) => {
   if (event.target.closest('a')) event.preventDefault();
 });
 
-// Whether a point is on the words of a head as read, a few pixels round each line of them
-// counting, since a finger is not a point: false when it is not, and otherwise where in the head's
-// text as typed, its source, or true, for the end, when that cannot be counted. A head read has its
-// marks taken out, but every piece of text it shows is a piece of its source, in order: a link's
-// words, an escaped letter, an address without its scheme. So each piece is found in the source
-// after the last, from past a task's box, and the letter pressed is counted from where its piece
-// was found, which puts a press on a link's word in that word. The address of a link written
-// `[words](address)` is not shown, so a piece that follows the link is looked for past it, or a
-// full stop after the link would be found inside the address.
+// Whether a point is on the words of a head, a task's box among them, a few pixels round each line
+// of them counting, since a finger is not a point.
 const SLOP = 6;
 const near = (r, x, y) => x >= r.left - SLOP && x <= r.right + SLOP && y >= r.top - SLOP && y <= r.bottom + SLOP;
-function hitText(head, source, x, y) {
+function onWords(head, x, y) {
   if (!head) return false;
   const words = document.createRange();
   words.selectNodeContents(head);
-  if (![...words.getClientRects()].some((r) => near(r, x, y))) return false;
-  const at = letterAt(x, y);
-  let from = Number(head.dataset.boxed ?? 0);
-  let link = null;
-  const pieces = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
-  for (let piece = pieces.nextNode(); piece; piece = pieces.nextNode()) {
-    const inLink = piece.parentElement?.closest('a') ?? null;
-    if (link && inLink !== link && source.startsWith('](', from)) from = pastAddress(source, from + 2);
-    link = inLink;
-    const found = source.indexOf(piece.data, from);
-    if (found < 0) return true;
-    if (piece === at?.offsetNode) return found + at.offset;
-    from = found + piece.data.length;
-  }
-  return true;
-}
-
-// Where the address of a link ends, from just inside its bracket: past the bracket that closes it,
-// counting those opened inside it.
-function pastAddress(source, at) {
-  for (let depth = 1; at < source.length; at++) {
-    if (source[at] === '(') depth++;
-    else if (source[at] === ')' && --depth === 0) return at + 1;
-  }
-  return at;
+  return [...words.getClientRects()].some((r) => near(r, x, y));
 }
 
 // A task's box ticks it where it reads, and the cursor stays where it was: on the line, so that
@@ -2441,7 +2141,7 @@ function tick(at) {
   const was = view.cursor != null ? (view.rows[view.cursor]?.id ?? null) : null;
   const task = view.rows[at].id;
   // A head being written keeps its caret, which landing on it again would put at its end.
-  const writing = was != null && boxIn === was ? [box.selectionStart, box.selectionEnd] : null;
+  const writing = was != null && editorIn === was ? editor.selection() : null;
   holdFocus = true;
   try {
     act({ select: at });
@@ -2450,7 +2150,7 @@ function tick(at) {
     if (was == null) act({ select: null });
     else if (was !== task && back >= 0) {
       act({ select: back });
-      if (writing && boxIn === was) box.setSelectionRange(...writing);
+      if (writing && editorIn === was) editor.select(writing);
     }
   } finally {
     holdFocus = false;
@@ -2459,14 +2159,6 @@ function tick(at) {
   wantsText = true;
   follow();
   wantsText = false;
-}
-
-// The text and the place in it under a point, by the standard's call or by WebKit's older one,
-// which Safari before 18 has alone.
-function letterAt(x, y) {
-  if (document.caretPositionFromPoint) return document.caretPositionFromPoint(x, y);
-  const range = document.caretRangeFromPoint?.(x, y);
-  return range && { offsetNode: range.startContainer, offset: range.startOffset };
 }
 
 // Where the last touch on the list landed, as the finger put it. A browser moves a tap onto a
@@ -2483,138 +2175,49 @@ list.addEventListener(
 );
 
 // A tap beside a head's words puts the cursor on the note, and a second there opens its body; a
-// tap on the words puts the cursor there too and writes in it, revealed, with the caret where it
-// landed, which on a phone is what raises the keyboard. On the row under the cursor, not yet
-// revealed, a press on the words is the same, a link's word included, which is not followed there;
-// one beside them on a desktop does nothing, the note being picked already. The arrow on the
-// selected row goes in, and a link in any other row opens and does nothing else.
+// tap on the words puts the cursor there too with the caret where it landed, which on a phone is
+// what raises the keyboard, and the span it landed in shows its marks. The head under the cursor
+// is the editor's, so a press on it is the editor's, a link's word included, which is not followed
+// there; but a press on a task's box ticks it, in any row, and one let go off the box does
+// nothing, as a button let go off itself does, rather than landing on the words. On the row under
+// the cursor a press off the editor opens the body. The arrow on the selected row goes in, and a
+// link in any other row opens and does nothing else.
+let fromTick = false;
+list.addEventListener('mousedown', (event) => {
+  fromTick = !!event.target.closest('.tick');
+});
 list.addEventListener('click', (event) => {
   const item = event.target.closest('.row');
-  if (dragged || (fromTick && !event.target.closest('.tick'))) {
-    dragged = fromTick = false;
+  if (fromTick && !event.target.closest('.tick')) {
+    fromTick = false;
     return;
   }
-  if (!item || event.target === box) return;
+  if (!item) return;
   const at = view.rows.findIndex((row) => row.id === item.dataset.id);
   if (at < 0) return;
-  const veiled = at === view.cursor && !revealed && !view.field?.whole && event.target.closest('.edit');
-  if (event.target.closest('a') && !veiled) return;
   const fresh = touched && Date.now() - touched.at < 1000;
   const [x, y] = fresh ? [touched.x, touched.y] : [event.clientX, event.clientY];
   const ticker = event.target.closest('.tick');
   const reach = (node) => node.getBoundingClientRect().right + 0.4 * parseFloat(getComputedStyle(node).fontSize);
   if (ticker && (!fresh || x <= reach(ticker))) return tick(at);
-  if (veiled) {
-    event.preventDefault();
-    const hit = hitText(veiled.querySelector(':scope > .head'), box.value, x, y);
-    if (hit !== false) revealAt(hit === true ? box.value.length : hit, x);
-    return;
-  }
+  if (event.target.closest('.cm-editor, a')) return;
   if (event.target.closest('.chev')) act('go_in');
   else if (at !== view.cursor) {
-    wantsText = hitText(item.querySelector('.head'), view.rows[at].head, x, y);
-    revealOnLanding = wantsText !== false;
-    if (typeof wantsText === 'number') pressedAt = x;
-    try {
-      act({ select: at });
-    } finally {
-      revealOnLanding = false;
-      pressedAt = null;
-    }
+    const words = onWords(item.querySelector('.head'), x, y);
+    wantsText = words;
+    act({ select: at });
+    if (words && editorIn === item.dataset.id) editor.placeAt(x, y);
   } else if (!view.field?.whole) act('open');
   follow();
   wantsText = false;
 });
-// A press on the head as read over the box keeps the focus in the box and starts no selection in
-// the reading; the click says what it did. The middle and right buttons, anywhere in the head's
-// frame, reveal the row with the focus in the box and the caret under the pointer before their
-// default would run, so that they act on the box as they always did: the middle button's paste of
-// what is selected elsewhere, and the menu with Paste in it. Their own default is not let run,
-// since the element pressed is gone by then and it would give the focus to the page. A drag from
-// the words, not from a task's box, which only ticks, reveals the row once it has gone a few
-// pixels, from where it began, and selects in the box as far as the pointer goes, as a drag in the
-// box always did; the click that ends it does nothing more. A press on a task's box that is let go
-// off it does nothing, as a button let go off itself does, rather than landing on the words.
-let dragFrom = null;
-let dragged = false;
-let fromTick = false;
-list.addEventListener('mousedown', (event) => {
-  dragged = false;
-  dragFrom = null;
-  fromTick = !!event.target.closest('.tick');
-  const veiled = !revealed && event.target.closest('.edit.veiled');
-  if (!veiled) return;
-  event.preventDefault();
-  const at = hitText(veiled.querySelector(':scope > .head'), box.value, event.clientX, event.clientY);
-  if (event.button === 1 || event.button === 2) {
-    return revealAt(typeof at === 'number' ? at : box.value.length, typeof at === 'number' ? event.clientX : null);
-  }
-  if (event.button !== 0 || (touched && Date.now() - touched.at < 1000)) return;
-  if (event.target.closest('.tick')) return;
-  if (at !== false) dragFrom = { x: event.clientX, y: event.clientY, at: at === true ? box.value.length : at, row: boxIn };
-});
-document.addEventListener('mousemove', (event) => {
-  if (!dragFrom) return;
-  if (!(event.buttons & 1)) {
-    dragFrom = null;
-    return;
-  }
-  if (!dragged) {
-    if (Math.hypot(event.clientX - dragFrom.x, event.clientY - dragFrom.y) < 4) return;
-    dragged = true;
-    revealAt(dragFrom.at, dragFrom.x);
-  }
-  dragFrom.to = { x: event.clientX, y: event.clientY };
-  dragTo();
-});
-// A drag ends with its button, and with a key or the window lost, either of which may move the
-// cursor, and the box with it, to another row.
-function endDrag() {
-  dragFrom = null;
-  cancelAnimationFrame(dragging);
-}
-document.addEventListener('mouseup', endDrag);
-document.addEventListener('keydown', endDrag, true);
-window.addEventListener('blur', endDrag);
 
-// The drag began on the reading, whose press was not the box's, so the browser does not scroll the
-// box as a drag past its edge would: the page does. While the pointer is past an edge that hides
-// text the box scrolls towards it by as far as it is past, a frame at a time for as long as it is
-// held there, and the selection's moving end is the letter just inside that edge, so that it is
-// always in sight and nothing hidden is selected without being shown.
-let dragging = 0;
-function dragTo() {
-  if (!dragFrom?.to || !dragged) return;
-  // A drag belongs to the row it began in: one whose box has gone to another row is over.
-  if (boxIn !== dragFrom.row || !box.isConnected || box.classList.contains('whole')) return endDrag();
-  const { x, y } = dragFrom.to;
-  const r = box.getBoundingClientRect();
-  const sideways = getComputedStyle(box).whiteSpace === 'pre';
-  const over = sideways ? (x > r.right ? x - r.right : x < r.left ? x - r.left : 0) : 0;
-  if (over) box.scrollLeft = Math.max(0, Math.min(box.scrollWidth - box.clientWidth, box.scrollLeft + over));
-  const inside = sideways ? Math.max(r.left + 1, Math.min(r.right - 1, x)) : x;
-  const to = offsetInBox(inside, sideways ? (r.top + r.bottom) / 2 : y);
-  const from = dragFrom.at;
-  box.setSelectionRange(Math.min(from, to), Math.max(from, to), to < from ? 'backward' : 'forward');
-  caretMoved();
-  cancelAnimationFrame(dragging);
-  if (over) dragging = requestAnimationFrame(dragTo);
-}
-
-// Where in the box's text a point is, by the browser where it says so for a text box, and
-// otherwise its start or its end, by which side of the box the point is on.
-function offsetInBox(x, y) {
-  const at = letterAt(x, y);
-  if (at?.offsetNode === box) return at.offset;
-  const r = box.getBoundingClientRect();
-  return y < r.top || (y <= r.bottom && x < r.left) ? 0 : box.value.length;
-}
-// A browser takes a tap near a text box into the box, and the head under the cursor is a box as
+// A browser takes a tap near a field into the field, and the head under the cursor is a field as
 // wide as the row, so a second tap beside its words, on its own line or on the date under it,
 // would only place the caret. So where the finger landed is read from the touch, which neither
-// browser moves, and judged as the first tap is: off the box, or in it past the lines of its
+// browser moves, and judged as the first tap is: off the head, or in it past the lines of its
 // words, it opens the body. It is heard on the list, since WebKit sends a touch to what is under
-// the finger and Chromium to the box. While the head is being written a tap in it is the caret's,
+// the finger and Chromium to the field. While the keyboard is up a tap in the head is the caret's,
 // so that a finger can put the caret at the end of the line; and a new row's empty head is all
 // words.
 let besideHead = false;
@@ -2635,17 +2238,14 @@ list.addEventListener('touchend', (event) => {
 });
 
 function besideTheWords({ clientX: x, clientY: y }) {
-  if (!view?.field || view.field.whole || !boxIn || (revealed && document.activeElement === box)) return false;
-  const row = rows.get(boxIn);
+  if (!view?.field || view.field.whole || !editorIn || editor.hasFocus) return false;
+  const row = rows.get(editorIn);
   const within = (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   if (!row || !within(row.getBoundingClientRect())) return false;
   const chev = row.querySelector('.chev');
   if (chev && within(chev.getBoundingClientRect())) return false;
-  // Not yet revealed, the words are those of the head as read, a task's box among them.
-  const read = !revealed && row.querySelector('.edit > .head');
-  if (read) return hitText(read, box.value, x, y) === false;
-  if (!near(box.getBoundingClientRect(), x, y)) return true;
-  return box.value !== '' && !wordsOf(box).some((r) => near(r, x, y));
+  if (editor.text() === '') return !near(editor.dom.getBoundingClientRect(), x, y);
+  return !onWords(editor.contentDOM.querySelector('.cm-line'), x, y);
 }
 
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));
@@ -2665,14 +2265,16 @@ $('path').addEventListener('click', (event) => {
 });
 
 // A control that is not text never takes the focus: the words in the foot, the cross and the
-// arrows, a step of the path act on where the cursor is and leave the focus, and so a phone's
-// keyboard, where it was; "put back" is about the note, and an open body is not closed first. On
-// a touch screen a press on a row while a field has the focus leaves it there too, so that the
-// keyboard stays up while the cursor moves (see the list's click).
+// arrows, a step of the path and a task's box act on where the cursor is and leave the focus, and
+// so a phone's keyboard, where it was; "put back" is about the note, and an open body is not
+// closed first. On a touch screen a press on a row while a field has the focus leaves it there
+// too, so that the keyboard stays up while the cursor moves (see the list's click).
 for (const part of [$('top'), $('path'), $('foot'), list]) {
   part.addEventListener('mousedown', (event) => {
-    if (event.target.closest('button')) event.preventDefault();
-    else if (part === list && coarse.matches && typing() && event.target !== box) event.preventDefault();
+    if (event.target.closest('button, .tick')) event.preventDefault();
+    else if (part === list && coarse.matches && typing() && !event.target.closest('.cm-editor')) {
+      event.preventDefault();
+    }
   });
 }
 
@@ -2681,7 +2283,7 @@ for (const part of [$('top'), $('path'), $('foot'), list]) {
 // heard too. A hidden page keeps the field and stays, an open body open, since switching tabs to
 // look something up and coming back is not leaving it; only a page that is going leaves the row,
 // and a second time with nothing changed does nothing. Writing may change the head under the
-// caret, as a new note written inside a tag gets the tag, so the box takes it at once: a hidden
+// caret, as a new note written inside a tag gets the tag, so the editor takes it at once: a hidden
 // page has no next frame to paint it in, and a key pressed on coming back would otherwise be
 // typed into the head as it was and take the tag away again.
 function putAway(going) {
@@ -2901,6 +2503,15 @@ async function start() {
     }
   }
   store = await openStore().catch(() => null);
+  // The reading and the editor are here before the first painting, which may put the cursor on a
+  // row, fetched meanwhile beside the engine (see modules).
+  const [renderModule, editorModule] = await modules;
+  render = renderModule;
+  render.onLanguage(reread);
+  editor = editorModule.mount(editorHooks, $('sheet-foot'));
+  editor.setVim(vimOn);
+  editor.dom.addEventListener('keydown', keyInHead, true);
+  editor.scrollDOM.addEventListener('scroll', headScrolled, { passive: true });
   if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
   carryOut(fzn.opened());
   joined = true;
@@ -2912,8 +2523,6 @@ async function start() {
   document.body.classList.remove('locked');
   follow();
   placeCaret();
-  requestAnimationFrame(prefetchOnPause);
-  document.addEventListener('keydown', prefetchOnPause, true);
   connect();
   // A lost relay is tried again as soon as there is reason to think it is back.
   const retry = () => {
