@@ -79,6 +79,32 @@ fn a_person_being_typed_is_offered_the_people_and_not_the_tags() {
 }
 
 #[test]
+fn a_tag_written_only_in_code_is_not_offered_and_nothing_is_offered_inside_code() {
+    let mut s = session();
+    tagged(&mut s);
+    put(
+        &mut s,
+        "fence",
+        "Paint the fence `#fab`\n```\n#fan\n```",
+        &[],
+        7_000,
+    );
+    s.act(Action::Select(None));
+    typed(&mut s, "#f");
+    assert_eq!(words(&s), ["#food", "#fox"], "a tag in code is not one");
+    clear(&mut s);
+    typed(&mut s, "`ls #fo");
+    assert_eq!(offered(&s), None, "the word is in code still being typed");
+    clear(&mut s);
+    typed(&mut s, "`ls` #fo");
+    assert_eq!(
+        words(&s),
+        ["#food", "#fox"],
+        "once the code is closed it is offered again"
+    );
+}
+
+#[test]
 fn what_is_offered_is_the_most_carried_first_then_the_newest_then_by_name_and_five_at_most() {
     let mut s = session();
     put(&mut s, "a", "#garden", &[], 1_000);

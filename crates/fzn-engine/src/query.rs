@@ -197,8 +197,16 @@ impl Query {
             letters,
             ..Query::default()
         };
+        let code = text::code(&chars);
         let mut i = 0;
         while i < chars.len() {
+            // Code is words, as in a note, and nothing in it holds.
+            if let Some(r) = code.iter().find(|r| r.contains(&i)) {
+                query.words.extend(&chars[i..r.end]);
+                query.free.extend(&chars[i..r.end]);
+                i = r.end;
+                continue;
+            }
             let c = chars[i];
             let boundary = i == 0 || !text::is_word_char(chars[i - 1]);
             if QUOTES.contains(&c) {
@@ -507,6 +515,19 @@ mod tests {
             "a date written out says itself"
         );
         assert!(query.ranks() && !query.letters && !query.only_labels());
+    }
+
+    #[test]
+    fn code_on_the_line_is_words_and_holds_nothing() {
+        let query = read("paint `#fff` @joe");
+        assert_eq!(
+            held(&query),
+            ["@joe…"],
+            "the last word is still being typed"
+        );
+        assert!(query.holds.is_empty());
+        let words = text::tokens(&query.words);
+        assert!(words.contains(&"paint".to_owned()) && words.contains(&"fff".to_owned()));
     }
 
     #[test]

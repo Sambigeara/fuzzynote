@@ -277,3 +277,11 @@ fn letters_rank_by_what_they_score_then_the_shorter_head_then_the_spaces_order()
         "a tie goes by the space's order"
     );
 }
+
+#[test]
+fn a_tag_in_code_on_the_line_finds_the_note_with_that_code() {
+    let mut s = session();
+    put(&mut s, "fence", "Paint `#fff` here", &[], 1_000);
+    type_in(&mut s, "`#fff`");
+    assert_eq!(heads(&s), ["Paint `#fff` here"]);
+}

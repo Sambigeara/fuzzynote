@@ -86,10 +86,13 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   hop and no further. Only explicit links are stored; everything else is recomputed on demand.
 - **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, `[[note head]]` as a way
   of typing a link, and a box, `[ ]` or `[x]`, at the start of a note, which makes it a task (see "A
-  task is a note headed by its box"). Nothing else is special in a note. In particular the old
-  ` >> ` prefix paths are plain text; the words in them still count, the hierarchy does not. On the
-  line, and only there, three more forms are read: a phrase in quotes, a span of when notes were
-  written or done, and `~` at its start (see "The line" under Clients).
+  task is a note headed by its box"). Nothing else is special in a note. Code is literal: inside a
+  code span or a fenced block nothing is a tag, a person, a link or a date, so `#fff` in backticks
+  or `#include` in a block files the note nowhere; a URL there is still the note's, for the key that
+  opens one (see "Code is literal"). In particular the old ` >> ` prefix paths are plain text; the
+  words in them still count, the hierarchy does not. On the line, and only there, three more forms
+  are read: a phrase in quotes, a span of when notes were written or done, and `~` at its start (see
+  "The line" under Clients).
 - **Date**: plain text in the note, written `2026-10-16`, and never stored apart from it. The engine
   reads it on load, as it reads tags. A link is held as an id because a note's head can change; a
   date's name cannot, so it lives in the text. The day a note was written is not typed at all: it is
@@ -611,7 +614,8 @@ all, and none of it changes how the words rank.
   is the start of until whitespace follows it, `#ho` holding `#house` and `#hosting`, so the list
   does not empty mid-word, and they are offered under it (see "The cursor, in both faces"). The name
   rule reads a label typed as the words it says, since a head says its tags as words: `oil tank
-  #house` names the note headed `Oil tank #house`.
+  #house` names the note headed `Oil tank #house`. Inside code on the line nothing holds and all of
+  it is words, as in a note (see "Code is literal"), so `` `#fff` `` finds the note that has it.
 - `[ ]` holds the open tasks, the notes headed `[ ]` and not archived, and the rest of the line
   still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. `[x]`
   holds the done tasks, the notes headed `[x]`, archived or not; typing it is asking for them, so
@@ -3281,6 +3285,24 @@ the app now does is described above; an entry repeats it only where the reason n
   terminal it is your editor, and the page's CodeMirror has a completion of its own, which would be
   a design of its own; use decides. Weighed: the dim hint, rejected; wrapping arrows; leaving Enter
   to write; and offering every tag the word starts, which at one letter is more than can be read.
+- **Code is literal.** Decided 2026-10-20, at Sam's report. A tag was read wherever a `#` met a
+  letter, in code too, so a colour `#fff` in backticks, an `#include` in a block of C or a channel
+  in a pasted command made a tag of the note: it was listed in that place, held by it on the line,
+  and offered when a tag was typed. Markdown reads nothing inside code, and nor does the engine now:
+  inside a code span or a fenced block nothing is a tag, a person, a link or a date. A span is a run
+  of backticks closed by a run as long on the same line, and a run nothing closes there is text, so
+  a stray backtick cannot swallow a body; a block opens on a line starting with three or more
+  backticks or tildes, at any indent since a list nests one, and runs to a line starting with as
+  many of the same or more and nothing after them, or to the end. An indent alone is not code, since
+  a body's lists are indented. A URL in code is still the note's, so the key that opens a note's URL
+  finds the one in a `curl` line, and a backtick ends a URL now, which it never belonged to. A
+  backtick fence cannot have a backtick after its run, as in CommonMark, so ```` ```ls``` ```` on a
+  line is a span. On the line, code is words, as it is in a note: nothing in it holds, so `` `#fff`
+  `` pasted from a note finds the note. A word typed inside code on the line or in a head is offered
+  nothing, an open backtick counting as code until it is closed. Nothing stored changes: tags are
+  read from the text when a space opens. Weighed: leaving the tags and only not offering them, which
+  would keep `#fff` a place; and reading a span across a paragraph's lines as CommonMark does, which
+  a single stray backtick could carry over every line after it.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

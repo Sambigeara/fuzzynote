@@ -101,11 +101,27 @@ pub struct Facts {
 /// `Mon, Jan 02, 2006` (the form the old `{d}` token expanded to).
 pub fn facts(text: &str) -> Facts {
     let chars: Vec<char> = text.chars().collect();
+    let code = code(&chars);
+    let mut spans = code.iter().peekable();
     let mut f = Facts::default();
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
         let boundary = i == 0 || !is_word_char(chars[i - 1]);
+        while spans.next_if(|r| r.end <= i).is_some() {}
+        if spans.peek().is_some_and(|r| r.start <= i) {
+            let url = (boundary && c.is_ascii_alphabetic())
+                .then(|| take_url(&chars, i))
+                .flatten();
+            i = match url {
+                Some((url, end)) => {
+                    f.urls.push(url);
+                    end
+                }
+                None => i + 1,
+            };
+            continue;
+        }
         let next = if boundary && c == '#' {
             take_tag(&chars, i + 1).map(|(tag, end)| {
                 f.tags.push(tag);
@@ -148,6 +164,117 @@ pub fn facts(text: &str) -> Facts {
     f.dates.sort_unstable();
     f.dates.dedup();
     f
+}
+
+/// The stretches of a text that are code, as character ranges, sorted and apart, with their
+/// backticks and fences in them. A block opens on a line that starts with three or more backticks
+/// or tildes, at any indent since a list nests one, and runs through a line that starts with as
+/// many of the same or more and says nothing after them, or to the end. Outside blocks a run of
+/// backticks opens a span that a run as long closes on the same line; a run nothing closes there
+/// is text, so one stray backtick cannot make code of everything after it. An indent alone is
+/// not code, since a body's lists are indented.
+pub(crate) fn code(chars: &[char]) -> Vec<std::ops::Range<usize>> {
+    scan(chars).0
+}
+
+/// The stretches `code` finds, and whether the last of them is a block nothing closed.
+fn scan(chars: &[char]) -> (Vec<std::ops::Range<usize>>, bool) {
+    let run = |at: usize| chars[at..].iter().take_while(|&&c| c == chars[at]).count();
+    let mut out = Vec::new();
+    let mut fence: Option<(usize, char, usize)> = None;
+    let mut open = false;
+    let mut start = 0;
+    while start < chars.len() || (start == chars.len() && fence.is_some()) {
+        let end = chars[start..]
+            .iter()
+            .position(|&c| c == '\n')
+            .map_or(chars.len(), |p| start + p);
+        let lead = start
+            + chars[start..end]
+                .iter()
+                .take_while(|c| c.is_whitespace())
+                .count();
+        let mark =
+            (lead < end && matches!(chars[lead], '`' | '~')).then(|| (chars[lead], run(lead)));
+        match (fence, mark) {
+            (Some((from, ch, n)), Some((c, m)))
+                if c == ch && m >= n && chars[lead + m..end].iter().all(|c| c.is_whitespace()) =>
+            {
+                out.push(from..end);
+                fence = None;
+            }
+            (Some(_), _) => {}
+            (None, Some((c, m)))
+                if m >= 3 && (c == '~' || !chars[lead + m..end].contains(&'`')) =>
+            {
+                fence = Some((start, c, m))
+            }
+            (None, _) => {
+                let mut i = start;
+                while i < end {
+                    if chars[i] != '`' {
+                        i += 1;
+                        continue;
+                    }
+                    let n = run(i).min(end - i);
+                    let mut j = i + n;
+                    let mut closed = None;
+                    while j < end {
+                        if chars[j] == '`' {
+                            let m = run(j).min(end - j);
+                            if m == n {
+                                closed = Some(j + m);
+                                break;
+                            }
+                            j += m;
+                        } else {
+                            j += 1;
+                        }
+                    }
+                    match closed {
+                        Some(close) => {
+                            out.push(i..close);
+                            i = close;
+                        }
+                        None => i += n,
+                    }
+                }
+            }
+        }
+        if end >= chars.len() {
+            if let Some((from, _, _)) = fence {
+                out.push(from..chars.len());
+                open = true;
+            }
+            break;
+        }
+        start = end + 1;
+    }
+    (out, open)
+}
+
+/// Whether a caret at `at` is in code as written so far: inside a stretch `code` finds, or after
+/// a backtick on its line that nothing has closed yet, as while code is still being typed. A
+/// block nothing has closed holds a caret at the end of the text.
+pub(crate) fn in_code(chars: &[char], at: usize) -> bool {
+    let (ranges, open) = scan(chars);
+    let last = ranges.len().saturating_sub(1);
+    let holds = |(n, r): (usize, &std::ops::Range<usize>)| {
+        r.start < at && (at < r.end || (open && n == last && at == r.end))
+    };
+    if ranges.iter().enumerate().any(holds) {
+        return true;
+    }
+    let from = chars[..at]
+        .iter()
+        .rposition(|&c| c == '\n')
+        .map_or(0, |p| p + 1);
+    let before = &chars[from..at];
+    let spans = code(before);
+    before
+        .iter()
+        .enumerate()
+        .any(|(i, &c)| c == '`' && !spans.iter().any(|r| r.contains(&i)))
 }
 
 /// Whether a line says nothing but tags.
@@ -353,7 +480,7 @@ pub(crate) fn take_url(chars: &[char], start: usize) -> Option<(String, usize)> 
     let mut end = start + prefix.len();
     while end < chars.len()
         && !chars[end].is_whitespace()
-        && !matches!(chars[end], '<' | '>' | '"' | '\'')
+        && !matches!(chars[end], '<' | '>' | '"' | '\'' | '`')
     {
         end += 1;
     }
@@ -911,5 +1038,58 @@ mod tests {
         assert_eq!(name_of("Boiler\u{a0}#house"), "Boiler");
         assert_eq!(label_word("#House"), Some(Labelled::Tag("house".into())));
         assert_eq!(label_word("2026-10-16x"), None);
+    }
+
+    #[test]
+    fn nothing_in_code_is_a_tag_a_person_a_link_or_a_date() {
+        let f = facts(
+            "Paint `#fff` and ``a `#b` c`` for @joe\n```sh\n#include @root [[Boiler]] 2026-10-16\n```\n#house",
+        );
+        assert_eq!(f.tags, ["house"]);
+        assert_eq!(f.mentions, ["joe"]);
+        assert!(f.links.is_empty() && f.dates.is_empty());
+    }
+
+    #[test]
+    fn a_url_in_code_is_still_a_url_and_a_backtick_ends_it() {
+        assert_eq!(
+            facts("run `curl https://nas.local/a` now").urls,
+            ["https://nas.local/a"]
+        );
+    }
+
+    #[test]
+    fn a_backtick_nothing_closes_on_its_line_is_text() {
+        assert_eq!(facts("a `#house thing\nand `#garden`").tags, ["house"]);
+    }
+
+    #[test]
+    fn a_fence_runs_to_a_fence_of_its_kind_at_least_as_long_or_to_the_end() {
+        assert_eq!(facts("````\n```\n#a\n````\n#b").tags, ["b"]);
+        assert_eq!(facts("~~~\n#a\n```\n#b\n~~~\n#c").tags, ["c"]);
+        assert_eq!(facts("- step\n  ```\n  #a\n  ```\n#b").tags, ["b"]);
+        assert!(facts("Boiler\n```\n#house").tags.is_empty());
+        assert_eq!(
+            facts("```ls``` #house").tags,
+            ["house"],
+            "a backtick in the info string makes it a span"
+        );
+        assert!(facts("~~~ls`~ #a\n#b").tags.is_empty());
+        assert_eq!(
+            facts("    #house").tags,
+            ["house"],
+            "an indent alone is not code"
+        );
+    }
+
+    #[test]
+    fn a_caret_is_in_code_inside_a_span_or_after_a_backtick_its_line_has_not_closed() {
+        let chars = |t: &str| t.chars().collect::<Vec<char>>();
+        assert!(in_code(&chars("`ls #fo"), 7));
+        assert!(!in_code(&chars("`ls` #fo"), 8));
+        assert!(in_code(&chars("```\n#fo"), 7));
+        assert!(!in_code(&chars("a #fo"), 5));
+        assert!(!in_code(&chars("a `b`"), 5));
+        assert!(!in_code(&chars("```\n#a\n```"), 10));
     }
 }

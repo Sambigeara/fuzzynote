@@ -44,10 +44,14 @@ impl Offer {
 
 /// The tag or person whose end is at `at`, in characters, as the index holds it, lowercased, and
 /// where its mark is: the word the caret is at the end of starts with `#` or `@`, has a letter
-/// after it, and is a tag or a person as a note's text reads one, from the mark to the caret.
+/// after it, and is a tag or a person as a note's text reads one, from the mark to the caret; a
+/// word inside code is not one.
 fn ending(text: &str, at: usize) -> Option<(usize, Label)> {
     let chars: Vec<char> = text.chars().collect();
     if at > chars.len() || chars.get(at).is_some_and(|c| !c.is_whitespace()) {
+        return None;
+    }
+    if text::in_code(&chars, at) {
         return None;
     }
     let from = chars[..at]
