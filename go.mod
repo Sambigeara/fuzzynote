@@ -1,6 +1,6 @@
 module github.com/sambigeara/fuzzynote
 
-go 1.18
+go 1.24
 
 require (
 	github.com/ardanlabs/conf v1.5.0
@@ -22,7 +22,7 @@ require (
 	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/juju/ansiterm v0.0.0-20180109212912-720a0952cc2a // indirect
-	github.com/klauspost/compress v1.10.3 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/lucasb-eyer/go-colorful v1.0.3 // indirect
 	github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a // indirect
 	github.com/mattn/go-colorable v0.0.9 // indirect
