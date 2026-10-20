@@ -2,14 +2,15 @@
 //!
 //! The words on the line rank, as they always have, each note with its reasons. Every other form
 //! on the line is something a note has to hold to be listed at all: a phrase in quotes, a tag, a
-//! person, a day, the box of an open task or of a done one, and a span of when notes were
-//! written, or with the done box on the line of when they were done. `/task` is the open box
-//! typed another way, as a date word is a day typed another way. A form never changes how
-//! the words rank, so a new kind of filter is one more form here and one more way for a note to
-//! hold it, and the words are left alone. A line of nothing but forms has nothing to rank by,
-//! and lists exactly what holds them in the space's order, as a place lists what is in it, or
-//! with a span in time order, since a span is a question about time. `~` at the start of the
-//! line makes its words letters, found in order in heads, as the original fzn's fuzzy found them.
+//! person, a day, the box of an open task or of a done one, a span of when notes were written,
+//! or with the done box on the line of when they were done, and with `!` before it what a note
+//! has to be without. `/task` is the open box typed another way, as a date word is a day typed
+//! another way. A form never changes how the words rank, so a new kind of filter is one more
+//! form here and one more way for a note to hold it, and the words are left alone. A line of
+//! nothing but forms has nothing to rank by, and lists exactly what holds them in the space's
+//! order, as a place lists what is in it, or with a span in time order, since a span is a
+//! question about time. `~` at the start of the line makes its words letters, found in order in
+//! heads, as the original fzn's fuzzy found them.
 //!
 //! Labels are what the index lists, so the engine looks them up; a span and a phrase are asked
 //! of each note, and only of the notes that are left once the rest has narrowed them.
@@ -40,6 +41,11 @@ pub(crate) struct Query {
     pub labels: Vec<Typed>,
     /// What else a note has to hold.
     pub holds: Vec<Hold>,
+    /// The tags and people a note must not carry, lowercased as the index holds them.
+    pub without: Vec<Label>,
+    /// A `!` form is still being typed at the end of the line: it holds nothing yet, and the line
+    /// is still not a line of labels.
+    pub leaving: bool,
     /// The days the date words stand for, the spans, and the box the task word stands for, in
     /// the order they were typed.
     shown: Vec<Shown>,
@@ -100,6 +106,8 @@ impl Label {
 pub(crate) enum Hold {
     /// Its text has this in it, both lowercased as `text::lowercase` does.
     Phrase(String),
+    /// Its text does not have this in it, both lowercased as `text::lowercase` does.
+    Without(String),
     /// It was written in this span, or done in it.
     Span(Span),
 }
@@ -109,6 +117,7 @@ impl Hold {
     pub(crate) fn held_by(&self, note: &Note, lower: &str) -> bool {
         match self {
             Hold::Phrase(phrase) => lower.contains(phrase.as_str()),
+            Hold::Without(phrase) => !lower.contains(phrase.as_str()),
             Hold::Span(span) => span.read(note).is_some_and(|at| span.holds(at)),
         }
     }
@@ -209,6 +218,62 @@ impl Query {
             }
             let c = chars[i];
             let boundary = i == 0 || !text::is_word_char(chars[i - 1]);
+            // A `!` starting a word holds the notes without what follows it: a phrase, a tag, a
+            // person, or else plain text to the next space. It never ranks, and it holds only
+            // once something follows it, so that the list does not empty on the way to a word.
+            // A mark after it that starts no tag or person leaves it words.
+            let bang = c == '!'
+                && (i == 0 || chars[i - 1].is_whitespace())
+                && chars.get(i + 1).is_some_and(|n| !n.is_whitespace());
+            let label = match chars.get(i + 1).filter(|_| bang) {
+                Some('#') => text::take_tag(&chars, i + 2).map(|(t, end)| (Label::Tag(t), end)),
+                Some('@') => {
+                    text::take_mention(&chars, i + 2).map(|(m, end)| (Label::Mention(m), end))
+                }
+                _ => None,
+            };
+            let unmarked = matches!(chars.get(i + 1), Some('#' | '@')) && label.is_none();
+            if bang && !unmarked {
+                let follows = |end: usize| end < chars.len() || finished;
+                let next = chars[i + 1];
+                query.blank();
+                if QUOTES.contains(&next) {
+                    let close = chars[i + 2..].iter().position(|c| QUOTES.contains(c));
+                    let end = close.map_or(chars.len(), |n| i + 2 + n);
+                    let phrase: String = chars[i + 2..end].iter().collect();
+                    if close.is_none() {
+                        query.leaving = true;
+                    } else if !phrase.trim().is_empty() {
+                        query.holds.push(Hold::Without(text::lowercase(&phrase)));
+                    }
+                    i = end + 1;
+                    continue;
+                }
+                i = match label {
+                    Some((label, end)) => {
+                        if follows(end) {
+                            query.without.push(label);
+                        } else {
+                            query.leaving = true;
+                        }
+                        end
+                    }
+                    None => {
+                        let end = chars[i + 1..]
+                            .iter()
+                            .position(|c| c.is_whitespace())
+                            .map_or(chars.len(), |n| i + 1 + n);
+                        if follows(end) {
+                            let plain: String = chars[i + 1..end].iter().collect();
+                            query.holds.push(Hold::Without(text::lowercase(&plain)));
+                        } else {
+                            query.leaving = true;
+                        }
+                        end
+                    }
+                };
+                continue;
+            }
             if QUOTES.contains(&c) {
                 // A phrase runs to the next quote, or while it is being typed to the end of the
                 // line, the space typed last included.
@@ -311,7 +376,7 @@ impl Query {
     pub(crate) fn timed(&self) -> Option<bool> {
         self.holds.iter().find_map(|hold| match hold {
             Hold::Span(span) => Some(span.done),
-            Hold::Phrase(_) => None,
+            Hold::Phrase(_) | Hold::Without(_) => None,
         })
     }
 
@@ -422,13 +487,15 @@ impl Query {
 
     /// Nothing to rank by and nothing to hold: the line lists what it would if it were empty.
     pub(crate) fn is_empty(&self) -> bool {
-        !self.ranks() && self.labels.is_empty() && self.holds.is_empty()
+        !self.ranks() && self.labels.is_empty() && self.holds.is_empty() && self.without.is_empty()
     }
 
     /// Whether the line is labels and nothing else, which Tab goes into one after another.
     pub(crate) fn only_labels(&self) -> bool {
         !self.letters
             && self.holds.is_empty()
+            && self.without.is_empty()
+            && !self.leaving
             && self.words.trim().is_empty()
             && !self.labels.is_empty()
     }
@@ -495,9 +562,15 @@ mod tests {
         });
         let holds = query.holds.iter().map(|hold| match hold {
             Hold::Phrase(phrase) => format!("{phrase:?}"),
+            Hold::Without(phrase) => format!("!{phrase:?}"),
             Hold::Span(_) => "span".to_owned(),
         });
-        labels.chain(holds).collect()
+        let without = query.without.iter().map(|label| match label {
+            Label::Tag(tag) => format!("!#{tag}"),
+            Label::Mention(person) => format!("!@{person}"),
+            _ => "!?".to_owned(),
+        });
+        labels.chain(holds).chain(without).collect()
     }
 
     #[test]
@@ -528,6 +601,74 @@ mod tests {
         assert!(query.holds.is_empty());
         let words = text::tokens(&query.words);
         assert!(words.contains(&"paint".to_owned()) && words.contains(&"fff".to_owned()));
+    }
+
+    #[test]
+    fn a_bang_holds_what_does_not_have_what_follows_it() {
+        let query = read("boiler !oil !\"Tank lid\" !#House !@joe ");
+        assert_eq!(text::tokens(&query.words), ["boiler"]);
+        assert_eq!(text::tokens(&query.free), ["boiler"]);
+        assert_eq!(
+            held(&query),
+            ["!\"oil\"", "!\"tank lid\"", "!#house", "!@joe"]
+        );
+        assert!(!query.only_labels());
+        assert!(!read("#house !#garden ").only_labels());
+    }
+
+    #[test]
+    fn a_bang_still_being_typed_holds_nothing() {
+        let withouts = |query: &Query| {
+            query
+                .holds
+                .iter()
+                .filter(|hold| matches!(hold, Hold::Without(_)))
+                .count()
+        };
+        for line in ["!oi", "#house !#gar", "!\"tank l", "!\"\" "] {
+            let query = read(line);
+            assert!(query.without.is_empty(), "{line:?}");
+            assert_eq!(withouts(&query), 0, "{line:?}");
+        }
+        assert_eq!(withouts(&read("!oil ")), 1);
+        assert_eq!(withouts(&read("!\"oil\"")), 1);
+    }
+
+    #[test]
+    fn a_bang_still_being_typed_makes_the_line_no_line_of_labels() {
+        assert!(!read("#house !roo").only_labels());
+        assert!(read("#house").only_labels());
+    }
+
+    #[test]
+    fn a_bang_before_a_mark_that_starts_nothing_is_words() {
+        for line in ["!# ", "!@ "] {
+            let query = read(line);
+            assert!(query.without.is_empty() && !query.leaving, "{line:?}");
+            assert!(
+                !query
+                    .holds
+                    .iter()
+                    .any(|hold| matches!(hold, Hold::Without(_))),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bang_that_does_not_start_a_word_is_words() {
+        for (line, words) in [("wow!oil", &["wow", "oil"][..]), ("! oil", &["oil"])] {
+            let query = read(line);
+            assert!(query.without.is_empty(), "{line:?}");
+            assert!(
+                !query
+                    .holds
+                    .iter()
+                    .any(|hold| matches!(hold, Hold::Without(_))),
+                "{line:?}"
+            );
+            assert_eq!(text::tokens(&query.words), words, "{line:?}");
+        }
     }
 
     #[test]
@@ -712,7 +853,7 @@ mod tests {
                 .iter()
                 .filter_map(|hold| match hold {
                     Hold::Span(span) => Some(span.done),
-                    Hold::Phrase(_) => None,
+                    Hold::Phrase(_) | Hold::Without(_) => None,
                 })
                 .collect()
         };

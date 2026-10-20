@@ -105,6 +105,16 @@ fn a_tag_written_only_in_code_is_not_offered_and_nothing_is_offered_inside_code(
 }
 
 #[test]
+fn a_tag_after_a_bang_on_the_line_is_offered_and_taken_after_the_bang() {
+    let mut s = session();
+    tagged(&mut s);
+    typed(&mut s, "!#fo");
+    assert_eq!(words(&s), ["#food", "#fox"]);
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "!#food ");
+}
+
+#[test]
 fn what_is_offered_is_the_most_carried_first_then_the_newest_then_by_name_and_five_at_most() {
     let mut s = session();
     put(&mut s, "a", "#garden", &[], 1_000);

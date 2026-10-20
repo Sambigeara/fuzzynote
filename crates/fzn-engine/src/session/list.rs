@@ -176,9 +176,14 @@ impl Session {
     }
 
     /// Every note the line holds at the top of the space, archived ones too, in the order the
-    /// line lists them and however many there are: what `fzn export` writes for a query.
+    /// line lists them and however many there are: what `fzn query` writes.
     pub fn query(&self, line: &str) -> Vec<&Record> {
-        let query = Query::read(line, self.today());
+        let mut query = Query::read(line, self.today());
+        // A command's line is finished, so a `!` form at its end leaves out what it names as it
+        // would with a space after it. Only that form can change, being the last on the line.
+        if query.leaving {
+            query = Query::read(&format!("{line} "), self.today());
+        }
         self.found(&query, true, usize::MAX)
             .iter()
             .filter_map(|row| self.notes.get(&row.id))

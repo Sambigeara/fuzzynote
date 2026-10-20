@@ -90,14 +90,16 @@ of these words in its head writes it out there and stays, and the next Enter ope
 under it. fzn keeps when each note was archived, which for a task is when it was ticked, and a new
 note written starting `[x]` is done as it is written.
 
-On the line, words find and everything else holds. `"oil tank"` must be in a note, `#house`,
-`@joe` and `/fri` must be on it, `[ ]` holds the open tasks and `[x]` the done ones, archived or
-not, and a span holds what was written in it: `/-mon 18:00..` since six on Monday evening,
+On the line, words find and everything else holds. `"oil tank"` must be in a note, `#house`, `@joe`
+and `/fri` must be on it, `[ ]` holds the open tasks and `[x]` the done ones, archived or not, and a
+span holds what was written in it: `/-mon 18:00..` since six on Monday evening,
 `2026-10-01..2026-10-05` those five days, `..` all time. With `[x]` a span holds the tasks done in
-it instead, so `[x] /-mon.. #work` is this week's done work, whenever it was written. A line with
-a span and no words lists oldest first. `~` at the start of the line finds heads by their letters
-in order, so `~bsv` finds Boiler service. A line of nothing but labels, such as
-`[ ] #house /today`, is gone into with one Tab.
+it instead, so `[x] /-mon.. #work` is this week's done work, whenever it was written. `!` at the
+start of a word leaves out the notes with what follows it: `#house !boiler`, `!"oil tank"`,
+`!#work`. `fzn query` reads its line as finished, so `fzn query '#house !#done'` leaves those out. A
+line with a span and no words lists oldest first. `~` at the start of the line finds heads by their
+letters in order, so `~bsv` finds Boiler service. A line of nothing but labels, such as `[ ] #house
+/today`, is gone into with one Tab.
 
 ## Sync
 

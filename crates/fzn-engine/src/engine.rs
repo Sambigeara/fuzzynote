@@ -79,6 +79,8 @@ struct Ties {
 struct Held<'q> {
     /// The notes carrying every label, sorted, or none when the line holds no label.
     carrying: Option<Vec<DocId>>,
+    /// The notes carrying any label the line leaves out, sorted.
+    without: Vec<DocId>,
     asked: Vec<&'q Hold>,
 }
 
@@ -87,6 +89,7 @@ impl Held<'_> {
         self.carrying
             .as_ref()
             .is_none_or(|docs| docs.binary_search(&d).is_ok())
+            && self.without.binary_search(&d).is_err()
             && self
                 .asked
                 .iter()
@@ -228,9 +231,20 @@ impl Engine {
                 all.retain(|d| docs.binary_search(d).is_ok());
                 all
             });
+        let mut without: Vec<DocId> = query
+            .without
+            .iter()
+            .flat_map(|label| self.index.docs_with(&label.indexed()).iter().copied())
+            .collect();
+        without.sort_unstable();
+        without.dedup();
         let mut asked: Vec<&Hold> = query.holds.iter().collect();
-        asked.sort_by_key(|hold| matches!(hold, Hold::Phrase(_)));
-        Held { carrying, asked }
+        asked.sort_by_key(|hold| matches!(hold, Hold::Phrase(_) | Hold::Without(_)));
+        Held {
+            carrying,
+            without,
+            asked,
+        }
     }
 
     /// The notes whose heads have every word of the line's letters in order, among those holding

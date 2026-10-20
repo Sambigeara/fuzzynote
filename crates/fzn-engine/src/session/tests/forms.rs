@@ -44,6 +44,69 @@ fn a_line_of_nothing_but_what_holds_lists_exactly_that_in_the_spaces_order() {
 }
 
 #[test]
+fn a_bang_leaves_out_the_notes_with_what_follows_it_once_something_follows_it() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house !roof");
+    assert_eq!(
+        heads(&s),
+        [
+            "fix the roof tiles #house",
+            "clear the gutter #house",
+            "Boiler"
+        ],
+        "still being typed, it holds nothing"
+    );
+    type_in(&mut s, " ");
+    assert_eq!(heads(&s), ["clear the gutter #house", "Boiler"]);
+    clear(&mut s);
+    type_in(&mut s, "#house !GUTTER ");
+    assert_eq!(
+        heads(&s),
+        ["fix the roof tiles #house", "Boiler"],
+        "in any case"
+    );
+    clear(&mut s);
+    type_in(&mut s, "#house !\"the roof\"");
+    assert_eq!(
+        heads(&s),
+        ["clear the gutter #house", "Boiler"],
+        "a closed phrase holds at once"
+    );
+    clear(&mut s);
+    type_in(&mut s, "!#house ");
+    assert!(
+        heads(&s)
+            .iter()
+            .all(|h| !h.contains("#house") && *h != "Boiler"),
+        "a tag in a body counts too"
+    );
+    assert!(heads(&s).contains(&"house move plan"));
+}
+
+#[test]
+fn a_command_reads_a_bang_at_the_end_of_its_line_as_finished() {
+    let mut s = session();
+    house(&mut s);
+    let heads = |s: &Session, line: &str| -> Vec<String> {
+        s.query(line)
+            .iter()
+            .map(|r| text::head(&r.text).to_owned())
+            .collect()
+    };
+    assert_eq!(
+        heads(&s, "#house !roof"),
+        ["clear the gutter #house", "Boiler"]
+    );
+    assert!(
+        heads(&s, "!#house")
+            .iter()
+            .all(|h| !h.contains("#house") && h != "Boiler")
+    );
+    assert!(heads(&s, "!#house").contains(&"house move plan".to_owned()));
+}
+
+#[test]
 fn a_line_of_labels_is_gone_into_one_after_another() {
     let mut s = session();
     house(&mut s);

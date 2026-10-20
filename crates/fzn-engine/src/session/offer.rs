@@ -45,8 +45,9 @@ impl Offer {
 /// The tag or person whose end is at `at`, in characters, as the index holds it, lowercased, and
 /// where its mark is: the word the caret is at the end of starts with `#` or `@`, has a letter
 /// after it, and is a tag or a person as a note's text reads one, from the mark to the caret; a
-/// word inside code is not one.
-fn ending(text: &str, at: usize) -> Option<(usize, Label)> {
+/// word inside code is not one. On the line the word may start with a `!` before its mark, which
+/// leaves the label out.
+fn ending(text: &str, at: usize, on_line: bool) -> Option<(usize, Label)> {
     let chars: Vec<char> = text.chars().collect();
     if at > chars.len() || chars.get(at).is_some_and(|c| !c.is_whitespace()) {
         return None;
@@ -58,6 +59,11 @@ fn ending(text: &str, at: usize) -> Option<(usize, Label)> {
         .iter()
         .rposition(|c| c.is_whitespace())
         .map_or(0, |i| i + 1);
+    let from = if on_line && chars.get(from) == Some(&'!') {
+        from + 1
+    } else {
+        from
+    };
     let (label, end) = match chars.get(from)? {
         '#' => text::take_tag(&chars, from + 1).map(|(tag, end)| (Label::Tag(tag), end))?,
         '@' => text::take_mention(&chars, from + 1).map(|(who, end)| (Label::Mention(who), end))?,
@@ -86,7 +92,7 @@ impl Session {
         if !typed {
             return was.filter(|offer| offer.to == at);
         }
-        let (from, label) = ending(self.caret_text()?, at)?;
+        let (from, label) = ending(self.caret_text()?, at, self.field.is_none())?;
         let besides = self.field.as_ref().map(|field| field.id.as_str());
         let words = self.engine.labels_starting(&label, besides, OFFERED);
         let alone = match &label {

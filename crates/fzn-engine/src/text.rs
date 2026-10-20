@@ -98,7 +98,9 @@ pub struct Facts {
 }
 
 /// Extracts `#tags`, `@mentions`, `[[wikilinks]]`, URLs and dates written as `2026-09-05` or
-/// `Mon, Jan 02, 2006` (the form the old `{d}` token expanded to).
+/// `Mon, Jan 02, 2006` (the form the old `{d}` token expanded to). A tag or a person straight
+/// after a `!` that starts a word is not one, since on the line that `!` leaves it out, and a
+/// note written from such a line should not carry what it was meant to leave out.
 pub fn facts(text: &str) -> Facts {
     let chars: Vec<char> = text.chars().collect();
     let code = code(&chars);
@@ -122,7 +124,10 @@ pub fn facts(text: &str) -> Facts {
             };
             continue;
         }
-        let next = if boundary && c == '#' {
+        let banged = i >= 1 && chars[i - 1] == '!' && (i == 1 || chars[i - 2].is_whitespace());
+        let next = if banged && (c == '#' || c == '@') {
+            None
+        } else if boundary && c == '#' {
             take_tag(&chars, i + 1).map(|(tag, end)| {
                 f.tags.push(tag);
                 end
@@ -783,6 +788,13 @@ fn date_named(word: &str, today: Day) -> Option<Day> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tag_or_a_person_after_a_bang_that_starts_a_word_is_not_one() {
+        let f = facts("#work !#home !@joe hooray!#win");
+        assert_eq!(f.tags, ["win", "work"]);
+        assert!(f.mentions.is_empty());
+    }
 
     #[test]
     fn a_text_lowercased_keeps_every_character_where_it_was() {

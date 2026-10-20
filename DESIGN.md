@@ -59,7 +59,7 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   tag, a person, a day, the open tasks' `[ ]`, the done tasks' `[x]` or a span narrows what is
   listed, and `~` at the start of the line is the original's fuzzy, letters in order in heads. The
   original's Tab-separated groups are given up, Tab being the key that goes in, and its `!` inverse
-  is not built yet.
+  is back, `!oil` leaving out the notes with oil in them.
 - Hashtags, @mentions, date expansion, URLs opened or copied with one key.
 - Archive with one key, which ticks a task; show/hide archived globally.
 - Undo/redo and move up/down. Copying whole notes, and pasting them, are not built yet.
@@ -609,6 +609,17 @@ all, and none of it changes how the words rank.
   the phrase is typed. `“`, `”` and `„` are quotes too, any of them closing what any of them opened,
   since a phone's keyboard curls them. An empty phrase holds nothing. A phrase's words are words as
   well, so a phrase in a head outranks one in a body.
+- `!` at the start of a word holds the notes without what follows it: `!oil` the notes whose whole
+  text, head and body, has no `oil` in it in any case, as plain text the way a phrase is matched, so
+  `!boil` leaves out the boiler too; `!"oil tank"` those without the phrase; and `!#house` or
+  `!@joe` those not carrying the tag or the person. It holds once something follows it, a space or
+  more of the line, so that `!o` does not empty the list on the way to `!oil`, and an unclosed `!"`
+  holds nothing until its quote closes. `fzn query` reads its line as finished, so a `!` at its end
+  leaves out what it names. A `!` before a mark that starts no tag or person is words. Tags and
+  people are offered after it as after any mark. It never ranks and names no place, even while it is
+  typed, and makes the line no line of labels; Enter writes it as typed, and in a note a tag or a
+  person straight after a `!` that starts a word is not one, so a note written from such a line does
+  not carry what it was to leave out. A `!` inside a word, or alone, is words.
 - `#tag`, `@person` and a day hold: the note carries the tag or the person, or is of the day, by
   mentioning it or by having been written on it. The last thing typed holds every tag or person it
   is the start of until whitespace follows it, `#ho` holding `#house` and `#hosting`, so the list
@@ -833,8 +844,8 @@ minutes, `this device's clock is 5 min ahead`. A window that does not hold the s
 since what it writes reaches the relay through the one that does. Why a relay refused this device is
 said on the status row, after the relay's host, until a relay takes it in.
 
-Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, `!`
-inverse, Ctrl-^ export.
+Not yet reinstated: Ctrl-S multi-select with Enter zooming on what the selection shares, and
+Ctrl-^ export.
 
 ### Browser
 The engine's `Device` compiled to wasm32 via wasm-bindgen, with a page of plain JavaScript and CSS
@@ -1858,6 +1869,7 @@ the app now does is described above; an entry repeats it only where the reason n
   as a date. The original's Tab-separated groups and its `!` inverse stay unbuilt; the groups were
   given up for good on 2026-10-16 ("Tab goes in"). Revised 2026-10-17 by "Time on the line is
   time order": a line holding a span with nothing to rank by lists in time order, not the space's.
+  Revised 2026-10-20 by "`!` holds what is without it": the inverse is built.
 
 - **A span is not a place.** Decided 2026-10-15, agreed with Sam. A span holds the notes written in
   it, Sam's choice over the notes written or edited in it, and a note written now was not written in
@@ -3297,12 +3309,29 @@ the app now does is described above; an entry repeats it only where the reason n
   a body's lists are indented. A URL in code is still the note's, so the key that opens a note's URL
   finds the one in a `curl` line, and a backtick ends a URL now, which it never belonged to. A
   backtick fence cannot have a backtick after its run, as in CommonMark, so ```` ```ls``` ```` on a
-  line is a span. On the line, code is words, as it is in a note: nothing in it holds, so `` `#fff`
-  `` pasted from a note finds the note. A word typed inside code on the line or in a head is offered
-  nothing, an open backtick counting as code until it is closed. Nothing stored changes: tags are
-  read from the text when a space opens. Weighed: leaving the tags and only not offering them, which
-  would keep `#fff` a place; and reading a span across a paragraph's lines as CommonMark does, which
-  a single stray backtick could carry over every line after it.
+  line is a span. On the line, code is words, as it is in a note: nothing in it holds, so
+  `` `#fff` `` pasted from a note finds the note. A word typed inside code on the line or in a head
+  is offered nothing, an open backtick counting as code until it is closed. Nothing stored changes:
+  tags are read from the text when a space opens. Weighed: leaving the tags and only not offering
+  them, which would keep `#fff` a place; and reading a span across a paragraph's lines as CommonMark
+  does, which a single stray backtick could carry over every line after it.
+- **`!` holds what is without it.** Decided 2026-10-20, at Sam's ask: the original's `!` inverse
+  "used to be super useful", and "Words find; everything else holds" left room for it as one more
+  form read from the line. `!` is the original's mark, so the hand knows it. `-`, which search
+  engines use, was not taken: plenty of text starts with a hyphen, and it would take the `-..` asked
+  for newest-first spans. What follows is matched as plain text, in any case, over head and body, as
+  a phrase is, which is what the original's full-string match was; a tag or a person after it is
+  left out by the index's postings, a phrase or a word by asking each note, last, as a phrase is
+  asked. It holds only once something follows it, the way a tag being typed holds every tag it
+  starts so that the list does not empty mid-word: a prefix left out as it is typed would empty the
+  list at the first letter. It names no place, since a place is what notes carry and not what they
+  lack. A tag or a person after a `!` starting a word is not one in a note either, so that Enter on
+  such a line writes a note that does not carry it. `fzn query` reads it as the line does, except
+  that a command's line is finished, so `fzn query '#house !boiler'` leaves the boiler out though
+  nothing follows it, and a `!` that is still being typed keeps the line from being a line of
+  labels, so what Enter does does not change mid-word. Weighed: leaving out as typed; matching words
+  rather than text; and leaving out days, boxes and spans, which nobody has asked for, so `!/task`
+  and `!2026-10-16` are plain text.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
