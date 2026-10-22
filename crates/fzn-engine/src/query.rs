@@ -9,8 +9,9 @@
 //! form here and one more way for a note to hold it, and the words are left alone. A line of
 //! nothing but forms has nothing to rank by, and lists exactly what holds them in the space's
 //! order, as a place lists what is in it, or with a span in time order, since a span is a
-//! question about time. `~` at the start of the line makes its words letters, found in order in
-//! heads, as the original fzn's fuzzy found them.
+//! question about time: oldest first, or newest first with a `-` before a span. `~` at the start
+//! of the line makes its words letters, found in order in heads, as the original fzn's fuzzy
+//! found them.
 //!
 //! Labels are what the index lists, so the engine looks them up; a span and a phrase are asked
 //! of each note, and only of the notes that are left once the rest has narrowed them.
@@ -132,7 +133,9 @@ pub(crate) struct Span {
     to: Option<End>,
     /// It measures when notes were done and not when they were written, since the line asks
     /// about the done tasks.
-    done: bool,
+    pub done: bool,
+    /// A `-` was typed before it, so a line of time it orders lists newest first.
+    pub newest: bool,
 }
 
 impl Span {
@@ -333,6 +336,19 @@ impl Query {
                 i = end;
                 continue;
             }
+            // A `-` starting a word and straight before a span lists it newest first; before
+            // anything else it is words, as it always was. What follows is read as it would be
+            // without the `-`, as the start of a word, so that `-/-mon..` is `/-mon..` reversed.
+            if c == '-'
+                && (i == 0 || chars[i - 1].is_whitespace())
+                && let Some((span, end)) = newest_span(&chars[i + 1..], today)
+            {
+                query.holds.push(Hold::Span(span));
+                query.shown.push(Shown::Span(span));
+                query.blank();
+                i += 1 + end;
+                continue;
+            }
             let label = match c {
                 '#' if boundary => {
                     text::take_tag(&chars, i + 1).map(|(t, end)| (Label::Tag(t), end))
@@ -371,13 +387,18 @@ impl Query {
         query
     }
 
-    /// Whether the line holds a span, and if it does, whether it measures when notes were done:
-    /// a line of time is listed in the order of the moment its span reads.
-    pub(crate) fn timed(&self) -> Option<bool> {
-        self.holds.iter().find_map(|hold| match hold {
-            Hold::Span(span) => Some(span.done),
-            Hold::Phrase(_) | Hold::Without(_) => None,
-        })
+    /// The span the line holds, if it holds one: a line of time is listed in the order of the
+    /// moment its first span reads, newest first if any span on the line has a `-` before it,
+    /// so that the newest end said first beside it is the end the list starts at.
+    pub(crate) fn timed(&self) -> Option<Span> {
+        let spans = || {
+            self.holds.iter().filter_map(|hold| match hold {
+                Hold::Span(span) => Some(*span),
+                Hold::Phrase(_) | Hold::Without(_) => None,
+            })
+        };
+        let newest = spans().any(|span| span.newest);
+        spans().next().map(|span| Span { newest, ..span })
     }
 
     /// Whether the line asks for the done tasks, with `[x]`.
@@ -447,6 +468,7 @@ impl Query {
             from,
             to,
             done: false,
+            newest: false,
         };
         self.holds.push(Hold::Span(span));
         self.shown.push(Shown::Span(span));
@@ -507,15 +529,39 @@ impl Query {
             .iter()
             .map(|shown| match shown {
                 Shown::Day(day) => day_shown(*day),
-                Shown::Span(span) => format!(
-                    "{} – {}",
-                    span.from.map_or("…".to_owned(), End::shown),
-                    span.to.map_or("now".to_owned(), End::shown)
-                ),
+                Shown::Span(span) => {
+                    let from = span.from.map_or("…".to_owned(), End::shown);
+                    let to = span.to.map_or("now".to_owned(), End::shown);
+                    // Newest first, it is said from the end the list starts at.
+                    match span.newest {
+                        true => format!("{to} – {from}"),
+                        false => format!("{from} – {to}"),
+                    }
+                }
                 Shown::Task => text::OPEN.to_owned(),
             })
             .collect()
     }
+}
+
+/// The span at the start of `chars`, read as the start of a word, made newest first, and where it
+/// ends; nothing if a span does not start there, a day alone included.
+fn newest_span(chars: &[char], today: Day) -> Option<(Span, usize)> {
+    if chars.is_empty() {
+        return None;
+    }
+    let mut read = Query::default();
+    let end = read.dated(chars, 0, true, today)?;
+    let Some(Hold::Span(span)) = read.holds.pop() else {
+        return None;
+    };
+    Some((
+        Span {
+            newest: true,
+            ..span
+        },
+        end,
+    ))
 }
 
 /// A time of day after a date, ` 18:00`, if there is one: the end it makes, and where it ends.
@@ -750,6 +796,54 @@ mod tests {
             ["2026-10-01"],
             "no such time, so no span"
         );
+    }
+
+    #[test]
+    fn a_dash_before_a_span_lists_it_newest_first_and_before_anything_else_is_words() {
+        for (line, shown) in [
+            ("-..", "now – …"),
+            ("-/-mon..", "now – Mon 2026-10-12"),
+            ("-/-mon 18:00..", "now – Mon 2026-10-12 18:00"),
+            ("-2026-10-01..2026-10-05", "Mon 2026-10-05 – Thu 2026-10-01"),
+            ("#house -..2026-10-05 ", "Mon 2026-10-05 – …"),
+        ] {
+            let query = read(line);
+            assert!(held(&query).ends_with(&["span".to_owned()]), "{line}");
+            assert_eq!(query.shown(), [shown], "{line}");
+            assert!(query.timed().is_some_and(|span| span.newest), "{line}");
+            assert!(!query.ranks(), "the dash is not a word: {line}");
+        }
+        for line in ["/-mon..", "- ..", "-x .."] {
+            let query = read(line);
+            assert!(query.timed().is_some_and(|span| !span.newest), "{line}");
+        }
+        let query = read("[x] -/-mon.. #work ");
+        assert_eq!(held(&query), ["[x]", "#work", "span"]);
+        assert!(query.timed().is_some_and(|span| span.newest && span.done));
+        for line in ["-", "-boiler", "-/-mon", "x -#house", "-...", "a-.."] {
+            assert!(read(line).timed().is_none(), "{line}");
+        }
+        assert_eq!(text::tokens(&read("-boiler").words), ["boiler"]);
+        assert!(
+            held(&read("-/-mon")).is_empty(),
+            "a dash before a date word alone leaves it words, as it was"
+        );
+        assert_eq!(
+            held(&read("-2026-10-01")),
+            ["2026-10-01"],
+            "a date written out after a dash is still a day, the dash a word, as it was"
+        );
+    }
+
+    #[test]
+    fn one_dashed_span_turns_the_line_newest_first_and_each_span_says_its_own_way() {
+        let query = read("/-mon.. -..2026-10-05");
+        assert_eq!(held(&query), ["span", "span"]);
+        assert_eq!(
+            query.shown(),
+            ["Mon 2026-10-12 – now", "Mon 2026-10-05 – …"]
+        );
+        assert!(query.timed().is_some_and(|span| span.newest));
     }
 
     #[test]

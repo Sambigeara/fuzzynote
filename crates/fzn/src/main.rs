@@ -61,9 +61,10 @@ again. $FZN_PASSPHRASE answers in place of the question, for scripts.
 query writes the notes a line finds, typed as on the line, one plain line of JSON each, readable
 without fzn: every one of them, archived ones too, in the order the app lists them, which with
 nothing to rank by is the space's order, or on a line with a span oldest first by when each was
-written, or with [x] by when each was done, and otherwise best first. fzn query '#house /-mon..'
-is everything tagged #house written since last Monday, fzn query '[ ]' the open tasks, and fzn
-query '[x] /-mon.. #work' the tasks in #work done since last Monday, whenever they were written.
+written, or with [x] by when each was done, and newest first with a - before the span, and
+otherwise best first. fzn query '#house /-mon..' is everything tagged #house written since last
+Monday, fzn query '[ ]' the open tasks, fzn query '[x] /-mon.. #work' the tasks in #work done
+since last Monday, whenever they were written, and fzn query '-..' every note newest first.
 export writes every live note the same way, oldest first. Neither writes anything, and jq orders
 and picks from either.
 
@@ -617,6 +618,11 @@ mod tests {
             "query needs a line, as typed in the app"
         );
         assert_eq!(cmd(&["query", ""]), Cmd::Query(String::new()));
+        assert_eq!(
+            cmd(&["query", "-.."]),
+            Cmd::Query("-..".into()),
+            "a line may start with a dash"
+        );
         assert_eq!(
             refused(&["query", "#house", "#garden"]),
             "unknown argument \"#garden\"; see fzn --help"

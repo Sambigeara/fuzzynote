@@ -240,6 +240,107 @@ fn a_list_of_time_past_the_rows_the_top_shows_keeps_the_newest_and_ends_at_now()
 }
 
 #[test]
+fn a_dash_before_two_dots_lists_every_note_newest_first_exactly_turned_over() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler #house", &[], 2_000);
+    put(&mut s, "garden", "a garden", &[], 1_000);
+    put(&mut s, "house", "House", &[], 3_000);
+    put(&mut s, "shed", "the shed", &[], 2_000);
+    clear(&mut s);
+    type_in(&mut s, "..");
+    let oldest: Vec<String> = heads(&s).iter().map(|h| h.to_string()).collect();
+    clear(&mut s);
+    type_in(&mut s, "-..");
+    assert_eq!(s.view().dates, ["now – …"]);
+    let newest: Vec<&str> = oldest.iter().rev().map(String::as_str).collect();
+    assert_eq!(heads(&s), newest, "notes of one moment turned over too");
+    assert_eq!(heads(&s)[0], "House");
+    s.act(Action::Move(1));
+    assert!(!labels(&s).iter().any(|l| l.starts_with("move")));
+    let queried: Vec<&str> = s.query("-..").iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        queried[0], "house",
+        "a query reads the line as the app does"
+    );
+    assert_eq!(queried.last(), Some(&"garden"));
+
+    // With words the scores order it, as without the dash.
+    s.act(Action::Select(None));
+    clear(&mut s);
+    type_in(&mut s, "-.. boiler");
+    assert_eq!(heads(&s), ["Boiler #house"]);
+    assert!(!s.rows[0].reasons.is_empty());
+}
+
+#[test]
+fn a_dashed_span_is_said_newest_end_first_and_written_out_by_enter_with_its_dash() {
+    let mut s = session();
+    // Monday 16:00 and 20:00, the day before the tests' noon.
+    put(
+        &mut s,
+        "early",
+        "bled the radiators",
+        &[],
+        NOON.secs() - 20 * 3_600,
+    );
+    put(&mut s, "late", "ordered oil", &[], NOON.secs() - 16 * 3_600);
+    clear(&mut s);
+    type_in(&mut s, "-/-mon..");
+    assert_eq!(s.view().dates, ["now – Mon 2026-10-12"]);
+    assert_eq!(heads(&s), ["ordered oil", "bled the radiators"]);
+    clear(&mut s);
+    type_in(&mut s, "/-mon.. -..");
+    assert_eq!(s.view().dates, ["Mon 2026-10-12 – now", "now – …"]);
+    assert_eq!(
+        heads(&s),
+        ["ordered oil", "bled the radiators"],
+        "one dashed span turns the line"
+    );
+
+    clear(&mut s);
+    type_in(&mut s, "boiler noise -/-mon 18:00../fri");
+    s.act(Action::Write);
+    let new = s.selected().unwrap().id.clone();
+    assert_eq!(
+        s.notes.get(&new).unwrap().text,
+        "boiler noise -2026-10-12 18:00..2026-10-16"
+    );
+
+    // Tab from the line onto that note was a search for it, written out as Enter writes.
+    s.act(Action::Select(None));
+    clear(&mut s);
+    type_in(&mut s, "boiler noise -/-mon 18:00../fri");
+    select(&mut s, "boiler noise -2026-10-12 18:00..2026-10-16");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["boiler noise -2026-10-12 18:00..2026-10-16"]);
+    assert_eq!(s.line, "", "the line was a search, so it clears");
+}
+
+#[test]
+fn a_list_of_time_newest_first_past_the_rows_the_top_shows_keeps_the_newest_and_starts_at_now() {
+    let mut s = session();
+    for n in 0..TOP_LIMIT + 2 {
+        put(
+            &mut s,
+            &format!("n{n:03}"),
+            &format!("note {n}"),
+            &[],
+            1_000 + n as i64,
+        );
+    }
+    clear(&mut s);
+    type_in(&mut s, "-..");
+    assert_eq!(s.rows.len(), TOP_LIMIT);
+    assert_eq!(s.rows[0].head, format!("note {}", TOP_LIMIT + 1));
+    assert_eq!(
+        s.rows[TOP_LIMIT - 1].head,
+        "note 2",
+        "the two oldest are past the cut, at the end"
+    );
+    assert_eq!(s.query("-..").len(), TOP_LIMIT + 2, "a query is not cut");
+}
+
+#[test]
 fn the_done_box_and_two_dots_list_every_done_task_in_the_order_it_was_done() {
     let mut s = session();
     put(&mut s, "fence", "[ ] Fix the fence #work", &[], 1_000);
@@ -278,6 +379,38 @@ fn the_done_box_and_two_dots_list_every_done_task_in_the_order_it_was_done() {
     assert!(
         heads(&s).is_empty(),
         "archived, and the line does not ask for them"
+    );
+}
+
+#[test]
+fn the_done_box_and_a_dashed_span_list_the_done_tasks_last_done_first() {
+    let mut s = session();
+    put(&mut s, "fence", "[ ] Fix the fence #work", &[], 1_000);
+    put(&mut s, "gate", "[ ] Paint the gate #work", &[], 2_000);
+    put(&mut s, "shed", "[ ] Tidy the shed", &[], 3_000);
+    for (id, at) in [("shed", 10_000), ("fence", 20_000), ("gate", 15_000)] {
+        let held = s.notes.get(id).unwrap().clone();
+        s.commit(Record {
+            text: text::tick(&held.text, true),
+            archived: true,
+            done: Some(Moment::utc(at)),
+            ..held
+        });
+    }
+    clear(&mut s);
+    type_in(&mut s, "[x] -.. #work ");
+    assert_eq!(
+        heads(&s),
+        ["[x] Fix the fence #work", "[x] Paint the gate #work"]
+    );
+    // In a place the same rule orders its facts.
+    clear(&mut s);
+    type_in(&mut s, "#work");
+    s.act(Action::GoIn);
+    type_in(&mut s, "[x] -..");
+    assert_eq!(
+        heads(&s),
+        ["[x] Fix the fence #work", "[x] Paint the gate #work"]
     );
 }
 

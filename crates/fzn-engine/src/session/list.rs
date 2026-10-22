@@ -88,7 +88,8 @@ impl Session {
     /// The notes that hold what the line holds, at most `limit`, in the order the line lists them
     /// when there is nothing on it to rank by: the space's order, or on a line holding a span the
     /// order of the moment the span reads, oldest first, notes of the same moment in the space's
-    /// order. A list of time is cut from its old end, so that it still ends at the span's end.
+    /// order, or with a `-` before the span exactly that list turned over, newest first. A list
+    /// of time is cut from its old end either way, so that it still reaches the span's end.
     fn ordered<'a>(
         &'a self,
         query: &Query,
@@ -97,15 +98,18 @@ impl Session {
         limit: usize,
     ) -> Vec<&'a Record> {
         let held = self.kept(archived).filter(|r| holds(r));
-        let Some(done) = query.timed() else {
+        let Some(span) = query.timed() else {
             return held.take(limit).collect();
         };
         let mut held: Vec<&Record> = held.collect();
-        held.sort_by_cached_key(|r| match done {
+        held.sort_by_cached_key(|r| match span.done {
             true => r.finished().map(|at| at.ms),
             false => r.created.map(|at| at.ms),
         });
         held.drain(..held.len().saturating_sub(limit));
+        if span.newest {
+            held.reverse();
+        }
         held
     }
 

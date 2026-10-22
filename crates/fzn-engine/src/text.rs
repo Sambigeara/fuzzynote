@@ -601,7 +601,8 @@ const DATE_NAMES: [&str; 10] = [
 /// `yesterday`, a day of the week (the next one after today, or with a `-` the last one before it),
 /// or a number of days from today as `+3` or `-2`. Any beginning of a name that only one name has
 /// will do: `/tom`, `/f`, `/-tu`. Anything else after a slash but the task word is left alone, a
-/// path included. A word starts after whitespace, a bracket, or the `..` of a span.
+/// path included. A word starts after whitespace, a bracket, or the `..` of a span, and a span's
+/// first end after a `-` that starts a word, as the line reads `-/-mon..` newest first.
 fn date_words(text: &str, today: Day) -> Vec<DateWord> {
     let chars: Vec<char> = text.chars().collect();
     let at: Vec<usize> = text
@@ -610,9 +611,12 @@ fn date_words(text: &str, today: Day) -> Vec<DateWord> {
         .chain([text.len()])
         .collect();
     (0..chars.len())
-        .filter(|&i| at_word_start(&chars, i))
+        .filter(|&i| at_word_start(&chars, i) || dashed(&chars, i))
         .filter_map(|i| {
             let (day, end) = take_date_word(&chars, i, today)?;
+            if !at_word_start(&chars, i) && !starts_span(&chars, end) {
+                return None;
+            }
             Some(DateWord {
                 start: at[i],
                 end: at[end],
@@ -629,6 +633,21 @@ pub(crate) fn at_word_start(chars: &[char], i: usize) -> bool {
         || chars[i - 1].is_whitespace()
         || chars[i - 1] == '('
         || (i >= 2 && chars[i - 2..i] == ['.', '.'])
+}
+
+/// Whether a `-` that starts a word is straight before `i`.
+fn dashed(chars: &[char], i: usize) -> bool {
+    i >= 1 && chars[i - 1] == '-' && (i == 1 || chars[i - 2].is_whitespace())
+}
+
+/// Whether the `..` of a span follows a date ending at `at`, a time of day between them if one
+/// is there, ` 18:00`.
+fn starts_span(chars: &[char], at: usize) -> bool {
+    let time = chars.get(at) == Some(&' ')
+        && chars.get(at + 3) == Some(&':')
+        && digits(chars, at + 1, 2).is_some_and(|hour| hour < 24)
+        && digits(chars, at + 4, 2).is_some_and(|minute| minute < 60);
+    dots(chars, at) || (time && dots(chars, at + 6))
 }
 
 /// The word after a slash at `start`, and where it ends: at whitespace, at the `..` of a span,
@@ -853,6 +872,16 @@ mod tests {
             expand("/-mon 18:00../fri /today..."),
             "2026-10-12 18:00..2026-10-16 2026-10-13...",
             "a span's ends, and a word ends at two dots"
+        );
+        assert_eq!(
+            expand("-/-mon.. boiler -/-mon 18:00../fri"),
+            "-2026-10-12.. boiler -2026-10-12 18:00..2026-10-16",
+            "a span newest first, the dash kept"
+        );
+        assert_eq!(
+            expand("-/-mon -/fri boiler x-/-mon.. -/-mon 25:00.."),
+            "-/-mon -/fri boiler x-/-mon.. -/-mon 25:00..",
+            "a dash before anything but a span leaves the word as it is"
         );
         for untouched in [
             "/t /to /s /-t /-s /-today /-y /+mon",

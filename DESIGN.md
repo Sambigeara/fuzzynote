@@ -646,7 +646,14 @@ all, and none of it changes how the words rank.
   is read by the clock of the place each note was written in, as a note's day is, a note with no
   moment to measure is in no span, and a time anywhere else on the line is words. The line says what
   a span stands for where it says a date word's date, `→ Mon 2026-10-12 18:00 – now`; the engine
-  words both, so that the faces keep no calendar of their own, and an open start is `…`.
+  words both, so that the faces keep no calendar of their own, and an open start is `…`. A `-`
+  starting a word and straight before a span, `-..`, `-/-mon..` or `-2026-10-01..2026-10-05`, holds
+  what the span holds and lists it newest first, and the line says the span from its newest end, the
+  end the list starts at, `→ now – Mon 2026-10-12 18:00`, `-..` as `→ now – …`. What follows the `-`
+  is read as if it started the word, so `-/-mon..` is `/-mon..` turned over, and Enter writes it out
+  with its dash, `-2026-10-12..`. A `-` before anything but a span is what it was: before a word or
+  a date word it is words, `-/-mon` among them, and before a date written out it is a word and the
+  date still a day, so `-2026-10-01` holds the 1st.
 - `~` as the first thing on the line makes its words letters, found in order in heads, as the
   original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there. They
   rank as fzf ranks: a letter at the start of a word earns more, twice as much for the first letter
@@ -659,18 +666,20 @@ A line with nothing to rank by lists exactly what holds what it holds, in the sp
 no reasons, as a place lists its facts on an empty line; a line that holds a span lists it in time
 order instead, oldest first, by the moment the span reads, when written or with `[x]` when done, so
 `..` lists every note in the order it was written and `[x] ..` every done task in the order it was
-done. At the top it is cut at the 500 rows the top of the space is cut at, a list of time keeping
-the newest 500 so that it still ends at now, and in a place it is not cut; `fzn query` is never
-cut. A single letter is not a word, so `#house a` lists what `#house`
-lists. With words as well, they rank among the notes that hold, by the scores, span or not. The note
-the line names has to hold it too. Inside a place, the line narrows the place's facts and its finds
-alike, and a line of labels in a place lists the facts that carry them. The rows of a line with
-nothing to rank by and no span are in the space's order, so they can be moved as the rows of an
-empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
-reads: quotes, `~` and spans stay as typed, date words are written out, after a span's dots too,
-and `/task` is written as the box at the start of the head, so that `Bleed the radiators /task`
-writes `[ ] Bleed the radiators`. A line of labels alone is the exception: it is the name of a
-place, and Enter goes into it as Tab does and writes nothing.
+done. With a `-` before a span, any span on the line, it is that list turned over, newest first,
+notes of one moment too, so `-..` is every note newest first and `[x] -/-mon.. #work` the week's
+done work last done first. At the top it is cut at the 500 rows the top of the space is cut at, a
+list of time keeping the newest 500 so that it still reaches now, at its end oldest first and at its
+top newest first, and in a place it is not cut; `fzn query` is never cut. A single letter is not a
+word, so `#house a` lists what `#house` lists. With words as well, they rank among the notes that
+hold, by the scores, span or not. The note the line names has to hold it too. Inside a place, the
+line narrows the place's facts and its finds alike, and a line of labels in a place lists the facts
+that carry them. The rows of a line with nothing to rank by and no span are in the space's order, so
+they can be moved as the rows of an empty line can; the rows of a line of time are not, and are not
+moved. Enter writes the line as it reads: quotes, `~` and spans stay as typed, date words are
+written out, after a span's dots too, and `/task` is written as the box at the start of the head, so
+that `Bleed the radiators /task` writes `[ ] Bleed the radiators`. A line of labels alone is the
+exception: it is the name of a place, and Enter goes into it as Tab does and writes nothing.
 Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
 asks for the done tasks.
 
@@ -2490,7 +2499,8 @@ the app now does is described above; an entry repeats it only where the reason n
   space is still cut at 500 rows in the app, and a list of time is cut from its old end, still
   listed oldest first, so that `..` in the app ends at now with the newest 500, where cutting the
   newest would leave a span to now without the week it was typed for; `fzn query` is not cut,
-  which is where a whole history is read.
+  which is where a whole history is read. Revised 2026-10-22 by "A dash before a span lists it
+  newest first": a span may be asked for newest first, and oldest first stays without the dash.
 
 - **A row's date is the day its note was written.** Decided 2026-10-17, agreed with Sam, revising
   the view under the engine's Session, where the note under the cursor came with when it last
@@ -3578,6 +3588,33 @@ the app now does is described above; an entry repeats it only where the reason n
   each step's search already, so a reloaded page steps back the same. Weighed: the whole line on the
   first step, which is what this revises, and which made the way back depend on how the way in was
   typed.
+
+- **A dash before a span lists it newest first.** Decided 2026-10-22, at Sam's ask, revising "Time
+  on the line is time order", where a line of time was listed oldest first only. Oldest first stays
+  right for a roundup copied out Monday to Friday, but what was written or done lately is read from
+  the top, and on a long span it was at the bottom: `..` put today under every note ever written. A
+  `-` starting a word and straight before a span, `-..`, `-/-mon..`, `[x] -/-mon.. #work`,
+  `-2026-10-01..2026-10-05`, holds exactly what the span without it holds and lists it newest first.
+  The `-` was kept free for this when `!` was chosen to leave notes out, in "`!` holds what is
+  without it", and a minus reads as the other way round, so there is little to learn. The list is
+  the oldest-first list turned over whole, notes of the same moment in the space's order reversed
+  with the rest, so that `-..` read from its bottom is `..`, rather than ties kept in the space's
+  order, which would make the two differ by more than direction. One dashed span turns the whole
+  line, since a line has one order, and with two spans the first measures it as before. What follows
+  the `-` is read as if it started the word, so a date word after it reads and `-/-mon..` is
+  `/-mon..` turned over, though `/-mon` has its own `-`; Enter writes the date word out after the
+  dash, as it would without it, so the note says `-2026-10-12..` and Tab from such a line onto it
+  reads it as the search it was. The cut is the same 500 newest notes, which listed newest first
+  fall at the top, so the cut is at the list's end. The line says a dashed span from its newest end,
+  `→ now – Mon 2026-10-12`, `-..` as `→ now – …`: the order the list reads in, with no words added.
+  So a stray dash shows what it did, and each dashed span's own words are right on a line that holds
+  another. Before anything but a span a `-` is what it was, since plenty of text starts with a
+  hyphen: `-boiler` and `-/-mon` alone are words, and `-2026-10-01` a word and a day. With words on
+  the line the scores order it, as before. `fzn query` reads the line as the app does, so it honours
+  the order. Weighed: a setting or a key to turn every line of time over, which is one more thing to
+  remember and hidden from the line; newest first for every span, which loses the roundup read
+  forwards; a `-` after the span, `..-`, which reads as a span's end; and `, newest first` said
+  after the span, which the faces' list of dates took for a date of its own.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
