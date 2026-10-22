@@ -43,6 +43,106 @@ fn a_tag_on_the_line_is_gone_into_and_lists_every_note_carrying_it() {
 }
 
 #[test]
+fn labels_gone_into_in_one_tab_step_back_as_if_each_had_been_typed_and_gone_into() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house #garden");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "#garden"]);
+    assert_eq!(s.line, "");
+    let kept = s.steps();
+
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(s.line, "#garden", "the search for that step alone");
+    clear(&mut s);
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    assert_eq!(s.line, "#house");
+
+    // The same as going in a label at a time.
+    clear(&mut s);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "#garden");
+    assert_eq!(s.steps(), kept);
+
+    // And so the same after a reload.
+    let mut again = session();
+    house(&mut again);
+    again.act(Action::Restore(kept));
+    again.act(Action::Back);
+    assert_eq!(
+        (path(&again), again.line.as_str()),
+        (vec!["#house"], "#garden")
+    );
+}
+
+#[test]
+fn a_label_put_back_on_the_way_out_is_as_it_is_written_and_reads_as_the_same_label() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house /task /fri");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "[ ]", "2026-10-16"]);
+
+    s.act(Action::Back);
+    assert_eq!(s.line, "2026-10-16", "a day word comes back as its day");
+    s.act(Action::GoIn);
+    assert_eq!(
+        path(&s),
+        ["#house", "[ ]", "2026-10-16"],
+        "and goes in again"
+    );
+
+    s.act(Action::Back);
+    clear(&mut s);
+    s.act(Action::Back);
+    assert_eq!(s.line, "[ ]", "the task word comes back as its box");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "[ ]"]);
+}
+
+#[test]
+fn a_label_typed_twice_is_one_place_and_gives_back_the_line_as_typed() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house #House");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house"]);
+    s.act(Action::Back);
+    assert_eq!(s.line, "#house #House");
+}
+
+#[test]
+fn a_label_only_gone_back_to_or_passed_over_puts_nothing_back() {
+    let mut s = session();
+    house(&mut s);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "/today");
+    type_in(&mut s, "#house @joe");
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "2026-10-13", "@joe"]);
+    s.act(Action::Back);
+    assert_eq!(s.line, "@joe", "not #house, which was passed over");
+
+    clear(&mut s);
+    go_to(&mut s, "boiler");
+    type_in(&mut s, "#house @joe");
+    s.act(Action::GoIn);
+    assert_eq!(
+        path(&s),
+        ["#house", "@joe"],
+        "#house before the note is gone back to"
+    );
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(s.line, "@joe");
+    clear(&mut s);
+    s.act(Action::Back);
+    assert_eq!(s.line, "#house", "what it was gone into with before");
+}
+
+#[test]
 fn typing_inside_a_tag_narrows_its_neighbourhood() {
     let mut s = session();
     house(&mut s);

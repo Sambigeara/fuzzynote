@@ -130,17 +130,18 @@ fn a_line_of_labels_is_gone_into_one_after_another() {
         "of several, a label the place has already is passed over"
     );
 
-    // Out a step at a time, each line coming back on the way out of the first place it
-    // went into.
+    // Out a step at a time, each label coming back as it is written on the way out of it, as if
+    // each had been typed and gone into alone; the one passed over puts nothing back.
     s.act(Action::Back);
     assert_eq!(path(&s), ["#house", "2026-10-13"]);
-    assert_eq!(s.line, "#house @joe");
+    assert_eq!(s.line, "@joe");
     clear(&mut s);
     s.act(Action::Back);
-    assert_eq!((path(&s), s.line.as_str()), (vec!["#house"], ""));
+    assert_eq!((path(&s), s.line.as_str()), (vec!["#house"], "2026-10-13"));
+    clear(&mut s);
     s.act(Action::Back);
     assert!(path(&s).is_empty());
-    assert_eq!(s.line, "#house /today");
+    assert_eq!(s.line, "#house");
 }
 
 #[test]

@@ -28,9 +28,9 @@
 //!
 //! A tag, a person or a day is a place too, gone into from the line when the line is labels and
 //! nothing else, each in turn, as a note is gone into from the line when the line is its name:
-//! either way the line was a search for the place, so it clears and comes back on the way out. A
-//! span is not a place, since a note written now could not be written in a span gone by. What is
-//! in a label is every note carrying it, in the space's order, and typing finds among those first
+//! either way the line was a search for the place, so it clears and comes back on the way out, of
+//! several labels each as it is written, as if gone into alone. A span is not a place, since a
+//! note written now could not be written in a span gone by. What is in a label is every note carrying it, in the space's order, and typing finds among those first
 //! and then among what the label's words find. A note written there ends its head with the
 //! label, as it would have been typed, so that it reads as one written with the label on the line
 //! always has. A new row opens with the label already in its head and the caret before it, so

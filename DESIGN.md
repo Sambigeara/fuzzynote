@@ -735,7 +735,12 @@ what their words find.
 Stepping back never throws away what you typed: a line written inside stays on the way out, and the
 search comes back only to an empty line. Esc with text on the line clears it, and only on an empty
 line steps back, so that inside a place "found it, clear, stay" is one key; the session offers
-`clear` as the way back while the line has text and `back` once it is empty.
+`clear` as the way back while the line has text and `back` once it is empty. A path steps back the
+same however it was made: each label gone into from a line of several comes back as if it had been
+gone into alone, as it is written. From `#house › #garden`, made by one Tab on
+`#house #garden`, Esc steps back to `#house` with `#garden` on the line, Esc clears it, and Esc
+again steps out with `#house` on the line. A label passed over or only gone back to puts nothing
+back.
 
 What you write inside is about the place. Inside a note it links to it and lands at the top of the
 place. Inside a label its head ends with the label, as it would have been typed, unless the note
@@ -1902,7 +1907,8 @@ the app now does is described above; an entry repeats it only where the reason n
   first place it went into. Passing over a label typed alone too, so that `#house` in
   `#house › today` did nothing, was tried the same day and dropped at Sam's direction: typing a
   label on the path is how he goes back to it. The key is Tab since 2026-10-16, from anywhere in the
-  line ("Tab goes in").
+  line ("Tab goes in"). Since 2026-10-22 each label gone into comes back as it is written instead
+  ("A path steps back the same however it was made").
 
 - **Export takes the line.** Decided 2026-10-15, agreed with Sam. `fzn export QUERY` writes the
   notes that line finds at the top of the space, every one of them and archived ones too, in the
@@ -3556,6 +3562,22 @@ the app now does is described above; an entry repeats it only where the reason n
   caret touches on arrival, the body's rule unamended, which moves text under a cursor that is only
   walking; and keeping the `…` until the head is written in, which wants a state of the row's own
   again for a mark the page draws on every other field as a fade.
+
+- **A path steps back the same however it was made.** Decided 2026-10-22, at Sam's ask, revising the
+  last rule of "The arrow at the end of a line of labels goes into each", where the line came back
+  on the way out of the first place it went into: `#house #garden` and Tab went into
+  `#house › #garden`, Esc stepped back to `#house` with an empty line, and Esc again to the top with
+  `#house #garden` put back. A path of several steps now steps back as if each had been gone into
+  alone, a label coming back as it is written: each label gone into is kept with itself as its
+  search, so from `#house › #garden` Esc steps back to `#house` with `#garden` on the line, Esc
+  clears it, and Esc again steps out with `#house` on the line. A label passed over because the
+  place has it already, or one that only goes back along the path, puts nothing back, since it added
+  no step. As written, a label reads as the same label, though not always as it was typed: `/fri`
+  comes back as `2026-10-16` and `/task` as `[ ]`. A line that names one place, however many times,
+  as `#house #House` does, still gives back the line as it was typed. The path a face keeps carries
+  each step's search already, so a reloaded page steps back the same. Weighed: the whole line on the
+  first step, which is what this revises, and which made the way back depend on how the way in was
+  typed.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
