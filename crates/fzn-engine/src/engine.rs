@@ -56,15 +56,16 @@ impl Default for SearchOptions {
 
 /// A place being looked around: the last note on the path, if there is one, and the labels
 /// gone into after it, which `written` is as they were typed. The labels before the note are
-/// only how it was reached, and are not here.
+/// written onto what is written there but narrow nothing, so they are not here: a note lists the
+/// same however it was reached.
 pub(crate) struct Place<'a> {
     pub note: Option<&'a str>,
     pub labels: &'a [Label],
     pub written: &'a str,
 }
 
-/// A place as the index has it: its note, the notes linking to it and those it links to, each
-/// sorted and without it, and its facts, sorted.
+/// A place as the index has it: its note, the notes linking to it and those it links to, one hop
+/// either way, each sorted and without it, and its facts, sorted.
 struct Ties {
     note: Option<DocId>,
     links_in: Vec<DocId>,
@@ -113,9 +114,9 @@ pub struct Hit<'a> {
     pub note: &'a Note,
     pub score: f32,
     pub reasons: Vec<Reason>,
-    /// Whether the note is a fact of the place being looked around: linked to or from its note
-    /// and carrying its labels. That is a fact, where the rest is a guess, and such notes are
-    /// returned whatever they score and whatever the limit.
+    /// Whether the note is a fact of the place being looked around: under its note at any depth
+    /// or linked from it, and carrying its labels. That is a fact, where the rest is a guess, and
+    /// such notes are returned whatever they score and whatever the limit.
     pub linked: bool,
     /// Whether the note's head is what was typed. Such notes come first, whatever they score
     /// and whatever the limit.
@@ -276,10 +277,10 @@ impl Engine {
                 found.partition_point(|&(s, l, _)| (Reverse(s), l) <= (Reverse(score), length));
             found.truncate(end);
         }
-        let reason = Reason {
-            scorer: Scorer::Letters,
-            text: query.free.split_whitespace().collect::<Vec<_>>().join(", "),
-        };
+        let reason = Reason::new(
+            Scorer::Letters,
+            query.free.split_whitespace().collect::<Vec<_>>().join(", "),
+        );
         found
             .into_iter()
             .filter_map(|(score, _, d)| {
@@ -413,17 +414,18 @@ impl Engine {
             .is_some_and(|doc| doc.lower.contains(&text::lowercase(typed)))
     }
 
-    /// A note's head and the notes that link to it.
+    /// A note's id and the notes that link to it.
     fn named(&self, d: DocId) -> Option<(&str, &[DocId])> {
         let doc = self.docs.get(d as usize)?.as_ref()?;
         let linked = self.index.docs_with(&Label::Link(doc.note.id.clone()));
-        Some((doc.note.head(), linked))
+        Some((doc.note.id.as_str(), linked))
     }
 
     /// The facts of a place that hold what the line holds, each with how it is linked to the
-    /// place's note when it has one: the notes linked to or from the note that carry every
-    /// label, or with no note the notes carrying them all. They are a set, worked out from the
-    /// links and the index and in no order; nothing is scored.
+    /// place's note when it is linked to it at all: the notes under the note at any depth and
+    /// those it links to that carry every label, or with no note the notes carrying them all.
+    /// One under it through another note is not linked to it, and says nothing. They are a set,
+    /// worked out from the links and the index and in no order; nothing is scored.
     pub(crate) fn facts(&self, place: &Place, query: &Query) -> Vec<(&Note, Option<&'static str>)> {
         let Some(ties) = self.ties(place) else {
             return Vec::new();
@@ -484,10 +486,7 @@ impl Engine {
             ties.links_out
                 .iter()
                 .filter_map(|&t| self.docs[t as usize].as_ref())
-                .map(|target| QueryLabel::LinksTo {
-                    id: target.note.id.clone(),
-                    head: target.note.head().to_owned(),
-                }),
+                .map(|target| QueryLabel::LinksTo(target.note.id.clone())),
         );
         let ctx = Context {
             terms: &terms,
@@ -503,9 +502,12 @@ impl Engine {
         self.run(&ctx, opts, &[], &ties.facts, &Held::default())
     }
 
-    /// A place as the index has it, or nothing if its note is gone. Its facts are the notes
-    /// linked either way that carry every label, the links alone with no labels, or the carriers
-    /// alone with no note.
+    /// A place as the index has it, or nothing if its note is gone. Its facts are the notes under
+    /// the note and those it links to that carry every label, those alone with no labels, or the
+    /// carriers alone with no note. Under it is every note linking to it, and every note linking
+    /// to one of those, however deep, walked through archived notes too, since what is under an
+    /// archived note is still under what that is under. A deleted note is not in the index, so
+    /// what was under it is under nothing it was.
     fn ties(&self, place: &Place) -> Option<Ties> {
         let carrying = place.labels.split_first().map(|(first, rest)| {
             let mut carrying = self.index.docs_with(first).to_vec();
@@ -537,7 +539,28 @@ impl Engine {
             docs.dedup();
             docs.retain(|&other| other != d);
         }
-        let mut facts: Vec<DocId> = links_in.iter().chain(&links_out).copied().collect();
+        // Breadth first from the notes linking to it, each note once, so that two notes linked
+        // both ways, or a ring of them, end the walk; the note itself is never under itself. What
+        // is found is its own queue: each note in it is walked in turn, what links to it added
+        // at the end.
+        let mut seen = vec![false; self.docs.len()];
+        for &x in links_in.iter().chain([&d]) {
+            seen[x as usize] = true;
+        }
+        let mut under = links_in.clone();
+        let mut next = 0;
+        while let Some(&above) = under.get(next) {
+            next += 1;
+            let Some(doc) = self.docs[above as usize].as_ref() else {
+                continue;
+            };
+            for &c in self.index.docs_with(&Label::Link(doc.note.id.clone())) {
+                if !std::mem::replace(&mut seen[c as usize], true) {
+                    under.push(c);
+                }
+            }
+        }
+        let mut facts: Vec<DocId> = under.into_iter().chain(links_out.iter().copied()).collect();
         facts.sort_unstable();
         facts.dedup();
         if let Some(carrying) = carrying {
@@ -671,23 +694,8 @@ impl Engine {
                     return None;
                 }
                 suggestions += usize::from(suggested);
-                if let Some(text) = link_reason(ctx.links_in, ctx.links_out, d) {
-                    reasons.insert(
-                        0,
-                        Reason {
-                            scorer: Scorer::Link,
-                            text: text.to_owned(),
-                        },
-                    );
-                }
                 if named(d) {
-                    reasons.insert(
-                        0,
-                        Reason {
-                            scorer: Scorer::Name,
-                            text: "its name".to_owned(),
-                        },
-                    );
+                    reasons.insert(0, Reason::new(Scorer::Name, "its name".to_owned()));
                 }
                 Some(Hit {
                     note: &doc.note,
@@ -885,10 +893,29 @@ mod tests {
         e.neighbourhood(&place, opts)
     }
 
-    fn has_reason(hit: &Hit, scorer: &str, contains: &str) -> bool {
+    /// The facts of a note and these labels after it, by id, with how each is linked, sorted.
+    fn facts_of<'a>(e: &'a Engine, id: &str, labels: &[Label]) -> Vec<(&'a str, Option<&'a str>)> {
+        let place = Place {
+            note: Some(id),
+            labels,
+            written: "",
+        };
+        let mut facts: Vec<(&str, Option<&str>)> = e
+            .facts(&place, &Query::default())
+            .into_iter()
+            .map(|(note, link)| (note.id.as_str(), link))
+            .collect();
+        facts.sort_unstable();
+        facts
+    }
+
+    /// Whether a hit has a reason of this scorer that says this, the notes it was found about
+    /// named by their heads.
+    fn has_reason(e: &Engine, hit: &Hit, scorer: &str, contains: &str) -> bool {
+        let name = |id: &str| e.get(id).map(|note| note.head().to_owned());
         hit.reasons
             .iter()
-            .any(|r| r.scorer.to_string() == scorer && r.text.contains(contains))
+            .any(|r| r.scorer.to_string() == scorer && r.read(name).contains(contains))
     }
 
     #[test]
@@ -904,7 +931,7 @@ mod tests {
         assert_eq!(ids(&hits)[0], "a");
         assert!(ids(&hits).contains(&"b") && ids(&hits).contains(&"c"));
         assert!(!ids(&hits).contains(&"e"));
-        assert!(has_reason(&hits[0], "words", "kettlebell"));
+        assert!(has_reason(&e, &hits[0], "words", "kettlebell"));
     }
 
     #[test]
@@ -912,7 +939,7 @@ mod tests {
         let e = engine(&[("a", "kettlebells log"), ("b", "shopping")]);
         let hits = search(&e, "kettlebels", &SearchOptions::default());
         assert_eq!(ids(&hits), ["a"]);
-        assert!(has_reason(&hits[0], "words", "kettlebels≈kettlebells"));
+        assert!(has_reason(&e, &hits[0], "words", "kettlebels≈kettlebells"));
     }
 
     #[test]
@@ -924,7 +951,10 @@ mod tests {
         ]);
         let hits = search(&e, "#errand", &SearchOptions::default());
         assert_eq!(ids(&hits).len(), 2);
-        assert!(hits.iter().all(|h| has_reason(h, "explicit", "#errand")));
+        assert!(
+            hits.iter()
+                .all(|h| has_reason(&e, h, "explicit", "#errand"))
+        );
         let hits = search(&e, "@Joe", &SearchOptions::default());
         assert_eq!(ids(&hits), ["c"]);
     }
@@ -1006,20 +1036,22 @@ mod tests {
             ["child", "profile", "sibling"],
             "linked notes are there whatever the limit, and share no words with the hub"
         );
+        let ties = facts_of(&e, "hub", &[]);
+        assert!(ties.contains(&("child", Some("links here"))));
+        assert!(ties.contains(&("profile", Some("linked from here"))));
         let around = near(&e, "hub", &SearchOptions::default());
         let hit = |id: &str| around.iter().find(|h| h.note.id.as_str() == id).unwrap();
-        assert!(has_reason(hit("child"), "link", "links here"));
-        assert!(has_reason(hit("profile"), "link", "linked from here"));
         assert!(!hit("near").linked, "shared words are a suggestion");
         assert!(around.iter().all(|h| h.note.id.as_str() != "far"));
 
-        // From a child, the hub is linked and the other child is a suggestion with its reason.
+        // From a child, the hub is linked and the other child is a suggestion.
         let around = near(&e, "child", &SearchOptions::default());
         assert_eq!(ids(&around), ["hub", "sibling"]);
         assert!(around[0].linked && !around[1].linked);
-        assert!(has_reason(&around[1], "explicit", "also links trainingapp"));
         assert!(
-            around.iter().all(|h| !has_reason(h, "explicit", "about ")),
+            around
+                .iter()
+                .all(|h| !has_reason(&e, h, "explicit", "about ")),
             "in a neighbourhood what is linked is listed already"
         );
 
@@ -1027,6 +1059,107 @@ mod tests {
         assert_eq!(linked(&e, "hub"), ["child", "profile", "sibling"]);
         e.upsert(Note::new("child", "some new note"));
         assert_eq!(linked(&e, "hub"), ["profile", "sibling"], "unlinked");
+    }
+
+    /// A boiler overhaul in House with a task under it, a task under that and a note under that
+    /// again, and a shed in a garden that has nothing to do with it.
+    fn overhaul() -> Engine {
+        let mut e = engine(&[("house", "House"), ("garden", "a garden")]);
+        e.upsert(linked_to("overhaul", "Boiler overhaul #house", "house"));
+        e.upsert(linked_to(
+            "bleed",
+            "[ ] Bleed the radiators #house",
+            "overhaul",
+        ));
+        e.upsert(linked_to("key", "[ ] Buy a radiator key #house", "bleed"));
+        e.upsert(linked_to("shop", "the shop on the corner", "key"));
+        e.upsert(linked_to("shed", "Shed", "garden"));
+        e
+    }
+
+    fn under<'a>(e: &'a Engine, id: &str, labels: &[Label]) -> Vec<&'a str> {
+        facts_of(e, id, labels)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    #[test]
+    fn a_place_lists_every_note_under_its_note_however_deep_and_what_it_links_to_one_hop() {
+        let e = overhaul();
+        assert_eq!(
+            facts_of(&e, "overhaul", &[]),
+            [
+                ("bleed", Some("links here")),
+                ("house", Some("linked from here")),
+                ("key", None),
+                ("shop", None),
+            ],
+            "a note under it through another says nothing of its own"
+        );
+        assert_eq!(
+            under(&e, "house", &[]),
+            ["bleed", "key", "overhaul", "shop"]
+        );
+        assert_eq!(under(&e, "key", &[]), ["bleed", "shop"]);
+    }
+
+    #[test]
+    fn two_notes_linked_both_ways_list_what_is_under_each_other_and_never_themselves() {
+        let mut e = overhaul();
+        e.upsert(linked_to("house", "House", "key"));
+        assert_eq!(
+            under(&e, "key", &[]),
+            ["bleed", "house", "overhaul", "shop"]
+        );
+        assert_eq!(
+            under(&e, "house", &[]),
+            ["bleed", "key", "overhaul", "shop"]
+        );
+        assert_eq!(
+            under(&e, "overhaul", &[]),
+            ["bleed", "house", "key", "shop"]
+        );
+    }
+
+    #[test]
+    fn what_is_under_an_archived_note_is_still_under_what_that_is_under() {
+        let mut e = overhaul();
+        let mut bleed = linked_to("bleed", "[x] Bleed the radiators #house", "overhaul");
+        bleed.archived = true;
+        e.upsert(bleed);
+        assert_eq!(
+            under(&e, "overhaul", &[]),
+            ["bleed", "house", "key", "shop"]
+        );
+    }
+
+    #[test]
+    fn what_is_under_a_deleted_note_is_no_longer_under_what_that_was_under() {
+        let mut e = overhaul();
+        e.remove("bleed");
+        assert_eq!(under(&e, "overhaul", &[]), ["house"]);
+        assert_eq!(under(&e, "key", &[]), ["shop"]);
+        e.upsert(linked_to(
+            "bleed",
+            "[ ] Bleed the radiators #house",
+            "overhaul",
+        ));
+        assert_eq!(
+            under(&e, "overhaul", &[]),
+            ["bleed", "house", "key", "shop"]
+        );
+    }
+
+    #[test]
+    fn the_labels_after_a_note_narrow_what_is_under_it_at_every_depth() {
+        let e = overhaul();
+        let house = || Label::Tag("house".into());
+        assert_eq!(under(&e, "overhaul", &[house()]), ["bleed", "key"]);
+        assert_eq!(
+            under(&e, "house", &[house(), Label::Open]),
+            ["bleed", "key"]
+        );
     }
 
     #[test]
@@ -1048,14 +1181,15 @@ mod tests {
         all.sort_unstable();
         assert_eq!(all, ["boiler", "pressure", "quote", "says"]);
         let hit = |id: &str| found.iter().find(|h| h.note.id.as_str() == id).unwrap();
-        assert!(has_reason(hit("pressure"), "explicit", "about Boiler"));
-        assert!(has_reason(hit("boiler"), "explicit", "in head: boiler"));
-        assert!(!has_reason(hit("says"), "explicit", "about"));
+        assert!(has_reason(&e, hit("pressure"), "explicit", "about Boiler"));
+        assert!(has_reason(&e, hit("boiler"), "explicit", "in head: boiler"));
+        assert!(!has_reason(&e, hit("says"), "explicit", "about"));
 
         // A word of the note and the name of what it is about find it together.
         let found = search(&e, "boiler quoted ", &opts);
         assert_eq!(found[0].note.id.as_str(), "quote");
         assert!(has_reason(
+            &e,
             &found[0],
             "explicit",
             "in head: quoted, about Boiler"
@@ -1088,7 +1222,7 @@ mod tests {
         let named = |typed: &str| -> Vec<String> {
             search(&e, typed, &opts)
                 .iter()
-                .filter(|h| has_reason(h, "name", "its name"))
+                .filter(|h| has_reason(&e, h, "name", "its name"))
                 .map(|h| h.note.id.to_string())
                 .collect()
         };
@@ -1130,7 +1264,7 @@ mod tests {
 
         // A neighbourhood has no name in it to go first.
         let around = near(&e, "a", &opts);
-        assert!(around.iter().all(|h| !has_reason(h, "name", "")));
+        assert!(around.iter().all(|h| !has_reason(&e, h, "name", "")));
     }
 
     #[test]
@@ -1316,6 +1450,7 @@ mod tests {
         let hits = search(&e, "horticultural trials", &SearchOptions::default());
         assert_eq!(ids(&hits)[0], "page");
         assert!(has_reason(
+            &e,
             &hits[0],
             "explicit",
             "in head: horticultural, trials"
@@ -1333,11 +1468,11 @@ mod tests {
         let hits = search(&e, "event publicatio", &SearchOptions::default());
         assert_eq!(ids(&hits)[0], "page");
         assert!(
-            has_reason(&hits[0], "explicit", "in head: event, publication"),
+            has_reason(&e, &hits[0], "explicit", "in head: event, publication"),
             "{:?}",
             hits[0].reasons
         );
-        assert!(has_reason(&hits[0], "words", "publication"));
+        assert!(has_reason(&e, &hits[0], "words", "publication"));
         let hits = search(&e, "kettl", &SearchOptions::default());
         assert_eq!(ids(&hits), ["kb"]);
         assert!(
@@ -1365,7 +1500,7 @@ mod tests {
         assert_eq!(ids(&hits).len(), 2, "the numbers in a date are not words");
         assert!(
             hits.iter()
-                .all(|h| has_reason(h, "time", "same date 2026-09-05"))
+                .all(|h| has_reason(&e, h, "time", "same date 2026-09-05"))
         );
     }
 
@@ -1391,7 +1526,7 @@ mod tests {
             },
         );
         assert_eq!(ids(&hits), ["new", "old"]);
-        assert!(has_reason(&hits[0], "time", "a day apart"));
+        assert!(has_reason(&e, &hits[0], "time", "a day apart"));
     }
 
     #[test]

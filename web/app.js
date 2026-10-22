@@ -662,8 +662,6 @@ const named = (action) => (typeof action === 'string' ? action : Object.keys(act
 // Whether the engine offers this action where the cursor is, which is when the page may ask for it.
 const offered = (name) => view.hints.some((hint) => named(hint.action) === name);
 
-const narrow = window.matchMedia('(max-width: 640px)');
-narrow.addEventListener('change', () => view && paintSoon());
 // A touch screen: a coarse pointer and nothing to hover with. A field with the focus there is a
 // keyboard up.
 const coarse = window.matchMedia('(hover: none) and (pointer: coarse)');
@@ -806,7 +804,7 @@ const headOf = (text) => {
   return at < 0 ? text : text.slice(0, at);
 };
 
-// The place's labels a row reads without, as the engine says: what its head says past what it
+// The path's labels a row reads without, as the engine says: what its head says past what it
 // shows. The head of the row under the cursor reads without them too, until the caret goes into
 // them (see the editor's openHead).
 const hiddenOf = (row) =>
@@ -1110,7 +1108,7 @@ function fill(li, row, selected) {
   const field = selected ? view.field : null;
   const main = el('div', 'main');
   if (view.scores_shown && row.score != null) main.append(el('span', 'score', row.score.toFixed(2)));
-  // Off the cursor a row reads as the engine shows it, without the place's labels at its end. On
+  // Off the cursor a row reads as the engine shows it, without the path's labels at its end. On
   // it the head is the editor's, held in a frame of its own, which reads it the same way.
   if (field && !field.whole) {
     const edit = el('div', 'edit');
@@ -1469,15 +1467,14 @@ function paintPath() {
   // to the top: where you are is inside the space, and the app's name says nothing about that. A
   // note's step reads as its row does, its marks rendered and its heading's mark dropped, and a
   // link in it reads as its text, since a step is a button and a link inside one would be a second
-  // thing to press. On a narrow screen a long path gives up its middle.
-  set(path, JSON.stringify([view.path, narrow.matches]), () => {
+  // thing to press. Every step is shown while they fit (see fitPath).
+  const made = set(path, JSON.stringify(view.path), () => {
     const steps = [space, ...view.path];
     const parts = [];
     steps.forEach((head, depth) => {
-      const middle = narrow.matches && steps.length > 3 && depth > 0 && depth < steps.length - 1;
-      if (depth > 0) parts.push(el('span', middle ? 'gone' : null, '›'));
-      if (middle && depth === 1) parts.push(el('span', null, '…'));
-      const step = el('button', middle ? 'gone' : null);
+      if (depth > 0) parts.push(el('span', null, '›'));
+      if (depth === 1) parts.push(el('span', 'gone', '…'), el('span', 'gone', '›'));
+      const step = el('button');
       step.append(depth > 0 ? readStep(head) : head);
       step.type = 'button';
       step.dataset.depth = depth;
@@ -1486,7 +1483,45 @@ function paintPath() {
     });
     return parts;
   });
+  if (made) fitPath();
 }
+
+// No step is wider than 22rem, a longer one cut at that. A path too long for its box gives up
+// its middle, the oldest step after the space first, into one `…`, as the terminal's does; what
+// still does not fit, the space and the last step share the cut of. Since a note written here
+// carries every label on the path, a step is hidden only when there is no room for it.
+function fitPath() {
+  const path = $('path');
+  if (path.hidden) return;
+  const parts = [...path.children];
+  const steps = parts.filter((part) => part.dataset.depth > 0);
+  const middle = steps.slice(0, -1).map((step) => [step, step.nextElementSibling]);
+  const ellipsis = parts.slice(2, 4);
+  const ends = [parts[0], steps.at(-1)];
+  for (const part of parts) part.classList.remove('gone');
+  for (const end of ends) end.style.maxWidth = '';
+  ellipsis.forEach((part) => part.classList.add('gone'));
+  // Measured with no step shrinking, which is what overflowing is.
+  path.classList.add('measure');
+  const over = () => path.scrollWidth > path.clientWidth;
+  for (let i = 0; i < middle.length && over(); i++) {
+    ellipsis.forEach((part) => part.classList.remove('gone'));
+    middle[i].forEach((part) => part.classList.add('gone'));
+  }
+  // What still does not fit, the space and the last step share as the terminal's do: the shorter
+  // keeps its width, up to half the room, and the longer has the rest, so that a long space name
+  // cannot squeeze where you are to nothing.
+  if (over()) {
+    const widths = ends.map((end) => end.getBoundingClientRect().width);
+    const room = Math.floor(path.clientWidth - (path.scrollWidth - widths[0] - widths[1]));
+    const short = widths[0] <= widths[1] ? 0 : 1;
+    const kept = Math.min(widths[short], Math.floor(room / 2));
+    ends[short].style.maxWidth = `${kept}px`;
+    ends[1 - short].style.maxWidth = `${Math.max(0, room - kept)}px`;
+  }
+  path.classList.remove('measure');
+}
+window.addEventListener('resize', () => view && fitPath());
 
 // A body read, beside the list or above the line, is painted when it has changed, and says
 // whether it had. A long one is rendered at first only as far as either shows, and whole once the
@@ -1534,7 +1569,7 @@ function paintPane() {
 }
 
 // The head as its row reads it, as it is typed: its box drawn while it begins with one, as the
-// engine reads a box, and a place's labels left off while they end it.
+// engine reads a box, and the path's labels left off while they end it.
 function paintPaneHead() {
   const field = view.field;
   const scroll = editor.scrollDOM;

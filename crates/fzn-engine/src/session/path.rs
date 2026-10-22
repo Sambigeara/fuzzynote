@@ -1,20 +1,21 @@
-//! The path: the places gone into, and what a note written in a place inherits from it. It is a
-//! part of its own because the place is what every list and every new note is relative to, and
-//! what it is, the last note on the path with the labels gone into after it, is best read in one
-//! place.
+//! The path: the places gone into, and what a note written at its end inherits from it. It is a
+//! part of its own because the path is what every list and every new note is relative to, and it
+//! is read two ways that are best kept side by side: a note written there inherits all of it, and
+//! the place it lists is only the last note on it with the labels gone into after it.
 
+use crate::engine;
 use crate::note::Note;
 use crate::query::{Label, Query};
 use crate::record::Record;
 use crate::text;
-use crate::time::Day;
+use crate::time::{Day, Moment};
 
 use super::{KeptStep, Session};
 
 /// A step of the path: what was gone into, a note or a label typed on the line, with the search
-/// it was found with. A note written in a place inherits it, as a link to the note or as the label
-/// at the end of its head. Labels gone into one after another are one place, with the last note
-/// before them if there is one, so a note written there inherits each of them: the last note on
+/// it was found with. A note written at the end of the path inherits every label on it, at the end
+/// of its head or the box at its start, and links to the last note on it. Labels gone into one
+/// after another are one place, with the last note before them if there is one: the last note on
 /// the path and the labels after it are the place looked around.
 ///
 /// `search` is the search the step was found with, put back on the way out if the line is empty
@@ -105,7 +106,7 @@ impl Step {
     }
 }
 
-/// Whether a word of a head, read as a label, is this one of the place's: `#house` or `#House`
+/// Whether a word of a head, read as a label, is this one of the path's: `#house` or `#House`
 /// for the tag, `@joe` for the person, `2026-10-16` for the day. The box is never at the end of a
 /// head.
 fn is_label(word: &text::Labelled, label: &Label) -> bool {
@@ -117,9 +118,9 @@ fn is_label(word: &text::Labelled, label: &Label) -> bool {
     }
 }
 
-/// A head as a row that is not under the cursor shows it in a place whose labels are these:
+/// A head as a row that is not under the cursor shows it on a path whose labels are these:
 /// with them taken off its end, in any order and any case, when they end it, whether the note
-/// has a body or not. The place already says them. The box at the start stays, since it says
+/// has a body or not. The path already says them. The box at the start stays, since it says
 /// what the row is; and a head of nothing but the labels, or the box and the labels, shows as it
 /// is, since a row of nothing says less than a row of its label, as does a heading mark with
 /// nothing after it. None when nothing is taken off.
@@ -127,8 +128,14 @@ pub(super) fn head_shown<'a>(
     head: &str,
     labels: impl Iterator<Item = &'a Label> + Clone,
 ) -> Option<String> {
+    head_without(head, |word| labels.clone().any(|l| is_label(word, l)))
+}
+
+/// A head with the labels that end it taken off while `said` says each is said already, by the
+/// rules of [`head_shown`].
+fn head_without(head: &str, said: impl Fn(&text::Labelled) -> bool) -> Option<String> {
     let rest = text::without_end(head, |word| {
-        text::label_word(word).is_some_and(|word| labels.clone().any(|l| is_label(&word, l)))
+        text::label_word(word).is_some_and(|w| said(&w))
     });
     if rest.len() == head.trim_end().len() {
         return None;
@@ -280,14 +287,14 @@ impl Session {
 
     /// The notes the line names here, by the one rule the list and going in share, so that a
     /// row saying `its name` is always where Tab goes. A note named only without the labels
-    /// that end it is named here if its row reads so here: if it carries the place's labels.
+    /// that end it is named here if its row reads so here: if it carries the path's labels.
     pub(super) fn named_here(&self, query: &Query) -> Vec<&Note> {
         let archived = self.archived_listed(query);
         let (mut named, called) = self.engine.notes_named(query, archived);
         if called {
             named.retain(|note| {
                 let day = note.written().unwrap_or(Day::MIN);
-                self.labels_here()
+                self.path_labels()
                     .all(|(label, _)| label.carried_by(&note.text, day, query.every_task))
             });
         }
@@ -295,9 +302,35 @@ impl Session {
     }
 
     /// A head as a row that is not under the cursor shows it here, if that differs from the
-    /// head: with the place's labels taken off its end, by [`head_shown`].
+    /// head: with the path's labels taken off its end, by [`head_shown`].
     pub(super) fn shown(&self, head: &str) -> Option<String> {
-        head_shown(head, self.labels_here().map(|(label, _)| label))
+        head_shown(head, self.path_labels().map(|(label, _)| label))
+    }
+
+    /// A head as a row here reads it, which is how anything here names a note: its arrow, a
+    /// reason, a status.
+    pub(super) fn row_head(&self, head: &str) -> String {
+        self.shown(head).unwrap_or_else(|| head.to_owned())
+    }
+
+    /// The head of a note a row links to as the row's arrow reads it: as a row here reads it,
+    /// and without the labels that end the row's own head too, since the row says them.
+    pub(super) fn arrow(&self, own: &str, target: &str) -> String {
+        // The labels that end the row's own head, gathered as they are taken off it: what is
+        // left of the head is not wanted, only what was taken.
+        let mut ends = Vec::new();
+        text::without_end(own, |word| match text::label_word(word) {
+            Some(label) => {
+                ends.push(label);
+                true
+            }
+            None => false,
+        });
+        let path: Vec<&Label> = self.path_labels().map(|(label, _)| label).collect();
+        head_without(target, |word| {
+            ends.contains(word) || path.iter().any(|&label| is_label(word, label))
+        })
+        .unwrap_or_else(|| target.to_owned())
     }
 
     /// Goes back to where a face kept you: each step from the top, as going in from the line
@@ -336,11 +369,11 @@ impl Session {
     }
 
     /// What the path calls a note gone into from here: its head as its row reads where it was
-    /// gone into from, its heading mark and the place's labels at its end taken off.
+    /// gone into from, its heading mark and the path's labels at its end taken off.
     pub(super) fn step_name(&self, id: &str) -> Option<String> {
         let record = self.notes.get(id)?;
         let head = unmarked(record.head());
-        let labels = self.labels_here().map(|(label, _)| label);
+        let labels = self.path_labels().map(|(label, _)| label);
         Some(head_shown(head, labels).unwrap_or_else(|| head.to_owned()))
     }
 
@@ -350,9 +383,10 @@ impl Session {
         self.path.iter().rev().find_map(Step::note)
     }
 
-    /// The labels being looked around, as they were typed, outermost first: those gone into one
+    /// The labels the place narrows by, as they were typed, outermost first: those gone into one
     /// after another since the last note on the path, or since its start. They are one place
-    /// with that note. Labels before it are only how it was reached.
+    /// with that note. Labels before it narrow nothing, so a note lists the same however it was
+    /// reached.
     pub(super) fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> + Clone {
         let from = self
             .path
@@ -363,6 +397,30 @@ impl Session {
             Step::Label { label, written, .. } => Some((label, written.as_str())),
             Step::Note { .. } => None,
         })
+    }
+
+    /// The labels a note written here carries and a row here hides, as they were typed: every
+    /// label on the path, outermost first, before its last note and after. Of two boxes on it, the
+    /// one nearer the end is the path's, since a note has one box.
+    pub(super) fn path_labels(&self) -> impl Iterator<Item = (&Label, &str)> + Clone {
+        let boxed = |s: &Step| {
+            matches!(
+                s,
+                Step::Label {
+                    label: Label::Open | Label::Done,
+                    ..
+                }
+            )
+        };
+        let last_box = self.path.iter().rposition(boxed);
+        self.path
+            .iter()
+            .enumerate()
+            .filter_map(move |(at, s)| match s {
+                Step::Label { .. } if boxed(s) && Some(at) != last_box => None,
+                Step::Label { label, written, .. } => Some((label, written.as_str())),
+                Step::Note { .. } => None,
+            })
     }
 
     /// Steps back out to `depth` places on the path, onto the line, so that what is asked next is
@@ -398,13 +456,13 @@ impl Session {
             .position(|s| s.note().is_some_and(|id| self.notes.get(id).is_none()))
     }
 
-    /// A text with each label being looked around that it does not carry already written into
-    /// its head, as it would have been typed: the box at the start and the rest at the end, in the
-    /// order of the path. A day is carried by a note written on it, since that is its `created`.
-    /// A box the writer typed is theirs, whichever box the place has, so a text headed by one is
+    /// A text with each label on the path that it does not carry already written into its head,
+    /// as it would have been typed: the box at the start and the rest at the end, in the order of
+    /// the path. A day is carried by a note written on it, since that is its `created`.
+    /// A box the writer typed is theirs, whichever box the path has, so a text headed by one is
     /// given neither; a text with none carries no box, whatever is shown.
     pub(super) fn inherit(&self, text: String, written_on: Day) -> String {
-        self.labels_here().fold(text, |text, (label, written)| {
+        self.path_labels().fold(text, |text, (label, written)| {
             let boxed = matches!(label, Label::Open | Label::Done) && text::task(&text).is_some();
             if boxed || label.carried_by(&text, written_on, false) {
                 text
@@ -414,9 +472,11 @@ impl Session {
         })
     }
 
-    /// Links the note under the cursor to the one being looked around, or takes that link away.
-    /// It is a correction: what is written in a note's place is linked already, and outside one, or in
-    /// labels with no note before them, there is nothing to link to.
+    /// Links the note under the cursor to the one being looked around, or takes that link away,
+    /// and with it all that is under the note. It is a correction: what is written in a note's
+    /// place is linked already, and outside one, or in labels with no note before them, there is
+    /// nothing to link to. A note under the place through another note is in it already, and is
+    /// unlinked from that one, so nothing is written for it here.
     pub(super) fn link(&mut self) {
         let Some(around) = self.place_note().cloned() else {
             let written: Vec<&str> = self.labels_here().map(|(_, written)| written).collect();
@@ -441,7 +501,7 @@ impl Session {
             self.status = "a note does not link to itself".into();
             return;
         }
-        let head = text::fit(&row.head, 40);
+        let head = text::fit(&self.row_head(&row.head), 40);
         let (Some(note), Some(place)) = (
             self.notes.get(&id).cloned(),
             self.notes.get(&around).cloned(),
@@ -472,6 +532,9 @@ impl Session {
                 links: without(&place.links, &id),
                 ..place
             });
+        } else if let Some(above) = self.under_through(&id) {
+            self.status = format!("it is under {above}; unlink it there");
+            return;
         } else {
             let mut links = note.links.clone();
             links.push(around);
@@ -480,5 +543,60 @@ impl Session {
         }
         self.refresh(false);
         self.reselect(&id);
+        // Unlinked from the place's note, a note still under it through another stays listed,
+        // and says why.
+        if let Some(above) = self.under_through(&id) {
+            self.status.push_str(&format!(" · still under {above}"));
+        }
+    }
+
+    /// What a note is under the place through, named as its row's arrow names it, if it is in the
+    /// place now and not linked to the place's note either way: the first note it links to that
+    /// is under the place itself. It is asked of the notes as they are now and not of the note's
+    /// row, which holds still with the list, so that the foot and the link chord say what a list
+    /// made now would.
+    pub(super) fn under_through(&self, id: &str) -> Option<String> {
+        let around = self.place_note()?;
+        let note = self.notes.get(id)?;
+        let links = |from: &str, to: &str| {
+            self.notes
+                .get(from)
+                .is_some_and(|n| n.links.iter().any(|l| l == to))
+        };
+        if id == around || links(id, around) || links(around, id) {
+            return None;
+        }
+        // One walk, whatever the notes carry: it answers whether this note is under the place
+        // and which of what it links to is too. The place's labels are then asked of this note
+        // alone, as the list narrows by them.
+        let place = engine::Place {
+            note: Some(around),
+            labels: &[],
+            written: "",
+        };
+        let under = self.engine.facts(&place, &Query::default());
+        let day = note.created.map_or(Day::MIN, Moment::day);
+        let narrowed = self
+            .labels_here()
+            .all(|(label, _)| label.carried_by(&note.text, day, self.show_archived));
+        if !narrowed || !under.iter().any(|(fact, _)| fact.id == id) {
+            return None;
+        }
+        // A note the place's note only links to is not one it is under.
+        let above = note.links.iter().find(|&target| {
+            under
+                .iter()
+                .any(|(fact, how)| &fact.id == target && *how != Some("linked from here"))
+        })?;
+        let above = self.notes.get(above)?;
+        Some(text::fit(&self.arrow(note.head(), above.head()), 40))
+    }
+
+    /// The labels the place narrows by, as the index holds them, the open box as every task if
+    /// `every_task`.
+    pub(super) fn narrowing(&self, every_task: bool) -> Vec<crate::score::Label> {
+        self.labels_here()
+            .map(|(label, _)| label.indexed(every_task))
+            .collect()
     }
 }

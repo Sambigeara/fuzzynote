@@ -12,13 +12,14 @@
 //!
 //! Going into a note makes it the place, and the path grows by one step. A place is a set and is
 //! listed as the top of the space is: with nothing on the line, what is in it, which for a note is
-//! what is linked to or from it, in the order the space keeps; with something on the line, what
-//! that finds, the place's own notes first and then the rest of its neighbourhood, each best first
-//! with its reasons. Where you are is what you are talking about, so a note written there is linked
-//! to it. The line comes with you under one rule: if the note contains what was typed, or holds
-//! what the line holds and its head and the heads of the notes it links to have every word of it
-//! outside its phrases, that was a search, so the line clears, and coming back puts it on an
-//! empty line again; otherwise it was a draft, and it stays on the line to be written there.
+//! everything under it however deep and what it links to, in the order the space keeps; with
+//! something on the line, what that finds, the place's own notes first and then the rest of its
+//! neighbourhood, each best first with its reasons. Where you are is what you are talking about,
+//! so a note written there is linked to it. The line comes with you under one rule: if the note
+//! contains what was typed, or holds what the line holds and its head and the heads of the notes
+//! it links to have every word of it outside its phrases, that was a search, so the line clears,
+//! and coming back puts it on an empty line again; otherwise it was a draft, and it stays on the
+//! line to be written there.
 //! Stepping back never throws away what is on the line; clearing it is asked for apart, and
 //! offered as the way back while there is something on it. Going into a place already on the
 //! path goes back to it, so the path never repeats, and a note on the path that is deleted, here
@@ -37,18 +38,22 @@
 //! been typed, so that it reads as one written with the label on the line always has. A new row
 //! opens with the label already in its head and the caret before it, so that what the writer sees
 //! is what is written, and the note is in its place on every device from its first letter. Only a
-//! note written in the place inherits it. Since the place says its labels, a row there that is not
-//! under the cursor shows its head without them where they end it, when the note is a head only,
-//! and the path names a note as its row read where it was gone into from. A head is named without
-//! the labels that end it too, so the words a row reads go into it.
+//! note written there inherits, and it inherits the whole path. Since the path says its labels, a
+//! row there that is not under the cursor shows its head without them where they end it, and the
+//! path names a note as its row read where it was gone into from. A head is named without the
+//! labels that end it too, so the words a row reads go into it.
 //!
 //! Labels gone into one after another are one place, so that going into today from inside a
 //! tag is today's notes in that tag: what is in it is the notes carrying every one of them, and
 //! a note written there ends its head with each it does not carry already, in the order of the
 //! path. The place is the last note on the path, if there is one, together with the labels gone
 //! into after it, so that `Boiler › today` is Boiler's notes from today and a note written there
-//! links to Boiler and is of today. Labels before the last note are only how it was reached, and
-//! a note gone into starts a new place.
+//! links to Boiler and is of today. Where you are is the whole path, though, so a note written
+//! there carries every label on it, those before the last note too: one written in
+//! `#house › Boiler overhaul › [ ]`, and one written in that in turn, is an open task of the house
+//! under Boiler overhaul, and each step back along the path still lists it. Labels before the last
+//! note narrow nothing, so a note lists the same however it was reached, but for the done tasks:
+//! what is written among them is done, so what is done is listed.
 //!
 //! A task is a note whose head starts with a box, `[ ]` while it is open and `[x]` once it is
 //! done. Each box is a label too, of the open tasks or the done ones, gone into as a tag is, and a
@@ -200,8 +205,9 @@ pub enum Action {
     /// onto the line: Backspace at the start of an empty row, which takes the row away as it
     /// would an empty line. A note with a body stays.
     Erase,
-    /// Link the note under the cursor to the one being looked around, or take that link away.
-    /// In labels with no note before them there is nothing to link to.
+    /// Link the note under the cursor to the one being looked around, or take that link away,
+    /// and with it all that is under the note. In labels with no note before them there is
+    /// nothing to link to, and a note under the place through another note is unlinked there.
     Link,
     /// Copy the first URL in the note under the cursor, or its head.
     Copy,
@@ -308,10 +314,11 @@ pub enum Effect {
 /// Where the session put the caret, in characters, when it and not the person's typing changed
 /// what the caret is in: the line it changed, at the end, or after a word taken from what was
 /// offered, wherever that was in the line or the head; a head the cursor landed on, one the
-/// session changed under it, or one whose body opened or closed, at the end of the head, or in a
-/// new note with only its labels where they leave room. Typing never moves it, so where this says
-/// nothing a face keeps its caret where it was, as far as the text still reaches. An open body's
-/// caret is its editor's, so a body that stays open is not said.
+/// session changed under it, or one whose body opened or closed, at the end of the head, before
+/// the path's labels where they end it and the body is closed, or in a new note with only its
+/// labels where they leave room. Typing never moves it, so where this says nothing a face keeps
+/// its caret where it was, as far as the text still reaches. An open body's caret is its editor's,
+/// so a body that stays open is not said.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Caret {
     pub line: Option<usize>,
@@ -356,10 +363,9 @@ pub struct Row {
     pub id: String,
     pub head: String,
     /// The head as the row shows it when the cursor is not on it, where that differs from the
-    /// head: in a place, with the place's labels taken off its end, when the note is a head only
-    /// and they end it. None when it reads as it is. In the terminal the row under the cursor
-    /// shows its text as it is, whatever this says; the page's reads without them until its caret
-    /// goes into them.
+    /// head: in a place, with the path's labels taken off its end, when they end it. None when it
+    /// reads as it is. In the terminal the row under the cursor shows its text as it is, whatever
+    /// this says; the page's reads without them until its caret goes into them.
     pub shown: Option<String>,
     /// Whether the note is a task, and if it is, whether its box is ticked. A task's head starts
     /// with its box, `[ ]` or `[x]`, so a face that draws the box takes the head's first three
@@ -368,12 +374,13 @@ pub struct Row {
     pub archived: bool,
     /// Whether there is more to read than the head.
     pub has_body: bool,
-    /// Whether the note is a fact of the place being looked around: linked to or from its note
-    /// and carrying its labels. With nothing on the line a place lists only its facts; with
-    /// something on it they come before what is only found there.
+    /// Whether the note is a fact of the place being looked around: under its note at any depth
+    /// or linked from it, and carrying its labels. With nothing on the line a place lists only its
+    /// facts; with something on it they come before what is only found there.
     pub linked: bool,
-    /// The heads, as they are now, of the notes this one is linked to by id. The note being
-    /// looked around is left out, since everything on the list is about it.
+    /// The heads, as they are now and as a row here shows them, of the notes this one is linked
+    /// to by id. The note being looked around is left out, since everything on the list is about
+    /// it, so a row under it through another note says which.
     pub links: Vec<String>,
     /// Why the note is listed.
     pub reasons: Vec<String>,
@@ -634,7 +641,7 @@ impl Session {
                 }
                 _ => true,
             };
-            moved.then(|| field.home())
+            moved.then(|| self.home(field))
         });
         Caret {
             line: (self.line != was.line).then(|| self.line.chars().count()),
@@ -726,6 +733,9 @@ impl Session {
         // field, if its head has not been changed here.
         if self.cursor.is_some() {
             self.stale = true;
+            for id in &changed {
+                self.redraw_arrows(id);
+            }
             self.follow(&changed);
             self.land();
         } else {
@@ -866,13 +876,16 @@ impl Session {
                 if !blank {
                     offer(Action::GoIn, "go in");
                     // Labels alone have nothing to link to: what is written there carries them.
-                    // Nor has the place's own note, listed when the line names it.
+                    // Nor has the place's own note, listed when the line names it. A row under
+                    // the place through another note is in it already, and is unlinked there.
                     if let Some(around) = self.place_note().filter(|&around| *around != row.id) {
                         let holds = |from: &String, to: &String| {
                             self.notes.get(from).is_some_and(|n| n.links.contains(to))
                         };
                         let linked = holds(&row.id, around) || holds(around, &row.id);
-                        offer(Action::Link, if linked { "unlink" } else { "link" });
+                        if linked || self.under_through(&row.id).is_none() {
+                            offer(Action::Link, if linked { "unlink" } else { "link" });
+                        }
                     }
                     // A task is ticked by archiving it, and says so.
                     offer(

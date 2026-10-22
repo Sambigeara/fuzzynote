@@ -8,11 +8,12 @@
 //! The cursor is on the line or on a row. On the line, typing finds, Enter writes the line and goes
 //! to the note it wrote or, with nothing on it, opens a new row at the top to write in, or, on a
 //! line of labels alone, goes into them as Tab does; and Down moves onto the list. On a row, its
-//! head is the field: the caret lands where the device puts it, at its end or, in a new row that
-//! opens with the labels of the place, before them and after a task's box, and typing changes it
-//! and is written at once, as it was in fzn, with its date words written out when the arrows up and
-//! down, or Escape, leave it, or Enter, which writes them out and stays. Otherwise Enter opens a
-//! new note under it, so that a run of notes is Enter and typing; a new note left empty goes.
+//! head is the field: the caret lands where the device puts it, at its end, before the path's
+//! labels where they end it, or, in a new row that opens with the labels of the path, before them
+//! and after a task's box, and typing changes it and is written at once, as it was in fzn, with its
+//! date words written out when the arrows up and down, or Escape, leave it, or Enter, which writes
+//! them out and stays. Otherwise Enter opens a new note under it, so that a run of notes is Enter
+//! and typing; a new note left empty goes.
 //! Ctrl-O hands the note to your editor, which is where a body is written, and on the line the note
 //! you are in. Tab goes in, wherever the caret is: on a row into its note, and on the line into the
 //! tag, person, day, box or note the line names. Right and Left are the caret's and nothing else. A
@@ -742,15 +743,27 @@ fn stop_telling_keys_apart() -> std::io::Result<()> {
 }
 
 /// Where you are: the space, then each place gone into, outermost first, in at most `max`
-/// columns. Past three steps the middle ones give way to `…`. The space is a step like the
-/// others, so that a long name cannot crowd out the place: every step gets an equal share of the
-/// room, and what a short step does not use goes to the longer ones.
+/// columns. Every step is shown while the whole path fits, since a note written here carries
+/// every label on it. Past that the middle gives way to one `…`, the oldest step after the space
+/// first, as on the page, so that the space and where you are stay. What still does not fit is
+/// cut, the space being a step like the others, so that a long name cannot crowd out the place:
+/// every step gets an equal share of the room, and what a short step does not use goes to the
+/// longer ones.
 fn breadcrumb(space: &str, heads: &[&str], max: usize) -> String {
-    let mut steps: Vec<&str> = match heads {
-        [first, .., before, last] if heads.len() > 3 => vec![first, "…", before, last],
-        _ => heads.to_vec(),
+    let wide = |steps: &[&str]| -> usize {
+        2 + 3 * (steps.len() - 1) + steps.iter().map(|s| s.width()).sum::<usize>()
     };
-    steps.insert(0, space);
+    let mut steps: Vec<&str> = std::iter::once(space)
+        .chain(heads.iter().copied())
+        .collect();
+    let mut gone = 0;
+    while wide(&steps) > max && gone + 1 < heads.len() {
+        gone += 1;
+        steps = [space, "…"]
+            .into_iter()
+            .chain(heads[gone..].iter().copied())
+            .collect();
+    }
     let mut room = max.saturating_sub(2 + 3 * (steps.len() - 1));
     let mut widths = vec![0; steps.len()];
     let mut order: Vec<usize> = (0..steps.len()).collect();
@@ -4659,12 +4672,27 @@ mod tests {
         let crumb = breadcrumb("garden", &["trainingapp", long], 70);
         assert_eq!(crumb.chars().count(), 70);
         assert!(
-            crumb.starts_with(" garden › trainingapp › a very long") && crumb.ends_with("… "),
-            "a short head keeps its length and the long one takes what is left: {crumb}"
+            crumb.starts_with(" garden › … › a very long") && crumb.ends_with("… "),
+            "the middle gives way before the last step is cut: {crumb}"
         );
         assert_eq!(
             breadcrumb("main", &["one", "two", "three", "four", "five"], 70),
-            " main › one › … › four › five "
+            " main › one › two › three › four › five ",
+            "every step while they fit"
+        );
+        let path = ["#work", "#review", "[ ]", "[ ] Fix the fence"];
+        assert_eq!(
+            breadcrumb("main", &path, 50),
+            " main › #work › #review › [ ] › [ ] Fix the fence "
+        );
+        assert_eq!(
+            breadcrumb("main", &path, 49),
+            " main › … › #review › [ ] › [ ] Fix the fence ",
+            "the oldest step after the space goes first"
+        );
+        assert_eq!(
+            breadcrumb("main", &path, 40),
+            " main › … › [ ] › [ ] Fix the fence "
         );
         let crumb = breadcrumb("a-garden-space-with-a-long-name", &["Boiler"], 24);
         assert_eq!(

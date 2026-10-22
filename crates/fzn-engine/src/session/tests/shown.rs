@@ -1,4 +1,5 @@
-//! A row in a place shows its head without the place's labels at its end.
+//! A row in a place shows its head without the path's labels at its end, from before the last
+//! note on the path and after it.
 
 use super::*;
 
@@ -99,25 +100,70 @@ fn at_the_top_and_with_a_label_only_typed_nothing_is_hidden() {
 }
 
 #[test]
-fn labels_before_the_note_on_the_path_still_show_and_the_path_reads_as_the_row_did() {
+fn every_label_on_the_path_is_hidden_from_a_row_its_arrow_and_the_path() {
     let mut s = session();
     put(&mut s, "boiler", "# Boiler #house", &[], 1_000);
-    put(&mut s, "pump", "Pump #house", &["boiler"], 2_000);
+    put(&mut s, "pump", "[ ] Pump #house", &["boiler"], 2_000);
+    put(&mut s, "seal", "[ ] New seal #house", &["pump"], 3_000);
     go_to(&mut s, "#house");
     assert_eq!(shown(&s, "# Boiler #house"), Some("# Boiler"));
     go_into(&mut s, "# Boiler #house");
     // The heading mark goes too, as a rendered heading reads.
     assert_eq!(path(&s), ["#house", "Boiler"]);
-    assert_eq!(shown(&s, "Pump #house"), None);
+    assert_eq!(shown(&s, "[ ] Pump #house"), Some("[ ] Pump"));
+    let seal = s.rows.iter().find(|r| r.id == "seal").unwrap();
+    assert_eq!(seal.shown.as_deref(), Some("[ ] New seal"));
+    assert_eq!(seal.links, ["[ ] Pump"], "the arrow, its box kept");
+    go_to(&mut s, "[ ]");
+    go_into(&mut s, "[ ] Pump #house");
+    assert_eq!(path(&s), ["#house", "Boiler", "[ ]", "[ ] Pump"]);
+    assert_eq!(shown(&s, "[ ] New seal #house"), Some("[ ] New seal"));
 
     // Named from the line, a note is named on the path as its row reads in the place too.
+    go_to(&mut s, "#house");
+    assert_eq!(path(&s), ["#house"], "back to it");
+    go_to(&mut s, "pump");
+    assert_eq!(path(&s), ["#house", "[ ] Pump"]);
+
+    // At the top nothing is on the path, and an arrow leaves off only what its row's own head
+    // ends with, since the row says that.
     s.act(Action::Back);
     s.act(Action::Back);
     clear(&mut s);
+    assert!(path(&s).is_empty());
+    let links = |s: &Session, id: &str| s.rows.iter().find(|r| r.id == id).unwrap().links.clone();
+    assert_eq!(links(&s, "seal"), ["[ ] Pump"]);
+    assert_eq!(links(&s, "pump"), ["# Boiler"]);
+    put(&mut s, "seal", "[ ] New seal @joe", &["pump"], 3_000);
+    assert_eq!(
+        links(&s, "seal"),
+        ["[ ] Pump #house"],
+        "its row does not say #house"
+    );
+}
+
+#[test]
+fn a_head_named_without_its_labels_in_a_note_is_named_only_if_it_carries_the_paths_labels() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler #house", &[], 1_000);
+    put(&mut s, "oil", "Order oil #house", &["boiler"], 2_000);
+    put(&mut s, "garden", "Order oil #garden", &["boiler"], 3_000);
     go_to(&mut s, "#house");
-    type_in(&mut s, "pump");
+    go_to(&mut s, "boiler");
+    assert_eq!(path(&s), ["#house", "Boiler"]);
+    assert_eq!(shown(&s, "Order oil #house"), Some("Order oil"));
+    assert_eq!(shown(&s, "Order oil #garden"), None);
+
+    type_in(&mut s, "order oil");
+    let named: Vec<&str> = s
+        .rows
+        .iter()
+        .filter(|r| r.reasons.first().is_some_and(|r| r == "its name"))
+        .map(|r| r.head.as_str())
+        .collect();
+    assert_eq!(named, ["Order oil #house"], "the row that reads so here");
     s.act(Action::GoIn);
-    assert_eq!(path(&s), ["#house", "Pump"]);
+    assert_eq!(path(&s), ["#house", "Boiler", "Order oil"]);
 }
 
 #[test]
@@ -234,7 +280,7 @@ fn in_a_place_the_list_says_its_name_only_where_tab_goes() {
     s.act(Action::GoIn);
     assert_eq!(path(&s), ["#house"]);
 
-    // Once a note carries the place's labels, it is listed first as named, and gone into.
+    // Once a note carries the path's labels, it is listed first as named, and gone into.
     put(&mut s, "house", "Order oil #house", &[], 2_000);
     clear(&mut s);
     type_in(&mut s, "order oil");

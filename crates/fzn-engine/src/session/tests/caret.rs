@@ -214,3 +214,47 @@ fn going_into_what_the_line_names_clears_it_with_the_caret_at_its_start() {
         }
     );
 }
+
+#[test]
+fn the_caret_lands_before_the_paths_labels_where_they_end_a_head() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    go_to(&mut s, "[ ]");
+    type_in(&mut s, "Drain the tank");
+    s.take_caret();
+    s.act(Action::Write);
+    assert_eq!(field(&s).unwrap().0, "[ ] Drain the tank #house");
+    assert_eq!(
+        s.take_caret().head,
+        Some("[ ] Drain the tank".len()),
+        "what is typed next goes before the tag, as the row reads"
+    );
+    edited(&mut s, "[ ] Drain the tank first #house");
+    s.act(Action::Select(None));
+
+    // Landing on a row puts it there too, and a label not on the path is the head's own.
+    put(
+        &mut s,
+        "flue",
+        "[ ] Check the flue #house @joe",
+        &["overhaul"],
+        2_000,
+    );
+    s.act(Action::Select(None));
+    s.take_caret();
+    select(&mut s, "[ ] Drain the tank first #house");
+    assert_eq!(s.take_caret(), head("[ ] Drain the tank first".len()));
+    select(&mut s, "[ ] Check the flue #house @joe");
+    assert_eq!(s.take_caret(), head("[ ] Check the flue #house @joe".len()));
+
+    // An open body shows its head whole, and the caret goes to its end.
+    select(&mut s, "[ ] Drain the tank first #house");
+    s.take_caret();
+    s.act(Action::Open);
+    assert_eq!(
+        s.take_caret(),
+        head("[ ] Drain the tank first #house".len())
+    );
+}

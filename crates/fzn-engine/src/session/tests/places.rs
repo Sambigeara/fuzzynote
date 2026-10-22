@@ -341,7 +341,7 @@ fn a_new_row_inside_a_tag_put_back_or_cleared_is_as_it_opened() {
 }
 
 #[test]
-fn inside_a_tag_and_then_a_note_a_new_note_links_to_the_note_and_gets_no_tag() {
+fn a_note_written_at_the_end_of_a_path_carries_every_label_on_it_and_links_to_its_last_note() {
     let mut s = session();
     house(&mut s);
     type_in(&mut s, "#house");
@@ -357,16 +357,34 @@ fn inside_a_tag_and_then_a_note_a_new_note_links_to_the_note_and_gets_no_tag() {
     s.act(Action::Write);
     let new = s.selected().unwrap().id.clone();
     let held = s.notes.get(&new).unwrap();
-    assert_eq!(held.text, "bleed the radiators");
+    assert_eq!(held.text, "bleed the radiators #house");
     assert_eq!(held.links, ["boiler"]);
 
     s.act(Action::Write);
-    edited(&mut s, "top up the pressure");
+    assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
+    edited(&mut s, "top up the pressure #house");
     let id = s.field.as_ref().unwrap().id.clone();
     s.act(Action::Select(None));
-    assert_eq!(s.notes.get(&id).unwrap().text, "top up the pressure");
+    assert_eq!(s.notes.get(&id).unwrap().text, "top up the pressure #house");
     assert_eq!(s.notes.get(&id).unwrap().links, ["boiler"]);
 
+    // Labels after the note and before it, in the order of the path, the box at the start.
+    go_to(&mut s, "[ ]");
+    assert_eq!(path(&s), ["#house", "Boiler", "[ ]"]);
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some(("[ ]  #house".to_owned(), true, false)));
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    clear(&mut s);
+    go_to(&mut s, "@joe");
+    type_in(&mut s, "Ring about the flue");
+    s.act(Action::Write);
+    let new = s.selected().unwrap().id.clone();
+    let held = s.notes.get(&new).unwrap();
+    assert_eq!(held.text, "Ring about the flue #house @joe");
+    assert_eq!(held.links, ["boiler"]);
+
+    s.act(Action::Back);
     s.act(Action::Back);
     assert_eq!(path(&s), ["#house"]);
     assert_eq!(s.line, "boil", "the search that found the note");
@@ -845,11 +863,12 @@ fn a_note_and_the_labels_gone_into_after_it_are_one_place() {
     assert_eq!(held.text, "Check the valve #house");
     assert_eq!(held.links, ["boiler"]);
 
-    // A note gone into from there starts a new place. The path names it as its row read there.
+    // A note gone into from there is a new place, and what is written in it still carries the
+    // tag. The path names it as its row read there.
     go_to(&mut s, "Pressure dropped #house");
     assert_eq!(path(&s), ["Boiler", "#house", "Pressure dropped"]);
     s.act(Action::Write);
-    assert_eq!(field(&s), Some((String::new(), true, false)));
+    assert_eq!(field(&s), Some((" #house".to_owned(), true, false)));
     assert_eq!(heads(&s)[1..], ["Boiler"]);
 }
 
@@ -885,7 +904,7 @@ fn the_note_of_a_place_with_labels_after_it_is_listed_when_named_and_gone_back_t
 }
 
 #[test]
-fn the_labels_before_a_note_are_only_how_it_was_reached() {
+fn a_note_lists_the_same_however_it_was_reached_and_writes_the_path_it_was_reached_by() {
     let mut s = session();
     boiler(&mut s);
     go_to(&mut s, "#house");
@@ -897,13 +916,17 @@ fn the_labels_before_a_note_are_only_how_it_was_reached() {
         "Boiler's notes, with the tag or without"
     );
     s.act(Action::Write);
-    assert_eq!(field(&s), Some((String::new(), true, false)), "no tag");
+    assert_eq!(
+        field(&s),
+        Some((" #house".to_owned(), true, false)),
+        "the tag it was reached by"
+    );
     s.act(Action::Select(None));
     type_in(&mut s, "Call the engineer");
     s.act(Action::Write);
     let new = s.selected().unwrap().id.clone();
     let held = s.notes.get(&new).unwrap();
-    assert_eq!(held.text, "Call the engineer");
+    assert_eq!(held.text, "Call the engineer #house");
     assert_eq!(held.links, ["boiler"]);
 
     // Today after the note is the place Boiler then today is.
@@ -916,7 +939,15 @@ fn the_labels_before_a_note_are_only_how_it_was_reached() {
     go_to(&mut s, "Boiler");
     go_to(&mut s, "/today");
     assert_eq!(heads(&s).join("|"), here);
-    assert_eq!(here, "Call the engineer|Pressure dropped #house");
+    assert_eq!(here, "Call the engineer #house|Pressure dropped #house");
+
+    // Reached without the tag, a note written there is written without it.
+    s.act(Action::Back);
+    clear(&mut s);
+    type_in(&mut s, "Ask about the warranty");
+    s.act(Action::Write);
+    let new = s.selected().unwrap().id.clone();
+    assert_eq!(s.notes.get(&new).unwrap().text, "Ask about the warranty");
 }
 
 #[test]
@@ -1288,4 +1319,363 @@ fn a_line_changed_after_a_step_out_put_it_back_is_kept_by_the_next() {
     s.act(Action::Back);
     assert!(path(&s).is_empty());
     assert_eq!(s.line, "#garden");
+}
+
+/// Each row as it reads off the cursor, with its arrow and what it says.
+fn read(s: &Session) -> Vec<(&str, Vec<&str>, Vec<&str>)> {
+    s.rows
+        .iter()
+        .map(|r| {
+            (
+                r.shown.as_deref().unwrap_or(&r.head),
+                r.links.iter().map(String::as_str).collect(),
+                r.reasons.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    put(&mut s, "oil", "Order oil #house", &[], 2_000);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    go_to(&mut s, "[ ]");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul", "[ ]"]);
+
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some(("[ ]  #house".to_owned(), true, false)));
+    edited(&mut s, "[ ] Bleed the radiators #house");
+    let bleed = s.field.as_ref().unwrap().id.clone();
+    s.act(Action::Select(None));
+    assert_eq!(s.notes.get(&bleed).unwrap().links, ["overhaul"]);
+
+    go_into(&mut s, "[ ] Bleed the radiators #house");
+    assert_eq!(
+        path(&s),
+        [
+            "#house",
+            "Boiler overhaul",
+            "[ ]",
+            "[ ] Bleed the radiators"
+        ]
+    );
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some(("[ ]  #house".to_owned(), true, false)));
+    edited(&mut s, "[ ] Buy a radiator key #house");
+    let key = s.field.as_ref().unwrap().id.clone();
+    s.act(Action::Select(None));
+    let held = s.notes.get(&key).unwrap();
+    assert_eq!(held.text, "[ ] Buy a radiator key #house");
+    assert_eq!(held.links, [bleed.as_str()]);
+
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house", "Boiler overhaul", "[ ]"]);
+    assert_eq!(s.line, "");
+    assert_eq!(
+        read(&s),
+        [
+            (
+                "[ ] Buy a radiator key",
+                vec!["[ ] Bleed the radiators"],
+                vec![]
+            ),
+            ("[ ] Bleed the radiators", vec![], vec!["links here"]),
+        ]
+    );
+
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(s.line, "[ ]");
+    clear(&mut s);
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Buy a radiator key #house",
+            "[ ] Bleed the radiators #house"
+        ]
+    );
+
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(s.line, "boiler overhaul");
+    clear(&mut s);
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Buy a radiator key #house",
+            "[ ] Bleed the radiators #house",
+            "Order oil #house",
+            "Boiler overhaul #house"
+        ],
+        "all three by their tag"
+    );
+}
+
+/// House, with a boiler overhaul in it, a task under the overhaul and a task under that, and a
+/// pressure gauge that is not in it.
+fn overhaul(s: &mut Session) {
+    put(s, "house", "House", &[], 1_000);
+    put(s, "overhaul", "Boiler overhaul", &["house"], 2_000);
+    put(s, "bleed", "[ ] Bleed the radiators", &["overhaul"], 3_000);
+    put(s, "key", "[ ] Buy a radiator key", &["bleed"], 4_000);
+    put(s, "gauge", "Pressure gauge", &[], 5_000);
+}
+
+#[test]
+fn unlinking_a_note_takes_what_is_under_it_out_of_the_place_with_it() {
+    let mut s = session();
+    overhaul(&mut s);
+    go_to(&mut s, "House");
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Buy a radiator key",
+            "[ ] Bleed the radiators",
+            "Boiler overhaul"
+        ]
+    );
+    select(&mut s, "Boiler overhaul");
+    assert!(labels(&s).contains(&"unlink"));
+    s.act(Action::Link);
+    assert!(s.notes.get("overhaul").unwrap().links.is_empty());
+    assert!(heads(&s).is_empty(), "and all that is under it");
+
+    type_in(&mut s, "boiler overhaul");
+    select(&mut s, "Boiler overhaul");
+    assert!(labels(&s).contains(&"link"));
+    s.act(Action::Link);
+    s.act(Action::Select(None));
+    clear(&mut s);
+    assert_eq!(heads(&s).len(), 3, "all of it back");
+}
+
+#[test]
+fn the_link_chord_offers_nothing_on_a_row_under_another_note_and_says_why() {
+    let mut s = session();
+    overhaul(&mut s);
+    go_to(&mut s, "House");
+    for typed in ["", "radiator key"] {
+        s.act(Action::Select(None));
+        clear(&mut s);
+        type_in(&mut s, typed);
+        select(&mut s, "[ ] Buy a radiator key");
+        assert!(!labels(&s).contains(&"link") && !labels(&s).contains(&"unlink"));
+        let undo = s.undo.len();
+        s.act(Action::Link);
+        assert_eq!(s.undo.len(), undo, "nothing was written");
+        assert_eq!(
+            s.status, "it is under [ ] Bleed the radiators; unlink it there",
+            "named, since a row under the cursor may not show its arrow"
+        );
+    }
+    s.act(Action::Select(None));
+    clear(&mut s);
+    select(&mut s, "Boiler overhaul");
+    assert!(labels(&s).contains(&"unlink"));
+}
+
+#[test]
+fn a_delete_in_the_middle_takes_what_was_under_it_where_it_stands_and_undo_puts_it_back() {
+    let mut s = session();
+    overhaul(&mut s);
+    put(&mut s, "porch", "Sweep the porch", &["house"], 6_000);
+    put(&mut s, "boots", "Boots by the door", &["porch"], 7_000);
+    go_to(&mut s, "House");
+    let all = heads(&s).join("|");
+    select(&mut s, "Boiler overhaul");
+    s.act(Action::Delete);
+    assert_eq!(
+        heads(&s),
+        ["Boots by the door", "Sweep the porch"],
+        "what was in the place only by being under it goes with it"
+    );
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Sweep the porch"),
+        "the cursor on the row that took the last one's place"
+    );
+    assert_eq!(s.notes.get("bleed").unwrap().links, ["overhaul"]);
+
+    s.act(Action::Undo);
+    s.act(Action::Select(None));
+    assert_eq!(heads(&s).join("|"), all, "undo puts the chain back");
+}
+
+#[test]
+fn an_arrow_is_drawn_again_when_the_note_it_names_changes() {
+    let mut s = session();
+    overhaul(&mut s);
+    go_to(&mut s, "Boiler overhaul");
+    let key = |s: &Session| s.rows.iter().find(|r| r.id == "key").unwrap().links.clone();
+    assert_eq!(key(&s), ["[ ] Bleed the radiators"]);
+    select(&mut s, "[ ] Bleed the radiators");
+    s.act(Action::Archive);
+    assert_eq!(
+        key(&s),
+        ["[x] Bleed the radiators"],
+        "ticked, with the cursor still on the list"
+    );
+
+    // A version from elsewhere is followed too.
+    s.absorb([theirs("bleed", "[x] Bleed every radiator", 60)]);
+    assert_eq!(key(&s), ["[x] Bleed every radiator"]);
+}
+
+#[test]
+fn a_note_gone_into_by_name_from_a_place_is_not_under_it_and_its_search_comes_back() {
+    let mut s = session();
+    overhaul(&mut s);
+    go_to(&mut s, "House");
+    go_to(&mut s, "pressure gauge");
+    assert_eq!(path(&s), ["House", "Pressure gauge"]);
+    type_in(&mut s, "Replace the dial");
+    s.act(Action::Write);
+    let dial = s.selected().unwrap().id.clone();
+    assert_eq!(s.notes.get(&dial).unwrap().links, ["gauge"]);
+
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    assert_eq!(s.line, "pressure gauge");
+    assert_eq!(heads(&s), ["Pressure gauge"]);
+    assert_eq!(linked(&s), [false], "found, and not in the place");
+    s.act(Action::GoIn);
+    assert_eq!(heads(&s), ["Replace the dial"], "where the search leads");
+
+    s.act(Action::Back);
+    clear(&mut s);
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Buy a radiator key",
+            "[ ] Bleed the radiators",
+            "Boiler overhaul"
+        ],
+        "neither is under House"
+    );
+}
+
+#[test]
+fn a_name_finds_one_hop_down_and_going_in_shows_every_depth() {
+    let mut s = session();
+    overhaul(&mut s);
+    type_in(&mut s, "boiler overhaul ");
+    assert_eq!(heads(&s), ["Boiler overhaul", "[ ] Bleed the radiators"]);
+    s.act(Action::GoIn);
+    assert_eq!(path(&s), ["Boiler overhaul"]);
+    assert_eq!(
+        read(&s),
+        [
+            (
+                "[ ] Buy a radiator key",
+                vec!["[ ] Bleed the radiators"],
+                vec![]
+            ),
+            ("[ ] Bleed the radiators", vec![], vec!["links here"]),
+            ("House", vec![], vec!["linked from here"]),
+        ]
+    );
+}
+
+#[test]
+fn the_link_chord_asks_of_the_notes_as_they_are_now_and_not_of_the_row() {
+    let mut s = session();
+    overhaul(&mut s);
+    go_to(&mut s, "House");
+    select(&mut s, "[ ] Buy a radiator key");
+    assert!(!labels(&s).contains(&"link"));
+
+    // Elsewhere the task it is under is taken out of the overhaul. Its row holds still, and is no
+    // longer in the place.
+    s.absorb([theirs("bleed", "[ ] Bleed the radiators", 60)]);
+    assert!(s.selected().is_some_and(|r| r.id == "key" && r.linked));
+    assert!(labels(&s).contains(&"link"), "{:?}", labels(&s));
+    s.act(Action::Link);
+    assert_eq!(s.notes.get("key").unwrap().links, ["bleed", "house"]);
+    assert_eq!(s.status, "linked [ ] Buy a radiator key");
+}
+
+#[test]
+fn unlinking_a_note_still_under_the_place_through_another_says_so() {
+    let mut s = session();
+    overhaul(&mut s);
+    put(
+        &mut s,
+        "key",
+        "[ ] Buy a radiator key",
+        &["bleed", "house"],
+        4_000,
+    );
+    go_to(&mut s, "House");
+    select(&mut s, "[ ] Buy a radiator key");
+    assert!(labels(&s).contains(&"unlink"));
+    s.act(Action::Link);
+    assert_eq!(s.notes.get("key").unwrap().links, ["bleed"]);
+    assert!(heads(&s).contains(&"[ ] Buy a radiator key"), "it stays");
+    assert_eq!(
+        s.status,
+        "unlinked [ ] Buy a radiator key · still under [ ] Bleed the radiators"
+    );
+}
+
+#[test]
+fn a_reason_and_a_status_name_a_note_as_its_row_reads() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    put(
+        &mut s,
+        "ring",
+        "Ring the engineer #house",
+        &["overhaul"],
+        2_000,
+    );
+    put(&mut s, "flue", "Check the flue #house", &["ring"], 3_000);
+
+    // At the top nothing is on the path, and a reason leaves off what the row's own head ends
+    // with, as its arrow does.
+    type_in(&mut s, "boiler overhaul ");
+    let ring = s.rows.iter().find(|r| r.id == "ring").unwrap();
+    assert_eq!(ring.links, ["Boiler overhaul"]);
+    assert!(
+        ring.reasons
+            .iter()
+            .any(|r| r.contains("about Boiler overhaul"))
+            && ring.reasons.iter().all(|r| !r.contains("#house")),
+        "{:?}",
+        ring.reasons
+    );
+    clear(&mut s);
+
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    type_in(&mut s, "engineer");
+    let flue = s.rows.iter().find(|r| r.id == "flue").unwrap();
+    assert!(
+        flue.reasons
+            .iter()
+            .any(|r| r.contains("about Ring the engineer"))
+            && flue.reasons.iter().all(|r| !r.contains("#house")),
+        "{:?}",
+        flue.reasons
+    );
+    clear(&mut s);
+    type_in(&mut s, "boiler overhaul ");
+    let ring = s.rows.iter().find(|r| r.id == "ring").unwrap();
+    assert!(
+        ring.reasons
+            .iter()
+            .any(|r| r.ends_with("about Boiler overhaul")),
+        "the place's own note, which has no arrow: {:?}",
+        ring.reasons
+    );
+
+    s.act(Action::Select(None));
+    clear(&mut s);
+    select(&mut s, "Ring the engineer #house");
+    s.act(Action::Link);
+    assert_eq!(s.status, "unlinked Ring the engineer");
+    s.act(Action::Undo);
+    assert_eq!(s.status, "undid: Ring the engineer");
 }

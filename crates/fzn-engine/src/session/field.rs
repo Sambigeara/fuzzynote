@@ -95,16 +95,6 @@ impl Writing {
             })
     }
 
-    /// Where the session puts the caret in the head: at its end, or in a new note with nothing in
-    /// it but its labels, where the writer's text goes.
-    pub(super) fn home(&self) -> usize {
-        if self.blank() {
-            self.start()
-        } else {
-            self.head().chars().count()
-        }
-    }
-
     /// The head, the text's first line.
     pub(super) fn head(&self) -> &str {
         self.text.lines().next().unwrap_or("")
@@ -492,6 +482,20 @@ impl Session {
         self.stale = true;
     }
 
+    /// Where the session puts the caret in the head of the note being written: in a new note
+    /// with nothing in it but its labels, where the writer's text goes, and otherwise at the end
+    /// of the head as its row reads, before the path's labels where they end it, so that what is
+    /// typed there goes before them, in the terminal as on the page. In an open body the head
+    /// shows whole, and the caret goes to its end.
+    pub(super) fn home(&self, field: &Writing) -> usize {
+        if field.blank() {
+            return field.start();
+        }
+        let head = field.head();
+        let shown = (!field.whole).then(|| self.shown(head)).flatten();
+        shown.as_deref().unwrap_or(head).chars().count()
+    }
+
     /// Keeps the field with the cursor: wherever the cursor has landed, the note under it is the
     /// field. A field for the note already under the cursor stays as it is, except that while it
     /// is unchanged in this visit a version of that note arrived from elsewhere shows in it. One
@@ -571,8 +575,8 @@ impl Session {
     }
 
     /// Opens a new note at this row of the list, with the cursor in it. It has its id from now,
-    /// and its time, and it is written at its first letter. Inside labels its head opens with
-    /// each of them, but for one the note carries already, as one written on the day it is does.
+    /// and its time, and it is written at its first letter. On a path its head opens with each
+    /// label on it, but for one the note carries already, as one written on the day it is does.
     pub(super) fn draft_at(&mut self, at: usize) {
         let id = self.host.new_id();
         let opened = self.host.now();
@@ -587,7 +591,7 @@ impl Session {
                 task: None,
                 archived: false,
                 has_body: false,
-                // Written here, it will be linked to the note being looked around, or carry the
+                // Written here, it will be linked to the last note on the path, and carry its
                 // labels.
                 linked: !self.path.is_empty(),
                 links: Vec::new(),

@@ -56,11 +56,8 @@ impl Label {
 pub(crate) enum QueryLabel {
     Tag(String),
     Mention(String),
-    /// Notes linked to the note with this id. The head says which one in the reason.
-    LinksTo {
-        id: String,
-        head: String,
-    },
+    /// Notes linked to the note with this id.
+    LinksTo(String),
     /// Notes with this word in their head.
     HeadTerm(String),
     /// Notes whose head has a word starting with this, the word still being typed.
@@ -111,17 +108,43 @@ impl Default for Weights {
 pub struct Reason {
     pub scorer: Scorer,
     pub text: String,
+    /// The notes it was found as written about, by id, named after the text as `about` and the
+    /// note's name. They are held by id and not by head because a note is named as whoever shows
+    /// it reads it, which the engine does not know: in a place, without the place's labels.
+    pub about: Vec<String>,
 }
 
-/// What gave a reason: a scorer, or a fact. `Link`, for a note linked to or from the one being
-/// looked around, and `Name`, for a note headed with what was typed, are facts and not scores.
+impl Reason {
+    /// A reason with nothing it was found about.
+    pub(crate) fn new(scorer: Scorer, text: String) -> Self {
+        Reason {
+            scorer,
+            text,
+            about: Vec::new(),
+        }
+    }
+
+    /// The reason as it reads, each note it was found about named by `name`, and left out where
+    /// that gives nothing, as for a note that has gone.
+    pub fn read(&self, name: impl Fn(&str) -> Option<String>) -> String {
+        let about = self.about.iter().filter_map(|id| name(id));
+        let text = (!self.text.is_empty()).then(|| self.text.clone());
+        text.into_iter()
+            .chain(about.map(|head| format!("about {head}")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// What gave a reason: a scorer, or a fact. `Name`, for a note headed with what was typed, is a
+/// fact and not a score. How a note is linked to the one being looked around is a fact too, and
+/// the place's facts say it without a scorer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scorer {
     Words,
     Explicit,
     Time,
     Letters,
-    Link,
     Name,
 }
 
@@ -133,7 +156,6 @@ impl std::fmt::Display for Scorer {
             Scorer::Explicit => "explicit",
             Scorer::Time => "time",
             Scorer::Letters => "letters",
-            Scorer::Link => "link",
             Scorer::Name => "name",
         })
     }
@@ -181,7 +203,7 @@ pub(crate) struct Context<'a> {
     pub named: Option<&'a Named<'a>>,
 }
 
-/// For a note, its head and the notes that link to it.
+/// For a note, its id and the notes that link to it.
 pub(crate) type Named<'a> = dyn Fn(DocId) -> Option<(&'a str, &'a [DocId])> + 'a;
 
 /// How many completions a prefix may expand to. Rare completions carry the most information,
@@ -302,15 +324,12 @@ pub(crate) fn lexical(index: &Index, ctx: &Context, w: &Weights, c: &mut Candida
         } else {
             names.join(", ")
         };
-        c.entry(doc).reasons.push(Reason {
-            scorer: Scorer::Words,
-            text,
-        });
+        c.entry(doc).reasons.push(Reason::new(Scorer::Words, text));
     }
 }
 
 fn add_explicit(
-    hits: &mut HashMap<DocId, (f32, Vec<String>)>,
+    hits: &mut ExplicitHits,
     exclude: Option<DocId>,
     docs: &[DocId],
     weight: f32,
@@ -320,18 +339,32 @@ fn add_explicit(
         if Some(d) == exclude {
             continue;
         }
-        let e = hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
-        e.0 += weight;
-        e.1.push(text.to_owned());
+        let e = hits.entry(d).or_default();
+        e.credit += weight;
+        e.texts.push(text.to_owned());
     }
 }
+
+/// What a note earned from the explicit scorer.
+#[derive(Default)]
+struct Explicit {
+    /// Its credit, before it is capped.
+    credit: f32,
+    /// What it was credited for, as its reason says it.
+    texts: Vec<String>,
+    /// The notes, by id, it was found as written about.
+    about: Vec<String>,
+}
+
+/// What each note earned from the explicit scorer.
+type ExplicitHits = HashMap<DocId, Explicit>;
 
 /// Where a query word was found for a note.
 #[derive(Clone, Copy)]
 enum InHead<'a> {
     /// In its own head: the word.
     Own(&'a str),
-    /// In the head of a note it links to: that head.
+    /// In the head of a note it links to: that note's id.
     Of(&'a str),
 }
 
@@ -354,10 +387,10 @@ fn offer_head<'a>(
     };
     for &d in index.docs_with(&Label::HeadTerm(word.to_owned())) {
         offer(d, weight, InHead::Own(word));
-        if let Some((head, linked)) = ctx.named.and_then(|named| named(d)) {
+        if let Some((id, linked)) = ctx.named.and_then(|named| named(d)) {
             for &other in linked {
                 if other != d {
-                    offer(other, weight * about, InHead::Of(head));
+                    offer(other, weight * about, InHead::Of(id));
                 }
             }
         }
@@ -370,7 +403,7 @@ fn offer_head<'a>(
 /// Where the query asks for it, the head of a note that a note links to counts nearly as its own
 /// does: a note written about another is found by that note's name without having to say it.
 pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: &mut Candidates) {
-    let mut hits: HashMap<DocId, (f32, Vec<String>)> = HashMap::new();
+    let mut hits = ExplicitHits::new();
     let mut head_hits: HashMap<DocId, (f32, Vec<InHead>)> = HashMap::new();
     let idf_max = ((index.live_docs() as f32) + 1.0).ln().max(f32::EPSILON);
     let mut query_weight = 0.0;
@@ -419,13 +452,15 @@ pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: 
                 1.0,
                 &format!("@{m}"),
             ),
-            QueryLabel::LinksTo { id, head } => add_explicit(
-                &mut hits,
-                ctx.exclude,
-                index.docs_with(&Label::Link(id.clone())),
-                1.0,
-                &format!("also links {head}"),
-            ),
+            // A note linked to the same note is credited and says nothing, since it is asked
+            // only around a note, where what the engine finds is kept for whether it is a fact.
+            QueryLabel::LinksTo(id) => {
+                for &d in index.docs_with(&Label::Link(id.clone())) {
+                    if Some(d) != ctx.exclude {
+                        hits.entry(d).or_default().credit += 1.0;
+                    }
+                }
+            }
         }
         for (d, (weight, found)) in best {
             let e = head_hits.entry(d).or_insert_with(|| (0.0, Vec::new()));
@@ -433,12 +468,12 @@ pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: 
             e.1.push(found);
         }
     }
-    // What is linked to or from the note being looked around. The engine states it as a
-    // reason of its own, so it carries weight here and no text.
+    // What is linked to or from the note being looked around. The place's facts say how, so it
+    // carries weight here and no text.
     for (docs, weight) in [(ctx.links_out, 2.0), (ctx.links_in, 1.0)] {
         for &d in docs {
             if Some(d) != ctx.exclude {
-                hits.entry(d).or_insert_with(|| (0.0, Vec::new())).0 += weight;
+                hits.entry(d).or_default().credit += weight;
             }
         }
     }
@@ -449,28 +484,36 @@ pub(crate) fn explicit<'a>(index: &'a Index, ctx: &Context<'a>, w: &Weights, c: 
         } else {
             0.0
         };
-        let e = hits.entry(doc).or_insert_with(|| (0.0, Vec::new()));
-        e.0 += 3.0 * fraction * specificity;
-        let (mut own, mut of): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+        let e = hits.entry(doc).or_default();
+        e.credit += 3.0 * fraction * specificity;
+        let mut own: Vec<&str> = Vec::new();
         for f in found {
             match f {
                 InHead::Own(word) => own.push(word),
-                InHead::Of(head) if !of.contains(&head) => of.push(head),
+                InHead::Of(id) if !e.about.iter().any(|of| of == id) => e.about.push(id.to_owned()),
                 InHead::Of(_) => {}
             }
         }
         if !own.is_empty() {
-            e.1.push(format!("in head: {}", own.join(", ")));
+            e.texts.push(format!("in head: {}", own.join(", ")));
         }
-        e.1.extend(of.iter().map(|head| format!("about {head}")));
     }
-    for (doc, (sum, texts)) in hits {
+    for (
+        doc,
+        Explicit {
+            credit,
+            texts,
+            about,
+        },
+    ) in hits
+    {
         let p = c.entry(doc);
-        p.explicit += (sum / 3.0).min(1.0);
-        if !texts.is_empty() {
+        p.explicit += (credit / 3.0).min(1.0);
+        if !texts.is_empty() || !about.is_empty() {
             p.reasons.push(Reason {
                 scorer: Scorer::Explicit,
                 text: texts.join(", "),
+                about,
             });
         }
     }
@@ -509,10 +552,10 @@ pub(crate) fn temporal(
             }
             let p = c.entry(doc);
             p.temporal += 0.5;
-            p.reasons.push(Reason {
-                scorer: Scorer::Time,
-                text: format!("same date {}", time::format_day(d)),
-            });
+            p.reasons.push(Reason::new(
+                Scorer::Time,
+                format!("same date {}", time::format_day(d)),
+            ));
         }
     }
     if let Some(day) = ctx.day {
@@ -528,10 +571,8 @@ pub(crate) fn temporal(
                 continue;
             }
             p.temporal += bonus;
-            p.reasons.push(Reason {
-                scorer: Scorer::Time,
-                text: describe_gap(delta),
-            });
+            p.reasons
+                .push(Reason::new(Scorer::Time, describe_gap(delta)));
         }
     }
     for p in c.0.values_mut() {

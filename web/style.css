@@ -193,6 +193,7 @@ button, input, textarea { font: inherit; color: inherit; }
 #path button[aria-current] { color: var(--soft); }
 #path button:hover, #path button:focus-visible { color: var(--ink); text-decoration: underline; outline: none; }
 #path .gone { display: none; }
+#path button:not([aria-current], [data-depth="0"]), #path.measure button { flex-shrink: 0; }
 
 /* A body read: what the cursor is on, beside the list, and where there is no room for that the
    note you are in, above the line under the path. It is rendered (see below), and as typed until

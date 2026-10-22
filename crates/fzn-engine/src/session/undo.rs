@@ -115,6 +115,7 @@ impl Session {
             self.engine.upsert(record.note());
         }
         self.notes.apply(record.clone());
+        self.redraw_arrows(&record.id);
         self.out.push(Effect::Keep(record.clone()));
         record
     }
@@ -167,6 +168,7 @@ impl Session {
         if let [(_, became)] = &change[..]
             && self.follow(std::slice::from_ref(&became.id))
         {
+            self.leave_facts();
             return;
         }
         self.refresh(false);
@@ -181,7 +183,8 @@ impl Session {
             return;
         };
         self.restore(&change, true);
-        self.status = format!("undid: {}", text::fit(change[0].1.head(), 40));
+        let head = self.row_head(change[0].1.head());
+        self.status = format!("undid: {}", text::fit(&head, 40));
         self.redo.push(change);
     }
 
@@ -191,7 +194,8 @@ impl Session {
             return;
         };
         self.restore(&change, false);
-        self.status = format!("redid: {}", text::fit(change[0].1.head(), 40));
+        let head = self.row_head(change[0].1.head());
+        self.status = format!("redid: {}", text::fit(&head, 40));
         self.undo.push(change);
     }
 
@@ -353,7 +357,8 @@ impl Session {
 
     /// Deletes the note under the cursor. Its row goes and the rest of the list stays where it
     /// was, so that the notes listed only for what the deleted note said, those found by its
-    /// name, stay listed until the list is made again.
+    /// name, stay listed until the list is made again. In a place, what was in it only by being
+    /// under the note goes with it, each row where it stands.
     pub(super) fn delete(&mut self) {
         let Some(record) = self.selected_record().cloned() else {
             return;
@@ -365,6 +370,7 @@ impl Session {
         });
         self.status = "deleted · undo brings it back".into();
         self.take_row(&id);
+        self.leave_facts();
     }
 
     /// Moves the note under the cursor `by` rows of the list as it is shown, as the original's

@@ -51,25 +51,29 @@ impl Session {
         (query, rows, finds_from)
     }
 
-    /// The line as it is read here: inside the done tasks a span on it measures when notes were
-    /// done, as it does with `[x]` on the line, and while archived notes are shown the open box
-    /// holds every task. Only the toggle does that, since `[x]` asks for the done tasks and not
-    /// for `[ ]` to change.
+    /// The line as it is read here: with the done tasks on the path a span on it measures when
+    /// notes were done, as it does with `[x]` on the line, since what is written there is done,
+    /// and while archived notes are shown the open box holds every task. Only the toggle does
+    /// that, since `[x]` asks for the done tasks and not for `[ ]` to change.
     pub(super) fn read_line(&self) -> Query {
         let mut query = Query::read(&self.line, self.today());
         query.every_task = self.show_archived;
-        if self.labels_here().any(|(label, _)| *label == Label::Done) {
+        if self.done_here() {
             query.measure_done();
         }
         query
     }
 
-    /// Whether archived notes are listed: when they are shown, and when the line or the place
+    /// Whether archived notes are listed: when they are shown, and when the line or the path
     /// asks for the done tasks, which are archived.
     pub(super) fn archived_listed(&self, query: &Query) -> bool {
-        self.show_archived
-            || query.asks_done()
-            || self.labels_here().any(|(label, _)| *label == Label::Done)
+        self.show_archived || query.asks_done() || self.done_here()
+    }
+
+    /// Whether the path's box is the done tasks', anywhere on it: what is written here is done,
+    /// so what is done is listed, though only the labels after the last note narrow.
+    fn done_here(&self) -> bool {
+        self.path_labels().any(|(label, _)| *label == Label::Done)
     }
 
     /// The notes to list, in the order the space keeps them in, the archived ones too if asked.
@@ -208,18 +212,16 @@ impl Session {
 
     /// The place being looked around. With nothing on the line to rank by it is what is in it
     /// and holds what the line holds, its facts in the order the space keeps them in and nothing
-    /// the engine suggests, as the top of the space is: what is linked to or from its note and
-    /// carries all of its labels. With something to rank by it is what the line finds in its
-    /// neighbourhood: the note the line names, then the facts that match, then what else the
-    /// engine finds there that matches, all of them holding what the line holds. With it comes
-    /// the first of what is only found there, if a fact comes before it, where a face sets the
-    /// two apart.
+    /// the engine suggests, as the top of the space is: what is under its note at any depth or
+    /// linked from it, and carries all of its labels. With something to rank by it is what the
+    /// line finds in its neighbourhood: the note the line names, then the facts that match, then
+    /// what else the engine finds there that matches, all of them holding what the line holds.
+    /// With it comes the first of what is only found there, if a fact comes before it, where a
+    /// face sets the two apart.
     fn in_place(&self, query: &Query) -> (Vec<Row>, Option<String>) {
         let note = self.place_note().map(String::as_str);
-        let (labels, written): (Vec<_>, Vec<_>) = self
-            .labels_here()
-            .map(|(label, written)| (label.indexed(query.every_task), written))
-            .unzip();
+        let labels = self.narrowing(query.every_task);
+        let written: Vec<&str> = self.labels_here().map(|(_, written)| written).collect();
         let written = written.join(" ");
         let place = engine::Place {
             note,
@@ -243,7 +245,8 @@ impl Session {
                 )
                 .into_iter()
                 .filter_map(|r| {
-                    // How it is linked is a fact too, and the one thing said about it.
+                    // How it is linked is a fact too, and the one thing said about it. A note
+                    // under the place through another note has its arrow to say which.
                     let link = facts.get(r.id.as_str())?;
                     Some(Row {
                         linked: true,
@@ -316,8 +319,9 @@ impl Session {
         (rows, finds_from)
     }
 
-    /// The heads, as they are now, of the notes a record is linked to by id. The note being
-    /// looked around is left out, since everything on the list is about it.
+    /// The heads, as they are now and as the record's arrow reads them, of the notes it is
+    /// linked to by id. The note being looked around is left out, since everything on the list
+    /// is about it.
     pub(super) fn link_heads(&self, record: &Record) -> Vec<String> {
         let around = self.place_note();
         record
@@ -325,8 +329,52 @@ impl Session {
             .iter()
             .filter(|&id| Some(id) != around)
             .filter_map(|id| self.notes.get(id))
-            .map(|target| target.head().to_owned())
+            .map(|target| self.arrow(record.head(), target.head()))
             .collect()
+    }
+
+    /// Draws again the arrows of the listed notes that link to this one, as it now reads, so
+    /// that no arrow names a note as it was before a change, or one that has gone.
+    pub(super) fn redraw_arrows(&mut self, id: &str) {
+        let redrawn: Vec<(usize, Vec<String>)> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(at, row)| {
+                let record = self.notes.get(&row.id)?;
+                let links_it = record.links.iter().any(|l| l == id);
+                links_it.then(|| (at, self.link_heads(record)))
+            })
+            .collect();
+        for (at, links) in redrawn {
+            self.rows[at].links = links;
+        }
+    }
+
+    /// Takes away where they stand the rows of the place's facts that a list made now would not
+    /// have, as when what they were under has gone, and leaves every other row as it was. What
+    /// is only found, by a name that has gone, say, stays listed until the list is made again.
+    pub(super) fn leave_facts(&mut self) {
+        let mut listed = None;
+        let gone: Vec<String> = self
+            .rows
+            .iter()
+            .filter(|row| row.linked && self.notes.get(&row.id).is_some())
+            .filter(|row| {
+                !listed
+                    .get_or_insert_with(|| self.listed_ids())
+                    .contains(&row.id)
+            })
+            .map(|row| row.id.clone())
+            .collect();
+        for id in gone {
+            self.take_away(&id);
+        }
+    }
+
+    /// The notes a list made now would have.
+    fn listed_ids(&self) -> HashSet<String> {
+        self.made().1.into_iter().map(|r| r.id).collect()
     }
 
     fn row(&self, hit: &Hit<'_>) -> Row {
@@ -344,10 +392,17 @@ impl Session {
             reasons: hit
                 .reasons
                 .iter()
-                .map(|r| match r.scorer {
-                    // A link is a fact and reads as one, with no scorer to credit. So is a name.
-                    Scorer::Link | Scorer::Name => r.text.clone(),
-                    scorer => format!("{scorer}: {}", r.text),
+                .map(|r| {
+                    // A note it was found about is named as the row's arrow reads it.
+                    let text = r.read(|id| {
+                        let note = self.notes.get(id)?;
+                        Some(self.arrow(hit.note.head(), note.head()))
+                    });
+                    match r.scorer {
+                        // A name is a fact and reads as one, with no scorer to credit.
+                        Scorer::Name => text,
+                        scorer => format!("{scorer}: {text}"),
+                    }
                 })
                 .collect(),
             score: Some(hit.score),
@@ -452,16 +507,25 @@ impl Session {
                 continue;
             }
             went = true;
-            if in_hand {
-                self.going = Some(id.clone());
-            } else if under {
-                self.field = None;
-                self.take_row(id);
-            } else if let Some(at) = self.drop_row(id) {
-                self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
-            }
+            self.take_away(id);
         }
         went
+    }
+
+    /// Takes a listed note's row away where it stands. The row under the cursor goes with the
+    /// cursor going to the row that took its place, unless it is being written in, when it goes
+    /// once the cursor leaves it; any other goes with the cursor staying on its own row.
+    fn take_away(&mut self, id: &str) {
+        let under = self.selected().is_some_and(|r| r.id == id);
+        let in_hand = under && self.field.as_ref().is_some_and(|f| f.in_hand());
+        if in_hand {
+            self.going = Some(id.to_owned());
+        } else if under {
+            self.field = None;
+            self.take_row(id);
+        } else if let Some(at) = self.drop_row(id) {
+            self.cursor = self.cursor.map(|i| if at < i { i - 1 } else { i });
+        }
     }
 
     /// Whether a listed note's row is to go: the note is deleted, or it was archived or brought
@@ -475,9 +539,7 @@ impl Session {
             return true;
         };
         (record.archived != row.archived || self.going.as_deref() == Some(id))
-            && !listed
-                .get_or_insert_with(|| self.made().1.into_iter().map(|r| r.id).collect())
-                .contains(id)
+            && !listed.get_or_insert_with(|| self.listed_ids()).contains(id)
     }
 
     pub(super) fn selected(&self) -> Option<&Row> {
