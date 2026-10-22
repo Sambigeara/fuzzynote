@@ -234,18 +234,28 @@ impl Session {
     }
 
     /// Takes the text of a note as the editor left it, for a note that is not under the cursor.
+    /// The note you are in, handed over from the line, leaves the cursor on the line.
     pub(super) fn save(&mut self, id: &str, edited: &str) {
+        let on_line = self.cursor.is_none();
         let Some(record) = self.notes.get(id) else {
             self.status = "that note is gone, so nothing was saved".into();
             return;
         };
         let edited = self.normalise(edited);
+        // The note you are in, handed over from the line and emptied, stays, as it does when its
+        // body opened there is emptied.
+        if on_line && edited.is_empty() && self.place_note().is_some_and(|here| here == id) {
+            self.status = super::field::HERE_STAYS.into();
+            return;
+        }
         if edited == record.text {
             self.status = "unchanged".into();
         } else {
             self.put(id, edited);
             self.refresh(false);
-            self.reselect(id);
+            if !on_line {
+                self.reselect(id);
+            }
         }
     }
 

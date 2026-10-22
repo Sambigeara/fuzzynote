@@ -542,7 +542,8 @@ hands expect. Enter opens a new row directly under it, its head the field, as th
 added a line under the current one, unless the head has a date word or `/task` still to be written
 out: then Enter writes it out and the cursor stays on the row, the caret at the end, and the next
 Enter opens the row under. Ctrl-O opens the body, which in the terminal is your editor and
-in the browser a sheet over the page that holds the whole note. Tab goes in. Right and Left are the
+in the browser a sheet over the page that holds the whole note; on the line in a note it opens the
+note you are in (see "Zoom and places"). Tab goes in. Right and Left are the
 caret's, on the line and in a head, and nothing else. Undo puts the head back as it was when the
 cursor landed, and otherwise takes back the last change, which for a row is the whole visit, one key
 for both. A chord acts on the note as it reads.
@@ -777,6 +778,15 @@ head again walks a hop further, and on a place already on the path goes back to 
 never repeats; stepping back goes one hop, onto the line. This is the ego graph as a flat list;
 following a link is picking its target here.
 
+On the line in a note's place, the body chord opens the note you are in, as it opens a row's: in the
+terminal Ctrl-O hands it to your editor and the cursor stays on the line, and on the page Ctrl-O,
+`body` in the foot, or a tap on the note read above the line or beside the list opens it in the
+sheet. To be opened there it is put under the cursor, first on the list, where the note the line
+names is listed, or on its own row where the line names it already; closing it puts the cursor back
+on the line and takes the row away, so the list is as it was. It cannot be deleted from there:
+emptied in the sheet or the editor, it stays as it was, and the status says so. Inside labels alone,
+or at the top, there is no note you are in, and nothing to open.
+
 ### Terminal
 Rust and ratatui, with the original fzn chords where they still earn their place, because that is
 where the muscle memory is. It is a face on the device and adds four things: its key table, the
@@ -789,32 +799,32 @@ otherwise. Ctrl-D clears or deletes; Ctrl-V shows archived or archives, which ti
 named `tick` there; the line's right-hand end says `archived shown` while they are. Shift-Enter on a
 row ticks or archives as Ctrl-V does wherever the terminal can be asked to tell it from Enter (see
 "Shift-Enter ticks, where it can be told from Enter"), and the footer then names it, `⇧↵ tick`,
-where otherwise it names Ctrl-V; on the line Shift-Enter is Enter. Ctrl-O opens the
-note in your editor, which is how a body is written here: in a file made new and readable only by
-its owner, in `$XDG_RUNTIME_DIR` or else in a directory of its own in the temporary directory that
-only its owner can open, and removed, with that directory, whatever the editor did, so that only a
-killed process leaves it; what the editor left is kept before the terminal is taken back. An editor
-that cannot be run is said on the status row and the app stays, and `fzn` with no terminal to draw
-on says so in one sentence. Tab goes in wherever the caret is, and Right at the end of the text does
-nothing. Shift-Tab is not bound. Ctrl-I is Tab, Ctrl-M Enter and Ctrl-[ Escape, as a terminal
-sends them unless asked to tell them apart, and where it is asked they are bound so. Up and
-Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and Ctrl-Down move the note under the
-cursor a row, the cursor with it. Ctrl-U undoes and Ctrl-Y redoes, Ctrl-K links or unlinks the
-note under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/ opens the URL, Ctrl-B shows
-scores. Ctrl-Y and Ctrl-K are the page's keys for redo and link, and the footer names them,
-`^Y redo` and `^K link`, so that one set is learned for both faces; Ctrl-R and Ctrl-L, fzn's own,
-do the same (see "Redo, link and showing what is archived have keys on the page"). Ctrl-_ and
-Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which crossterm reads as
-Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the kitty flags
-Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and the head
-take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
+where otherwise it names Ctrl-V; on the line Shift-Enter is Enter. Ctrl-O opens the note in your
+editor, on the line in a note's place the note you are in, which is how a body is written here: in a
+file made new and readable only by its owner, in `$XDG_RUNTIME_DIR` or else in a directory of its
+own in the temporary directory that only its owner can open, and removed, with that directory,
+whatever the editor did, so that only a killed process leaves it; what the editor left is kept
+before the terminal is taken back. An editor that cannot be run is said on the status row and the
+app stays, and `fzn` with no terminal to draw on says so in one sentence. Tab goes in wherever the
+caret is, and Right at the end of the text does nothing. Shift-Tab is not bound. Ctrl-I is Tab,
+Ctrl-M Enter and Ctrl-[ Escape, as a terminal sends them unless asked to tell them apart, and where
+it is asked they are bound so. Up and Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and
+Ctrl-Down move the note under the cursor a row, the cursor with it. Ctrl-U undoes and Ctrl-Y redoes,
+Ctrl-K links or unlinks the note under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/
+opens the URL, Ctrl-B shows scores. Ctrl-Y and Ctrl-K are the page's keys for redo and link, and the
+footer names them, `^Y redo` and `^K link`, so that one set is learned for both faces; Ctrl-R and
+Ctrl-L, fzn's own, do the same (see "Redo, link and showing what is archived have keys on the
+page"). Ctrl-_ and Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which
+crossterm reads as Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the
+kitty flags Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and
+the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
 Ctrl-Backspace as Ctrl-W where the terminal tells it from Backspace. A paste goes into the line or
-the head at the caret as one change, its tabs and line
-breaks made spaces and the breaks at its ends dropped. Escape comes back a rung at a time: off the
-row, writing out its date words, off the text on the line, out of the place, and twice on an empty
-line outside one quits, the first saying `Escape again to quit`. Ctrl-Q quits from anywhere, writing
-out the head first. While a tag or a person is offered, Tab and Enter take the one in bold, Up and
-Down choose and Escape closes it; Shift-Enter on a row still ticks.
+the head at the caret as one change, its tabs and line breaks made spaces and the breaks at its ends
+dropped. Escape comes back a rung at a time: off the row, writing out its date words, off the text
+on the line, out of the place, and twice on an empty line outside one quits, the first saying
+`Escape again to quit`. Ctrl-Q quits from anywhere, writing out the head first. While a tag or a
+person is offered, Tab and Enter take the one in bold, Up and Down choose and Escape closes it;
+Shift-Enter on a row still ticks.
 
 The screen is flat: no borders, no boxes, the terminal's own colours. Everything is measured in the
 columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
@@ -942,17 +952,18 @@ when its row cuts it, or with the cursor on the line in a place the note you are
 as markdown, in the soft grey, from the top of the first row's text, with no border, scrolled on its
 own and faded at its foot as the list is. A narrower page has no room for it: a note's body, and the
 whole of a head its row cuts, are read there by opening it, and the note you are in is read above
-the line, rendered, under the path and in the path's smaller size, clamped to six lines, and opened
-with a tap, so that where you are is all above the line and what is found follows it directly; the
-margin grows downwards only for a body longer than it has room for. At a phone's width, 640px and
-under, the column is the screen's width with the line at the top, a long path gives up its middle,
-the note you are in is clamped to three lines and, on a touch screen, hidden while the keyboard is
-up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the
-room, and a field there has the focus almost always. A head there is read whole, on as many lines as
-it takes, since there is no room beside the list to read the rest in: every row leaves the arrow's
-room at its end, whether or not it has the arrow, so that a head wraps the same on the cursor as off
-it, and the row under the cursor keeps its tail with its date at the tail's end, so that walking the
-list moves nothing; a row with no tail has no date there.
+the line, rendered, under the path and in the path's smaller size, clamped to six lines, and a tap
+on it opens its body in the sheet, as a click does on it read beside the list, a link in it opening
+only the link, so that where you are is all above the line and what is found follows it directly;
+the margin grows downwards only for a body longer than it has room for. At a phone's width, 640px
+and under, the column is the screen's width with the line at the top, a long path gives up its
+middle, the note you are in is clamped to three lines and, on a touch screen, hidden while the
+keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight:
+it has the room, and a field there has the focus almost always. A head there is read whole, on as
+many lines as it takes, since there is no room beside the list to read the rest in: every row leaves
+the arrow's room at its end, whether or not it has the arrow, so that a head wraps the same on the
+cursor as off it, and the row under the cursor keeps its tail with its date at the tail's end, so
+that walking the list moves nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
@@ -1002,7 +1013,8 @@ stack holds, a body is read as typed.
 as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page
 takes the terminal's chords where a browser lets it"): Ctrl-D clears the line or deletes the note
 under the cursor, and inside the sheet it is the browser's, and vim's in vim mode; Ctrl-O opens the
-body of the note under the cursor, and does nothing on the line; Shift-Enter on a row ticks a task
+body of the note under the cursor, and on the line in a note's place the body of the note you are
+in, and outside one does nothing; Shift-Enter on a row ticks a task
 or archives a note that is not one, as Ctrl-V does in the terminal, and on the line it is Enter;
 Ctrl-U undoes, on the line and on a row, and in the sheet it is the editor's and never the browser's
 page source; in a head Ctrl-Z, Cmd-Z on a Mac, undoes as Ctrl-U does and with Shift redoes, since a
@@ -3615,6 +3627,36 @@ the app now does is described above; an entry repeats it only where the reason n
   remember and hidden from the line; newest first for every span, which loses the roundup read
   forwards; a `-` after the span, `..-`, which reads as a span's end; and `, newest first` said
   after the span, which the faces' list of dates took for a date of its own.
+
+- **The note you are in opens from the line.** Decided 2026-10-22, at Sam's ask, revising the
+  Browser's *Keys*, where Ctrl-O did nothing on the line, the narrow page's note you are in, which a
+  tap only unclamped, and the session's rule that on the line there was no note to open. Inside a
+  note it could be read beside the list, above the line or in the terminal's foot, but not written
+  in without stepping out and finding it again. Now, on the line in a place whose path holds a note,
+  the body chord and the editor are about that note, and the session offers `body` and `editor`
+  there and nowhere else on the line, so each face's foot shows what it has a key for: the terminal
+  `^O editor`, the page `body ^O`. The editor needs no cursor, so the terminal hands the note over
+  and the cursor stays on the line, and what the editor leaves is written as any note's is, the list
+  left where it was. The sheet is the field's, so the page needs the note under the cursor: it is
+  put at the top of the list, where the note the line names is listed, saying it is the next thing
+  there as `its name` does, and the cursor goes to it with its body open. Its row is one going, as
+  the row of a note ticked under the hands is, so it goes once the cursor leaves it: closing the
+  body puts the cursor back on the line, where it was, and the list is as it was, and a press on
+  another row leaves it as it leaves any body. Where the line names the note already, it is opened
+  on the row it has and that row stays. Delete is neither offered nor done in that body, since the
+  path would be left in a note that is not there, and for the same reason a body emptied there, or
+  an editor handed it from the line that leaves nothing, keeps the note as it was and says so. A tap
+  on the note above the line on a narrow page steps onto the line if the cursor was on a row and
+  opens it, since the sheet reads the rest whole and was all the unclamping gave, and a click on it
+  beside the list opens it too, while the cursor is on the line and it has something to read; a link
+  in it opens the link only, and a press that selected text was for the selection. Inside labels
+  alone, or at the top, nothing changes. Weighed: opening the sheet on the note without putting it
+  under the cursor, which is a second kind of field, one with no row, for every rule that reads the
+  field from its row; listing the note you are in always, as the first row of its own place, which
+  moves the list for every place and makes it a fact of itself; and bringing the cursor back to the
+  row rather than the line, which leaves it on a row the list does not have. Not done: the path
+  still names the note as it read when it was gone into, so a head changed from inside it shows in
+  the path once it is gone into again.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

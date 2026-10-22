@@ -69,7 +69,7 @@ impl Session {
     }
 
     /// A note as the empty line lists it, with nothing to say why.
-    fn listed(&self, r: &Record) -> Row {
+    pub(super) fn listed(&self, r: &Record) -> Row {
         let has_body = text::has_body(&r.text);
         Row {
             id: r.id.clone(),

@@ -547,6 +547,8 @@ fn only_what_applies_is_offered() {
         labels(&s),
         [
             "new note here",
+            "body",
+            "editor",
             "pick a note",
             "show archived",
             "undo",
@@ -619,6 +621,8 @@ fn only_what_applies_is_offered() {
         labels(&s),
         [
             "new note here",
+            "body",
+            "editor",
             "pick a note",
             "hide archived",
             "undo",

@@ -1005,3 +1005,172 @@ fn the_finds_begin_after_every_fact_however_the_named_rows_mix() {
     s.act(Action::Write);
     assert_eq!(s.rows[s.view().finds_from.unwrap()].id, "d");
 }
+
+#[test]
+fn the_body_opens_on_the_line_in_a_note_onto_the_note_you_are_in_and_closes_back_onto_the_line() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    assert_eq!(path(&s), ["Boiler"]);
+    let before: Vec<String> = heads(&s).into_iter().map(str::to_owned).collect();
+    assert!(
+        !before.contains(&"Boiler".to_owned()),
+        "where you are is not listed"
+    );
+
+    // It is put under the cursor, first, as the note the line names is listed.
+    assert!(s.act(Action::Open).is_empty());
+    assert_eq!(field(&s), Some(("Boiler\n#house".into(), false, true)));
+    assert_eq!((s.cursor, s.rows[0].id.as_str()), (Some(0), "boiler"));
+    assert_eq!(heads(&s)[1..], before);
+    assert!(
+        s.act(Action::Close).is_empty(),
+        "nothing changed, nothing written"
+    );
+    assert_eq!((s.cursor, field(&s)), (None, None), "back on the line");
+    assert_eq!(heads(&s), before, "and the list is as it was");
+
+    // What is written there is written when it closes, as a row's body is.
+    s.act(Action::Open);
+    edited(&mut s, "Boiler\n#house\nthe combi under the stairs");
+    let done = s.act(Action::Close);
+    assert_eq!(kept(&done).len(), 1);
+    assert_eq!((s.cursor, field(&s)), (None, None));
+    assert_eq!(heads(&s), before);
+    assert_eq!(
+        s.view().here.map(|here| here.text),
+        Some("Boiler\n#house\nthe combi under the stairs")
+    );
+    assert_eq!(path(&s), ["Boiler"], "still in it");
+
+    // Leaving it for another row, as a press on the page does, takes its row away too.
+    s.act(Action::Open);
+    s.act(Action::Select(Some(2)));
+    assert_eq!(heads(&s), before);
+    assert_eq!(s.rows[s.cursor.unwrap()].head, before[1]);
+}
+
+#[test]
+fn the_note_you_are_in_listed_by_its_name_is_opened_where_it_is_listed() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    go_to(&mut s, "#house");
+    type_in(&mut s, "Boiler");
+    assert_eq!(s.rows[0].id, "boiler", "the line names it");
+    let listed = s.rows.len();
+    s.act(Action::Open);
+    assert_eq!(
+        (s.cursor, s.rows.len()),
+        (Some(0), listed),
+        "not listed twice"
+    );
+    s.act(Action::Close);
+    assert_eq!((s.cursor, s.rows.len()), (None, listed));
+    assert_eq!(s.rows[0].id, "boiler", "its row stays, being listed");
+}
+
+#[test]
+fn on_the_line_inside_labels_alone_or_at_the_top_there_is_still_nothing_to_open() {
+    let mut s = session();
+    boiler(&mut s);
+    s.act(Action::Select(None));
+    for at in ["the top", "#house"] {
+        if at != "the top" {
+            go_to(&mut s, at);
+        }
+        let before: Vec<String> = heads(&s).into_iter().map(str::to_owned).collect();
+        assert!(s.act(Action::Open).is_empty(), "{at}");
+        assert!(s.act(Action::Editor).is_empty(), "{at}");
+        assert_eq!((s.cursor, field(&s)), (None, None), "{at}");
+        assert_eq!(heads(&s), before, "{at}");
+        assert!(
+            !labels(&s).iter().any(|&l| l == "body" || l == "editor"),
+            "{at}: {:?}",
+            labels(&s)
+        );
+    }
+}
+
+#[test]
+fn the_body_and_the_editor_are_offered_on_the_line_only_in_a_note() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    assert_eq!(
+        labels(&s),
+        [
+            "new note here",
+            "body",
+            "editor",
+            "pick a note",
+            "show archived",
+            "undo",
+            "back"
+        ]
+    );
+    // Opened from the line it offers what a row's body does, but for deleting the note you are
+    // in, which would leave the path in a note that is not there.
+    s.act(Action::Open);
+    assert_eq!(labels(&s), ["done"]);
+    edited(&mut s, "Boiler\n#house\nthe combi");
+    assert_eq!(labels(&s), ["put back", "done"]);
+    s.act(Action::Delete);
+    assert!(s.notes.get("boiler").is_some_and(|r| !r.deleted));
+    s.act(Action::Close);
+    assert_eq!(labels(&s)[..3], ["new note here", "body", "editor"]);
+}
+
+#[test]
+fn the_editor_is_handed_the_note_you_are_in_from_the_line_and_the_cursor_stays_there() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    assert_eq!(
+        s.act(Action::Editor),
+        [Effect::Editor {
+            id: "boiler".into(),
+            text: "Boiler\n#house".into(),
+        }]
+    );
+    assert_eq!(s.cursor, None);
+    let saved = s.act(Action::Save {
+        id: "boiler".into(),
+        text: "Boiler\n#house\nthe combi".into(),
+    });
+    assert_eq!(kept(&saved).len(), 1);
+    assert_eq!((s.cursor, field(&s)), (None, None));
+    assert_eq!(
+        s.view().here.map(|here| here.text),
+        Some("Boiler\n#house\nthe combi")
+    );
+}
+
+#[test]
+fn the_note_you_are_in_emptied_from_the_line_stays_as_it_was() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    let held = |s: &Session| s.notes.get("boiler").map(|r| (r.text.clone(), r.deleted));
+    let was = held(&s);
+
+    // Its body cleared in the sheet and closed.
+    s.act(Action::Open);
+    edited(&mut s, "");
+    let done = s.act(Action::Close);
+    assert!(kept(&done).is_empty(), "nothing written");
+    assert_eq!(held(&s), was);
+    assert_eq!((s.cursor, field(&s)), (None, None), "back on the line");
+    assert_eq!(s.view().status, crate::session::field::HERE_STAYS);
+
+    // An editor that leaves nothing.
+    s.act(Action::Editor);
+    let saved = s.act(Action::Save {
+        id: "boiler".into(),
+        text: "\n".into(),
+    });
+    assert!(kept(&saved).is_empty(), "nothing written");
+    assert_eq!(held(&s), was);
+    assert_eq!(s.view().status, crate::session::field::HERE_STAYS);
+    assert_eq!(path(&s), ["Boiler"]);
+}

@@ -13,22 +13,22 @@
 //! and is written at once, as it was in fzn, with its date words written out when the arrows up and
 //! down, or Escape, leave it, or Enter, which writes them out and stays. Otherwise Enter opens a
 //! new note under it, so that a run of notes is Enter and typing; a new note left empty goes.
-//! Ctrl-O hands the note to your editor, which is where a body is written. Tab goes in, wherever
-//! the caret is: on a row into its note, and on the line into the tag, person, day, box or note the
-//! line names. Right and Left are the caret's and nothing else. A paste is one change, made as if
-//! it were typed in one key, its tabs and line breaks made spaces, since the line and a head are
-//! one line each and a tab typed would go in. A chord acts on the note where on the line it acts on
-//! the line, as it did in fzn: Ctrl-D deletes or clears, Ctrl-V archives, which ticks a task, or
-//! shows archived notes, and Ctrl-U puts a changed head back before it undoes anything else. Ctrl-Y
-//! redoes and Ctrl-K links, the keys the page has for them, and fzn's own Ctrl-R and Ctrl-L still
-//! do too, so that one set of keys is learned for both faces. Control with an arrow moves the note
-//! under the cursor up or down a row, and the cursor with it. Escape comes back a rung at a time:
-//! off the row, off the text on the line, out of the place, and on an empty line outside any place
-//! two of them quit. The footer shows only the keys that apply where the cursor is. Shift-Enter on
-//! a row ticks as Ctrl-V does, where the terminal can tell it from Enter. While a tag or a person
-//! is typed, what the space has that it starts is offered on the rows under it, and Tab or Enter
-//! takes the bold one; the device is told where the caret is after each key that types, since
-//! whether anything is offered is its to decide.
+//! Ctrl-O hands the note to your editor, which is where a body is written, and on the line the note
+//! you are in. Tab goes in, wherever the caret is: on a row into its note, and on the line into the
+//! tag, person, day, box or note the line names. Right and Left are the caret's and nothing else. A
+//! paste is one change, made as if it were typed in one key, its tabs and line breaks made spaces,
+//! since the line and a head are one line each and a tab typed would go in. A chord acts on the
+//! note where on the line it acts on the line, as it did in fzn: Ctrl-D deletes or clears, Ctrl-V
+//! archives, which ticks a task, or shows archived notes, and Ctrl-U puts a changed head back
+//! before it undoes anything else. Ctrl-Y redoes and Ctrl-K links, the keys the page has for them,
+//! and fzn's own Ctrl-R and Ctrl-L still do too, so that one set of keys is learned for both faces.
+//! Control with an arrow moves the note under the cursor up or down a row, and the cursor with it.
+//! Escape comes back a rung at a time: off the row, off the text on the line, out of the place, and
+//! on an empty line outside any place two of them quit. The footer shows only the keys that apply
+//! where the cursor is. Shift-Enter on a row ticks as Ctrl-V does, where the terminal can tell it
+//! from Enter. While a tag or a person is typed, what the space has that it starts is offered on
+//! the rows under it, and Tab or Enter takes the bold one; the device is told where the caret is
+//! after each key that types, since whether anything is offered is its to decide.
 //!
 //! A terminal sends some keys alike unless it is asked to tell them apart: Shift-Enter is Enter,
 //! and in some it is lost altogether. So where the terminal says it has the kitty keyboard
@@ -231,21 +231,22 @@ fn meant(key: KeyEvent) -> (KeyCode, KeyModifiers) {
     }
 }
 
-/// What a key asks for. A chord acts on the line when the cursor is there and on the note under
-/// the cursor otherwise. `empty` is of the text the cursor is in, the line or the head. Tab goes
-/// in wherever the caret is, since a tab means nothing in a line of text: from a head into the
-/// note, and from the line into what the line names, which the session decides. Shift-Tab is
+/// What a key asks for. A chord acts on the line when the cursor is there and on the note under the
+/// cursor otherwise; Ctrl-O on the line hands the note you are in to the editor, where there is
+/// one, which the session decides. `empty` is of the text the cursor is in, the line or the head.
+/// Tab goes in wherever the caret is, since a tab means nothing in a line of text: from a head into
+/// the note, and from the line into what the line names, which the session decides. Shift-Tab is
 /// not bound, Escape being the way back. Shift-Enter on a row ticks, as Ctrl-V does, and on the
-/// line is Enter, as it is wherever the terminal cannot tell it from Enter. Ctrl-/ opens a URL,
-/// and so do Ctrl-7 and Ctrl-_, since a terminal sends Ctrl-/ and Ctrl-_ as one byte that
-/// crossterm reads as Ctrl-7; under the kitty flags Ctrl-_ comes as Ctrl-Shift-minus. Backspace
-/// takes a row away only when its head is empty, as a new row with only its labels is while the
-/// caret is where it landed; with text in the head it is the caret's. Ctrl-Y and Ctrl-K redo and
-/// link, the page's keys for them, since Ctrl-R and Ctrl-L are the browser's there; fzn's own
-/// Ctrl-R and Ctrl-L do too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes
-/// back a rung: off the row, then off the text on the line, then out of the place. While a word is
-/// `offered` for, Tab and Enter take the one chosen, Up and Down choose another, and Escape closes
-/// it, which is its rung; Shift-Enter on a row still ticks, and every other key is as it was.
+/// line is Enter, as it is wherever the terminal cannot tell it from Enter. Ctrl-/ opens a URL, and
+/// so do Ctrl-7 and Ctrl-_, since a terminal sends Ctrl-/ and Ctrl-_ as one byte that crossterm
+/// reads as Ctrl-7; under the kitty flags Ctrl-_ comes as Ctrl-Shift-minus. Backspace takes a row
+/// away only when its head is empty, as a new row with only its labels is while the caret is where
+/// it landed; with text in the head it is the caret's. Ctrl-Y and Ctrl-K redo and link, the page's
+/// keys for them, since Ctrl-R and Ctrl-L are the browser's there; fzn's own Ctrl-R and Ctrl-L do
+/// too, one action with two keys as Shift-Enter and Ctrl-V are. Escape comes back a rung: off the
+/// row, then off the text on the line, then out of the place. While a word is `offered` for, Tab
+/// and Enter take the one chosen, Up and Down choose another, and Escape closes it, which is its
+/// rung; Shift-Enter on a row still ticks, and every other key is as it was.
 fn bound(
     code: KeyCode,
     modifiers: KeyModifiers,
@@ -266,7 +267,7 @@ fn bound(
         (KeyCode::Enter, _) => Action::Write,
         (KeyCode::Tab, _) => Action::GoIn,
         (KeyCode::Backspace, _) if !on_line && empty => Action::Erase,
-        (KeyCode::Char('o'), true) if !on_line => Action::Editor,
+        (KeyCode::Char('o'), true) => Action::Editor,
         (KeyCode::Esc, _) if !on_line => Action::Select(None),
         (KeyCode::Esc, _) if !empty => Action::Type(String::new()),
         (KeyCode::Esc, _) if zoomed => Action::Back,
@@ -2756,7 +2757,7 @@ mod tests {
         write(&mut app, "squat form video https://example.com/squat");
         assert_eq!(
             keys(&app),
-            "↵ new note here  ↓ pick a note  ^V show archived  ^U undo  Esc back"
+            "↵ new note here  ^O editor  ↓ pick a note  ^V show archived  ^U undo  Esc back"
         );
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
@@ -2782,7 +2783,8 @@ mod tests {
         press(&mut app, KeyCode::Esc, false);
         assert_eq!(
             keys(&app),
-            "↵ new note here  ↓ pick a note  ^V hide archived  ^U undo  ^Y redo  Esc back"
+            "↵ new note here  ^O editor  ↓ pick a note  ^V hide archived  ^U undo  ^Y redo  \
+             Esc back"
         );
 
         // A new note offers the editor, and once it has text, everything a note offers, with
@@ -2890,6 +2892,45 @@ mod tests {
             chord(&mut app, key);
             assert_eq!(linked(&space), then, "{key}");
         }
+        done(&space);
+    }
+
+    #[test]
+    fn ctrl_o_on_the_line_in_a_note_hands_the_note_you_are_in_to_the_editor() {
+        let ctrl = KeyModifiers::CONTROL;
+        let on = |place| bound(KeyCode::Char('o'), ctrl, place, true, true, false);
+        assert_eq!(on(Place::Line), Some(Action::Editor));
+        assert_eq!(on(Place::Row), Some(Action::Editor));
+
+        let (mut app, space) = app();
+        write(&mut app, "Boiler #house");
+        write(&mut app, "Order oil #house");
+        type_in(&mut app, "#house");
+        press(&mut app, KeyCode::Tab, false);
+        assert!(
+            matches!(chord(&mut app, 'o'), Flow::Continue),
+            "inside a tag alone there is no note to hand over"
+        );
+        press(&mut app, KeyCode::Esc, false);
+        press(&mut app, KeyCode::Esc, false);
+        type_in(&mut app, "Boiler");
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(path(&app), ["Boiler #house"]);
+        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
+            panic!("the note you are in was not handed over");
+        };
+        assert_eq!(text, "Boiler #house");
+        app.act(Action::Save {
+            id,
+            text: "Boiler #house\nthe combi under the stairs".into(),
+        })
+        .unwrap();
+        assert!(!on_note(&app), "the cursor stays on the line");
+        let view = app.device.view();
+        assert_eq!(
+            view.here.map(|here| here.text),
+            Some("Boiler #house\nthe combi under the stairs")
+        );
         done(&space);
     }
 

@@ -966,16 +966,17 @@ function atEmpty() {
 
 // The chords with Control alone that ask for something of the note under the cursor, or of the
 // line, and say whether one did. They are the terminal's, where a browser lets them go: Ctrl-D
-// deletes, or clears the line; Ctrl-O opens the body; Ctrl-U undoes, which costs only the
-// browser's page source; Ctrl-C copies the note's address or its head, but only while nothing is
-// selected, so that a selection is still copied as anywhere else; Ctrl-/ opens the note's address,
-// which no browser binds. Ctrl-R, Ctrl-L and Ctrl-V are a browser's reload, address bar and paste,
-// so redo, link and showing what is archived take keys a browser lets a page have: Ctrl-Y redoes,
-// Ctrl-K links or unlinks the note, as it makes a link in most editors, and Ctrl-H shows or hides
-// what is archived, as it shows what is hidden in a file chooser. Each is swallowed where it does
-// nothing, as Ctrl-O is on the line, so that the browser's search and history never open from the
-// page. The table is what each letter asks for of a row, and the foot writes a word's chord from
-// it (see keyFor), so that the letter written after a word is the letter that asks for it.
+// deletes, or clears the line; Ctrl-O opens the body, and on the line in a note the body of the
+// note you are in; Ctrl-U undoes, which costs only the browser's page source; Ctrl-C copies the
+// note's address or its head, but only while nothing is selected, so that a selection is still
+// copied as anywhere else; Ctrl-/ opens the note's address, which no browser binds. Ctrl-R, Ctrl-L
+// and Ctrl-V are a browser's reload, address bar and paste, so redo, link and showing what is
+// archived take keys a browser lets a page have: Ctrl-Y redoes, Ctrl-K links or unlinks the note,
+// as it makes a link in most editors, and Ctrl-H shows or hides what is archived, as it shows what
+// is hidden in a file chooser. Each is swallowed where it does nothing, as Ctrl-O is on the line
+// outside a note, so that the browser's search and history never open from the page. The table is
+// what each letter asks for of a row, and the foot writes a word's chord from it (see keyFor), so
+// that the letter written after a word is the letter that asks for it.
 const CHORDS = {
   d: 'delete',
   o: 'open',
@@ -1001,6 +1002,9 @@ function chord(key, onRow) {
       return true;
     case 'show_archived':
       if (view.hints.some((hint) => named(hint.action) === name)) act(name);
+      return true;
+    case 'open':
+      if (onRow || view.hints.some((hint) => named(hint.action) === name)) act(name);
       return true;
     case 'copy':
       if (!onRow || !nothingSelected()) return false;
@@ -1502,6 +1506,8 @@ function paintPane() {
   const says =
     !wide.matches || field?.whole ? '' : field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
   paintBody(paneBody, says);
+  // It opens on a click only while it reads the note you are in and has something to read.
+  pane.classList.toggle('here', view.cursor == null && !!view.here && says !== '');
   paintPaneHead();
   const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
   if (pane.dataset.under !== under) {
@@ -1553,16 +1559,13 @@ function paint() {
   $('dates').textContent = view.dates.length ? `→ ${view.dates.join(', ')}` : '';
 
   // The note you are in, when it says more than its head and the page has no room for it beside
-  // the list, clamped to six lines; a tap gives the rest, until another note is gone into.
+  // the list, clamped to six lines; a tap opens it, which reads the rest.
   const here = $('here');
   const told = view.here && !wide.matches ? bodyOf(view.here.text) : '';
   here.hidden = !told;
   const into = view.here?.id ?? '';
   const arrived = here.dataset.into !== into;
-  if (arrived) {
-    here.dataset.into = into;
-    here.classList.remove('open');
-  }
+  if (arrived) here.dataset.into = into;
   if (paintBody(here, told) || arrived) clampHere();
 
   $('empty').hidden = !(view.notes === 0 && !zoomed && view.line === '' && view.cursor == null);
@@ -2031,8 +2034,9 @@ function pressed(event) {
     return;
   }
   // The chords: on the line Ctrl-D clears it, and on a row it deletes the note; Ctrl-O on a row
-  // opens its body, and on the line does nothing; none asks for the browser's bookmark or file
-  // dialog, its search or its history, either way (see chord). Ctrl-[ is Escape.
+  // opens its body, and on the line the body of the note you are in, where there is one; none asks
+  // for the browser's bookmark or file dialog, its search or its history, either way (see chord).
+  // Ctrl-[ is Escape.
   if (ctrlOnly(event) && event.key.length === 1 && event.key !== '[') {
     if (!chord(event.key, !onLine)) return;
     event.preventDefault();
@@ -2250,10 +2254,21 @@ function besideTheWords({ clientX: x, clientY: y }) {
 
 list.addEventListener('animationend', (event) => event.target.classList.remove('in'));
 
-// A tap on the note you are in gives the rest of it, unless it was on a link, which opens and does
-// nothing else.
-$('here').addEventListener('click', (event) => {
-  if (!event.target.closest('a')) $('here').classList.add('open');
+// A tap on the note you are in, read above the line or beside the list, opens its body in the
+// sheet, as a second tap on a row opens the row's, unless it was on a link, which opens and does
+// nothing else. The body opened from the line is that note's, so a tap above the line with the
+// cursor on a row steps onto the line first. Beside the list it is the note you are in only while
+// the cursor is on the line and it has something to read, and a press that selected some of it was
+// for the selection.
+function openHere(event) {
+  if (event.target.closest('a') || getSelection()?.type === 'Range' || !view?.here) return;
+  if (view.cursor != null) act({ select: null });
+  if (view.cursor == null && view.hints.some((hint) => named(hint.action) === 'open')) act('open');
+  follow();
+}
+$('here').addEventListener('click', openHere);
+pane.addEventListener('click', (event) => {
+  if (pane.classList.contains('here')) openHere(event);
 });
 
 // Each step of the path goes back to where it was.

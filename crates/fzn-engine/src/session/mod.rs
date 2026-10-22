@@ -166,7 +166,8 @@ pub enum Action {
     GoIn,
     /// Step back out of the place being looked around, onto the line.
     Back,
-    /// Open the body of the note under the cursor, so that the field holds the whole note.
+    /// Open the body of the note under the cursor, so that the field holds the whole note. On
+    /// the line, the note you are in, which is put under the cursor while its body is open.
     Open,
     /// The note under the cursor now reads this. The cursor stays on it. A head is written at
     /// once, as typed, unless it is empty; an open body is written when it closes.
@@ -179,8 +180,9 @@ pub enum Action {
     /// body, if it is open, kept as a version, and stay: the body stays open and the cursor
     /// where it is. What a face asks before it is hidden or reloaded, and vim's `:w`.
     Keep,
-    /// Hand the note under the cursor to the face's editor, as it now reads. Comes back as
-    /// [`Effect::Editor`], and what the editor leaves comes back as [`Action::Save`].
+    /// Hand the note under the cursor to the face's editor, as it now reads, or on the line the
+    /// note you are in. Comes back as [`Effect::Editor`], and what the editor leaves comes back
+    /// as [`Action::Save`].
     Editor,
     /// The text of a note as the editor left it.
     Save {
@@ -648,14 +650,11 @@ impl Session {
             Action::Write => self.write_line(),
             Action::GoIn => self.go_in(),
             Action::Back => self.back_to(self.path.len().saturating_sub(1)),
-            // On the line there is no note to open, change, write, hand to the editor or take
-            // away.
-            Action::Open
-            | Action::Edited(_)
-            | Action::Close
-            | Action::Keep
-            | Action::Editor
-            | Action::Erase => {}
+            // On the line the note to open, or to hand to the editor, is the note you are in, and
+            // there is none to change, write or take away.
+            Action::Open => self.open_here(),
+            Action::Editor => self.edit_here(),
+            Action::Edited(_) | Action::Close | Action::Keep | Action::Erase => {}
             Action::Save { id, text } => self.save(&id, &text),
             Action::Archive => self.archive(),
             Action::Delete => self.delete(),
@@ -822,7 +821,7 @@ impl Session {
             if changed {
                 offer(Action::Undo, "put back");
             }
-            if !blank {
+            if !blank && !field.is_some_and(|f| f.from_line) {
                 offer(Action::Delete, "delete");
             }
             offer(Action::Close, "done");
@@ -896,6 +895,14 @@ impl Session {
                 }
                 if !self.places_named().is_empty() {
                     offer(Action::GoIn, "go in");
+                }
+                // The note you are in is opened from the line, as a row's note is from its row.
+                if self
+                    .place_note()
+                    .is_some_and(|id| self.notes.get(id).is_some())
+                {
+                    offer(Action::Open, "body");
+                    offer(Action::Editor, "editor");
                 }
                 if !self.rows.is_empty() {
                     offer(Action::Move(1), "pick a note");
