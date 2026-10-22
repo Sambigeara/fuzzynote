@@ -17,8 +17,17 @@ use super::{FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
 
 impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
-    /// line.
+    /// line. A note on the path that has gone, by whatever route, takes the path back to just
+    /// before it, as stepping back would, and the cursor to the line: there is nothing left to be
+    /// in.
     pub(super) fn refresh(&mut self, reset: bool) {
+        let reset = match self.gone_from() {
+            Some(depth) => {
+                self.cut_path(depth);
+                true
+            }
+            None => reset,
+        };
         let (query, rows, finds_from) = self.made();
         (self.rows, self.finds_from, self.parsed) = (rows, finds_from, query);
         self.stale = false;
@@ -98,16 +107,16 @@ impl Session {
         limit: usize,
     ) -> Vec<&'a Record> {
         let held = self.kept(archived).filter(|r| holds(r));
-        let Some(span) = query.timed() else {
+        let Some(timed) = query.timed() else {
             return held.take(limit).collect();
         };
         let mut held: Vec<&Record> = held.collect();
-        held.sort_by_cached_key(|r| match span.done {
+        held.sort_by_cached_key(|r| match timed.done {
             true => r.finished().map(|at| at.ms),
             false => r.created.map(|at| at.ms),
         });
         held.drain(..held.len().saturating_sub(limit));
-        if span.newest {
+        if timed.newest {
             held.reverse();
         }
         held

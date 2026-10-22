@@ -503,14 +503,14 @@ pub(crate) fn take_url(chars: &[char], start: usize) -> Option<(String, usize)> 
     Some((chars[start..end].iter().collect(), end))
 }
 
-pub(crate) fn digits(chars: &[char], start: usize, n: usize) -> Option<u32> {
+fn digits(chars: &[char], start: usize, n: usize) -> Option<u32> {
     let slice = chars.get(start..start + n)?;
     slice
         .iter()
         .try_fold(0u32, |acc, c| c.to_digit(10).map(|d| acc * 10 + d))
 }
 
-pub(crate) fn followed_by_digit(chars: &[char], at: usize) -> bool {
+fn followed_by_digit(chars: &[char], at: usize) -> bool {
     chars.get(at).is_some_and(char::is_ascii_digit)
 }
 
@@ -611,13 +611,16 @@ fn date_words(text: &str, today: Day) -> Vec<DateWord> {
         .chain([text.len()])
         .collect();
     (0..chars.len())
-        .filter(|&i| at_word_start(&chars, i) || dashed(&chars, i))
         .filter_map(|i| {
-            let (day, end) = take_date_word(&chars, i, today)?;
-            if !at_word_start(&chars, i) && !starts_span(&chars, end) {
+            let word_start = at_word_start(&chars, i);
+            let dashed = i
+                .checked_sub(1)
+                .is_some_and(|d| dash_starts_word(&chars, d));
+            if !word_start && !dashed {
                 return None;
             }
-            Some(DateWord {
+            let (day, end) = take_date_word(&chars, i, today)?;
+            (word_start || starts_span(&chars, end)).then(|| DateWord {
                 start: at[i],
                 end: at[end],
                 day,
@@ -635,19 +638,28 @@ pub(crate) fn at_word_start(chars: &[char], i: usize) -> bool {
         || (i >= 2 && chars[i - 2..i] == ['.', '.'])
 }
 
-/// Whether a `-` that starts a word is straight before `i`.
-fn dashed(chars: &[char], i: usize) -> bool {
-    i >= 1 && chars[i - 1] == '-' && (i == 1 || chars[i - 2].is_whitespace())
+/// Whether a `-` that starts a word is at `i`, as one before a span is that lists it newest
+/// first.
+pub(crate) fn dash_starts_word(chars: &[char], i: usize) -> bool {
+    chars.get(i) == Some(&'-') && (i == 0 || chars[i - 1].is_whitespace())
+}
+
+/// A time of day at `at`, as a span's end may have after its date, ` 18:00`: the minute of the
+/// day it is, and where it ends. A longer number is not one.
+pub(crate) fn time_of_day(chars: &[char], at: usize) -> Option<(u32, usize)> {
+    if chars.get(at) != Some(&' ') || chars.get(at + 3) != Some(&':') {
+        return None;
+    }
+    let hour = digits(chars, at + 1, 2).filter(|&hour| hour < 24)?;
+    let minute = digits(chars, at + 4, 2).filter(|&minute| minute < 60)?;
+    (!followed_by_digit(chars, at + 6)).then_some((hour * 60 + minute, at + 6))
 }
 
 /// Whether the `..` of a span follows a date ending at `at`, a time of day between them if one
-/// is there, ` 18:00`.
+/// is there.
 fn starts_span(chars: &[char], at: usize) -> bool {
-    let time = chars.get(at) == Some(&' ')
-        && chars.get(at + 3) == Some(&':')
-        && digits(chars, at + 1, 2).is_some_and(|hour| hour < 24)
-        && digits(chars, at + 4, 2).is_some_and(|minute| minute < 60);
-    dots(chars, at) || (time && dots(chars, at + 6))
+    let at = time_of_day(chars, at).map_or(at, |(_, end)| end);
+    dots(chars, at)
 }
 
 /// The word after a slash at `start`, and where it ends: at whitespace, at the `..` of a span,

@@ -242,12 +242,6 @@ impl Session {
             return;
         };
         let edited = self.normalise(edited);
-        // The note you are in, handed over from the line and emptied, stays, as it does when its
-        // body opened there is emptied.
-        if on_line && edited.is_empty() && self.place_note().is_some_and(|here| here == id) {
-            self.status = super::field::HERE_STAYS.into();
-            return;
-        }
         if edited == record.text {
             self.status = "unchanged".into();
         } else {

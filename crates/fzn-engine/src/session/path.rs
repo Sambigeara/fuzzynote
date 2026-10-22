@@ -71,6 +71,16 @@ impl Step {
         self
     }
 
+    /// The same step, found with this search unless it was found with one of its own.
+    fn found_with_or(mut self, search: String) -> Step {
+        match &mut self {
+            Step::Note { search: s, .. } | Step::Label { search: s, .. } => {
+                s.get_or_insert(search);
+            }
+        }
+        self
+    }
+
     /// The step as a face keeps it.
     pub(super) fn kept(&self) -> KeptStep {
         match self {
@@ -196,34 +206,20 @@ impl Session {
 
     /// Goes into what the line names, one place after another, as if each had been typed and Tab
     /// pressed after it: a place already on the path is gone back to, and any other is gone into.
-    /// The line was a search for where it leads, so it clears. A place it names alone gives the
-    /// line back on the way out; of a line of several labels, each one gone into gives itself back
-    /// as it is written, and one passed over or gone back to gives nothing, so that a path made in
-    /// one Tab steps back as if each label had been gone into alone. A line that only went back
-    /// stays as it is.
+    /// The line was a search for where it leads, so it clears, and comes back on the way out of a
+    /// place it names alone; a label of several comes back as it is written, as `places_named`
+    /// gives it. A line that only went back stays as it is.
     pub(super) fn go_in_from_line(&mut self) {
         let places = self.places_named();
         if places.is_empty() {
             return;
         }
-        // Labels are several when they are different places, so `#house #House` is one.
-        let mut labels: Vec<&Label> = Vec::new();
-        for typed in &self.parsed.labels {
-            if !labels.contains(&&typed.label) {
-                labels.push(&typed.label);
-            }
-        }
-        let several = labels.len() > 1;
         for step in places {
             match self.path.iter().position(|s| s.is(&step)) {
                 Some(at) => self.path.truncate(at + 1),
                 None => {
                     let line = std::mem::take(&mut self.line);
-                    let search = match &step {
-                        Step::Label { written, .. } if several => written.clone(),
-                        _ => line,
-                    };
-                    self.path.push(step.found_with(Some(search)));
+                    self.path.push(step.found_with_or(line));
                 }
             }
         }
@@ -235,7 +231,9 @@ impl Session {
     /// the line holds, by [`Session::named_here`]. That note is first on the list in a place as at
     /// the top, saying `its name`, so this is where Down and then Tab would go too. One place is
     /// named unless it is where you are, so that one on the path is gone back to; of several
-    /// labels, those the place has already are passed over, so that the rest are added to it.
+    /// labels, those the place has already are passed over, so that the rest are added to it, and
+    /// each is found with itself as it is written, as if typed alone, so that a path made in one
+    /// Tab steps back as one made a label at a time does. A label typed twice is one place.
     pub(super) fn places_named(&self) -> Vec<Step> {
         let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
@@ -260,7 +258,13 @@ impl Session {
                 places.retain(
                     |place| !matches!(place, Step::Label { label, .. } if had.contains(&label)),
                 );
-                return places;
+                return places
+                    .into_iter()
+                    .map(|place| {
+                        let written = place.name().to_owned();
+                        place.found_with(Some(written))
+                    })
+                    .collect();
             }
         } else if let [note] = self.named_here(query)[..] {
             places.push(Step::Note {
@@ -361,21 +365,36 @@ impl Session {
     }
 
     /// Steps back out to `depth` places on the path, onto the line, so that what is asked next is
-    /// asked of the line and not of a note. What is on the line stays as it is; only an empty
-    /// line gets back the search that the first place left behind was found with, which is what
-    /// the line held at that depth, or would have held had each label of a line of several been
-    /// typed and gone into alone.
+    /// asked of the line and not of a note.
     pub(super) fn back_to(&mut self, depth: usize) {
-        if depth >= self.path.len() {
-            return;
+        if depth < self.path.len() {
+            self.cut_path(depth);
+            self.refresh(true);
         }
+    }
+
+    /// Cuts the path to `depth` places. What is on the line stays as it is; only an empty line
+    /// gets back the search that the first place left behind was found with, which is what the
+    /// line held at that depth. A line that still reads as the last step out left it is as good
+    /// as empty, since nothing of it is the writer's: so two steps out of a path made in one Tab
+    /// end with the outer search, as two out of one made a step at a time do.
+    pub(super) fn cut_path(&mut self, depth: usize) {
         let left = self.path.split_off(depth);
-        if let Some(line) = left.into_iter().next().and_then(Step::into_search)
-            && self.line.trim().is_empty()
+        let untouched = self.line.trim().is_empty() || self.returned == self.line;
+        if let Some(search) = left.into_iter().next().and_then(Step::into_search)
+            && untouched
         {
-            self.line = line;
+            self.returned.clone_from(&search);
+            self.line = search;
         }
-        self.refresh(true);
+    }
+
+    /// How deep the path goes before the first note on it that has gone, deleted here or on
+    /// another device, if one has.
+    pub(super) fn gone_from(&self) -> Option<usize> {
+        self.path
+            .iter()
+            .position(|s| s.note().is_some_and(|id| self.notes.get(id).is_none()))
     }
 
     /// A text with each label being looked around that it does not carry already written into

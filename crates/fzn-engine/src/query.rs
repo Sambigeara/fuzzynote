@@ -133,12 +133,29 @@ pub(crate) struct Span {
     to: Option<End>,
     /// It measures when notes were done and not when they were written, since the line asks
     /// about the done tasks.
-    pub done: bool,
+    done: bool,
     /// A `-` was typed before it, so a line of time it orders lists newest first.
-    pub newest: bool,
+    newest: bool,
+}
+
+/// How a line of time is listed: by when its notes were done or when they were written, and
+/// newest first or oldest first.
+#[derive(Clone, Copy)]
+pub(crate) struct Timed {
+    pub(crate) done: bool,
+    pub(crate) newest: bool,
 }
 
 impl Span {
+    fn new(from: Option<End>, to: Option<End>) -> Self {
+        Span {
+            from,
+            to,
+            done: false,
+            newest: false,
+        }
+    }
+
     /// The moment of a note the span measures: when it was written, or when it was done.
     pub(crate) fn read(&self, note: &Note) -> Option<Moment> {
         if self.done { note.done } else { note.created }
@@ -339,12 +356,13 @@ impl Query {
             // A `-` starting a word and straight before a span lists it newest first; before
             // anything else it is words, as it always was. What follows is read as it would be
             // without the `-`, as the start of a word, so that `-/-mon..` is `/-mon..` reversed.
-            if c == '-'
-                && (i == 0 || chars[i - 1].is_whitespace())
-                && let Some((span, end)) = newest_span(&chars[i + 1..], today)
+            if text::dash_starts_word(&chars, i)
+                && let Some((Dated::Span(span), end)) = dated(&chars[i + 1..], 0, true, today)
             {
-                query.holds.push(Hold::Span(span));
-                query.shown.push(Shown::Span(span));
+                query.hold_span(Span {
+                    newest: true,
+                    ..span
+                });
                 query.blank();
                 i += 1 + end;
                 continue;
@@ -367,7 +385,10 @@ impl Query {
                     });
                     Some(end)
                 }
-                None => query.dated(&chars, i, boundary, today),
+                None => dated(&chars, i, boundary, today).map(|(dated, end)| {
+                    query.take_dated(dated);
+                    end
+                }),
             };
             match taken {
                 Some(end) => {
@@ -387,18 +408,19 @@ impl Query {
         query
     }
 
-    /// The span the line holds, if it holds one: a line of time is listed in the order of the
-    /// moment its first span reads, newest first if any span on the line has a `-` before it,
-    /// so that the newest end said first beside it is the end the list starts at.
-    pub(crate) fn timed(&self) -> Option<Span> {
-        let spans = || {
-            self.holds.iter().filter_map(|hold| match hold {
-                Hold::Span(span) => Some(*span),
-                Hold::Phrase(_) | Hold::Without(_) => None,
-            })
-        };
-        let newest = spans().any(|span| span.newest);
-        spans().next().map(|span| Span { newest, ..span })
+    /// How the line is listed if it holds a span: in the order of the moment its first span
+    /// reads, newest first if any span on the line has a `-` before it, so that the newest end
+    /// said first beside it is the end the list starts at.
+    pub(crate) fn timed(&self) -> Option<Timed> {
+        let mut spans = self.holds.iter().filter_map(|hold| match hold {
+            Hold::Span(span) => Some(span),
+            Hold::Phrase(_) | Hold::Without(_) => None,
+        });
+        let first = spans.next()?;
+        Some(Timed {
+            done: first.done,
+            newest: first.newest || spans.any(|span| span.newest),
+        })
     }
 
     /// Whether the line asks for the done tasks, with `[x]`.
@@ -416,60 +438,25 @@ impl Query {
         }
     }
 
-    /// Reads a day or a span at `i`, if one starts there, and says where it ends: `START..END`,
-    /// `START..` to now, `..END`, or a day alone. A day is a date written out, in the old form
-    /// too, or a date word; an end of a span may have a time after it. A time anywhere else is
-    /// words.
-    fn dated(&mut self, chars: &[char], i: usize, boundary: bool, today: Day) -> Option<usize> {
-        if boundary && text::dots(chars, i) {
-            // Two dots alone are a span with neither end: all time. Alone means a word of their
-            // own, so that the dots after `wait...` are not one.
-            let alone = |at: Option<&char>| at.is_none_or(|c| c.is_whitespace());
-            if alone(i.checked_sub(1).map(|at| &chars[at])) && alone(chars.get(i + 2)) {
-                self.span(None, None);
-                return Some(i + 2);
+    /// Takes a day or a span read off the line: a day is a label, and a span is held.
+    fn take_dated(&mut self, dated: Dated) {
+        match dated {
+            Dated::Day { day, word } => {
+                self.labels.push(Typed {
+                    label: Label::Day(day),
+                    written: time::format_day(day),
+                    whole: true,
+                });
+                // A date word is said as the date it stands for; a date written out says itself.
+                if word {
+                    self.shown.push(Shown::Day(day));
+                }
             }
-            let (to, end) = span_end(chars, i + 2, today)?;
-            self.span(None, Some(to));
-            return Some(end);
+            Dated::Span(span) => self.hold_span(span),
         }
-        let (day, end, word) = if boundary && chars[i].is_ascii_digit() {
-            text::take_iso_date(chars, i).map(|(day, end)| (day, end, false))?
-        } else if text::at_word_start(chars, i) && chars[i] == '/' {
-            text::take_date_word(chars, i, today).map(|(day, end)| (day, end, true))?
-        } else if boundary && chars[i].is_ascii_alphabetic() {
-            text::take_fzn_date(chars, i).map(|(day, end)| (day, end, false))?
-        } else {
-            return None;
-        };
-        let (from, at) = timed(chars, day, end);
-        if text::dots(chars, at) {
-            let (to, end) = match span_end(chars, at + 2, today) {
-                Some((to, end)) => (Some(to), end),
-                None => (None, at + 2),
-            };
-            self.span(Some(from), to);
-            return Some(end);
-        }
-        self.labels.push(Typed {
-            label: Label::Day(day),
-            written: time::format_day(day),
-            whole: true,
-        });
-        // A date word is said as the date it stands for; a date written out says itself.
-        if word {
-            self.shown.push(Shown::Day(day));
-        }
-        Some(end)
     }
 
-    fn span(&mut self, from: Option<End>, to: Option<End>) {
-        let span = Span {
-            from,
-            to,
-            done: false,
-            newest: false,
-        };
+    fn hold_span(&mut self, span: Span) {
         self.holds.push(Hold::Span(span));
         self.shown.push(Shown::Span(span));
     }
@@ -544,41 +531,61 @@ impl Query {
     }
 }
 
-/// The span at the start of `chars`, read as the start of a word, made newest first, and where it
-/// ends; nothing if a span does not start there, a day alone included.
-fn newest_span(chars: &[char], today: Day) -> Option<(Span, usize)> {
-    if chars.is_empty() {
-        return None;
-    }
-    let mut read = Query::default();
-    let end = read.dated(chars, 0, true, today)?;
-    let Some(Hold::Span(span)) = read.holds.pop() else {
-        return None;
-    };
-    Some((
-        Span {
-            newest: true,
-            ..span
-        },
-        end,
-    ))
+/// A day or a span, as the line reads one.
+enum Dated {
+    /// A day alone, and whether it was typed as a date word.
+    Day {
+        day: Day,
+        word: bool,
+    },
+    Span(Span),
 }
 
-/// A time of day after a date, ` 18:00`, if there is one: the end it makes, and where it ends.
+/// Reads a day or a span at `i`, if one starts there, and says where it ends: `START..END`,
+/// `START..` to now, `..END`, or a day alone. A day is a date written out, in the old form too,
+/// or a date word; an end of a span may have a time after it. A time anywhere else is words.
+fn dated(chars: &[char], i: usize, boundary: bool, today: Day) -> Option<(Dated, usize)> {
+    let &c = chars.get(i)?;
+    if boundary && text::dots(chars, i) {
+        // Two dots alone are a span with neither end: all time. Alone means a word of their
+        // own, so that the dots after `wait...` are not one.
+        let alone = |at: Option<&char>| at.is_none_or(|c| c.is_whitespace());
+        if alone(i.checked_sub(1).map(|at| &chars[at])) && alone(chars.get(i + 2)) {
+            return Some((Dated::Span(Span::new(None, None)), i + 2));
+        }
+        let (to, end) = span_end(chars, i + 2, today)?;
+        return Some((Dated::Span(Span::new(None, Some(to))), end));
+    }
+    let (day, end, word) = if boundary && c.is_ascii_digit() {
+        text::take_iso_date(chars, i).map(|(day, end)| (day, end, false))?
+    } else if text::at_word_start(chars, i) && c == '/' {
+        text::take_date_word(chars, i, today).map(|(day, end)| (day, end, true))?
+    } else if boundary && c.is_ascii_alphabetic() {
+        text::take_fzn_date(chars, i).map(|(day, end)| (day, end, false))?
+    } else {
+        return None;
+    };
+    let (from, at) = timed(chars, day, end);
+    if text::dots(chars, at) {
+        let (to, end) = match span_end(chars, at + 2, today) {
+            Some((to, end)) => (Some(to), end),
+            None => (None, at + 2),
+        };
+        return Some((Dated::Span(Span::new(Some(from), to)), end));
+    }
+    Some((Dated::Day { day, word }, end))
+}
+
+/// A date's day with the time of day after it, ` 18:00`, if there is one: the end it makes, and
+/// where it ends.
 fn timed(chars: &[char], day: Day, at: usize) -> (End, usize) {
-    let minute = (chars.get(at) == Some(&' ')
-        && chars.get(at + 3) == Some(&':')
-        && !text::followed_by_digit(chars, at + 6))
-    .then(|| text::digits(chars, at + 1, 2).zip(text::digits(chars, at + 4, 2)))
-    .flatten()
-    .filter(|&(hour, minute)| hour < 24 && minute < 60);
-    match minute {
-        Some((hour, minute)) => (
+    match text::time_of_day(chars, at) {
+        Some((minute, end)) => (
             End {
                 day,
-                minute: Some(i64::from(hour * 60 + minute)),
+                minute: Some(i64::from(minute)),
             },
-            at + 6,
+            end,
         ),
         None => (End { day, minute: None }, at),
     }

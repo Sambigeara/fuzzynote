@@ -10,9 +10,6 @@ use crate::time::{Day, Moment};
 
 use super::{Action, Effect, Row, Session};
 
-/// What is said when the note you are in is emptied from the line's body or editor.
-pub(super) const HERE_STAYS: &str = "the note you are in stays: it is not emptied from inside it";
-
 /// The note under the cursor as it is being written: what it now reads, and what it was. One
 /// lasts as long as one visit of the cursor to a row, and everything it writes in that time is
 /// one entry to undo.
@@ -44,6 +41,22 @@ pub(super) struct Writing {
 }
 
 impl Writing {
+    /// A visit to a note that reads `text`, begun at `opened`, with nothing typed yet.
+    fn new(id: String, text: String, opened: Moment) -> Self {
+        Writing {
+            id,
+            original: text.clone(),
+            text,
+            new: false,
+            whole: false,
+            touched: false,
+            opened,
+            label: String::new(),
+            entry: None,
+            from_line: false,
+        }
+    }
+
     /// Whether the text has changed in this visit: from what it read when the cursor landed, or
     /// was last written out on closing its body, which for a new note is what it opened with at
     /// first. A new note with nothing in it has nothing to put back.
@@ -236,9 +249,6 @@ impl Session {
                 self.flush();
             }
             Action::ShowScores => self.show_scores = !self.show_scores,
-            // The note you are in is not deleted from inside it, which would leave the path in a
-            // note that is not there.
-            Action::Delete if field.from_line => {}
             // A new note with nothing in it deleted goes as if it was never anything.
             Action::Delete if field.empty() => {
                 self.abandon();
@@ -519,18 +529,7 @@ impl Session {
             // the head does not go blank under the cursor.
             _ => {
                 let text = held.map_or(head, str::to_owned);
-                self.field = Some(Writing {
-                    id,
-                    original: text.clone(),
-                    text,
-                    new: false,
-                    whole: false,
-                    touched: false,
-                    opened: self.host.now(),
-                    label: String::new(),
-                    entry: None,
-                    from_line: false,
-                });
+                self.field = Some(Writing::new(id, text, self.host.now()));
             }
         }
     }
@@ -541,31 +540,24 @@ impl Session {
     /// it goes once the cursor leaves it, as closing the body takes it back to the line, and the
     /// list is as it was. With no note on the path there is nothing to open.
     pub(super) fn open_here(&mut self) {
-        let Some(record) = self.place_note().and_then(|id| self.notes.get(id)).cloned() else {
+        let Some(record) = self.place_note().and_then(|id| self.notes.get(id)) else {
             return;
         };
         let at = match self.rows.iter().position(|r| r.id == record.id) {
             Some(at) => at,
             None => {
-                let row = self.listed(&record);
+                let row = self.listed(record);
+                self.going = Some(row.id.clone());
                 self.rows.insert(0, row);
-                self.going = Some(record.id.clone());
                 0
             }
         };
         self.cursor = Some(at);
-        self.field = Some(Writing {
-            id: record.id,
-            original: record.text.clone(),
-            text: record.text,
-            new: false,
-            whole: true,
-            touched: false,
-            opened: self.host.now(),
-            label: String::new(),
-            entry: None,
-            from_line: true,
-        });
+        self.land();
+        if let Some(field) = self.field.as_mut() {
+            field.whole = true;
+            field.from_line = true;
+        }
     }
 
     /// Hands the note you are in to the face's editor from the line, as a row's is handed: what
@@ -605,16 +597,9 @@ impl Session {
         );
         self.cursor = Some(at);
         self.field = Some(Writing {
-            id,
-            text: label.clone(),
-            original: label.clone(),
             new: true,
-            whole: false,
-            touched: false,
-            opened,
-            label,
-            entry: None,
-            from_line: false,
+            label: label.clone(),
+            ..Writing::new(id, label, opened)
         });
     }
 
@@ -652,15 +637,6 @@ impl Session {
         }
         let (id, new, original) = (field.id.clone(), field.new, field.original.clone());
         let text = self.normalise(&field.text);
-        // The note you are in, opened from the line, is not deleted from inside it, which would
-        // leave the path in a note that is not there: emptied, it is kept as it was.
-        if field.from_line && text.is_empty() {
-            self.status = HERE_STAYS.into();
-            if let Some(field) = self.field.as_mut() {
-                field.text = original;
-            }
-            return false;
-        }
         let wrote = match self.notes.get(&id) {
             Some(held) if held.text == text => false,
             Some(_) => {

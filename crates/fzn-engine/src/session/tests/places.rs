@@ -1007,7 +1007,7 @@ fn the_finds_begin_after_every_fact_however_the_named_rows_mix() {
 }
 
 #[test]
-fn the_body_opens_on_the_line_in_a_note_onto_the_note_you_are_in_and_closes_back_onto_the_line() {
+fn the_note_you_are_in_opens_from_the_line_and_closes_back_onto_it() {
     let mut s = session();
     boiler(&mut s);
     go_to(&mut s, "Boiler");
@@ -1109,14 +1109,11 @@ fn the_body_and_the_editor_are_offered_on_the_line_only_in_a_note() {
             "back"
         ]
     );
-    // Opened from the line it offers what a row's body does, but for deleting the note you are
-    // in, which would leave the path in a note that is not there.
+    // Opened from the line it offers what a row's body does.
     s.act(Action::Open);
-    assert_eq!(labels(&s), ["done"]);
+    assert_eq!(labels(&s), ["delete", "done"]);
     edited(&mut s, "Boiler\n#house\nthe combi");
-    assert_eq!(labels(&s), ["put back", "done"]);
-    s.act(Action::Delete);
-    assert!(s.notes.get("boiler").is_some_and(|r| !r.deleted));
+    assert_eq!(labels(&s), ["put back", "delete", "done"]);
     s.act(Action::Close);
     assert_eq!(labels(&s)[..3], ["new note here", "body", "editor"]);
 }
@@ -1146,31 +1143,133 @@ fn the_editor_is_handed_the_note_you_are_in_from_the_line_and_the_cursor_stays_t
     );
 }
 
+/// Whether the session has stepped out of Boiler, deleted, onto the line with what it says.
+fn stepped_out(s: &Session, line: &str) {
+    assert!(s.notes.get("boiler").is_none(), "deleted");
+    assert!(path(s).is_empty(), "out to just before it");
+    assert_eq!((s.line.as_str(), s.cursor, field(s)), (line, None, None));
+    assert_eq!(s.view().status, "deleted · undo brings it back");
+}
+
 #[test]
-fn the_note_you_are_in_emptied_from_the_line_stays_as_it_was() {
+fn the_note_you_are_in_deleted_from_its_body_opened_from_the_line_steps_out_of_it() {
     let mut s = session();
     boiler(&mut s);
     go_to(&mut s, "Boiler");
-    let held = |s: &Session| s.notes.get("boiler").map(|r| (r.text.clone(), r.deleted));
-    let was = held(&s);
+    s.act(Action::Open);
+    s.act(Action::Delete);
+    stepped_out(&s, "Boiler");
+
+    // Undo brings it back, under the cursor where the line finds it.
+    s.act(Action::Undo);
+    assert!(s.notes.get("boiler").is_some());
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some("boiler"));
+}
+
+#[test]
+fn the_note_you_are_in_deleted_from_its_row_steps_out_of_it_and_keeps_the_line() {
+    let mut s = session();
+    boiler(&mut s);
+    go_to(&mut s, "Boiler");
+    go_to(&mut s, "#house");
+    type_in(&mut s, "Boiler");
+    assert_eq!(s.rows[0].id, "boiler", "the line names it");
+    s.act(Action::Select(Some(0)));
+    assert!(labels(&s).contains(&"delete"));
+    s.act(Action::Delete);
+    stepped_out(&s, "Boiler");
+}
+
+#[test]
+fn the_note_you_are_in_emptied_from_the_line_is_deleted_and_steps_out_of_it() {
+    let mut s = session();
+    boiler(&mut s);
 
     // Its body cleared in the sheet and closed.
+    go_to(&mut s, "Boiler");
     s.act(Action::Open);
     edited(&mut s, "");
     let done = s.act(Action::Close);
-    assert!(kept(&done).is_empty(), "nothing written");
-    assert_eq!(held(&s), was);
-    assert_eq!((s.cursor, field(&s)), (None, None), "back on the line");
-    assert_eq!(s.view().status, crate::session::field::HERE_STAYS);
+    assert!(kept(&done).iter().any(|r| r.id == "boiler" && r.deleted));
+    stepped_out(&s, "Boiler");
+    s.act(Action::Undo);
 
     // An editor that leaves nothing.
+    go_to(&mut s, "Boiler");
     s.act(Action::Editor);
-    let saved = s.act(Action::Save {
+    s.act(Action::Save {
         id: "boiler".into(),
         text: "\n".into(),
     });
-    assert!(kept(&saved).is_empty(), "nothing written");
-    assert_eq!(held(&s), was);
-    assert_eq!(s.view().status, crate::session::field::HERE_STAYS);
-    assert_eq!(path(&s), ["Boiler"]);
+    stepped_out(&s, "Boiler");
+    s.act(Action::Undo);
+    assert!(s.notes.get("boiler").is_some(), "undo brings it back");
+}
+
+#[test]
+fn the_note_you_are_in_deleted_elsewhere_steps_out_of_it_once_the_cursor_is_on_the_line() {
+    let mut s = session();
+    boiler(&mut s);
+    let gone = |s: &Session, at: i64| Record {
+        deleted: !s.notes.version("boiler").unwrap().deleted,
+        stamp: Some(NOON.plus_secs(at)),
+        device: "3f9a01c2".into(),
+        ..s.notes.version("boiler").unwrap().clone()
+    };
+    go_to(&mut s, "#house");
+    go_into(&mut s, "Boiler");
+    assert_eq!(path(&s), ["#house", "Boiler"]);
+    assert!(s.absorb([gone(&s, 60)]));
+    assert_eq!(path(&s), ["#house"], "out to just before it");
+    assert!(s.view().here.is_none());
+
+    // While the cursor walks the list, the list holds still, the path with it, until the
+    // cursor is back on the line.
+    s.absorb([gone(&s, 120)]);
+    go_into(&mut s, "Boiler");
+    s.act(Action::Move(1));
+    s.absorb([gone(&s, 180)]);
+    assert_eq!(path(&s), ["#house", "Boiler"]);
+    s.act(Action::Select(None));
+    assert_eq!(path(&s), ["#house"]);
+}
+
+#[test]
+fn two_steps_out_of_labels_gone_into_in_one_tab_end_with_the_outer_one_on_the_line() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house #garden");
+    s.act(Action::GoIn);
+    s.act(Action::Back);
+    assert_eq!((path(&s), s.line.as_str()), (vec!["#house"], "#garden"));
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    assert_eq!(
+        s.line, "#house",
+        "as two steps out of one made a label at a time"
+    );
+}
+
+#[test]
+fn a_line_changed_after_a_step_out_put_it_back_is_kept_by_the_next() {
+    let mut s = session();
+    house(&mut s);
+    type_in(&mut s, "#house #garden");
+    s.act(Action::GoIn);
+    s.act(Action::Back);
+    type_in(&mut s, " shed");
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    assert_eq!(s.line, "#garden shed");
+
+    // Typed again as it was put back, it is the writer's all the same.
+    clear(&mut s);
+    type_in(&mut s, "#house #garden");
+    s.act(Action::GoIn);
+    s.act(Action::Back);
+    clear(&mut s);
+    type_in(&mut s, "#garden");
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    assert_eq!(s.line, "#garden");
 }

@@ -21,25 +21,26 @@
 //! empty line again; otherwise it was a draft, and it stays on the line to be written there.
 //! Stepping back never throws away what is on the line; clearing it is asked for apart, and
 //! offered as the way back while there is something on it. Going into a place already on the
-//! path goes back to it, so the path never repeats. Linking or unlinking a note of the list is a
+//! path goes back to it, so the path never repeats, and a note on the path that is deleted, here
+//! or elsewhere, steps out to just before it. Linking or unlinking a note of the list is a
 //! correction. A `[[head]]` typed into a note is one more way of making a link: saving the note
 //! links it to the note so headed. However it was made, a link is the target's id held on the
 //! note.
 //!
 //! A tag, a person or a day is a place too, gone into from the line when the line is labels and
 //! nothing else, each in turn, as a note is gone into from the line when the line is its name:
-//! either way the line was a search for the place, so it clears and comes back on the way out, of
-//! several labels each as it is written, as if gone into alone. A span is not a place, since a
-//! note written now could not be written in a span gone by. What is in a label is every note carrying it, in the space's order, and typing finds among those first
-//! and then among what the label's words find. A note written there ends its head with the
-//! label, as it would have been typed, so that it reads as one written with the label on the line
-//! always has. A new row opens with the label already in its head and the caret before it, so
-//! that what the writer sees is what is written, and the note is in its place on every device
-//! from its first letter. Only a note written in the place inherits it. Since the place says its
-//! labels, a row there that is not under the cursor shows its head without them where they end
-//! it, when the note is a head only, and the path names a note as its row read where it was gone
-//! into from. A head is named without the labels that end it too, so the words a row reads go
-//! into it.
+//! either way the line was a search for the place, so it clears and comes back on the way out, a
+//! line of several labels a label at a time, each as if gone into alone. A span is not a place,
+//! since a note written now could not be written in a span gone by. What is in a label is every
+//! note carrying it, in the space's order, and typing finds among those first and then among what
+//! the label's words find. A note written there ends its head with the label, as it would have
+//! been typed, so that it reads as one written with the label on the line always has. A new row
+//! opens with the label already in its head and the caret before it, so that what the writer sees
+//! is what is written, and the note is in its place on every device from its first letter. Only a
+//! note written in the place inherits it. Since the place says its labels, a row there that is not
+//! under the cursor shows its head without them where they end it, when the note is a head only,
+//! and the path names a note as its row read where it was gone into from. A head is named without
+//! the labels that end it too, so the words a row reads go into it.
 //!
 //! Labels gone into one after another are one place, so that going into today from inside a
 //! tag is today's notes in that tag: what is in it is the notes carrying every one of them, and
@@ -462,8 +463,13 @@ pub struct Session {
     /// a chord rebuilds the list.
     stale: bool,
     /// The row under the cursor, whose note went from the list while it was being written in:
-    /// it is not taken from under the hands, and goes once the cursor leaves it.
+    /// it is not taken from under the hands, and goes once the cursor leaves it. The row put
+    /// under the cursor for the note you are in, its body opened from the line, is held here too,
+    /// so that it goes as the cursor leaves it and the list is as it was.
     going: Option<String>,
+    /// What the last step out put back on the line, or nothing once anything else is typed there.
+    /// A line that still reads so is as good as empty to the next step out.
+    returned: String,
     /// What the action being carried out asks of the face.
     out: Vec<Effect>,
     /// Where the session has put the caret since a face last took it.
@@ -520,6 +526,7 @@ impl Session {
             field: None,
             stale: false,
             going: None,
+            returned: String::new(),
             out: Vec::new(),
             caret: Caret::default(),
             parsed: Query::default(),
@@ -577,6 +584,11 @@ impl Session {
             action => {
                 if let Some(action) = self.on_field(action) {
                     self.carry_out(action);
+                }
+                // The note you are in, deleted here by whatever route, takes you out of it at
+                // once, where any other note deleted leaves the list where it was.
+                if self.gone_from().is_some() {
+                    self.refresh(true);
                 }
             }
         }
@@ -637,6 +649,9 @@ impl Session {
     fn carry_out(&mut self, action: Action) {
         match action {
             Action::Type(line) => {
+                if line != self.returned {
+                    self.returned.clear();
+                }
                 self.line = line;
                 self.refresh(true);
             }
@@ -821,7 +836,7 @@ impl Session {
             if changed {
                 offer(Action::Undo, "put back");
             }
-            if !blank && !field.is_some_and(|f| f.from_line) {
+            if !blank {
                 offer(Action::Delete, "delete");
             }
             offer(Action::Close, "done");
@@ -897,10 +912,7 @@ impl Session {
                     offer(Action::GoIn, "go in");
                 }
                 // The note you are in is opened from the line, as a row's note is from its row.
-                if self
-                    .place_note()
-                    .is_some_and(|id| self.notes.get(id).is_some())
-                {
+                if self.place_note().is_some() {
                     offer(Action::Open, "body");
                     offer(Action::Editor, "editor");
                 }

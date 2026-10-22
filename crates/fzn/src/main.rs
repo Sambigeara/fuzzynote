@@ -61,8 +61,8 @@ again. $FZN_PASSPHRASE answers in place of the question, for scripts.
 query writes the notes a line finds, typed as on the line, one plain line of JSON each, readable
 without fzn: every one of them, archived ones too, in the order the app lists them, which with
 nothing to rank by is the space's order, or on a line with a span oldest first by when each was
-written, or with [x] by when each was done, and newest first with a - before the span, and
-otherwise best first. fzn query '#house /-mon..' is everything tagged #house written since last
+written, or with [x] by when each was done, newest first with a - before the span; otherwise
+best first. fzn query '#house /-mon..' is everything tagged #house written since last
 Monday, fzn query '[ ]' the open tasks, fzn query '[x] /-mon.. #work' the tasks in #work done
 since last Monday, whenever they were written, and fzn query '-..' every note newest first.
 export writes every live note the same way, oldest first. Neither writes anything, and jq orders

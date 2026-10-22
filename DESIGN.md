@@ -670,17 +670,17 @@ order instead, oldest first, by the moment the span reads, when written or with 
 done. With a `-` before a span, any span on the line, it is that list turned over, newest first,
 notes of one moment too, so `-..` is every note newest first and `[x] -/-mon.. #work` the week's
 done work last done first. At the top it is cut at the 500 rows the top of the space is cut at, a
-list of time keeping the newest 500 so that it still reaches now, at its end oldest first and at its
-top newest first, and in a place it is not cut; `fzn query` is never cut. A single letter is not a
-word, so `#house a` lists what `#house` lists. With words as well, they rank among the notes that
-hold, by the scores, span or not. The note the line names has to hold it too. Inside a place, the
-line narrows the place's facts and its finds alike, and a line of labels in a place lists the facts
-that carry them. The rows of a line with nothing to rank by and no span are in the space's order, so
-they can be moved as the rows of an empty line can; the rows of a line of time are not, and are not
-moved. Enter writes the line as it reads: quotes, `~` and spans stay as typed, date words are
-written out, after a span's dots too, and `/task` is written as the box at the start of the head, so
-that `Bleed the radiators /task` writes `[ ] Bleed the radiators`. A line of labels alone is the
-exception: it is the name of a place, and Enter goes into it as Tab does and writes nothing.
+list of time keeping the newest 500 so that it still reaches now. In a place it is not cut, and
+`fzn query` is never cut. A single letter is not a word, so `#house a` lists what `#house` lists.
+With words as well, they rank among the notes that hold, by the scores, span or not. The note the
+line names has to hold it too. Inside a place, the line narrows the place's facts and its finds
+alike, and a line of labels in a place lists the facts that carry them. The rows of a line with
+nothing to rank by and no span are in the space's order, so they can be moved as the rows of an
+empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
+reads: quotes, `~` and spans stay as typed, date words are written out, after a span's dots too, and
+`/task` is written as the box at the start of the head, so that `Bleed the radiators /task` writes
+`[ ] Bleed the radiators`. A line of labels alone is the exception: it is the name of a place, and
+Enter goes into it as Tab does and writes nothing.
 Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
 asks for the done tasks.
 
@@ -692,7 +692,8 @@ otherwise you were writing, and the draft is carried in to be written here. So a
 note in its body was a search, and so was `/today`, and a draft with a tag in it,
 `boiler needs bleeding #house`, is carried in, as is a line with nothing on it to rank by or to
 hold, a letter or a mark. A place gone into from the line was searched for by definition, so the
-line clears.
+line clears. Stepping back brings a search back to an empty line, or to one that still reads as the
+last step back left it, since nothing on it is yours; a line typed into stays as it is.
 
 ### Zoom and places
 Tab on a note's head makes it the place, and the path grows by one, wherever the caret is in the
@@ -743,14 +744,15 @@ same things, with only the notes carrying the labels counted as facts; around la
 what their words find.
 
 Stepping back never throws away what you typed: a line written inside stays on the way out, and the
-search comes back only to an empty line. Esc with text on the line clears it, and only on an empty
-line steps back, so that inside a place "found it, clear, stay" is one key; the session offers
-`clear` as the way back while the line has text and `back` once it is empty. A path steps back the
-same however it was made: each label gone into from a line of several comes back as if it had been
-gone into alone, as it is written. From `#house › #garden`, made by one Tab on
-`#house #garden`, Esc steps back to `#house` with `#garden` on the line, Esc clears it, and Esc
-again steps out with `#house` on the line. A label passed over or only gone back to puts nothing
-back.
+search comes back only to an empty line, or to one that still reads as the last step back left it.
+Esc with text on the line clears it, and only on an empty line steps back, so that inside a place
+"found it, clear, stay" is one key; the session offers `clear` as the way back while the line has
+text and `back` once it is empty. A path steps back the same however it was made: each label gone
+into from a line of several comes back as if it had been gone into alone, as it is written. From
+`#house › #garden`, made by one Tab on `#house #garden`, Esc steps back to `#house` with `#garden`
+on the line, Esc clears it, and Esc again steps out with `#house` on the line; the page's Back,
+twice, ends there too, since the `#garden` the first put back is not yours. A label passed over or
+only gone back to puts nothing back.
 
 What you write inside is about the place. Inside a note it links to it and lands at the top of the
 place. Inside a label its head ends with the label, as it would have been typed, unless the note
@@ -783,9 +785,14 @@ terminal Ctrl-O hands it to your editor and the cursor stays on the line, and on
 `body` in the foot, or a tap on the note read above the line or beside the list opens it in the
 sheet. To be opened there it is put under the cursor, first on the list, where the note the line
 names is listed, or on its own row where the line names it already; closing it puts the cursor back
-on the line and takes the row away, so the list is as it was. It cannot be deleted from there:
-emptied in the sheet or the editor, it stays as it was, and the status says so. Inside labels alone,
-or at the top, there is no note you are in, and nothing to open.
+on the line and takes the row away, so the list is as it was. In all else it is a row's body, Delete
+included. Inside labels alone, or at the top, there is no note you are in, and nothing to open.
+
+A note on the path that goes steps you out to just before it, as stepping back would, the line kept
+as stepping back keeps it: deleted from its body, from its row where the line names it, by emptying
+it in the sheet or the editor, or on another device. One deleted here says
+`deleted · undo brings it back`, and undo does. One deleted elsewhere while the cursor walks the
+list steps you out once the cursor is back on the line, since the list holds still till then.
 
 ### Terminal
 Rust and ratatui, with the original fzn chords where they still earn their place, because that is
@@ -3586,77 +3593,49 @@ the app now does is described above; an entry repeats it only where the reason n
   again for a mark the page draws on every other field as a fade.
 
 - **A path steps back the same however it was made.** Decided 2026-10-22, at Sam's ask, revising the
-  last rule of "The arrow at the end of a line of labels goes into each", where the line came back
-  on the way out of the first place it went into: `#house #garden` and Tab went into
-  `#house › #garden`, Esc stepped back to `#house` with an empty line, and Esc again to the top with
-  `#house #garden` put back. A path of several steps now steps back as if each had been gone into
-  alone, a label coming back as it is written: each label gone into is kept with itself as its
-  search, so from `#house › #garden` Esc steps back to `#house` with `#garden` on the line, Esc
-  clears it, and Esc again steps out with `#house` on the line. A label passed over because the
-  place has it already, or one that only goes back along the path, puts nothing back, since it added
-  no step. As written, a label reads as the same label, though not always as it was typed: `/fri`
-  comes back as `2026-10-16` and `/task` as `[ ]`. A line that names one place, however many times,
-  as `#house #House` does, still gives back the line as it was typed. The path a face keeps carries
-  each step's search already, so a reloaded page steps back the same. Weighed: the whole line on the
-  first step, which is what this revises, and which made the way back depend on how the way in was
-  typed.
+  last rule of "The arrow at the end of a line of labels goes into each", where the whole line came
+  back on the way out of the first place it went into: from `#house › #garden`, made by one Tab on
+  `#house #garden`, Esc stepped back to `#house` with an empty line, and again to the top with
+  `#house #garden`. Now each label of a line of several comes back as it is written, as if it had
+  been gone into alone, and one passed over or only gone back to puts nothing back, since it added
+  no step; a line naming one place, `#house #House`, still comes back whole. So the way back no
+  longer depends on how the way in was typed. A line that still reads as the last step back left it
+  counts as empty to the next, so that the page's Back, which steps out a step at a time with no
+  clearing between, ends at the top with `#house` and not `#garden`; a line typed into is kept, as
+  before. Weighed: the whole line on the first step, which is what this revises; and the page
+  clearing the line before each Back, which would leave a rule of the session's to one face.
 
 - **A dash before a span lists it newest first.** Decided 2026-10-22, at Sam's ask, revising "Time
-  on the line is time order", where a line of time was listed oldest first only. Oldest first stays
-  right for a roundup copied out Monday to Friday, but what was written or done lately is read from
-  the top, and on a long span it was at the bottom: `..` put today under every note ever written. A
-  `-` starting a word and straight before a span, `-..`, `-/-mon..`, `[x] -/-mon.. #work`,
-  `-2026-10-01..2026-10-05`, holds exactly what the span without it holds and lists it newest first.
-  The `-` was kept free for this when `!` was chosen to leave notes out, in "`!` holds what is
-  without it", and a minus reads as the other way round, so there is little to learn. The list is
-  the oldest-first list turned over whole, notes of the same moment in the space's order reversed
-  with the rest, so that `-..` read from its bottom is `..`, rather than ties kept in the space's
-  order, which would make the two differ by more than direction. One dashed span turns the whole
-  line, since a line has one order, and with two spans the first measures it as before. What follows
-  the `-` is read as if it started the word, so a date word after it reads and `-/-mon..` is
-  `/-mon..` turned over, though `/-mon` has its own `-`; Enter writes the date word out after the
-  dash, as it would without it, so the note says `-2026-10-12..` and Tab from such a line onto it
-  reads it as the search it was. The cut is the same 500 newest notes, which listed newest first
-  fall at the top, so the cut is at the list's end. The line says a dashed span from its newest end,
-  `→ now – Mon 2026-10-12`, `-..` as `→ now – …`: the order the list reads in, with no words added.
-  So a stray dash shows what it did, and each dashed span's own words are right on a line that holds
-  another. Before anything but a span a `-` is what it was, since plenty of text starts with a
-  hyphen: `-boiler` and `-/-mon` alone are words, and `-2026-10-01` a word and a day. With words on
-  the line the scores order it, as before. `fzn query` reads the line as the app does, so it honours
-  the order. Weighed: a setting or a key to turn every line of time over, which is one more thing to
-  remember and hidden from the line; newest first for every span, which loses the roundup read
-  forwards; a `-` after the span, `..-`, which reads as a span's end; and `, newest first` said
-  after the span, which the faces' list of dates took for a date of its own.
+  on the line is time order", where a line of time was listed oldest first only. Oldest first suits
+  a roundup copied out Monday to Friday, but what was written or done lately is read from the top,
+  and `..` put today under every note ever written. A `-` starting a word and straight before a
+  span, `-..` or `[x] -/-mon.. #work`, holds what the span holds and lists it newest first. The `-`
+  was kept free for this when `!` was chosen to leave notes out, and a minus reads as the other way
+  round, so there is little to learn. The list is the oldest-first list turned over whole, ties too,
+  so that `-..` read from its bottom is `..`, and one dashed span turns the line, since a line has
+  one order. The line says a dashed span from its newest end, `→ now – Mon 2026-10-12`, the order
+  the list reads in, so a stray dash shows what it did. Before anything but a span a `-` is what it
+  was, since plenty of text starts with a hyphen. Weighed: a setting or a key to turn every line of
+  time over, one more thing to remember and hidden from the line; newest first for every span, which
+  loses the roundup read forwards; `..-`, which reads as a span's end; and `, newest first` after
+  the span, which the faces' list of dates took for a date of its own.
 
 - **The note you are in opens from the line.** Decided 2026-10-22, at Sam's ask, revising the
   Browser's *Keys*, where Ctrl-O did nothing on the line, the narrow page's note you are in, which a
   tap only unclamped, and the session's rule that on the line there was no note to open. Inside a
-  note it could be read beside the list, above the line or in the terminal's foot, but not written
-  in without stepping out and finding it again. Now, on the line in a place whose path holds a note,
-  the body chord and the editor are about that note, and the session offers `body` and `editor`
-  there and nowhere else on the line, so each face's foot shows what it has a key for: the terminal
-  `^O editor`, the page `body ^O`. The editor needs no cursor, so the terminal hands the note over
-  and the cursor stays on the line, and what the editor leaves is written as any note's is, the list
-  left where it was. The sheet is the field's, so the page needs the note under the cursor: it is
-  put at the top of the list, where the note the line names is listed, saying it is the next thing
-  there as `its name` does, and the cursor goes to it with its body open. Its row is one going, as
-  the row of a note ticked under the hands is, so it goes once the cursor leaves it: closing the
-  body puts the cursor back on the line, where it was, and the list is as it was, and a press on
-  another row leaves it as it leaves any body. Where the line names the note already, it is opened
-  on the row it has and that row stays. Delete is neither offered nor done in that body, since the
-  path would be left in a note that is not there, and for the same reason a body emptied there, or
-  an editor handed it from the line that leaves nothing, keeps the note as it was and says so. A tap
-  on the note above the line on a narrow page steps onto the line if the cursor was on a row and
-  opens it, since the sheet reads the rest whole and was all the unclamping gave, and a click on it
-  beside the list opens it too, while the cursor is on the line and it has something to read; a link
-  in it opens the link only, and a press that selected text was for the selection. Inside labels
-  alone, or at the top, nothing changes. Weighed: opening the sheet on the note without putting it
-  under the cursor, which is a second kind of field, one with no row, for every rule that reads the
-  field from its row; listing the note you are in always, as the first row of its own place, which
-  moves the list for every place and makes it a fact of itself; and bringing the cursor back to the
-  row rather than the line, which leaves it on a row the list does not have. Not done: the path
-  still names the note as it read when it was gone into, so a head changed from inside it shows in
-  the path once it is gone into again.
+  note it could be read but not written in without stepping out and finding it again. Now the body
+  chord and the editor on the line are about the note you are in, and offered there only in a note.
+  The terminal's editor needs no cursor, so the cursor stays on the line; the page's sheet is the
+  field's, so the note is put under the cursor first on the list, where the note the line names is,
+  and its row goes as the body closes, leaving the cursor on the line and the list as it was. In all
+  else it is a row's body, Delete included. A note on the path that goes, by any route, here or on
+  another device, steps you out to just before it, as stepping back would: one rule for every way a
+  note can go, where guards on each way in disagreed, and the note's own row, listed by its name,
+  got past them. Weighed: opening the sheet without putting the note under the cursor, a second kind
+  of field with no row; listing the note you are in always, which moves the list for every place;
+  bringing the cursor back to the row rather than the line, a row the list does not have; and
+  keeping the note you are in from being deleted from inside it, tried first the same day. Not done:
+  the path still names the note as it read when it was gone into.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
