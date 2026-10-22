@@ -582,12 +582,15 @@ impl Session {
             Action::Take(which) => taken = offer.and_then(|offer| self.take(offer, which)),
             Action::Dismiss => {}
             action => {
+                // The note you are in, deleted here by whatever route, takes you out of it at
+                // once, where any other note deleted leaves the list where it was. One deleted
+                // elsewhere is not this action's doing, and waits for the cursor to come back to
+                // the line, so that the row being walked or written in is not pulled away.
+                let whole = self.gone_from().is_none();
                 if let Some(action) = self.on_field(action) {
                     self.carry_out(action);
                 }
-                // The note you are in, deleted here by whatever route, takes you out of it at
-                // once, where any other note deleted leaves the list where it was.
-                if self.gone_from().is_some() {
+                if whole && self.gone_from().is_some() {
                     self.refresh(true);
                 }
             }

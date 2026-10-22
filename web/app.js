@@ -1307,7 +1307,7 @@ function paintRows() {
   const under = view.cursor != null ? view.rows[view.cursor]?.id ?? '' : '';
   const was = list.dataset.under;
   if (under !== was) {
-    const back = !under && was === hereFromLine;
+    const back = !under && was === hereFromLine && !anew;
     hereFromLine = !was && field?.whole && under === view.here?.id ? under : '';
     if (!hereFromLine && !back) {
       if (under) rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });

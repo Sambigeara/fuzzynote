@@ -1230,8 +1230,24 @@ fn the_note_you_are_in_deleted_elsewhere_steps_out_of_it_once_the_cursor_is_on_t
     s.act(Action::Move(1));
     s.absorb([gone(&s, 180)]);
     assert_eq!(path(&s), ["#house", "Boiler"]);
-    s.act(Action::Select(None));
+
+    // Nor does what is done on the row pull it away, walking on or writing in its body, and
+    // what was written there is kept as the cursor leaves for the line.
+    s.act(Action::Move(1));
+    s.act(Action::Open);
+    let written = format!("{}\nfor tuesday", field(&s).unwrap().0);
+    edited(&mut s, &written);
+    assert_eq!(path(&s), ["#house", "Boiler"]);
+    assert_eq!(
+        field(&s).map(|(text, _, whole)| (text, whole)),
+        Some((written.clone(), true))
+    );
+    let effects = s.act(Action::Select(None));
     assert_eq!(path(&s), ["#house"]);
+    assert!(
+        kept(&effects).iter().any(|r| r.text == written),
+        "the body is not lost"
+    );
 }
 
 #[test]

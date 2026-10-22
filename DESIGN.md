@@ -671,16 +671,16 @@ done. With a `-` before a span, any span on the line, it is that list turned ove
 notes of one moment too, so `-..` is every note newest first and `[x] -/-mon.. #work` the week's
 done work last done first. At the top it is cut at the 500 rows the top of the space is cut at, a
 list of time keeping the newest 500 so that it still reaches now. In a place it is not cut, and
-`fzn query` is never cut. A single letter is not a word, so `#house a` lists what `#house` lists.
-With words as well, they rank among the notes that hold, by the scores, span or not. The note the
-line names has to hold it too. Inside a place, the line narrows the place's facts and its finds
-alike, and a line of labels in a place lists the facts that carry them. The rows of a line with
-nothing to rank by and no span are in the space's order, so they can be moved as the rows of an
-empty line can; the rows of a line of time are not, and are not moved. Enter writes the line as it
-reads: quotes, `~` and spans stay as typed, date words are written out, after a span's dots too, and
-`/task` is written as the box at the start of the head, so that `Bleed the radiators /task` writes
-`[ ] Bleed the radiators`. A line of labels alone is the exception: it is the name of a place, and
-Enter goes into it as Tab does and writes nothing.
+`fzn query` is never cut, though it reads the order as the app does. A single letter is not a word,
+so `#house a` lists what `#house` lists. With words as well, they rank among the notes that hold, by
+the scores, span or not. The note the line names has to hold it too. Inside a place, the line
+narrows the place's facts and its finds alike, and a line of labels in a place lists the facts that
+carry them. The rows of a line with nothing to rank by and no span are in the space's order, so they
+can be moved as the rows of an empty line can; the rows of a line of time are not, and are not
+moved. Enter writes the line as it reads: quotes, `~` and spans stay as typed, date words are
+written out, after a span's dots too, and `/task` is written as the box at the start of the head, so
+that `Bleed the radiators /task` writes `[ ] Bleed the radiators`. A line of labels alone is the
+exception: it is the name of a place, and Enter goes into it as Tab does and writes nothing.
 Archived notes are out of every list, typed results included, until they are asked for, or `[x]`
 asks for the done tasks.
 
@@ -748,11 +748,12 @@ search comes back only to an empty line, or to one that still reads as the last 
 Esc with text on the line clears it, and only on an empty line steps back, so that inside a place
 "found it, clear, stay" is one key; the session offers `clear` as the way back while the line has
 text and `back` once it is empty. A path steps back the same however it was made: each label gone
-into from a line of several comes back as if it had been gone into alone, as it is written. From
-`#house › #garden`, made by one Tab on `#house #garden`, Esc steps back to `#house` with `#garden`
-on the line, Esc clears it, and Esc again steps out with `#house` on the line; the page's Back,
-twice, ends there too, since the `#garden` the first put back is not yours. A label passed over or
-only gone back to puts nothing back.
+into from a line of several comes back as if it had been gone into alone, as it is written. A day
+word comes back written out, `/fri` as `2026-10-16`, and `/task` as `[ ]`, each the same place
+again. From `#house › #garden`, made by one Tab on `#house #garden`, Esc steps back to `#house` with
+`#garden` on the line, Esc clears it, and Esc again steps out with `#house` on the line; the page's
+Back, twice, ends there too, since the `#garden` the first put back is not yours. A label passed
+over or only gone back to puts nothing back.
 
 What you write inside is about the place. Inside a note it links to it and lands at the top of the
 place. Inside a label its head ends with the label, as it would have been typed, unless the note
@@ -966,15 +967,15 @@ above the line and what is found follows it directly; the margin grows downwards
 longer than it has room for. While the sheet holds the note you are in, it is not read above the
 line as well but keeps its room there, so that nothing moves as the sheet opens and closes, and the
 list stays scrolled where the line left it, the row put under the cursor for the sheet coming and
-going without moving what is in sight. At a phone's width, 640px
-and under, the column is the screen's width with the line at the top, a long path gives up its
-middle, the note you are in is clamped to three lines and, on a touch screen, hidden while the
-keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight:
-it has the room, and a field there has the focus almost always. A head there is read whole, on as
-many lines as it takes, since there is no room beside the list to read the rest in: every row leaves
-the arrow's room at its end, whether or not it has the arrow, so that a head wraps the same on the
-cursor as off it, and the row under the cursor keeps its tail with its date at the tail's end, so
-that walking the list moves nothing; a row with no tail has no date there.
+going without moving what is in sight. At a phone's width, 640px and under, the column is the
+screen's width with the line at the top, a long path gives up its middle, the note you are in is
+clamped to three lines and, on a touch screen, hidden while the keyboard is up, and the foot is a
+bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the room, and a field there
+has the focus almost always. A head there is read whole, on as many lines as it takes, since there
+is no room beside the list to read the rest in: every row leaves the arrow's room at its end,
+whether or not it has the arrow, so that a head wraps the same on the cursor as off it, and the row
+under the cursor keeps its tail with its date at the tail's end, so that walking the list moves
+nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
