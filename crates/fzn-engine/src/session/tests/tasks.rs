@@ -147,6 +147,86 @@ fn while_archived_notes_are_shown_the_open_box_holds_the_done_tasks_among_the_op
 }
 
 #[test]
+fn the_open_box_typed_inside_a_place_narrows_to_every_task_there_while_archived_notes_are_shown() {
+    let mut s = session();
+    tasks(&mut s);
+    go_to(&mut s, "#house");
+    s.act(Action::ShowArchived);
+    type_in(&mut s, "[ ]");
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Paint the shed #house",
+            "[x] Sweep the chimney #house",
+            "[ ] Bleed the radiators #house",
+            "[ ] Order oil #house",
+        ]
+    );
+    s.act(Action::ShowArchived);
+    assert_eq!(
+        heads(&s),
+        ["[ ] Bleed the radiators #house", "[ ] Order oil #house"]
+    );
+}
+
+#[test]
+fn the_open_box_at_the_top_lists_the_done_tasks_while_archived_is_shown_and_not_once_hidden() {
+    let mut s = session();
+    tasks(&mut s);
+    type_in(&mut s, "[ ] #house");
+    s.act(Action::ShowArchived);
+    assert!(heads(&s).contains(&"[x] Sweep the chimney #house"));
+    s.act(Action::ShowArchived);
+    assert_eq!(
+        heads(&s),
+        ["[ ] Bleed the radiators #house", "[ ] Order oil #house"]
+    );
+}
+
+#[test]
+fn a_box_the_writer_typed_stays_as_typed_whichever_box_the_place_has_and_whatever_is_shown() {
+    let mut s = session();
+    tasks(&mut s);
+    let held = |s: &Session, head: &str| {
+        let r = s
+            .notes
+            .order()
+            .into_iter()
+            .find(|r| r.head() == head)
+            .unwrap();
+        (r.archived, r.done.is_some())
+    };
+
+    // Ticked in the open tasks, with archived hidden it is done and goes from the list.
+    go_to(&mut s, "#house [ ]");
+    type_in(&mut s, "[x] Called the plumber");
+    s.act(Action::Write);
+    assert_eq!(held(&s, "[x] Called the plumber #house"), (true, true));
+    assert!(!heads(&s).contains(&"[x] Called the plumber #house"));
+
+    // With archived shown it is done the same, and stays, ticked.
+    s.act(Action::ShowArchived);
+    type_in(&mut s, "[x] Drained the tank");
+    s.act(Action::Write);
+    assert_eq!(held(&s, "[x] Drained the tank #house"), (true, true));
+    let row = s.selected().unwrap();
+    assert_eq!(
+        (row.head.as_str(), row.task),
+        ("[x] Drained the tank #house", Some(true))
+    );
+    s.act(Action::ShowArchived);
+
+    // Open in the done tasks, it stays open.
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    s.act(Action::Back);
+    go_to(&mut s, "#house [x]");
+    type_in(&mut s, "[ ] Clean the windows");
+    s.act(Action::Write);
+    assert_eq!(held(&s, "[ ] Clean the windows #house"), (false, false));
+}
+
+#[test]
 fn a_task_archived_with_its_box_open_is_listed_in_the_open_box_while_archived_notes_are_shown() {
     let mut s = session();
     tasks(&mut s);

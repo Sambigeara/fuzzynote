@@ -234,8 +234,12 @@ impl Engine {
         let mut without: Vec<DocId> = query
             .without
             .iter()
-            // Only tags and people are left out, never a box.
-            .flat_map(|label| self.index.docs_with(&label.indexed(false)).iter().copied())
+            .flat_map(|label| {
+                self.index
+                    .docs_with(&label.indexed(query.every_task))
+                    .iter()
+                    .copied()
+            })
             .collect();
         without.sort_unstable();
         without.dedup();
@@ -789,8 +793,9 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     {
         labels.push(Label::Date(d));
     }
-    // Every task is posted as one, since the open box holds them all while archived notes are
-    // shown, as well as by its box: a task archived with its box open is in neither box.
+    // Every task is posted as a task as well as by its box, since the open box holds them all
+    // while archived notes are shown, and the two boxes are not all of them: a task archived with
+    // its box open is in neither.
     if let Some(done) = text::task(&note.text) {
         labels.push(Label::Task);
         if done {

@@ -164,11 +164,12 @@ session is the part that finds things, in three parts.
 
 **Index.** A Unicode-aware tokeniser, lowercased, with a URL counted as its host; no stemming. An
 inverted index with term frequencies and document lengths, a trigram index over the vocabulary for
-fuzzy matching, and a label index for tags, people, days and the two boxes, open and done. Beside
-each note's text is the text lowercased once, a character at a time, which a phrase and letters are
-matched against, so that a keystroke does not lowercase every note it asks. All update incrementally
-on every note change. The old corpus is 8.7k notes, 284k tokens and 12k distinct terms; the index
-for a space ten times that size fits comfortably in memory.
+fuzzy matching, and a label index for tags, people, days, the two boxes, open and done, and every
+task, which `[ ]` holds while archived notes are shown. Beside each note's text is the text
+lowercased once, a character at a time, which a phrase and letters are matched against, so that a
+keystroke does not lowercase every note it asks. All update incrementally on every note change. The
+old corpus is 8.7k notes, 284k tokens and 12k distinct terms; the index for a space ten times that
+size fits comfortably in memory.
 
 **Scorers.** Each takes the current input plus context and returns candidate notes with a score and
 a human-readable reason. Three are built, cheapest first.
@@ -766,16 +767,19 @@ carries it already: in its text, or for a day by being written on it, since the 
 written is its `created`. Among the open or done tasks the head starts with the box instead, since
 that is where a box is written, and among the done tasks the note is then a task done now, as any
 new note headed `[x]` is (see "A task is a note headed by its box"), so that something finished is
-logged straight into the week. A note written from the line has the labels added as it is written; a
-new row opens with them already in its head, the caret where the writer's text goes, and a row with
-nothing in it but what it opened with, or a start of it, is empty, however it is spaced. Inside
-labels gone into one after another the head ends with each of them it does not carry, in the order
-of the path: in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens `[ ]
-#house` with the caret after the box, in `#work › [x]` it opens `[x] #work`, and in `#house › today`
-a note reads `Order oil #house`. A zoom on today opens an empty row, one on `/fri` opens `
-2026-10-16`. Only a note created there inherits, and only from the place: in `Boiler › today` a new
-note links to Boiler and is of today by being written on it, in `Boiler › #house` a new row opens `
-#house` and links to Boiler, and in `#house › Boiler` a new note links to Boiler and carries no tag.
+logged straight into the week. A box the writer typed stays as typed, in any place and whatever is
+shown: `[x] Called the plumber` written in `#house › [ ]` is done, and `[ ] Clean the windows`
+written in `#house › [x]` is open. A note written from the line has the labels added as it is
+written; a new row opens with them already in its head, the caret where the writer's text goes, and
+a row with nothing in it but what it opened with, or a start of it, is empty, however it is spaced.
+Inside labels gone into one after another the head ends with each of them it does not carry, in the
+order of the path: in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens
+`[ ] #house` with the caret after the box, in `#work › [x]` it opens `[x] #work`, and in
+`#house › today` a note reads `Order oil #house`. A zoom on today opens an empty row, one on `/fri`
+opens ` 2026-10-16`. Only a note created there inherits, and only from the place: in
+`Boiler › today` a new note links to Boiler and is of today by being written on it, in
+`Boiler › #house` a new row opens ` #house` and links to Boiler, and in `#house › Boiler` a new note
+links to Boiler and carries no tag.
 
 The link chord, Ctrl-K (or Ctrl-L) in the terminal and Ctrl-K or `link` / `unlink` in the page's
 foot, links the note under the cursor to the place's note or unlinks it, which takes it into the
@@ -3650,8 +3654,8 @@ the app now does is described above; an entry repeats it only where the reason n
 - **Showing what is archived puts the done tasks back among the open ones.** Decided 2026-10-22, at
   Sam's ask, revising "A task is a note headed by its box", where `[ ]` held the open tasks, the
   notes headed `[ ]` and not archived, whatever was shown, and "When a note was done is kept, and
-  `[x]` holds the done tasks", where a task archived with its box open was in neither box. Ticking
-  a task archives it in the same version, so showing what is archived brought nothing back inside
+  `[x]` holds the done tasks", where a task archived with its box open was in neither box. Ticking a
+  task archives it in the same version, so showing what is archived brought nothing back inside
   `[ ]`, though it does in every other list. Ticking is archiving, and archiving is what took the
   task out of `[ ]`; showing what is archived puts back what archiving took out, as it does
   everywhere else. So while archived notes are shown `[ ]` holds every task, the notes headed `[ ]`
@@ -3661,12 +3665,15 @@ the app now does is described above; an entry repeats it only where the reason n
   stays where it is, drawn ticked, since whether it still belongs is whatever the list made now
   would say. It follows the toggle alone. `[x]`, on the line or in the place, lists archived notes
   too, but it asks for the done tasks and not for `[ ]` to change, so `[ ] [x]` still lists nothing
-  with archived hidden. Nor does `fzn query`, which lists archived notes always: a script asking
-  for `[ ]` asks what is still to do, and `[x]` is there for the rest, so `fzn query '[ ] #house'`
-  still writes only the open tasks. The index posts every task as one besides its box, so `[ ]`
-  with archived shown is looked up as that and costs what a tag costs. Weighed: `[ ]` as every task
-  wherever archived notes are listed, which `[x]` and `fzn query` would have turned on unasked; and
-  leaving `[ ]` alone, with the done tasks a second place to visit.
+  with archived hidden. Nor does `fzn query`, which lists archived notes always: a script asking for
+  `[ ]` asks what is still to do, and `[x]` is there for the rest, so `fzn query '[ ] #house'` still
+  writes only the open tasks. A box the writer typed is now theirs in every place: a note written
+  from the line used to have a typed `[x]` unticked among the open tasks and a typed `[ ]` ticked
+  among the done ones, which a new row never did, and with `[ ]` turning on the toggle that would
+  have let a view setting decide the text, so now neither does. The index posts every task as one
+  besides its box, so `[ ]` with archived shown is looked up as that and costs what a tag costs.
+  Weighed: `[ ]` as every task wherever archived notes are listed, which `[x]` and `fzn query` would
+  have turned on unasked; and leaving `[ ]` alone, with the done tasks a second place to visit.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

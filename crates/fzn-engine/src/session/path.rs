@@ -237,7 +237,8 @@ impl Session {
     pub(super) fn places_named(&self) -> Vec<Step> {
         let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
-        // No note is both open and done, so a line of both boxes names nowhere to go.
+        // A line of both boxes names nowhere to go: with archived hidden no note is both, and
+        // with it shown the line is `[x]` with a box too many.
         let both = query.asks_done() && query.labels.iter().any(|t| t.label == Label::Open);
         if both {
             return places;
@@ -287,7 +288,7 @@ impl Session {
             named.retain(|note| {
                 let day = note.written().unwrap_or(Day::MIN);
                 self.labels_here()
-                    .all(|(label, _)| label.carried_by(&note.text, day, self.show_archived))
+                    .all(|(label, _)| label.carried_by(&note.text, day, query.every_task))
             });
         }
         named
@@ -400,9 +401,12 @@ impl Session {
     /// A text with each label being looked around that it does not carry already written into
     /// its head, as it would have been typed: the box at the start and the rest at the end, in the
     /// order of the path. A day is carried by a note written on it, since that is its `created`.
+    /// A box the writer typed is theirs, whichever box the place has, so a text headed by one is
+    /// given neither; a text with none carries no box, whatever is shown.
     pub(super) fn inherit(&self, text: String, written_on: Day) -> String {
         self.labels_here().fold(text, |text, (label, written)| {
-            if label.carried_by(&text, written_on, self.show_archived) {
+            let boxed = matches!(label, Label::Open | Label::Done) && text::task(&text).is_some();
+            if boxed || label.carried_by(&text, written_on, false) {
                 text
             } else {
                 with_label(&text, label, written)

@@ -218,7 +218,7 @@ impl Session {
         let note = self.place_note().map(String::as_str);
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
-            .map(|(label, written)| (label.indexed(self.show_archived), written))
+            .map(|(label, written)| (label.indexed(query.every_task), written))
             .unzip();
         let written = written.join(" ");
         let place = engine::Place {
