@@ -287,7 +287,7 @@ impl Session {
             named.retain(|note| {
                 let day = note.written().unwrap_or(Day::MIN);
                 self.labels_here()
-                    .all(|(label, _)| label.carried_by(&note.text, day))
+                    .all(|(label, _)| label.carried_by(&note.text, day, self.show_archived))
             });
         }
         named
@@ -402,7 +402,7 @@ impl Session {
     /// order of the path. A day is carried by a note written on it, since that is its `created`.
     pub(super) fn inherit(&self, text: String, written_on: Day) -> String {
         self.labels_here().fold(text, |text, (label, written)| {
-            if label.carried_by(&text, written_on) {
+            if label.carried_by(&text, written_on, self.show_archived) {
                 text
             } else {
                 with_label(&text, label, written)

@@ -41,9 +41,6 @@ fn the_box_on_the_line_holds_the_open_tasks_and_the_rest_of_the_line_still_appli
         type_in(&mut s, typed);
         assert_eq!(heads(&s), open, "{typed:?}");
     }
-    s.act(Action::ShowArchived);
-    assert_eq!(heads(&s), open, "a task archived is not open");
-    s.act(Action::ShowArchived);
     clear(&mut s);
     type_in(&mut s, "[ ] #house");
     assert_eq!(heads(&s), open[1..]);
@@ -112,6 +109,119 @@ fn the_box_is_a_place_and_a_new_row_there_opens_with_it_before_the_caret() {
     assert_eq!(path(&s), ["[ ]", "#house"]);
     s.act(Action::Write);
     assert_eq!(fresh(&s), Some(("[ ]  #house".to_owned(), Some(4))));
+}
+
+#[test]
+fn while_archived_notes_are_shown_the_open_box_holds_the_done_tasks_among_the_open_ones() {
+    let mut s = session();
+    tasks(&mut s);
+    let open = ["[ ] Bleed the radiators #house", "[ ] Order oil #house"];
+    let every = [
+        "[ ] Paint the shed #house",
+        "[x] Sweep the chimney #house",
+        "[ ] Bleed the radiators #house",
+        "[ ] Order oil #house",
+    ];
+    go_to(&mut s, "#house [ ]");
+    assert_eq!(path(&s), ["#house", "[ ]"]);
+    assert_eq!(heads(&s), open);
+    s.act(Action::ShowArchived);
+    assert_eq!(heads(&s), every, "in the space's order");
+    let archived: Vec<bool> = s.rows.iter().map(|r| r.archived).collect();
+    assert_eq!(archived, [true, true, false, false]);
+    s.act(Action::ShowArchived);
+    assert_eq!(heads(&s), open, "and gone again once archived is hidden");
+
+    // On the line at the top it is the same, typed either way, and words find among them.
+    s.act(Action::Back);
+    s.act(Action::Back);
+    s.act(Action::ShowArchived);
+    for typed in ["[ ] #house", "/task #house"] {
+        clear(&mut s);
+        type_in(&mut s, typed);
+        assert_eq!(heads(&s), every, "{typed:?}");
+    }
+    clear(&mut s);
+    type_in(&mut s, "[ ] chimney");
+    assert_eq!(heads(&s), ["[x] Sweep the chimney #house"]);
+}
+
+#[test]
+fn a_task_archived_with_its_box_open_is_listed_in_the_open_box_while_archived_notes_are_shown() {
+    let mut s = session();
+    tasks(&mut s);
+    type_in(&mut s, "[ ]");
+    assert!(!heads(&s).contains(&"[ ] Paint the shed #house"));
+    s.act(Action::ShowArchived);
+    assert!(heads(&s).contains(&"[ ] Paint the shed #house"));
+}
+
+#[test]
+fn ticking_in_the_open_box_while_archived_notes_are_shown_leaves_the_row_where_it_is_ticked() {
+    let mut s = session();
+    tasks(&mut s);
+    go_to(&mut s, "#house [ ]");
+    select(&mut s, "[ ] Order oil #house");
+    s.act(Action::Archive);
+    assert_eq!(
+        heads(&s),
+        ["[ ] Bleed the radiators #house"],
+        "hidden, it goes as it always did"
+    );
+
+    s.act(Action::ShowArchived);
+    select(&mut s, "[ ] Bleed the radiators #house");
+    let at = s.cursor;
+    s.act(Action::Archive);
+    assert_eq!(s.status, "ticked");
+    assert_eq!(s.cursor, at, "the cursor stays on it");
+    let row = s.selected().unwrap();
+    assert_eq!(
+        (row.head.as_str(), row.task, row.archived),
+        ("[x] Bleed the radiators #house", Some(true), true)
+    );
+    s.act(Action::Select(None));
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Paint the shed #house",
+            "[x] Sweep the chimney #house",
+            "[x] Bleed the radiators #house",
+            "[x] Order oil #house",
+        ]
+    );
+}
+
+#[test]
+fn a_command_asking_for_the_open_box_gets_only_the_open_tasks_whatever_the_face_shows() {
+    let mut s = session();
+    tasks(&mut s);
+    s.act(Action::ShowArchived);
+    let written: Vec<&str> = s
+        .query("[ ] #house")
+        .iter()
+        .map(|r| r.id.as_str())
+        .collect();
+    assert_eq!(written, ["radiators", "oil"]);
+}
+
+#[test]
+fn the_done_box_lists_archived_notes_without_making_the_open_box_every_task() {
+    let mut s = session();
+    tasks(&mut s);
+    type_in(&mut s, "[ ] [x]");
+    assert!(heads(&s).is_empty(), "no note is both open and done");
+    go_to(&mut s, "[x]");
+    type_in(&mut s, "[ ]");
+    assert!(heads(&s).is_empty(), "nor in the done tasks");
+
+    // With archived shown the open box is every task, so beside the done box it is those.
+    s.act(Action::ShowArchived);
+    assert_eq!(heads(&s), ["[x] Sweep the chimney #house"]);
+    s.act(Action::Back);
+    clear(&mut s);
+    type_in(&mut s, "[ ] [x]");
+    assert_eq!(heads(&s), ["[x] Sweep the chimney #house"]);
 }
 
 #[test]

@@ -34,6 +34,9 @@ pub enum Label {
     Open,
     /// The note is a done task: its head starts with `[x]`, archived or not.
     Done,
+    /// The note is a task, open or done, archived or not: what `[ ]` holds while archived notes
+    /// are shown.
+    Task,
 }
 
 impl Label {

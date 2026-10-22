@@ -47,6 +47,9 @@ pub(crate) struct Query {
     /// A `!` form is still being typed at the end of the line: it holds nothing yet, and the line
     /// is still not a line of labels.
     pub leaving: bool,
+    /// The open box holds every task, as it does while archived notes are shown. Nothing on the
+    /// line sets it: the face's toggle does, so a line read for a command never has it.
+    pub every_task: bool,
     /// The days the date words stand for, the spans, and the box the task word stands for, in
     /// the order they were typed.
     shown: Vec<Shown>,
@@ -70,7 +73,9 @@ pub(crate) enum Label {
     Tag(String),
     Mention(String),
     Day(Day),
-    /// The box `[ ]`: the notes whose heads start with it and that are not archived.
+    /// The box `[ ]`: the notes whose heads start with it and that are not archived, or while
+    /// archived notes are shown every task, archived or not. Ticking a task archives it, so
+    /// showing what is archived puts back what ticking took out.
     Open,
     /// The box `[x]`: the notes whose heads start with it, archived or not. Asking for them is
     /// asking for archived notes, since that is where done tasks are.
@@ -78,26 +83,27 @@ pub(crate) enum Label {
 }
 
 impl Label {
-    /// The label as the index holds it.
-    pub(crate) fn indexed(&self) -> score::Label {
+    /// The label as the index holds it, the open box as every task if `every_task`.
+    pub(crate) fn indexed(&self, every_task: bool) -> score::Label {
         match self {
             Label::Tag(tag) => score::Label::Tag(tag.clone()),
             Label::Mention(person) => score::Label::Mention(person.clone()),
             Label::Day(day) => score::Label::Date(*day),
+            Label::Open if every_task => score::Label::Task,
             Label::Open => score::Label::Open,
             Label::Done => score::Label::Done,
         }
     }
 
     /// Whether a note already carries it: anywhere in its text, for a day by having been written
-    /// on it, and for the box at the start of its head.
-    pub(crate) fn carried_by(&self, text: &str, created: Day) -> bool {
+    /// on it, and for the box at the start of its head, the open box any box if `every_task`.
+    pub(crate) fn carried_by(&self, text: &str, created: Day, every_task: bool) -> bool {
         match self {
             Label::Tag(tag) => text::facts(text).tags.contains(tag),
             Label::Mention(person) => text::facts(text).mentions.contains(person),
             // The day a note was written is not typed: it is the note's `created`.
             Label::Day(day) => *day == created || text::facts(text).dates.contains(day),
-            Label::Open => text::task(text) == Some(false),
+            Label::Open => text::task(text).is_some_and(|done| every_task || !done),
             Label::Done => text::task(text) == Some(true),
         }
     }

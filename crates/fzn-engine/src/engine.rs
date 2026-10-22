@@ -213,7 +213,7 @@ impl Engine {
             .labels
             .iter()
             .map(|typed| {
-                let label = typed.label.indexed();
+                let label = typed.label.indexed(query.every_task);
                 if typed.whole {
                     return self.index.docs_with(&label).to_vec();
                 }
@@ -234,7 +234,8 @@ impl Engine {
         let mut without: Vec<DocId> = query
             .without
             .iter()
-            .flat_map(|label| self.index.docs_with(&label.indexed()).iter().copied())
+            // Only tags and people are left out, never a box.
+            .flat_map(|label| self.index.docs_with(&label.indexed(false)).iter().copied())
             .collect();
         without.sort_unstable();
         without.dedup();
@@ -788,10 +789,15 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     {
         labels.push(Label::Date(d));
     }
-    match text::task(&note.text) {
-        Some(false) if !note.archived => labels.push(Label::Open),
-        Some(true) => labels.push(Label::Done),
-        _ => {}
+    // Every task is posted as one, since the open box holds them all while archived notes are
+    // shown, as well as by its box: a task archived with its box open is in neither box.
+    if let Some(done) = text::task(&note.text) {
+        labels.push(Label::Task);
+        if done {
+            labels.push(Label::Done);
+        } else if !note.archived {
+            labels.push(Label::Open);
+        }
     }
     labels
 }

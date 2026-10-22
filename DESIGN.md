@@ -629,14 +629,19 @@ all, and none of it changes how the words rank.
   #house` names the note headed `Oil tank #house`. Inside code on the line nothing holds and all of
   it is words, as in a note (see "Code is literal"), so `` `#fff` `` finds the note that has it.
 - `[ ]` holds the open tasks, the notes headed `[ ]` and not archived, and the rest of the line
-  still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. `[x]`
-  holds the done tasks, the notes headed `[x]`, archived or not; typing it is asking for them, so
-  they are listed though archived notes are otherwise hidden. Each is read only whole: `[` and
-  `[ ` are not words either, so they hold nothing, and a `[[` on its way to a link lists no tasks
-  on the way. `"[x]"` is still a phrase, held by any note with it in its text, archived notes
-  shown or not as they are. `/task`, or `/ta` or `/tas`, is `[ ]` typed another way, read as `[ ]`
-  is everywhere the line reads it, `/task #house` holding the open tasks of the house and Tab going
-  into them, and the line says `→ [ ]` beside it, where it says a date word's date.
+  still applies: `[ ] #house` is the open tasks of the house, and `[ ] oil` finds among them. While
+  archived notes are shown it holds every task, the notes headed `[ ]` or `[x]`, archived or not,
+  on the line and as a place alike, so the house's done tasks are listed among its open ones in
+  `#house › [ ]` and a task ticked there stays where it is, ticked. Only showing what is archived
+  does that: `[x]` on the line or in the place does not, and `fzn query '[ ] #house'` writes the
+  open tasks whatever a face shows (see "Showing what is archived puts the done tasks back among
+  the open ones"). `[x]` holds the done tasks, the notes headed `[x]`, archived or not; typing it is
+  asking for them, so they are listed though archived notes are otherwise hidden. Each is read only
+  whole: `[` and `[ ` are not words either, so they hold nothing, and a `[[` on its way to a link
+  lists no tasks on the way. `"[x]"` is still a phrase, held by any note with it in its text,
+  archived notes shown or not as they are. `/task`, or `/ta` or `/tas`, is `[ ]` typed another way,
+  read as `[ ]` is everywhere the line reads it, `/task #house` holding what `[ ] #house` holds and
+  Tab going into it, and the line says `→ [ ]` beside it, where it says a date word's date.
 - A span, `START..END`, `START..` or `..END` with no spaces round the dots, holds the notes written
   in it, and `..` as a word of its own is a span of all time. With `[x]` on the line, or in the
   place, it holds the done tasks done in it instead, by `done`, or for a box ticked by hand and
@@ -3641,6 +3646,27 @@ the app now does is described above; an entry repeats it only where the reason n
   bringing the cursor back to the row rather than the line, a row the list does not have; and
   keeping the note you are in from being deleted from inside it, tried first the same day. Not done:
   the path still names the note as it read when it was gone into.
+
+- **Showing what is archived puts the done tasks back among the open ones.** Decided 2026-10-22, at
+  Sam's ask, revising "A task is a note headed by its box", where `[ ]` held the open tasks, the
+  notes headed `[ ]` and not archived, whatever was shown, and "When a note was done is kept, and
+  `[x]` holds the done tasks", where a task archived with its box open was in neither box. Ticking
+  a task archives it in the same version, so showing what is archived brought nothing back inside
+  `[ ]`, though it does in every other list. Ticking is archiving, and archiving is what took the
+  task out of `[ ]`; showing what is archived puts back what archiving took out, as it does
+  everywhere else. So while archived notes are shown `[ ]` holds every task, the notes headed `[ ]`
+  or `[x]`, archived or not, a task archived with its box open among them, on the line, as a place
+  after Tab, and in a place's narrowing, `/task` too; archived rows are drawn as they always were,
+  and with archived hidden nothing changed. A task ticked in `[ ]` while archived notes are shown
+  stays where it is, drawn ticked, since whether it still belongs is whatever the list made now
+  would say. It follows the toggle alone. `[x]`, on the line or in the place, lists archived notes
+  too, but it asks for the done tasks and not for `[ ]` to change, so `[ ] [x]` still lists nothing
+  with archived hidden. Nor does `fzn query`, which lists archived notes always: a script asking
+  for `[ ]` asks what is still to do, and `[x]` is there for the rest, so `fzn query '[ ] #house'`
+  still writes only the open tasks. The index posts every task as one besides its box, so `[ ]`
+  with archived shown is looked up as that and costs what a tag costs. Weighed: `[ ]` as every task
+  wherever archived notes are listed, which `[x]` and `fzn query` would have turned on unasked; and
+  leaving `[ ]` alone, with the done tasks a second place to visit.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

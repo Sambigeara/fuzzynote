@@ -52,9 +52,12 @@ impl Session {
     }
 
     /// The line as it is read here: inside the done tasks a span on it measures when notes were
-    /// done, as it does with `[x]` on the line.
+    /// done, as it does with `[x]` on the line, and while archived notes are shown the open box
+    /// holds every task. Only the toggle does that, since `[x]` asks for the done tasks and not
+    /// for `[ ]` to change.
     pub(super) fn read_line(&self) -> Query {
         let mut query = Query::read(&self.line, self.today());
+        query.every_task = self.show_archived;
         if self.labels_here().any(|(label, _)| *label == Label::Done) {
             query.measure_done();
         }
@@ -215,7 +218,7 @@ impl Session {
         let note = self.place_note().map(String::as_str);
         let (labels, written): (Vec<_>, Vec<_>) = self
             .labels_here()
-            .map(|(label, written)| (label.indexed(), written))
+            .map(|(label, written)| (label.indexed(self.show_archived), written))
             .unzip();
         let written = written.join(" ");
         let place = engine::Place {

@@ -57,7 +57,8 @@
 //! tasks is asking for archived notes, since that is where they are, and a span with them
 //! measures when they were done. Archiving a task ticks it and bringing it back unticks it, in
 //! one version, so that no device sees the tick without the archiving, and that version says when
-//! it was done.
+//! it was done. So while archived notes are shown the open box holds every task, done or not:
+//! archiving is what took a task out of it, and showing what is archived puts that back.
 //!
 //! A date is plain text, written `2026-10-16`. A word such as `/fri` or `/tomorrow` is a quicker
 //! way of typing one: the view says the date it stands for, on the line it holds the notes of
