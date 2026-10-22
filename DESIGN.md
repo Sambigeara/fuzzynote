@@ -959,10 +959,14 @@ when its row cuts it, or with the cursor on the line in a place the note you are
 as markdown, in the soft grey, from the top of the first row's text, with no border, scrolled on its
 own and faded at its foot as the list is. A narrower page has no room for it: a note's body, and the
 whole of a head its row cuts, are read there by opening it, and the note you are in is read above
-the line, rendered, under the path and in the path's smaller size, clamped to six lines, and a tap
-on it opens its body in the sheet, as a click does on it read beside the list, a link in it opening
-only the link, so that where you are is all above the line and what is found follows it directly;
-the margin grows downwards only for a body longer than it has room for. At a phone's width, 640px
+the line, rendered, under the path and in the path's smaller size, clamped to six lines, its foot
+faded as the list's is only when it is cut, and a tap on it opens its body in the sheet, as a click
+does on it read beside the list, a link in it opening only the link, so that where you are is all
+above the line and what is found follows it directly; the margin grows downwards only for a body
+longer than it has room for. While the sheet holds the note you are in, it is not read above the
+line as well but keeps its room there, so that nothing moves as the sheet opens and closes, and the
+list stays scrolled where the line left it, the row put under the cursor for the sheet coming and
+going without moving what is in sight. At a phone's width, 640px
 and under, the column is the screen's width with the line at the top, a long path gives up its
 middle, the note you are in is clamped to three lines and, on a touch screen, hidden while the
 keyboard is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight:

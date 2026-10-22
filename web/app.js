@@ -659,6 +659,8 @@ const readHead = (text, task) => {
 const readBody = (text, upTo) => render.body(text, upTo);
 
 const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
+// Whether the engine offers this action where the cursor is, which is when the page may ask for it.
+const offered = (name) => view.hints.some((hint) => named(hint.action) === name);
 
 const narrow = window.matchMedia('(max-width: 640px)');
 narrow.addEventListener('change', () => view && paintSoon());
@@ -741,7 +743,6 @@ function typed() {
   const now = typing();
   if (document.body.classList.contains('typing') === now) return;
   document.body.classList.toggle('typing', now);
-  if (!now) clampHere();
   reframe();
 }
 document.addEventListener('focusin', typed);
@@ -761,12 +762,15 @@ function set(node, key, make) {
   return true;
 }
 
-// Whether the note you are in runs past its six lines is seen once it is laid out, so it is read
-// only when that note changes and when the page's width does, rather than at every key.
+// Whether the note you are in runs past its lines is seen once it is laid out, so it is read only
+// when what it says changes and when its box does, rather than at every key: as it is shown again
+// when a phone's keyboard goes down, and as the page's width changes. Only a note cut there has its
+// foot faded.
 function clampHere() {
   const here = $('here');
   here.classList.toggle('clamp', here.scrollHeight > here.clientHeight);
 }
+new ResizeObserver(clampHere).observe($('here'));
 
 // The rows on the page by note id.
 const rows = new Map();
@@ -853,7 +857,7 @@ const editorHooks = {
         // Put back is asked for only when the engine offers it, since on a body that has not
         // changed undo would take back the last version written instead, which may be another
         // note's.
-        if (what === 'discard' && view.hints.some((hint) => named(hint.action) === 'undo')) act('undo');
+        if (what === 'discard' && offered('undo')) act('undo');
         act('close');
       }
       follow();
@@ -1001,10 +1005,8 @@ function chord(key, onRow) {
       act(name);
       return true;
     case 'show_archived':
-      if (view.hints.some((hint) => named(hint.action) === name)) act(name);
-      return true;
     case 'open':
-      if (onRow || view.hints.some((hint) => named(hint.action) === name)) act(name);
+      if (offered(name)) act(name);
       return true;
     case 'copy':
       if (!onRow || !nothingSelected()) return false;
@@ -1146,6 +1148,8 @@ let fits = 0;
 let further = 0;
 let made = 0;
 let listFor = '';
+// The note you are in while its body is open from the line, which the list does not follow.
+let hereFromLine = '';
 let listed = new Set();
 const rowHeight = () => 2.5 * parseFloat(getComputedStyle(document.documentElement).fontSize);
 function reach() {
@@ -1296,11 +1300,19 @@ function paintRows() {
   // The list follows the cursor when the cursor moves, and not otherwise: a note arriving from
   // elsewhere, or a head being written, must not pull the list from where it was scrolled to. A new
   // list with the cursor on the line starts at its top, though the list before it was scrolled, as
-  // a phone's resting list can be.
+  // a phone's resting list can be. The note you are in, opened from the line, is the one move that
+  // leaves the list alone both ways: its body is read in the sheet over the list, and the row put
+  // under the cursor for it goes again as the cursor comes back to the line, where the list is as
+  // the line left it, the browser keeping what was in sight in sight as the row comes and goes.
   const under = view.cursor != null ? view.rows[view.cursor]?.id ?? '' : '';
-  if (under !== list.dataset.under) {
-    if (under) rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    else list.scrollTop = 0;
+  const was = list.dataset.under;
+  if (under !== was) {
+    const back = !under && was === hereFromLine;
+    hereFromLine = !was && field?.whole && under === view.here?.id ? under : '';
+    if (!hereFromLine && !back) {
+      if (under) rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      else list.scrollTop = 0;
+    }
   } else if (!under && anew) list.scrollTop = 0;
   list.dataset.under = under;
 }
@@ -1501,13 +1513,18 @@ function paintBody(node, says) {
 // so that a letter typed in a long head reads the head again and never the body.
 const paneHead = $('pane-head');
 const paneBody = $('pane-body');
-function paintPane() {
+function paneSays() {
   const field = view.field;
-  const says =
-    !wide.matches || field?.whole ? '' : field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
+  if (!wide.matches || field?.whole) return '';
+  return field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
+}
+// The pane reads the note you are in while the cursor is on the line and it has something to read,
+// and only then does a click on it open that note (see openHere).
+const paneReadsHere = (says = paneSays()) => view.cursor == null && says !== '';
+function paintPane() {
+  const says = paneSays();
   paintBody(paneBody, says);
-  // It opens on a click only while it reads the note you are in and has something to read.
-  pane.classList.toggle('here', view.cursor == null && !!view.here && says !== '');
+  pane.classList.toggle('here', paneReadsHere(says));
   paintPaneHead();
   const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
   if (pane.dataset.under !== under) {
@@ -1555,14 +1572,16 @@ function paint() {
 
   paintPath();
   $('clear').hidden = view.line === '';
-  $('go-in').hidden = !(view.cursor == null && view.hints.some((hint) => named(hint.action) === 'go_in'));
+  $('go-in').hidden = !(view.cursor == null && offered('go_in'));
   $('dates').textContent = view.dates.length ? `→ ${view.dates.join(', ')}` : '';
 
   // The note you are in, when it says more than its head and the page has no room for it beside
-  // the list, clamped to six lines; a tap opens it, which reads the rest.
+  // the list, clamped to six lines; a tap opens it, which reads the rest. While the sheet holds it,
+  // it is not read twice, but keeps its room, so that nothing moves as the sheet comes and goes.
   const here = $('here');
   const told = view.here && !wide.matches ? bodyOf(view.here.text) : '';
   here.hidden = !told;
+  here.classList.toggle('opened', whole && view.rows[view.cursor]?.id === view.here?.id);
   const into = view.here?.id ?? '';
   const arrived = here.dataset.into !== into;
   if (arrived) here.dataset.into = into;
@@ -1995,7 +2014,6 @@ window.addEventListener('resize', () => {
   // The fades of the line and of a head follow their width even while no caret is drawn there.
   edges(line);
   if (editor) headEdges();
-  clampHere();
   // Whether the head under the cursor is cut, and so read beside the list, follows the width.
   if (view && wide.matches) paintSoon();
 });
@@ -2263,12 +2281,12 @@ list.addEventListener('animationend', (event) => event.target.classList.remove('
 function openHere(event) {
   if (event.target.closest('a') || getSelection()?.type === 'Range' || !view?.here) return;
   if (view.cursor != null) act({ select: null });
-  if (view.cursor == null && view.hints.some((hint) => named(hint.action) === 'open')) act('open');
+  if (view.cursor == null && offered('open')) act('open');
   follow();
 }
 $('here').addEventListener('click', openHere);
 pane.addEventListener('click', (event) => {
-  if (pane.classList.contains('here')) openHere(event);
+  if (view && paneReadsHere()) openHere(event);
 });
 
 // Each step of the path goes back to where it was.
@@ -2382,7 +2400,7 @@ const busy = () =>
   !!editor?.composing ||
   Date.now() - lastKey < 2000 ||
   (coarse.matches && typing()) ||
-  (!!view?.field?.whole && view.hints.some((hint) => named(hint.action) === 'undo'));
+  (!!view?.field?.whole && offered('undo'));
 
 let later = 0;
 function tryReload() {

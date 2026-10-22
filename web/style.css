@@ -204,14 +204,22 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 
 /* Under the path, so that what is found follows the line directly, as it does outside a note. Six
-   lines, with a fade over the last two when there is more; a tap opens it, as a click opens it
-   where it is read beside the list. */
+   lines, its foot faded as the list's is when there is more; a tap opens it, as a click opens it
+   where it is read beside the list. While the sheet holds it, it keeps its room unseen, so that the
+   line does not move under the sheet and back. */
 #here, #pane.here { cursor: pointer; }
-#here { flex: none; margin-top: 0.375rem; max-height: calc(6 * 1.5em); overflow: hidden; }
-#here.clamp {
-  mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(4 * 1.5em), transparent);
+#here {
+  --lines: 6;
+  flex: none;
+  margin-top: 0.375rem;
+  max-height: calc(var(--lines) * 1.5em);
+  overflow: hidden;
 }
+#here.clamp {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * 1.5em), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * 1.5em), transparent);
+}
+#here.opened { visibility: hidden; }
 
 #empty {
   flex: none;
@@ -819,11 +827,7 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
      none while a touch screen's keyboard is up, so that what is found stays in sight. A narrow
      window with a mouse has the room, and a field there has the focus almost always. */
   #path { font-size: 0.9375rem; gap: 0.5rem; }
-  #here { max-height: calc(3 * 1.5em); }
-  #here.clamp {
-    mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(2 * 1.5em), transparent);
-  }
+  #here { --lines: 3; }
   @media (hover: none) and (pointer: coarse) {
     body.typing #here { display: none; }
   }
