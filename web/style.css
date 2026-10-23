@@ -539,7 +539,10 @@ body.resting .row .head a,
 /* A body open: a sheet over the column, the page dimmed slightly behind it, which holds the whole
    note at its natural weight and scrolls on its own. It is placed from the top and given its
    height, never pinned to the foot of the screen, where iOS Safari misplaces what is pinned around
-   its keyboard. The words in the foot stay above the dimming, since they are about the note. */
+   its keyboard. The words in the foot stay above the dimming, since they are about the note. The
+   editor's text fills the sheet below the words, as a page does, so that a press there is the
+   editor's and puts the caret on the last line: the editor hears only a press on its text, and one
+   on its bare frame took the focus nowhere, which is leaving the body and closed it. */
 #buffer {
   position: fixed;
   z-index: 2;
@@ -558,13 +561,15 @@ body.resting .row .head a,
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--rule) transparent;
   padding: 0 var(--sheet-pad) 0.5rem;
 }
-#sheet > .cm-editor { width: 100%; min-height: 100%; }
+#sheet > .cm-editor, #sheet .cm-scroller { flex: 1 0 auto; }
 #foot { position: relative; z-index: 3; }
 
 /* The editor, a head in its row or the open body in the sheet, is in the face, size and leading of

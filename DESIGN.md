@@ -1152,8 +1152,8 @@ its row as it wraps. Enter opens a new row under it; Ctrl-O, or `body` in the fo
 note in the sheet, a bounded overlay over the column with the page dimmed slightly behind it, which
 scrolls on its own, and in it Enter is a line break, Tab indents and Shift-Tab takes the indent
 back, the arrows move within it, and Esc closes it back onto the head. Leaving it for anywhere else
-on the page closes it, and a press on another row goes there; a press in its own margin, or on its
-row behind it, does not, and nor does leaving the window, though the tab going out of sight writes
+on the page closes it, and a press on another row goes there; a press in its own margin, below its
+text, which puts the caret on its last line, or on its row behind it, does not, and nor does leaving the window, though the tab going out of sight writes
 what it holds. The words in the foot stay above the dimming, since they are about the note. There is
 no second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
