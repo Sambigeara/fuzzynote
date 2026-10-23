@@ -20,8 +20,9 @@ const OFFERED: usize = 5;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Offer {
     /// The tags or the people, as they are written with their mark, `#food` or `@joe`: those of
-    /// the space that start with the word, carried by the most notes first. Or the heads, as a
-    /// row reads them and cut as an arrow's are, of the notes most linked to first.
+    /// the space that start with the word, carried by the most notes first. Or the names of
+    /// notes, as brackets name them and their rows read them, without the box and the labels
+    /// that end them, cut as an arrow's head is, of the notes most linked to first.
     pub words: Vec<String>,
     /// The one Tab or Enter takes, as an index into `words`.
     pub chosen: usize,
@@ -32,7 +33,7 @@ pub struct Offer {
     /// Where the word ends, in characters, which is where the caret was when it was offered.
     #[serde(skip)]
     to: usize,
-    /// What taking each writes, which for a head is the head whole and not as it is drawn.
+    /// What taking each writes, which for a name is the name whole and not as it is drawn.
     #[serde(skip)]
     written: Vec<String>,
     /// Whether these are heads, which taking closes with brackets rather than a space.
@@ -160,15 +161,12 @@ impl Session {
         // Inside brackets no tag or person is offered, since there they are part of the name.
         if let Some(from) = bracketed(&chars, at) {
             let head = head_typed(&chars, from, at)?;
-            let written = self.engine.heads_starting(&head, besides, OFFERED);
+            let written = self.engine.names_starting(&head, besides, OFFERED);
             if written.is_empty() || written.len() == 1 && text::normalise_head(&written[0]) == head
             {
                 return None;
             }
-            let words = written
-                .iter()
-                .map(|head| text::fit(&self.row_head(head), 40))
-                .collect();
+            let words = written.iter().map(|name| text::fit(name, 40)).collect();
             return Some(Offer {
                 words,
                 chosen: 0,

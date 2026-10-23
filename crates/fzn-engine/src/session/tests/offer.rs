@@ -529,9 +529,9 @@ fn notes_sharing_a_head_are_offered_once_as_the_newest_writes_it() {
 }
 
 #[test]
-fn a_head_brackets_could_not_name_is_not_offered() {
+fn a_name_brackets_could_not_hold_is_not_offered() {
     let mut s = session();
-    put(&mut s, "a", "Boiler service #house", &[], 1_000);
+    put(&mut s, "a", "Boiler #house service", &[], 1_000);
     put(&mut s, "b", "Boiler | gas", &[], 2_000);
     put(&mut s, "c", "Boiler [x]]", &[], 3_000);
     put(&mut s, "d", "Boiler `make`", &[], 4_000);
@@ -629,4 +629,93 @@ fn a_long_head_is_drawn_cut_and_taken_whole() {
     assert_eq!(words(&s), [text::fit(long, 40)]);
     s.act(Action::Take(None));
     assert_eq!(s.line, format!("[[{long}]]"));
+}
+
+/// In `#house`, an open task, a note whose head ends in the place's label, and one whose whole
+/// head is the name the labelled one is called.
+fn housed(s: &mut Session) {
+    put(s, "bleed", "[ ] Bleed the radiators #house", &[], 1_000);
+    put(s, "oil", "Order oil #house", &[], 2_000);
+    put(s, "boiler", "Boiler #house 2026-10-16", &[], 3_000);
+    s.act(Action::Select(None));
+}
+
+#[test]
+fn a_task_is_linked_by_its_name_without_its_box_and_labels() {
+    let mut s = session();
+    housed(&mut s);
+    let effects = add(&mut s, "Call about [[Bleed the radiators]]");
+    let new = kept(&effects)[0].clone();
+    assert_eq!(new.links, ["bleed"]);
+}
+
+#[test]
+fn a_note_whose_head_ends_in_labels_is_linked_by_its_name() {
+    let mut s = session();
+    housed(&mut s);
+    let effects = add(&mut s, "Ring about [[boiler]] and [[ORDER  oil]]");
+    let new = kept(&effects)[0].clone();
+    assert_eq!(new.links, ["boiler", "oil"]);
+}
+
+#[test]
+fn a_note_whose_whole_head_is_the_name_is_linked_before_one_only_called_it() {
+    let mut s = session();
+    housed(&mut s);
+    put(&mut s, "plain", "Order oil", &[], 4_000);
+    s.act(Action::Select(None));
+    let effects = add(&mut s, "Ask about [[Order oil]]");
+    assert_eq!(kept(&effects)[0].links, ["plain"]);
+}
+
+#[test]
+fn a_link_by_name_is_dropped_when_its_brackets_are_taken_out() {
+    let mut s = session();
+    housed(&mut s);
+    put(
+        &mut s,
+        "call",
+        "Call about [[Bleed the radiators]]",
+        &["bleed"],
+        4_000,
+    );
+    select(&mut s, "Call about [[Bleed the radiators]]");
+    let effects = edited(&mut s, "Call about the radiators");
+    assert!(kept(&effects)[0].links.is_empty());
+}
+
+#[test]
+fn a_task_and_a_labelled_note_are_offered_by_their_names() {
+    let mut s = session();
+    housed(&mut s);
+    typed(&mut s, "Call about [[ble");
+    assert_eq!(words(&s), ["Bleed the radiators"]);
+    clear(&mut s);
+    typed(&mut s, "[[o");
+    assert_eq!(words(&s), ["Order oil"]);
+    put(&mut s, "plain", "Order oil", &[], 500);
+    s.act(Action::Select(None));
+    clear(&mut s);
+    typed(&mut s, "[[o");
+    assert_eq!(
+        words(&s),
+        ["Order oil"],
+        "once, though two notes are called it, as the one its whole head is"
+    );
+}
+
+#[test]
+fn a_name_taken_and_saved_links_the_note_it_names() {
+    let mut s = session();
+    housed(&mut s);
+    typed(&mut s, "Call about [[ble");
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "Call about [[Bleed the radiators]]");
+    let effects = s.act(Action::Write);
+    let new = kept(&effects)
+        .into_iter()
+        .find(|r| r.text == "Call about [[Bleed the radiators]]")
+        .unwrap()
+        .clone();
+    assert_eq!(new.links, ["bleed"]);
 }

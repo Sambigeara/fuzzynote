@@ -16,6 +16,10 @@ struct Doc {
     /// The text lowercased, made once here rather than for each note a phrase or letters ask of
     /// on each keystroke.
     lower: String,
+    /// Whether its whole head is its name, with no box and no labels at its end, so that brackets
+    /// naming it link to it before any note only called so. Made once here, since a bracketed
+    /// name being typed asks it of every note whose name it starts.
+    whole: bool,
 }
 
 impl Doc {
@@ -173,7 +177,13 @@ impl Engine {
         };
         self.index.add(doc, &tokens, &labels);
         let lower = text::lowercase(&note.text);
-        self.docs[doc as usize] = Some(Doc { note, facts, lower });
+        let whole = text::bracket_name(note.head()).len() == note.head().len();
+        self.docs[doc as usize] = Some(Doc {
+            note,
+            facts,
+            lower,
+            whole,
+        });
     }
 
     /// Removes a note and returns it.
@@ -614,12 +624,18 @@ impl Engine {
         }
     }
 
-    /// The notes a text names in `[[brackets]]`, by their heads. Brackets are a way of typing a
-    /// link and nothing more: the link itself is the id, held on the note that was saved.
+    /// The notes a text names in `[[brackets]]`, as the line names a note: by their whole heads,
+    /// or where no note's head is the name, by their heads without the box and the labels that
+    /// end them. Brackets are a way of typing a link and nothing more: the link itself is the id,
+    /// held on the note that was saved.
     pub fn named_in(&self, text: &str) -> Vec<String> {
         let mut named = Vec::new();
-        for head in text::facts(text).links {
-            for &d in self.index.docs_with(&Label::Head(head.clone())) {
+        for name in text::facts(text).links {
+            let mut docs = self.index.docs_with(&Label::Head(name.clone()));
+            if docs.is_empty() {
+                docs = self.index.docs_with(&Label::Bare(name));
+            }
+            for &d in docs {
                 if let Some(doc) = self.docs[d as usize].as_ref()
                     && !named.contains(&doc.note.id)
                 {
@@ -750,15 +766,17 @@ impl Engine {
         found.into_iter().map(|(_, _, written)| written).collect()
     }
 
-    /// The heads that `start`, a head normalised as a bracketed name is, starts, each written as
-    /// its newest note has it with its spaces collapsed, at most `limit`: those of the notes most
-    /// linked to first, then those of the note written last, then in order. A head shared by
-    /// notes is one, linked to as often as they are together, since brackets naming it link to
-    /// every one of them. The note `besides` names is neither offered nor counted as linking,
-    /// since it is the one being written and a note does not link to itself. A head brackets
-    /// could not name whole, one with a `#`, a `|` or a `]]` in it, is not offered, so that a
-    /// head taken always becomes a link. An archived note is still linked to, so it counts.
-    pub(crate) fn heads_starting(
+    /// The names that `start`, normalised as a bracketed name is, starts, each written as its
+    /// newest note has it with its spaces collapsed, at most `limit`: those of the notes most
+    /// linked to first, then those of the note written last, then in order. A note is named as
+    /// brackets name it, without its box and the labels that end it, and a name is counted for
+    /// the notes brackets naming it would link to: those whose whole head it is, if any are, and
+    /// otherwise every note it names, since brackets link to every one of them. The note
+    /// `besides` names is neither offered nor counted as linking, since it is the one being
+    /// written and a note does not link to itself. A name brackets could not hold whole, one with
+    /// a `#`, a `|` or a `]]` in it, is not offered, so that a name taken always becomes a link.
+    /// An archived note is still linked to, so it counts.
+    pub(crate) fn names_starting(
         &self,
         start: &str,
         besides: Option<&str>,
@@ -768,18 +786,20 @@ impl Engine {
         let besides_links = besides
             .and_then(|d| self.docs[d as usize].as_ref())
             .map_or(&[][..], |doc| doc.note.links.as_slice());
-        let start = Label::Head(start.to_owned());
+        let start = Label::Bare(start.to_owned());
         let mut found: Vec<(usize, Option<Moment>, &str, DocId)> = self
             .index
             .labels_starting(&start)
             .filter_map(|(label, docs)| {
-                let Label::Head(head) = label else {
+                let Label::Bare(name) = label else {
                     return None;
                 };
+                let doc = |d: DocId| self.docs[d as usize].as_ref();
+                let first = docs.iter().any(|&d| doc(d).is_some_and(|doc| doc.whole));
                 let mut linked = 0;
                 let mut newest: Option<(Option<Moment>, DocId)> = None;
                 for &d in docs.iter().filter(|&&d| Some(d) != besides) {
-                    let Some(doc) = self.docs[d as usize].as_ref() else {
+                    let Some(doc) = doc(d).filter(|doc| !first || doc.whole) else {
                         continue;
                     };
                     let id = doc.note.id.as_str();
@@ -790,11 +810,11 @@ impl Engine {
                     }
                 }
                 let (last, newest) = newest?;
-                Some((linked, last, head.as_str(), newest))
+                Some((linked, last, name.as_str(), newest))
             })
-            .filter(|&(.., head, _)| {
-                let plain = !head.contains(['#', '|', '[', ']', '`']) && head.len() < 200;
-                plain || text::facts(&format!("[[{head}]]")).links == [head]
+            .filter(|&(.., name, _)| {
+                let plain = !name.contains(['#', '|', '[', ']', '`']) && name.len() < 200;
+                plain || text::facts(&format!("[[{name}]]")).links == [name]
             })
             .collect();
         type Found<'a> = (usize, Option<Moment>, &'a str, DocId);
@@ -810,8 +830,7 @@ impl Engine {
             .into_iter()
             .filter_map(|(.., d)| self.docs[d as usize].as_ref())
             .map(|doc| {
-                doc.note
-                    .head()
+                text::bracket_name(doc.note.head())
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -849,6 +868,10 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     let head = text::normalise_head(note.head());
     if !head.is_empty() {
         labels.push(Label::Head(head));
+    }
+    let bare = text::normalise_head(text::bracket_name(note.head()));
+    if !bare.is_empty() {
+        labels.push(Label::Bare(bare));
     }
     let mut head_terms = text::tokens(note.head());
     head_terms.sort_unstable();

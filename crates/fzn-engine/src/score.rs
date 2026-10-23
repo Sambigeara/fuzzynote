@@ -19,6 +19,9 @@ pub enum Label {
     /// The note's own head, normalised, so that a `[[head]]` typed into a text can be resolved
     /// to it when the text is saved, and offered while it is typed.
     Head(String),
+    /// The note's head without its box and the labels that end it, normalised: what brackets
+    /// name it by when no note's head is the name whole, and what is offered while it is typed.
+    Bare(String),
     /// A word in the note's head.
     HeadTerm(String),
     /// The words of the note's head, in alphabetical order with a space between: what the note
@@ -40,13 +43,13 @@ pub enum Label {
 }
 
 impl Label {
-    /// Whether this label is one that `start`, typed so far, could be: a tag, a person or a head
-    /// whose name starts with its name. Any other label starts only itself.
+    /// Whether this label is one that `start`, typed so far, could be: a tag, a person or a
+    /// bracketed name that starts with its name. Any other label starts only itself.
     pub fn starts_with(&self, start: &Label) -> bool {
         match (self, start) {
             (Label::Tag(name), Label::Tag(start))
             | (Label::Mention(name), Label::Mention(start))
-            | (Label::Head(name), Label::Head(start)) => name.starts_with(start.as_str()),
+            | (Label::Bare(name), Label::Bare(start)) => name.starts_with(start.as_str()),
             _ => self == start,
         }
     }

@@ -77,17 +77,19 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
 - **Link**: from one note to another, held on the note as the target's id. There is one kind. It
   survives a rename and adds no words to the text. Links are made by position: a note written while
   looking around another is about it, and links to it. Nobody has to say "link". Brackets are the
-  way of typing one from inside the editor: when a note is saved, each `[[head]]` that names an
-  existing note becomes a link, and a link whose brackets were taken out is dropped. While a head
-  is typed in brackets on the line or in a row, the heads of the space that it starts are offered,
-  as a tag is, so that a head taken is one that links (see "A note's head is offered inside
-  brackets"). The one
-  explicit gesture is a correction: a chord on a note in a note's place links it or unlinks it, for
-  when the engine was wrong or the note was written in the wrong place. The engine does not read
-  brackets when it searches. A link adds no words, and still a note is found by the name of what it
-  is about: when you type, the head of a note that a note links to counts as its own head does, one
-  hop and no further. Only explicit links are stored; everything else is recomputed on demand.
-- **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, `[[note head]]` as a way
+  way of typing one from inside the editor: when a note is saved, each `[[name]]` that names an
+  existing note becomes a link, and a link whose brackets were taken out is dropped. Brackets name a
+  note as the line names one: by its whole head first, and where no note's head is the name, by its
+  head without its box and the labels that end it, the words its row reads in its place, so `[[Bleed
+  the radiators]]` links `[ ] Bleed the radiators #house`. While a name is typed in brackets on the
+  line or in a row, the names of the space that it starts are offered, as a tag is, so that a name
+  taken is one that links (see "A note's head is offered inside brackets"). The one explicit gesture
+  is a correction: a chord on a note in a note's place links it or unlinks it, for when the engine
+  was wrong or the note was written in the wrong place. The engine does not read brackets when it
+  searches. A link adds no words, and still a note is found by the name of what it is about: when
+  you type, the head of a note that a note links to counts as its own head does, one hop and no
+  further. Only explicit links are stored; everything else is recomputed on demand.
+- **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, `[[note name]]` as a way
   of typing a link, and a box, `[ ]` or `[x]`, at the start of a note, which makes it a task (see "A
   task is a note headed by its box"). Nothing else is special in a note. Code is literal: inside a
   code span or a fenced block nothing is a tag, a person, a link or a date, so `#fff` in backticks
@@ -582,16 +584,19 @@ offered as it is typed").
 
 A note's head is offered the same way inside brackets. Once typing leaves the caret after an opening
 `[[` on its line, with something typed after it, no `]]` or other `[[` between them and the caret,
-and the caret neither in code nor in a word, the heads of the space that start with what is typed
-are offered under it, from where the head starts: in any case, spaces as one, as a bracketed name is
-matched when the note is saved; the notes most linked to first, then the newest, then by head;
-archived notes counting, the note being written never, and a head two notes share once. Each is
-shown as a row reads it, cut as an arrow's head is. A head brackets could not name whole, one with a
-`#`, a `|` or a `]]` in it, is not offered. Taking one writes the head whole after the `[[`, closes
-it with `]]` unless that follows already, and puts the caret after the `]]`, so `[[boi` Tab is
-`[[Boiler]]`, and the note links to the boiler once it is saved. Inside open brackets no tag or
-person is offered, since there it is part of the name. Every other rule is the tag's (see "A note's
-head is offered inside brackets").
+and the caret neither in code nor in a word, the notes of the space whose names start with what is
+typed are offered under it, from where the name starts. A note's name is what brackets name it by
+and its row reads in its place: its head without its box and the labels that end it, so `[[ble`
+offers `Bleed the radiators` for `[ ] Bleed the radiators #house`. It is matched in any case, spaces
+as one, as a bracketed name is when the note is saved; the notes most linked to come first, then the
+newest, then by name; archived notes count, the note being written never, and a name two notes share
+is offered once. Each is shown as it will be written, cut as an arrow's head is. A name brackets
+could not hold whole, one with a `#`, a `|` or a `]]` among its words, is not offered. Taking one
+writes the name after the `[[`, in the note's own case, closes it with `]]` unless that follows
+already, and puts the caret after the `]]`, so `[[ble` Tab is `[[Bleed the radiators]]`, and the
+note links to the task once it is saved. Inside open brackets no tag or person is offered, since
+there it is part of the name. Every other rule is the tag's (see "A note's head is offered inside
+brackets").
 
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
@@ -3435,8 +3440,8 @@ the app now does is described above; an entry repeats it only where the reason n
   terminal it is your editor, and the page's CodeMirror has a completion of its own, which would be
   a design of its own; use decides. Weighed: the dim hint, rejected; wrapping arrows; leaving Enter
   to write; and offering every tag the word starts, which at one letter is more than can be read.
-  Revised 2026-10-23 by "A note's head is offered inside brackets": a head typed in brackets is
-  offered the same way, ranked by the notes linking to it.
+  Revised 2026-10-23 by "A note's head is offered inside brackets": a note's name typed in
+  brackets is offered the same way, ranked by the notes linking to it.
 - **Code is literal.** Decided 2026-10-20, at Sam's report. A tag was read wherever a `#` met a
   letter, in code too, so a colour `#fff` in backticks, an `#include` in a block of C or a channel
   in a pasted command made a tag of the note: it was listed in that place, held by it on the line,
@@ -3776,45 +3781,58 @@ the app now does is described above; an entry repeats it only where the reason n
   as a place; the box kept to the labels after the note, which loses the follow-up as before; a
   depth limit, a number to remember; and only the links made by writing, a second kind of link.
 - **A note's head is offered inside brackets.** Decided 2026-10-23, at Sam's ask, revising "The tags
-  a word starts are offered as it is typed". A link typed as `[[head]]` links only if the head is
-  spelt as a note has it, and nothing said so: a misspelt one stayed plain text, quietly, and a link
-  not made is found out only when the note is not where it was meant to be. Sam asked for
-  completion. It is the tag's offer with a second kind of word, and every rule of that one holds: it
-  opens only by typing, a caret walked onto it never opens it, Escape closes it until it is typed
-  into again, Tab or Enter takes the one marked, Up and Down choose and stop at the ends, a tap
-  takes one on the page, at most five, and the session decides it all. It opens on the line and in a
-  head being written, the places tags are offered, when typing leaves the caret after an opening
-  `[[` on its line with something typed after it, nothing between them a `]]` or another `[[`, and
-  the caret not in code. What is typed is matched as a bracketed name is resolved when the note is
-  saved, in any case and with its spaces as one, against the start of each head, so that a head
-  taken always links; a space typed after a word keeps it whole, so `[[boiler ` offers `Boiler
-  service` and not `Boiler`. A head brackets could not name whole, one with a `#`, a `|` or a `]]`
-  in it, is not offered, since taking it would write what does not link. The notes most linked to
-  come first, since the note many link to is the one most often named; then the newest, then by
-  head. Archived notes count, since a link to a done task is a link, and the note being written is
-  never offered and its own links are not counted, since a note does not link to itself. Two notes
-  with one head are offered once, linked to as often as they are together, since brackets naming it
-  link to both, and written as the newer has it. Each is drawn as a row reads it, cut to forty
-  letters as an arrow's head is, from where the head starts rather than from the brackets, so the
-  faces draw it as they draw a tag and the view's `offer` is unchanged: `{"words":["Boiler","Boiler
-  service"],"chosen":0,"from":13}` for `Call about [[boi`. Taking writes the head whole, its case as
-  the note has it, closes the brackets with `]]` unless they follow already, and puts the caret
-  after them, with no space, since what follows a link is as often a comma as a word. Inside open
-  brackets no tag or person is offered, since there a `#` or an `@` is part of the name. The index
-  keeps how many notes link to each id beside the links' labels, so that each head the typed start
-  finds is asked its count without a label made for it; the heads come from the index's labels in
-  order, as tags do, and nothing is kept between keys. Measured natively over 10,000 invented notes:
-  43µs for a letter that starts 700 heads, about as many as a common first letter starts, and 18µs
-  for `boi` over 400; a letter that starts a third of the space, 3,100 heads, costs 240µs. It is
-  dearer than a tag, whose letter finds a few tags, since every head a letter starts is asked how
-  often it is linked to; it is still well inside a keystroke. A task's head starts with its box, so
-  `[[ble` does not offer `[ ] Bleed the radiators`; brackets resolve the head with its box, and
-  ticking it changes the head, so use decides whether a task is offered by its words. Weighed:
-  matching any word of a head, not only its start, which finds `Boiler service` from `serv` but
-  offers far more at one letter, ranks words against heads, and breaks the rule that what is typed
-  is the start of what is taken; a fuzzy match, which would mend a misspelling but offer what was
-  not meant; offering by the search's own ranking, which costs a search a key; and leaving out
-  archived notes, which would make a done task unlinkable by name.
+  a word starts are offered as it is typed" and the Model's bracket rule of 2026-10-13, where a
+  `[[head]]` named only a note whose whole head it was. A link typed in brackets linked only if the
+  head was spelt as the note had it, and nothing said so: a misspelt one stayed plain text, quietly,
+  and a link not made is found out only when the note is not where it was meant to be. Sam asked for
+  completion, and building it showed the larger fault: since "Where you are is the whole path", a
+  note written in a place ends its head with that place's labels, and a task starts with its box, so
+  the whole head, `[ ] Bleed the radiators #house`, was rarely what anyone would type, and most
+  notes could not be named in brackets at all. So brackets now name a note as the line names one, in
+  two tiers: by its whole head, as before, and only where no note's whole head is the name, by its
+  name, the head without its box and the labels that end it, the words its row reads in its place.
+  `[[Bleed the radiators]]` links the task, and `[[Order oil]]` links `Order oil #house` unless some
+  note's whole head is `Order oil`, which wins, as a head typed whole wins on the line. The index
+  holds each note's name as a label of its own beside its head, kept in step with it, and a link
+  whose brackets are taken out is still dropped, since the same tiers read the old text. Completion
+  is the tag's offer with a second kind of word, and every rule of that one holds: it opens only by
+  typing, a caret walked onto it never opens it, Escape closes it until it is typed into again, Tab
+  or Enter takes the one marked, Up and Down choose and stop at the ends, a tap takes one on the
+  page, at most five, and the session decides it all. It opens on the line and in a head being
+  written, the places tags are offered, when typing leaves the caret after an opening `[[` on its
+  line with something typed after it, nothing between them a `]]` or another `[[`, and the caret
+  neither in code nor in a word. What is typed is matched against the start of each name, in any
+  case and with its spaces as one, as a bracketed name is resolved, so that a name taken always
+  links; a space typed after a word keeps it whole, so `[[boiler ` offers `Boiler service` and not
+  `Boiler`. A name brackets could not hold whole, one with a `#`, a `|` or a `]]` among its words,
+  is not offered, since taking it would write what does not link. The notes most linked to come
+  first, since the note many link to is the one most often named; then the newest, then by name; and
+  a name counts the links of the notes it would link, those whose whole head it is if any are, and
+  otherwise all it names. Archived notes count, since a link to a done task is a link, and the note
+  being written is never offered and its own links are not counted, since a note does not link to
+  itself. A name two notes share is offered once, written as the newer has it. Each is drawn as it
+  will be written, which is as its row reads, without its box, since a task being a task needs no
+  mark here; cut to forty letters as an arrow's head is; and from where the name starts rather than
+  from the brackets, so the faces draw it as they draw a tag and the view's `offer` is unchanged:
+  `{"words":["Bleed the radiators"],"chosen":0,"from":13}` for `Call about [[ble`. Taking writes the
+  name whole, in the note's own case, closes the brackets with `]]` unless they follow already, and
+  puts the caret after them, with no space, since what follows a link is as often a comma as a word.
+  Inside open brackets no tag or person is offered, since there a `#` or an `@` is part of the name.
+  The index keeps how many notes link to each id beside the links' labels, so that each name the
+  typed start finds is asked its count without a label made for it; the names come from the index's
+  labels in order, as tags do, and nothing is kept between keys. Measured natively over 10,000
+  invented notes, a third of them tasks and half ending in a label: 66µs for a letter that starts
+  700 names, about as many as a common first letter starts, and 35µs for `boi` over 350; a letter
+  that starts a third of the space, 3,100 names, costs 850µs. It is dearer than a tag, whose letter
+  finds a few tags, since every name a letter starts is asked how often it is linked to; it is still
+  well inside a keystroke. Weighed: matching any word of a name, not only its start, which finds
+  `Boiler service` from `serv` but offers far more at one letter, ranks words against names, and
+  breaks the rule that what is typed is the start of what is taken; a fuzzy match, which would mend
+  a misspelling but offer what was not meant; offering by the search's own ranking, which costs a
+  search a key; leaving out archived notes, which would make a done task unlinkable by name;
+  offering whole heads only, which left out every task and every note written in a place; and naming
+  by the name alone, without the whole head first, which would let `[[Order oil]]` link a labelled
+  note as well as the one actually called that.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -3822,7 +3840,8 @@ the app now does is described above; an entry repeats it only where the reason n
   (milestone 4) decides.
 - Brackets that name a note which does not exist yet stay plain text until the note is saved again.
   Should creating the target link the notes that were waiting for it? The first link found missing
-  that way decides.
+  that way decides. Since names are offered as they are typed, a name nothing was
+  offered for while it was typed names nothing yet.
 - The carry rule ("the note contains what you typed" means it was a search) is a heuristic. Its bad
   case is clearing a one-word draft, which costs one word to retype; the case it must never produce
   is a note called `trai` under `trainingapp`. Daily use decides whether the rule holds.

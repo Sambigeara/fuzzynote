@@ -349,6 +349,18 @@ pub(crate) fn name_of(head: &str) -> &str {
     without_end(head, |word| label_word(word).is_some())
 }
 
+/// A head as brackets name it when no note's head is the name whole: without its box and the
+/// labels that end it, the words its row reads in its place. `[ ] Bleed the radiators #house`
+/// is named `Bleed the radiators`.
+pub(crate) fn bracket_name(head: &str) -> &str {
+    let head = head.trim();
+    let unboxed = match task(head) {
+        Some(_) => head[OPEN.len()..].trim_start(),
+        None => head,
+    };
+    name_of(unboxed)
+}
+
 /// The box an open task starts with.
 pub const OPEN: &str = "[ ]";
 /// The box a done task starts with.
@@ -1089,6 +1101,17 @@ mod tests {
         assert_eq!(name_of("Order oil #household?"), "Order oil #household?");
         assert_eq!(name_of("#house #garden"), "");
         assert_eq!(name_of("Boiler\u{a0}#house"), "Boiler");
+    }
+
+    #[test]
+    fn a_head_is_named_in_brackets_without_its_box_and_the_labels_that_end_it() {
+        assert_eq!(
+            bracket_name("[ ] Bleed the radiators #house"),
+            "Bleed the radiators"
+        );
+        assert_eq!(bracket_name("[x] Order oil #house 2026-10-16"), "Order oil");
+        assert_eq!(bracket_name("Boiler"), "Boiler");
+        assert_eq!(bracket_name("[ ] #house"), "");
         assert_eq!(label_word("#House"), Some(Labelled::Tag("house".into())));
         assert_eq!(label_word("2026-10-16x"), None);
     }
