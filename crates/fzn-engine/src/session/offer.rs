@@ -1,5 +1,5 @@
-//! What is offered while a tag or a person is typed: the ones the space already has that start
-//! with what is typed, and a key to take one. It is a part of its own because it is the one thing
+//! What is offered while a tag or a person is typed, or a note's head inside brackets: the ones
+//! the space already has that start with what is typed, and a key to take one. It is a part of its own because it is the one thing
 //! the session keeps that follows the face's caret, which the session is otherwise never told:
 //! the face says where the caret is after typing, and only typing opens what is offered, so that
 //! a word walked past with the arrows is not offered for, and a word closed with Escape stays
@@ -15,20 +15,29 @@ use super::{Action, Caret, Session};
 /// The most that is offered at once.
 const OFFERED: usize = 5;
 
-/// What is offered to complete the tag or person the caret ends, while it is offered.
+/// What is offered to complete the tag, person or bracketed head the caret ends, while it is
+/// offered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Offer {
     /// The tags or the people, as they are written with their mark, `#food` or `@joe`: those of
-    /// the space that start with the word, carried by the most notes first.
+    /// the space that start with the word, carried by the most notes first. Or the heads, as a
+    /// row reads them and cut as an arrow's are, of the notes most linked to first.
     pub words: Vec<String>,
     /// The one Tab or Enter takes, as an index into `words`.
     pub chosen: usize,
     /// Where the word's mark is, in characters, in the line or the head, so that a face can draw
-    /// what is offered under the word.
+    /// what is offered under the word. For a head it is where the head starts, after the
+    /// brackets, so that a face draws a head as it draws a tag, under what it completes.
     pub from: usize,
     /// Where the word ends, in characters, which is where the caret was when it was offered.
     #[serde(skip)]
     to: usize,
+    /// What taking each writes, which for a head is the head whole and not as it is drawn.
+    #[serde(skip)]
+    written: Vec<String>,
+    /// Whether these are heads, which taking closes with brackets rather than a space.
+    #[serde(skip)]
+    heads: bool,
 }
 
 impl Offer {
@@ -72,6 +81,55 @@ fn ending(text: &str, at: usize, on_line: bool) -> Option<(usize, Label)> {
     (end == at).then_some((from, label))
 }
 
+/// Where the head being typed in brackets starts, in characters, if the caret at `at` is after an
+/// opening `[[` on its line that nothing has closed, read as a note's text reads brackets, with
+/// code passed over.
+fn bracketed(chars: &[char], at: usize) -> Option<usize> {
+    let line = chars[..at]
+        .iter()
+        .rposition(|&c| c == '\n')
+        .map_or(0, |i| i + 1);
+    let code = text::code(chars);
+    let pair = |i: usize, c: char| chars[i] == c && chars.get(i + 1) == Some(&c) && i + 1 < at;
+    let mut open = None;
+    let mut i = line;
+    while i < at {
+        if code.iter().any(|r| r.contains(&i)) {
+            i += 1;
+        } else if open.is_none() && pair(i, '[') {
+            open = Some(i + 2);
+            i += 2;
+        } else if open.is_some() && pair(i, ']') {
+            open = None;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    open
+}
+
+/// The head being typed from `from` to the caret at `at`, normalised as a bracketed name is, a
+/// space typed after it kept so that a word is known to be done. There is none if nothing but
+/// spaces is typed, if another `[[` or a `]]` comes between, if a `#` or a `|` does, which would
+/// make the rest a section or another name, if the caret is in code, or if it is in a word.
+fn head_typed(chars: &[char], from: usize, at: usize) -> Option<String> {
+    let typed = &chars[from..at];
+    let inside = typed.windows(2).any(|w| w == ['[', '['] || w == [']', ']']);
+    let after = chars.get(at).is_none_or(|&c| c.is_whitespace() || c == ']');
+    if inside || !after || typed.iter().any(|&c| c == '#' || c == '|') || text::in_code(chars, at) {
+        return None;
+    }
+    let mut head = text::normalise_head(&typed.iter().collect::<String>());
+    if head.is_empty() {
+        return None;
+    }
+    if typed.last().is_some_and(|c| c.is_whitespace()) {
+        head.push(' ');
+    }
+    Some(head)
+}
+
 impl Session {
     /// The text the caret is in where a word can be offered for: the line, or the head of the
     /// note under the cursor while its body is shut. An open body is its editor's.
@@ -84,7 +142,8 @@ impl Session {
     }
 
     /// What is offered now that the face says the caret is at `at`: after typing, what the space
-    /// has that the word the caret ends starts; after the caret has only moved, what was offered,
+    /// has that the word the caret ends starts, or inside brackets the heads that what is typed
+    /// in them starts; after the caret has only moved, what was offered,
     /// for as long as the caret is still at the end of its word. The note being written does not
     /// count, since its word is the one still being typed, and the word alone is nothing to
     /// offer.
@@ -92,8 +151,34 @@ impl Session {
         if !typed {
             return was.filter(|offer| offer.to == at);
         }
-        let (from, label) = ending(self.caret_text()?, at, self.field.is_none())?;
+        let text = self.caret_text()?;
         let besides = self.field.as_ref().map(|field| field.id.as_str());
+        let chars: Vec<char> = text.chars().collect();
+        if at > chars.len() {
+            return None;
+        }
+        // Inside brackets no tag or person is offered, since there they are part of the name.
+        if let Some(from) = bracketed(&chars, at) {
+            let head = head_typed(&chars, from, at)?;
+            let written = self.engine.heads_starting(&head, besides, OFFERED);
+            if written.is_empty() || written.len() == 1 && text::normalise_head(&written[0]) == head
+            {
+                return None;
+            }
+            let words = written
+                .iter()
+                .map(|head| text::fit(&self.row_head(head), 40))
+                .collect();
+            return Some(Offer {
+                words,
+                chosen: 0,
+                from,
+                to: at,
+                written,
+                heads: true,
+            });
+        }
+        let (from, label) = ending(text, at, self.field.is_none())?;
         let words = self.engine.labels_starting(&label, besides, OFFERED);
         let alone = match &label {
             Label::Tag(tag) => format!("#{tag}"),
@@ -104,31 +189,35 @@ impl Session {
             return None;
         }
         Some(Offer {
+            written: words.clone(),
             words,
             chosen: 0,
             from,
             to: at,
+            heads: false,
         })
     }
 
     /// Puts the word offered, the chosen one or the one asked for, in place of the word the
     /// caret ends, with a space after it unless one follows already, and says where the caret
-    /// goes: after that space.
+    /// goes: after that space. A head is closed with brackets instead, unless they follow it
+    /// already, and the caret goes after them.
     pub(super) fn take(&mut self, offer: Offer, which: Option<usize>) -> Option<Caret> {
-        let word = offer.words.get(which.unwrap_or(offer.chosen))?;
+        let word = offer.written.get(which.unwrap_or(offer.chosen))?;
         let chars: Vec<char> = self.caret_text()?.chars().collect();
         if offer.to > chars.len() {
             return None;
         }
         let before: String = chars[..offer.from].iter().collect();
         let after: String = chars[offer.to..].iter().collect();
-        let space = if after.starts_with(char::is_whitespace) {
-            ""
-        } else {
-            " "
+        let end = match (offer.heads, after.starts_with(char::is_whitespace)) {
+            (true, _) if after.starts_with("]]") => "",
+            (true, _) => "]]",
+            (false, true) => "",
+            (false, false) => " ",
         };
-        let taken = format!("{before}{word}{space}{after}");
-        let at = offer.from + word.chars().count() + 1;
+        let taken = format!("{before}{word}{end}{after}");
+        let at = offer.from + word.chars().count() + if offer.heads { 2 } else { 1 };
         match self.field.as_ref() {
             None => {
                 self.carry_out(Action::Type(taken));

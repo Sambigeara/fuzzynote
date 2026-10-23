@@ -30,9 +30,14 @@ pub struct Index {
     live: Vec<bool>,
     live_docs: usize,
     total_len: u64,
-    /// In order, so that a tag or a person still being typed finds every one it starts.
+    /// In order, so that a tag, a person or a bracketed head still being typed finds every one it
+    /// starts.
     labels: BTreeMap<Label, Vec<DocId>>,
     doc_labels: Vec<Vec<Label>>,
+    /// How many notes link to each id, kept beside the links' labels so that it is asked of by
+    /// the id as it is held, without making a label to look it up, for every head a bracketed
+    /// name being typed starts.
+    linked: HashMap<String, u32>,
 }
 
 impl Index {
@@ -97,6 +102,9 @@ impl Index {
             let pos = v.partition_point(|&d| d < doc);
             if v.get(pos) != Some(&doc) {
                 v.insert(pos, doc);
+                if let Label::Link(id) = l {
+                    *self.linked.entry(id.clone()).or_default() += 1;
+                }
             }
         }
         self.doc_labels[i] = doc_labels;
@@ -118,6 +126,14 @@ impl Index {
             if let Some(v) = self.labels.get_mut(&l) {
                 if let Ok(pos) = v.binary_search(&doc) {
                     v.remove(pos);
+                    if let Label::Link(id) = &l
+                        && let Some(n) = self.linked.get_mut(id)
+                    {
+                        *n -= 1;
+                        if *n == 0 {
+                            self.linked.remove(id);
+                        }
+                    }
                 }
                 if v.is_empty() {
                     self.labels.remove(&l);
@@ -175,6 +191,11 @@ impl Index {
         let n = self.live_docs as f32;
         let df = self.df(t) as f32;
         ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
+    }
+
+    /// How many notes link to the note with this id.
+    pub fn linked_to(&self, id: &str) -> usize {
+        self.linked.get(id).map_or(0, |&n| n as usize)
     }
 
     pub fn docs_with(&self, label: &Label) -> &[DocId] {
@@ -298,6 +319,20 @@ mod tests {
         assert_eq!(ix.live_docs(), 2);
         assert_eq!(ix.total_len, 4);
         assert!(ix.doc_terms(0).is_empty());
+    }
+
+    #[test]
+    fn how_often_a_note_is_linked_to_follows_the_notes_added_and_removed() {
+        let mut ix = Index::default();
+        let link = |id: &str| Label::Link(id.into());
+        ix.add(0, &toks("boiler"), &[]);
+        ix.add(1, &toks("pressure dropped"), &[link("boiler")]);
+        ix.add(2, &toks("order oil"), &[link("boiler"), link("tank")]);
+        assert_eq!((ix.linked_to("boiler"), ix.linked_to("tank")), (2, 1));
+        ix.remove(2);
+        assert_eq!((ix.linked_to("boiler"), ix.linked_to("tank")), (1, 0));
+        ix.remove(2);
+        assert_eq!(ix.linked_to("boiler"), 1, "removing it twice is nothing");
     }
 
     #[test]

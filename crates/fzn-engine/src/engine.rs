@@ -750,6 +750,75 @@ impl Engine {
         found.into_iter().map(|(_, _, written)| written).collect()
     }
 
+    /// The heads that `start`, a head normalised as a bracketed name is, starts, each written as
+    /// its newest note has it with its spaces collapsed, at most `limit`: those of the notes most
+    /// linked to first, then those of the note written last, then in order. A head shared by
+    /// notes is one, linked to as often as they are together, since brackets naming it link to
+    /// every one of them. The note `besides` names is neither offered nor counted as linking,
+    /// since it is the one being written and a note does not link to itself. A head brackets
+    /// could not name whole, one with a `#`, a `|` or a `]]` in it, is not offered, so that a
+    /// head taken always becomes a link. An archived note is still linked to, so it counts.
+    pub(crate) fn heads_starting(
+        &self,
+        start: &str,
+        besides: Option<&str>,
+        limit: usize,
+    ) -> Vec<String> {
+        let besides = besides.and_then(|id| self.by_id.get(id).copied());
+        let besides_links = besides
+            .and_then(|d| self.docs[d as usize].as_ref())
+            .map_or(&[][..], |doc| doc.note.links.as_slice());
+        let start = Label::Head(start.to_owned());
+        let mut found: Vec<(usize, Option<Moment>, &str, DocId)> = self
+            .index
+            .labels_starting(&start)
+            .filter_map(|(label, docs)| {
+                let Label::Head(head) = label else {
+                    return None;
+                };
+                let mut linked = 0;
+                let mut newest: Option<(Option<Moment>, DocId)> = None;
+                for &d in docs.iter().filter(|&&d| Some(d) != besides) {
+                    let Some(doc) = self.docs[d as usize].as_ref() else {
+                        continue;
+                    };
+                    let id = doc.note.id.as_str();
+                    linked += self.index.linked_to(id);
+                    linked -= usize::from(besides_links.iter().any(|l| l == id));
+                    if newest.is_none_or(|(at, _)| doc.note.created >= at) {
+                        newest = Some((doc.note.created, d));
+                    }
+                }
+                let (last, newest) = newest?;
+                Some((linked, last, head.as_str(), newest))
+            })
+            .filter(|&(.., head, _)| {
+                let plain = !head.contains(['#', '|', '[', ']', '`']) && head.len() < 200;
+                plain || text::facts(&format!("[[{head}]]")).links == [head]
+            })
+            .collect();
+        type Found<'a> = (usize, Option<Moment>, &'a str, DocId);
+        let order =
+            |a: &Found, b: &Found| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then_with(|| a.2.cmp(b.2));
+        // Only the first few are wanted, so they are found before they are put in order.
+        if found.len() > limit && limit > 0 {
+            found.select_nth_unstable_by(limit - 1, order);
+        }
+        found.truncate(limit);
+        found.sort_by(order);
+        found
+            .into_iter()
+            .filter_map(|(.., d)| self.docs[d as usize].as_ref())
+            .map(|doc| {
+                doc.note
+                    .head()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    }
+
     /// The note's most distinctive terms, ignoring ones no other note shares.
     fn top_terms(&self, doc: DocId, n: usize) -> Vec<String> {
         let mut scored: Vec<(f32, TermId)> = self

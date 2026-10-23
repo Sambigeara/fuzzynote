@@ -97,8 +97,8 @@
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
 //! face's to decide, and so is editing the line: a terminal has to do that itself and a browser
 //! is given it, so the session is told what the line now reads, and after typing where the caret
-//! is in it, since what completes a tag or a person being typed is offered only at the end of the
-//! word, and what is offered is the app's to decide (see `offer`). Where the caret goes
+//! is in it, since what completes a tag, a person or a bracketed head being typed is offered only
+//! at the end of the word, and what is offered is the app's to decide (see `offer`). Where the caret goes
 //! when something other than typing changes what it is in is the session's, since it is the one
 //! that changed it: it says where it put the caret, as a [`Caret`], and a face that worked that
 //! out for itself would be working it out a second time. A face that is
@@ -225,12 +225,12 @@ pub enum Action {
     Restore(Vec<KeptStep>),
     /// The caret is here, in characters, in what the cursor is in: the line, or the head of the
     /// note under the cursor. A face says it after typing, so that the tags or people the word
-    /// it ends starts are offered, and when the caret moves while something is offered, which
+    /// it ends starts are offered, or the heads what it ends in brackets starts, and when the caret moves while something is offered, which
     /// closes it unless the caret is still at the end of the word. A caret moved while nothing
     /// is offered changes nothing, so a face need not say it then.
     At(usize),
-    /// Take a word offered, in place of the word the caret ends, with a space after it: the one
-    /// chosen, or the one at this place in what is offered.
+    /// Take a word offered, in place of the word the caret ends, with a space after it, or a head
+    /// with its brackets closed: the one chosen, or the one at this place in what is offered.
     Take(Option<usize>),
     /// Choose the word offered this many after the one chosen, or before it, stopping at the
     /// first and the last.
@@ -441,7 +441,8 @@ pub struct View<'a> {
     pub here: Option<Here<'a>>,
     /// The note under the cursor as it is being written, if the cursor is on a row.
     pub field: Option<Field<'a>>,
-    /// What is offered to complete the tag or person the caret ends, while it is offered.
+    /// What is offered to complete the tag, person or bracketed head the caret ends, while it is
+    /// offered.
     pub offer: Option<&'a Offer>,
 }
 
@@ -496,7 +497,8 @@ pub struct Session {
     /// The session held no notes when it opened and nothing has been asked of it yet, so what
     /// arrives is the space filling it, from as many logs as it has, and not news.
     filling: bool,
-    /// What is offered to complete the tag or person the caret ends, while it is offered.
+    /// What is offered to complete the tag, person or bracketed head the caret ends, while it is
+    /// offered.
     offer: Option<Offer>,
     /// The last thing asked was typing, so that where the face says the caret is next is
     /// offered for.

@@ -17,7 +17,7 @@ pub enum Label {
     /// The id of a note this one is linked to.
     Link(String),
     /// The note's own head, normalised, so that a `[[head]]` typed into a text can be resolved
-    /// to it when the text is saved.
+    /// to it when the text is saved, and offered while it is typed.
     Head(String),
     /// A word in the note's head.
     HeadTerm(String),
@@ -40,12 +40,13 @@ pub enum Label {
 }
 
 impl Label {
-    /// Whether this label is one that `start`, typed so far, could be: a tag or a person whose
-    /// name starts with its name. Any other label starts only itself.
+    /// Whether this label is one that `start`, typed so far, could be: a tag, a person or a head
+    /// whose name starts with its name. Any other label starts only itself.
     pub fn starts_with(&self, start: &Label) -> bool {
         match (self, start) {
             (Label::Tag(name), Label::Tag(start))
-            | (Label::Mention(name), Label::Mention(start)) => name.starts_with(start.as_str()),
+            | (Label::Mention(name), Label::Mention(start))
+            | (Label::Head(name), Label::Head(start)) => name.starts_with(start.as_str()),
             _ => self == start,
         }
     }

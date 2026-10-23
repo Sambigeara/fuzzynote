@@ -1,5 +1,5 @@
-//! What is offered while a tag or a person is typed, and taking it: on the line and in a head,
-//! opened by typing and closed by anything else.
+//! What is offered while a tag or a person is typed, or a note's head inside brackets, and taking
+//! it: on the line and in a head, opened by typing and closed by anything else.
 
 use super::*;
 
@@ -367,4 +367,266 @@ fn what_is_offered_goes_over_the_wire_as_its_words_the_one_chosen_and_where_the_
     );
     assert_eq!(view["hints"][1]["action"], serde_json::json!({"choose": 1}));
     assert_eq!(view["hints"][2]["action"], "dismiss");
+}
+
+/// A boiler linked to twice, its service once, the radiators not at all, and a note about the
+/// house that links to nothing.
+fn headed(s: &mut Session) {
+    put(s, "boiler", "Boiler", &[], 1_000);
+    put(s, "service", "Boiler service", &[], 2_000);
+    put(s, "radiators", "Bleed the radiators", &[], 3_000);
+    put(s, "pressure", "Pressure dropped", &["boiler"], 4_000);
+    put(s, "oil", "Order oil", &["boiler", "service"], 5_000);
+    put(s, "house", "House", &[], 6_000);
+    s.act(Action::Select(None));
+}
+
+#[test]
+fn a_head_being_typed_in_brackets_is_offered_the_heads_it_starts_the_most_linked_to_first() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "Call about [[");
+    assert_eq!(offered(&s), None, "brackets alone start nothing yet");
+    typed(&mut s, "b");
+    assert_eq!(
+        words(&s),
+        ["Boiler", "Boiler service", "Bleed the radiators"]
+    );
+    assert_eq!(labels(&s), ["take", "choose", "close"]);
+    typed(&mut s, "OILER  ");
+    assert_eq!(
+        words(&s),
+        ["Boiler service"],
+        "in any case, spaces as one, and a space typed after a word ends it"
+    );
+    clear(&mut s);
+    typed(&mut s, "[[boiler s");
+    assert_eq!(words(&s), ["Boiler service"]);
+    typed(&mut s, "ervice");
+    assert_eq!(
+        offered(&s),
+        None,
+        "the head typed whole is nothing to offer"
+    );
+}
+
+#[test]
+fn a_head_is_offered_only_inside_brackets_still_open_and_out_of_code() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "[[Boiler]] b");
+    assert_eq!(offered(&s), None, "brackets closed");
+    clear(&mut s);
+    typed(&mut s, "[[Boiler]] [[b");
+    assert_eq!(words(&s).len(), 3, "brackets opened after closed ones");
+    clear(&mut s);
+    typed(&mut s, "[[oil [[b");
+    assert_eq!(offered(&s), None, "brackets inside brackets");
+    clear(&mut s);
+    typed(&mut s, "`[[b");
+    assert_eq!(offered(&s), None, "inside code still being typed");
+    clear(&mut s);
+    typed(&mut s, "`[[` b");
+    assert_eq!(offered(&s), None, "brackets in code are not brackets");
+    clear(&mut s);
+    typed(&mut s, "`ls` [[b");
+    assert_eq!(words(&s).len(), 3, "once the code is closed");
+    clear(&mut s);
+    typed(&mut s, "[[#ho");
+    assert_eq!(offered(&s), None, "no tag is offered inside brackets");
+    clear(&mut s);
+    type_in(&mut s, "[[boiler");
+    s.act(Action::At(4));
+    assert_eq!(offered(&s), None, "the caret in the middle of a word");
+}
+
+#[test]
+fn a_caret_walked_into_brackets_opens_nothing_and_escape_closes_until_typed_into() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "[[bo");
+    s.act(Action::At(2));
+    s.act(Action::At(4));
+    assert_eq!(offered(&s), None, "the caret walked back to the end of it");
+    typed(&mut s, "i");
+    assert_eq!(words(&s), ["Boiler", "Boiler service"]);
+    s.act(Action::Dismiss);
+    assert_eq!(offered(&s), None);
+    s.act(Action::At(5));
+    assert_eq!(offered(&s), None, "the caret said again opens nothing");
+    typed(&mut s, "l");
+    assert_eq!(words(&s), ["Boiler", "Boiler service"]);
+}
+
+#[test]
+fn heads_are_ranked_by_how_often_they_are_linked_to_then_the_newest_then_by_head_five_at_most() {
+    let mut s = session();
+    put(&mut s, "a", "Garden gate", &[], 1_000);
+    put(&mut s, "b", "Garden shed", &[], 2_000);
+    put(&mut s, "c", "Garden bench", &[], 3_000);
+    put(&mut s, "d", "Garden wall", &[], 4_000);
+    put(&mut s, "e", "Garden pond", &[], 900);
+    put(&mut s, "f", "Garden path", &[], 900);
+    put(&mut s, "g", "Mend it", &["f"], 5_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[gar");
+    assert_eq!(
+        words(&s),
+        [
+            "Garden path",
+            "Garden wall",
+            "Garden bench",
+            "Garden shed",
+            "Garden gate"
+        ]
+    );
+}
+
+#[test]
+fn an_archived_note_is_offered_and_its_links_count() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler", &[], 1_000);
+    put(&mut s, "bench", "Bench", &[], 3_000);
+    put(&mut s, "note", "Once a year", &["boiler"], 4_000);
+    select(&mut s, "Boiler");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[b");
+    assert_eq!(words(&s), ["Boiler", "Bench"]);
+}
+
+#[test]
+fn the_note_being_written_is_not_offered_and_its_own_links_do_not_count() {
+    let mut s = session();
+    put(&mut s, "boiler", "Boiler", &[], 1_000);
+    put(&mut s, "service", "Boiler service", &[], 500);
+    put(&mut s, "call", "Call about it", &["service"], 2_000);
+    put(&mut s, "board", "Boiler board", &[], 3_000);
+    select(&mut s, "Boiler board");
+    edited(&mut s, "Boiler board [[boi");
+    s.act(Action::At("Boiler board [[boi".chars().count()));
+    assert_eq!(words(&s), ["Boiler service", "Boiler"]);
+    edited(&mut s, "Boiler board");
+    select(&mut s, "Call about it");
+    edited(&mut s, "Call about it [[boi");
+    s.act(Action::At("Call about it [[boi".chars().count()));
+    assert_eq!(
+        words(&s),
+        ["Boiler board", "Boiler", "Boiler service"],
+        "the service linked to only by the note being written"
+    );
+}
+
+#[test]
+fn notes_sharing_a_head_are_offered_once_as_the_newest_writes_it() {
+    let mut s = session();
+    put(&mut s, "a", "boiler", &[], 1_000);
+    put(&mut s, "b", "Boiler  ", &[], 2_000);
+    put(&mut s, "c", "Boiler   service", &[], 3_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[b");
+    assert_eq!(words(&s), ["Boiler service", "Boiler"]);
+}
+
+#[test]
+fn a_head_brackets_could_not_name_is_not_offered() {
+    let mut s = session();
+    put(&mut s, "a", "Boiler service #house", &[], 1_000);
+    put(&mut s, "b", "Boiler | gas", &[], 2_000);
+    put(&mut s, "c", "Boiler [x]]", &[], 3_000);
+    put(&mut s, "d", "Boiler `make`", &[], 4_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[b");
+    assert_eq!(words(&s), ["Boiler `make`"]);
+}
+
+#[test]
+fn taking_a_head_writes_it_whole_closes_the_brackets_and_puts_the_caret_after_them() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "Call about [[boi");
+    s.take_caret();
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "Call about [[Boiler]]");
+    assert_eq!(s.take_caret().line, Some("Call about [[Boiler]]".len()));
+    assert_eq!(offered(&s), None);
+
+    clear(&mut s);
+    type_in(&mut s, "Call about [[boi]] soon");
+    s.act(Action::At("Call about [[boi".len()));
+    s.act(Action::Choose(1));
+    s.act(Action::Take(None));
+    assert_eq!(
+        s.line, "Call about [[Boiler service]] soon",
+        "brackets already there are not written twice"
+    );
+    assert_eq!(
+        s.take_caret().line,
+        Some("Call about [[Boiler service]]".len())
+    );
+
+    clear(&mut s);
+    type_in(&mut s, "Call about [[boi soon");
+    s.act(Action::At("Call about [[boi".len()));
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "Call about [[Boiler]] soon");
+}
+
+#[test]
+fn a_head_taken_into_a_head_and_saved_becomes_a_link() {
+    let mut s = session();
+    headed(&mut s);
+    select(&mut s, "House");
+    edited(&mut s, "House [[serv\nkeep it warm");
+    s.act(Action::At("House [[serv".chars().count()));
+    assert_eq!(offered(&s), None, "only a head that starts with it");
+    edited(&mut s, "House [[boiler s\nkeep it warm");
+    s.act(Action::At("House [[boiler s".chars().count()));
+    let effects = s.act(Action::Take(None));
+    assert_eq!(
+        field(&s).unwrap().0,
+        "House [[Boiler service]]\nkeep it warm"
+    );
+    assert_eq!(s.take_caret().head, Some("House [[Boiler service]]".len()));
+    assert_eq!(kept(&effects)[0].links, ["service"]);
+}
+
+#[test]
+fn a_head_taken_on_the_line_and_written_becomes_a_link() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "Call about [[bl");
+    s.act(Action::Take(None));
+    let effects = s.act(Action::Write);
+    let new = kept(&effects)
+        .into_iter()
+        .find(|r| r.text == "Call about [[Bleed the radiators]]")
+        .unwrap()
+        .clone();
+    assert_eq!(new.links, ["radiators"]);
+}
+
+#[test]
+fn an_offered_head_goes_over_the_wire_as_a_tag_does_from_where_the_head_starts() {
+    let mut s = session();
+    headed(&mut s);
+    typed(&mut s, "oil [[bl");
+    let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
+    assert_eq!(
+        view["offer"],
+        serde_json::json!({"words": ["Bleed the radiators"], "chosen": 0, "from": 6})
+    );
+}
+
+#[test]
+fn a_long_head_is_drawn_cut_and_taken_whole() {
+    let mut s = session();
+    let long = "Boiler service booked with the engineer for the second week of the month";
+    put(&mut s, "long", long, &[], 1_000);
+    put(&mut s, "boiler", "Boiler", &[], 2_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[boiler ");
+    assert_eq!(words(&s), [text::fit(long, 40)]);
+    s.act(Action::Take(None));
+    assert_eq!(s.line, format!("[[{long}]]"));
 }
