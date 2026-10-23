@@ -765,3 +765,35 @@ fn a_row_being_written_under_a_note_deleted_elsewhere_is_written_under_what_that
     assert!(s.notes.get(&id).unwrap().links.is_empty());
     assert!(loft.links == ["valves"] && downstairs.links == ["valves"]);
 }
+
+#[test]
+fn a_row_opened_beside_one_of_a_group_standing_where_ticked_notes_stood_opens_after_the_group() {
+    let mut s = session();
+    valves(&mut s, " #house");
+    put(&mut s, "rag", "[ ] Find a rag #house", &["bleed"], 950);
+    go_to(&mut s, "#house");
+    select(&mut s, "[ ] Bleed the bedroom radiator #house");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+    select(&mut s, "upstairs #house");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+    select(&mut s, "Check the pressure first #house");
+    s.act(Action::Write);
+    edited(&mut s, "Drain it #house");
+    let written = [
+        "Replace the radiator valves",
+        "  Check the pressure first  → upstairs",
+        "  [ ] Find a rag  → [x] Bleed the bedroom radiator",
+        "  [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "  [ ] Fit the new valve on the landing  → upstairs",
+        "  Drain it",
+        "  downstairs",
+    ];
+    assert_eq!(drawn(&s)[..7], written, "drawn where it will stay");
+    assert_eq!(
+        remade(&mut s)[..7],
+        written,
+        "and there when the list is made again"
+    );
+}

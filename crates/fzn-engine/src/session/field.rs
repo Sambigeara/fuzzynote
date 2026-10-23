@@ -686,16 +686,28 @@ impl Session {
         let id = self.host.new_id();
         let opened = self.host.now();
         let label = self.inherit(String::new(), opened.day());
-        let at = at.min(self.rows.len());
+        let mut at = at.min(self.rows.len());
         // In a list drawn as a tree it is written as it is drawn: the first of the notes drawn
         // under the row it was opened from, if there are any, and otherwise beside that row,
-        // under what it is under.
+        // under what it is under. Beside a row that stands where notes not listed stand, it opens
+        // after the last row standing there, since a note of its own cannot stand among them.
         let (level, under) = match at.checked_sub(1).and_then(|i| self.rows.get(i)) {
             Some(above) if self.nests() => match self.rows.get(at) {
                 Some(below) if below.under.as_ref() == Some(&above.id) => {
                     (above.level + 1, Some(above.id.clone()))
                 }
-                _ => (above.level, above.under.clone()),
+                _ => {
+                    let (level, under) = (above.level, above.under.clone());
+                    if !above.through.is_empty() {
+                        let stands = above.stands().to_owned();
+                        while self.rows.get(at).is_some_and(|r| {
+                            r.level > level || (r.under == under && r.stands() == stands)
+                        }) {
+                            at += 1;
+                        }
+                    }
+                    (level, under)
+                }
             },
             _ => (0, None),
         };
