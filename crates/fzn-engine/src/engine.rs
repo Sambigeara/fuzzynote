@@ -638,9 +638,10 @@ impl Engine {
         let mut named = Vec::new();
         for name in text::facts(text).links {
             let whole = self.index.docs_with(&Label::Head(name.clone()));
-            let called = match tiered && !whole.is_empty() {
-                true => &[][..],
-                false => self.index.docs_with(&Label::Bare(name)),
+            let called = if tiered && !whole.is_empty() {
+                &[][..]
+            } else {
+                self.index.docs_with(&Label::Bare(name))
             };
             for &d in whole.iter().chain(called) {
                 if let Some(doc) = self.docs[d as usize].as_ref()
@@ -737,9 +738,9 @@ impl Engine {
     /// The tags or the people that `start` starts, as they are written with their mark, at most
     /// `limit`: the one typed whole first, if there is one, so that taking takes what was typed,
     /// then those carried by the most notes, then those carried by the note written last, then in
-    /// order. The note `besides` names is not counted, since it is the one being
-    /// written and its word is the one still being typed. An archived note still carries what it
-    /// says, so it counts.
+    /// order. The note `besides` names is not counted, since it is the one being written and its
+    /// word is the one still being typed. An archived note still carries what it says, so it
+    /// counts.
     pub(crate) fn labels_starting(
         &self,
         start: &Label,
@@ -785,14 +786,13 @@ impl Engine {
     /// The names that `start`, normalised as a bracketed name is, starts, each written as its
     /// newest note has it with its spaces collapsed, at most `limit`: the one typed whole first,
     /// if there is one, then those of the notes most linked to, then those of the note written
-    /// last, then in order. A note is named as
-    /// brackets name it, without its box and the labels that end it, and a name is counted for
-    /// the notes brackets naming it would link to: those whose whole head it is, if any are, and
-    /// otherwise every note it names, since brackets link to every one of them. The note
-    /// `besides` names is neither offered nor counted as linking, since it is the one being
-    /// written and a note does not link to itself. A name brackets could not hold whole, one with
-    /// a `#`, a `|` or a `]]` in it, is not offered, so that a name taken always becomes a link.
-    /// An archived note is still linked to, so it counts.
+    /// last, then in order. A note is named as brackets name it, without its box and the labels
+    /// that end it, and a name is counted for the notes brackets naming it would link to: those
+    /// whose whole head it is, if any are, and otherwise every note it names, since brackets link
+    /// to every one of them. The note `besides` names is neither offered nor counted as linking,
+    /// since it is the one being written and a note does not link to itself. A name brackets could
+    /// not hold whole, one with a `#`, a `|` or a `]]` in it, is not offered, so that a name taken
+    /// always becomes a link. An archived note is still linked to, so it counts.
     pub(crate) fn names_starting(
         &self,
         start: &str,
