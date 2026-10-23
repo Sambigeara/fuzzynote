@@ -541,18 +541,19 @@ fn space(notes: &[(String, Vec<String>, bool, Option<String>)]) -> Session {
 
 /// The tree a session draws of what is not archived and `holds` keeps, from `root`, cut at
 /// `limit`: each note's id, depth, the note it is under and the note it stands at.
-fn drawn_tree(
-    s: &Session,
+fn drawn_tree<'a>(
+    s: &'a Session,
     holds: fn(&str) -> bool,
     root: Option<&str>,
     limit: usize,
-) -> Vec<(String, usize, Option<String>, String)> {
+) -> Vec<(String, usize, Option<String>, Vec<&'a str>)> {
     let listed = |r: &Record| !r.deleted && !r.archived && holds(&r.id);
     s.tree(&listed, root, limit)
         .into_iter()
-        .map(|(r, level, under, stands): Drawn| {
+        .map(|(r, level, under, through): Drawn| {
             let under = under.map(|u| u.id.clone());
-            (r.id.clone(), level, under, stands.id.clone())
+            let through = through.iter().map(|t| t.id.as_str()).collect();
+            (r.id.clone(), level, under, through)
         })
         .collect()
 }
@@ -626,38 +627,81 @@ fn ticked(s: &mut Session) {
 }
 
 #[test]
-fn a_move_past_a_row_standing_where_a_ticked_note_stood_goes_past_it() {
+fn a_row_standing_where_a_ticked_note_stood_is_not_moved_and_the_rows_beside_it_pass_its_group() {
     let mut s = session();
-    ticked(&mut s);
+    valves(&mut s, " #house");
+    put(&mut s, "rag", "[ ] Find a rag #house", &["bleed"], 950);
+    go_to(&mut s, "#house");
+    select(&mut s, "[ ] Bleed the bedroom radiator #house");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+    let ticked = [
+        "    Check the pressure first",
+        "    [ ] Find a rag  → [x] Bleed the bedroom radiator",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "    [ ] Fit the new valve on the landing",
+    ];
+    assert_eq!(drawn(&s)[2..6], ticked);
+
+    // Each row standing where the ticked note stood is offered no move, and none is made.
+    for head in ["[ ] Find a rag #house", "[ ] Buy a radiator key #house"] {
+        select(&mut s, head);
+        assert!(!labels(&s).iter().any(|l| l.starts_with("move")), "{head}");
+        assert!(kept(&s.act(Action::Shift(-1))).is_empty());
+        assert!(kept(&s.act(Action::Shift(1))).is_empty());
+    }
+    assert_eq!(remade(&mut s)[2..6], ticked);
+
+    // A row beside them passes the whole group, as it would pass a note and all under it.
+    select(&mut s, "Check the pressure first #house");
+    assert!(labels(&s).contains(&"move down"));
+    s.act(Action::Shift(1));
+    let down = [
+        "    [ ] Find a rag  → [x] Bleed the bedroom radiator",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "    Check the pressure first",
+        "    [ ] Fit the new valve on the landing",
+    ];
+    assert_eq!(drawn(&s)[2..6], down);
+    assert_eq!(remade(&mut s)[2..6], down);
     select(&mut s, "[ ] Fit the new valve on the landing #house");
     s.act(Action::Shift(-1));
-    assert_ne!(s.notes.get("fit").unwrap().after.as_deref(), Some("fit"));
-    assert_eq!(s.selected().unwrap().id, "fit");
-    let up = [
-        "    Check the pressure first",
-        "    [ ] Fit the new valve on the landing",
-        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
-    ];
-    assert_eq!(drawn(&s)[2..5], up);
-    assert_eq!(remade(&mut s)[2..5], up);
-
-    // The row standing where the ticked note stood moves by it.
-    select(&mut s, "[ ] Buy a radiator key #house");
     s.act(Action::Shift(-1));
-    assert_eq!(s.status, "moved");
-    assert_eq!(s.selected().unwrap().id, "key");
+    assert_ne!(s.notes.get("fit").unwrap().after.as_deref(), Some("fit"));
     let up = [
-        "    Check the pressure first",
-        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
         "    [ ] Fit the new valve on the landing",
+        "    [ ] Find a rag  → [x] Bleed the bedroom radiator",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "    Check the pressure first",
     ];
-    assert_eq!(remade(&mut s)[2..5], up);
-    select(&mut s, "[ ] Buy a radiator key #house");
-    s.act(Action::Shift(1));
-    assert_eq!(
-        remade(&mut s)[3],
-        "    [ ] Fit the new valve on the landing"
-    );
+    assert_eq!(remade(&mut s)[2..6], up);
+}
+
+#[test]
+fn a_second_note_ticked_above_leaves_the_rows_where_the_list_made_again_puts_them() {
+    let mut s = session();
+    valves(&mut s, " #house");
+    put(&mut s, "rag", "[ ] Find a rag #house", &["bleed"], 950);
+    go_to(&mut s, "#house");
+    select(&mut s, "[ ] Bleed the bedroom radiator #house");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+    let mut upstairs = s.notes.get("upstairs").unwrap().clone();
+    upstairs.text = "[ ] upstairs #house".into();
+    s.commit(upstairs);
+    s.refresh(false);
+    select(&mut s, "[ ] upstairs #house");
+    s.act(Action::Archive);
+    let ticked = [
+        "Replace the radiator valves",
+        "  Check the pressure first  → [x] upstairs",
+        "  [ ] Find a rag  → [x] Bleed the bedroom radiator",
+        "  [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "  [ ] Fit the new valve on the landing  → [x] upstairs",
+        "  downstairs",
+    ];
+    assert_eq!(drawn(&s)[..6], ticked, "while the list holds");
+    assert_eq!(remade(&mut s)[..6], ticked, "and made again");
 }
 
 #[test]

@@ -86,14 +86,14 @@ impl Session {
 
     /// A note as the empty line lists it, with nothing to say why.
     pub(super) fn listed(&self, r: &Record) -> Row {
-        self.drawn((r, 0, None, r))
+        self.drawn((r, 0, None, Vec::new()))
     }
 
     /// A note as a list in the space's order draws it: `level` deep, under the listed note
-    /// `under`, which its arrow then leaves out, since the drawing says it, and standing where
-    /// `stands` is in the space's order. Past the deepest a row is drawn, the drawing no longer
-    /// says it, and the arrow does.
-    fn drawn(&self, (r, level, under, stands): Drawn) -> Row {
+    /// `under`, which its arrow then leaves out, since the drawing says it, and under it
+    /// `through` the notes not listed it is walked through. Past the deepest a row is drawn, the
+    /// drawing no longer says it, and the arrow does.
+    fn drawn(&self, (r, level, under, through): Drawn) -> Row {
         let under = under.map(|u| u.id.as_str());
         let has_body = text::has_body(&r.text);
         Row {
@@ -110,7 +110,7 @@ impl Session {
             depth: level.min(DEEPEST),
             level,
             under: under.map(str::to_owned),
-            stands: (stands.id != r.id).then(|| stands.id.clone()),
+            through: through.iter().map(|t| t.id.clone()).collect(),
         }
     }
 
@@ -163,18 +163,18 @@ impl Session {
             {
                 continue;
             }
-            stack.push((r, 0, None, r));
-            while let Some((r, level, under, stands)) = stack.pop() {
+            stack.push((r, 0, None, Vec::new()));
+            while let Some((r, level, under, through)) = stack.pop() {
                 if out.len() >= limit {
                     break;
                 }
                 if !drawn.insert(std::ptr::from_ref(r)) {
                     continue;
                 }
-                out.push((r, level, under, stands));
+                out.push((r, level, under, through));
                 let below = lists.below(r, &walk);
                 let below = below.into_iter().rev();
-                stack.extend(below.map(|(c, stands)| (c, level + 1, Some(r), stands)));
+                stack.extend(below.map(|(c, through)| (c, level + 1, Some(r), through)));
             }
             stack.clear();
         }
@@ -334,7 +334,7 @@ impl Session {
                         usize::MAX,
                     )
                     .into_iter()
-                    .map(|r| (r, 0, None, r))
+                    .map(|r| (r, 0, None, Vec::new()))
                     .collect(),
                 None => {
                     let listed =
@@ -521,7 +521,7 @@ impl Session {
             depth: 0,
             level: 0,
             under: None,
-            stands: None,
+            through: Vec::new(),
         }
     }
 
@@ -574,11 +574,14 @@ impl Session {
             let row = &mut self.rows[i];
             row.level -= 1;
             row.depth = row.level.min(DEEPEST);
-            // What was right under it now stands where it stood, as the list made again has it
-            // when it was walked through.
+            // What was right under it is now under what it was under through it, as the list
+            // made again has it when it was walked through, and stands where it stood.
             if row.under.as_deref() == Some(id) {
                 row.under.clone_from(&gone.under);
-                row.stands = Some(gone.stands().to_owned());
+                let inner = std::mem::take(&mut row.through);
+                row.through = gone.through.to_vec();
+                row.through.push(gone.id.clone());
+                row.through.extend(inner);
             }
             let under = unsaid(row.under.as_deref(), row.level).map(str::to_owned);
             if let Some(record) = self.notes.get(&self.rows[i].id) {
@@ -713,7 +716,9 @@ impl Session {
     /// beside it, under the note it is drawn under, or at the top, stopping at the first and the
     /// last. None where the row cannot be moved, or there is no note beside it that way.
     pub(super) fn sibling(&self, at: usize, by: i64) -> Option<usize> {
-        if at >= self.in_order() {
+        // A row under its note through a note not listed stands where that one does, with all
+        // else under it through that note, so it is not moved alone, and moves with none of them.
+        if at >= self.in_order() || !self.rows[at].through.is_empty() {
             return None;
         }
         let under = &self.rows[at].under;
@@ -734,9 +739,20 @@ impl Session {
 }
 
 /// A note as a list drawn as a tree has it: how deep it is, the listed note it is under, and the
-/// note it stands at in the space's order, which is itself, or the note it is under through that
-/// is not listed.
-pub(super) type Drawn<'a> = (&'a Record, usize, Option<&'a Record>, &'a Record);
+/// notes not listed it is under that one through, outermost first, which it stands among those
+/// beside it by.
+pub(super) type Drawn<'a> = (&'a Record, usize, Option<&'a Record>, Vec<&'a Record>);
+
+/// Where a note stands among those beside it: where each note not listed that it is under them
+/// through stands in the space's order, outermost first, and then where it does.
+fn stand(walk: &Walk, through: &[&Record], place: usize) -> Vec<usize> {
+    let mut at: Vec<usize> = through
+        .iter()
+        .map(|t| walk.place(&t.id).unwrap_or(usize::MAX))
+        .collect();
+    at.push(place);
+    at
+}
 
 /// Whether a note is one to list, the archived ones too if asked.
 fn kept(r: &Record, archived: bool) -> bool {
@@ -767,10 +783,9 @@ impl<'s> Lists<'s, '_> {
         self.above_via(r).map(|(above, _)| above)
     }
 
-    /// The same, with the note walked through that is right under it, where the note is under it
-    /// through notes not listed: where the note stands among those beside it, as it did while
-    /// that one was listed.
-    fn above_via(&self, r: &'s Record) -> Option<(&'s Record, Option<&'s Record>)> {
+    /// The same, with the notes not listed it is under that one through, outermost first: where
+    /// the note stands among those beside it, as it did while they were listed.
+    fn above_via(&self, r: &'s Record) -> Option<(&'s Record, Vec<&'s Record>)> {
         let notes = &self.session.notes;
         self.above_by(r, |id| notes.get(id).filter(|target| self.has(target)))
     }
@@ -782,7 +797,7 @@ impl<'s> Lists<'s, '_> {
         &self,
         r: &'s Record,
         find: impl Fn(&str) -> Option<T>,
-    ) -> Option<(T, Option<&'s Record>)> {
+    ) -> Option<(T, Vec<&'s Record>)> {
         let mut at = r;
         let mut passed: Vec<&'s Record> = Vec::new();
         loop {
@@ -796,7 +811,8 @@ impl<'s> Lists<'s, '_> {
                     continue;
                 }
                 if let Some(found) = find(link) {
-                    return Some((found, passed.last().copied()));
+                    passed.reverse();
+                    return Some((found, passed));
                 }
                 if through.is_none() {
                     through = self.session.notes.get(link);
@@ -821,30 +837,26 @@ impl<'s> Lists<'s, '_> {
             .map(|(i, (_, r))| (r.id.as_str(), i))
             .collect();
         let mut above = Vec::with_capacity(n);
-        let mut stand = Vec::with_capacity(n);
+        let mut through = Vec::with_capacity(n);
         let mut below = vec![Vec::new(); n];
         let mut stands = false;
-        for (i, &(place, r)) in held.iter().enumerate() {
-            let found = self.above_by(r, |id| at.get(id).copied());
-            let via = found.and_then(|(_, via)| via);
-            if let Some((p, _)) = found {
-                let place = via.and_then(|via| walk.place(&via.id)).unwrap_or(place);
-                stands |= via.is_some();
-                below[p].push((place, i));
+        for (i, &(_, r)) in held.iter().enumerate() {
+            let (p, chain) = self
+                .above_by(r, |id| at.get(id).copied())
+                .map_or((None, Vec::new()), |(p, chain)| (Some(p), chain));
+            if let Some(p) = p {
+                stands |= !chain.is_empty();
+                below[p].push(i);
             }
-            above.push(found.map(|(p, _)| p));
-            stand.push(via.unwrap_or(r));
+            above.push(p);
+            through.push(chain);
         }
-        // What is under a note through one not listed stands where that one does.
+        // What is under a note through notes not listed stands where they do, from the top down.
         if stands {
             for notes in &mut below {
-                notes.sort_unstable();
+                notes.sort_by_cached_key(|&i| stand(walk, &through[i], held[i].0));
             }
         }
-        let below: Vec<Vec<usize>> = below
-            .into_iter()
-            .map(|notes| notes.into_iter().map(|(_, i)| i).collect())
-            .collect();
         let held: Vec<&Record> = held.into_iter().map(|(_, r)| r).collect();
         // What the top reaches, so that a ring, which it does not, is drawn where it comes.
         let mut reached = vec![false; n];
@@ -877,8 +889,11 @@ impl<'s> Lists<'s, '_> {
                     continue;
                 }
                 let under = above[i].filter(|_| level > 0).map(|p| held[p]);
-                let stands = if under.is_some() { stand[i] } else { held[i] };
-                out.push((held[i], level, under, stands));
+                let chain = match under {
+                    Some(_) => std::mem::take(&mut through[i]),
+                    None => Vec::new(),
+                };
+                out.push((held[i], level, under, chain));
                 stack.extend(below[i].iter().rev().map(|&c| (c, level + 1)));
             }
         }
@@ -922,7 +937,7 @@ impl<'s> Lists<'s, '_> {
     /// stands at: those linking to it, and those linking to what is not listed and links to it in
     /// turn, however deep. Every note not listed that links there is walked through, since a note
     /// is under what its own links put it under, whatever the note walked through is under.
-    fn below(&self, r: &'s Record, walk: &Walk) -> Vec<(&'s Record, &'s Record)> {
+    fn below(&self, r: &'s Record, walk: &Walk) -> Vec<(&'s Record, Vec<&'s Record>)> {
         let notes = &self.session.notes;
         let mut below = Vec::new();
         // What is walked through, each note of it once, so that a ring of notes not listed ends
@@ -941,20 +956,17 @@ impl<'s> Lists<'s, '_> {
                     through.push(c);
                     continue;
                 }
-                let Some((above, via)) = self.above_via(c) else {
+                let Some((above, chain)) = self.above_via(c) else {
                     continue;
                 };
                 if std::ptr::eq(above, r) {
-                    // What is under it through a note not listed stands where that one does.
-                    let stands = via.unwrap_or(c);
-                    below.push((walk.place(&stands.id), walk.place(&c.id), c, stands));
+                    let place = walk.place(&c.id).unwrap_or(usize::MAX);
+                    below.push((stand(walk, &chain, place), c, chain));
                 }
             }
         }
-        below.sort_unstable_by_key(|&(stands, place, _, _)| (stands, place));
-        below
-            .into_iter()
-            .map(|(_, _, c, stands)| (c, stands))
-            .collect()
+        // What is under it through notes not listed stands where they do, from the top down.
+        below.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        below.into_iter().map(|(_, c, chain)| (c, chain)).collect()
     }
 }

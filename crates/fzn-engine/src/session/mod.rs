@@ -415,17 +415,18 @@ pub struct Row {
     /// The listed note the row is drawn under, if any.
     #[serde(skip)]
     pub(crate) under: Option<String>,
-    /// The note the row stands at in the space's order, where that is not its own: the note not
-    /// listed that it is under its drawn parent through. A new row beside it, or a move past it,
-    /// is placed by that note.
+    /// The notes not listed that the row is under the note it is drawn under through, outermost
+    /// first: it stands among the rows beside it where they stand in the space's order. A row
+    /// with any is not moved, and a new row beside it, or a move past it, is placed by the
+    /// outermost.
     #[serde(skip)]
-    pub(crate) stands: Option<String>,
+    pub(crate) through: Vec<String>,
 }
 
 impl Row {
-    /// The note the row stands at in the space's order.
+    /// The note the row stands at in the space's order among the rows beside it.
     pub(crate) fn stands(&self) -> &str {
-        self.stands.as_deref().unwrap_or(&self.id)
+        self.through.first().unwrap_or(&self.id)
     }
 }
 

@@ -717,7 +717,7 @@ impl Session {
                 depth: level.min(DEEPEST),
                 level,
                 under: under.clone(),
-                stands: None,
+                through: Vec::new(),
             },
         );
         self.cursor = Some(at);

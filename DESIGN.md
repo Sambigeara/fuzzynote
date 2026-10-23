@@ -269,17 +269,20 @@ added to the engine until daily use asks for it.
   follows in the space's order, or at the top, so that it lands beside the sibling it passes and
   goes past nothing else, even among a place's facts, where the notes between two facts are not
   shown. What is drawn under it goes with it, since the drawing is made from links and not from
-  where notes are placed. What was placed after it is placed after the note it followed
-  instead, oldest first, so a run written under a note stays together and no cycle is made. A move
-  is one entry to undo, though it writes a version of every note it places; moving the top up, or
-  the last down, writes nothing. Undo takes back only the side a change made, so undoing a move
-  leaves what has been written since and undoing an edit leaves where the note has been moved since.
-  The order is kept between lists and walked again only when a version moves a note or a note
-  arrives that does not plainly go first where it lands, as one written here always does; typing
-  into a note keeps it. While the space holds a cycle, or once more than sixteen notes have arrived
-  since it was last read, as when a space comes from the relay at once, it is walked again when next
-  read. Where each note is in the walk is kept beside it, so that the notes drawn under a note are
-  put in the order without walking it again.
+  where notes are placed. A row under its note through notes not listed, as a subtask of a ticked
+  task is, stands where they stand, with all else under its note through them, so it is not offered
+  a move and none is made; the rows beside it pass them all, as they pass a note and all under it.
+  What was placed after it is placed after the note it followed instead, oldest first, so a run
+  written under a note stays together and no cycle is made. A move is one entry to undo, though it
+  writes a version of every note it places; moving the top up, or the last down, writes nothing.
+  Undo takes back only the side a change made, so undoing a move leaves what has been written since
+  and undoing an edit leaves where the note has been moved since. The order is kept between lists
+  and walked again only when a version moves a note or a note arrives that does not plainly go first
+  where it lands, as one written here always does; typing into a note keeps it. While the space
+  holds a cycle, or once more than sixteen notes have arrived since it was last read, as when a
+  space comes from the relay at once, it is walked again when next read. Where each note is in the
+  walk is kept beside it, so that the notes drawn under a note are put in the order without walking
+  it again.
 - **Lines are sealed before they are kept.** What goes into a log, and so to the relay, is not the
   snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is a random 24-byte nonce and
   then the snapshot encrypted with XChaCha20-Poly1305 under the space's key, base64. The key is 32
@@ -3893,51 +3896,57 @@ the app now does is described above; an entry repeats it only where the reason n
   another in the space's order and all under each following it; in a note's place a link to the note
   you are in is the top. A note under another through one not listed stands among those beside it
   where that one stands, so a task ticked leaves its subtask where the list made again puts it,
-  under the ticked task's own parent and naming it; a new row beside such a row, and a move past it
-  or of it, is placed by the note it stands at. Nothing is folded, since a follow-up written in a
-  task is to stay in sight a step out. The arrow goes where the drawing says the same thing, and so
-  does `links here`; an arrow to any other note stays, `linked from here` and `linked both ways`
-  stay, and a list of scores or of time is flat with its arrows, since its order is the point.
-  `fzn query` lists in the app's order, a subtree after its parent, with no depth. Enter on a row
-  writes the new note as it is drawn: beside the row, under what the row is under, or, on a row with
-  notes drawn under it, first among them, under it, linked to the note it is drawn under in place of
-  the path's last and carrying the path's labels, and drawn under a note the place's note only links
-  to, linked to the place's note as well, after it, so that it stays in the place it was written in;
-  it is placed directly after the note before it among the notes beside it, or first among them
-  directly before the next, so it is where it was drawn when the list is made again. Enter on a new
-  row left empty, the last under its note, takes it out a level where it stands, and the foot offers
-  that there and nowhere else, as `out a level`. So a run written inside a subtree stays there, as
-  "Where a note sits is kept" asked of a run written under a row, and a run written inside a place
-  reads inside it from outside. A move goes among the notes beside it, taking all under it along,
-  and the foot offers it only where there is a note beside it that way. Depth stops at the fourth
-  level, two columns a level in the terminal and 1.25rem on the page, a task's box after the indent,
-  and a note deeper is drawn at the fourth with its arrow. The notes are as they were: a link is the
-  target's id held on the note, a note under two listed notes is drawn once, under the one it links
-  to first, which for a note written in place is where it was written, and a ring is drawn from its
-  note that comes first, which keeps its arrow. No version is written for any of it and the line
-  format does not change; a build from before lists the same notes flat. The top is drawn only as
-  far as its 500 rows, each note's place in the walk being kept beside the walk and the notes under
-  a note found by what links to it; a list that is not cut, a place's or a command's, is drawn whole
-  in one pass. On the synthetic space of 30,000 notes, in release, an empty line went from 0.75 ms
-  to 1.1, its order from 0.2 to 0.5, a line of `#house` stayed about 3.5, `#house` as a place went
-  from about 54 to about 45 and the hub of 4,000 from 9 to 8, since a row under another no longer
-  works out its arrow, and `fzn query` of everything from 47 to 35; a space whose newest 30,000
-  notes are all under a hundred old ones, the worst case for the top, costs 5 to 10 ms, a parent
-  looked up for each, and `#house` on the line over a tagged note with 29,900 untagged notes under
-  it, every one walked through, 8 to 13. Why a drawing and not a tree: what was missing was being
-  seen, not being stored, and a tree of notes makes a parent a second kind of link beside the one
-  there is, puts a note in one place where the link chord puts it in two, and changes the line
-  format, for what the links already hold. What it costs: a note filed in two places shows in one;
-  moving a note to another parent is still the link chord in each place, where an outliner has Tab
-  and Shift-Tab, and Tab here goes in; a hub at the top is drawn whole, where what was written in it
-  was listed at the top newest first; Enter does one more thing, which the drawing shows; and the
-  rows under a deleted note stand a level up until the list is made again, and then go to the top.
-  Weighed: a tree, reversing "Graph, not tree", for the reasons above; a mark on a row with notes
-  under it, which says there is something and not what, and is a count by another name; folding,
-  which hides the follow-up that "Where you are is the whole path" brought into sight, keeps a state
-  per note and wants a key and a mark, where going in already folds; the notes under a note grouped
-  after it without indenting, which keeps every arrow; and a new row opened in a subtree linked to
-  the path alone, which is drawn in the subtree and jumps out of it when the list is made again.
+  under the ticked task's own parent and naming it; a new row beside such a row, and a move past it,
+  is placed by where it stands, and such a row is not moved, since all under its note through the
+  same notes stands there with it: the rows beside it pass them all, as they pass a note and all
+  under it. A note ticked above another walked through adds to what a row stands at, so the rows
+  stay in order however many are ticked. Nothing is folded, since a follow-up written in a task is
+  to stay in sight a step out. The arrow goes where the drawing says the same thing, and so does
+  `links here`; an arrow to any other note stays, `linked from here` and `linked both ways` stay,
+  and a list of scores or of time is flat with its arrows, since its order is the point. `fzn query`
+  lists in the app's order, a subtree after its parent, with no depth. Enter on a row writes the new
+  note as it is drawn: beside the row, under what the row is under, or, on a row with notes drawn
+  under it, first among them, under it, linked to the note it is drawn under in place of the path's
+  last and carrying the path's labels, and drawn under a note the place's note only links to, linked
+  to the place's note as well, after it, so that it stays in the place it was written in; it is
+  placed directly after the note before it among the notes beside it, or first among them directly
+  before the next, so it is where it was drawn when the list is made again. Enter on a new row left
+  empty, the last under its note, takes it out a level where it stands, and the foot offers that
+  there and nowhere else, as `out a level`. So a run written inside a subtree stays there, as "Where
+  a note sits is kept" asked of a run written under a row, and a run written inside a place reads
+  inside it from outside. A move goes among the notes beside it, taking all under it along, and the
+  foot offers it only where there is a note beside it that way. Depth stops at the fourth level, two
+  columns a level in the terminal and 1.25rem on the page, a task's box after the indent, and a note
+  deeper is drawn at the fourth with its arrow. The notes are as they were: a link is the target's
+  id held on the note, a note under two listed notes is drawn once, under the one it links to first,
+  which for a note written in place is where it was written, and a ring is drawn from its note that
+  comes first, which keeps its arrow. No version is written for any of it and the line format does
+  not change; a build from before lists the same notes flat. The top is drawn only as far as its 500
+  rows, each note's place in the walk being kept beside the walk and the notes under a note found by
+  what links to it; a list that is not cut, a place's or a command's, is drawn whole in one pass. On
+  the synthetic space of 30,000 notes, in release, an empty line went from 0.75 ms to 1.1, its order
+  from 0.2 to 0.4, a line of `#house` stayed about 3.5, `#house` as a place went from about 54 to
+  about 45 and the hub of 4,000 from 9 to 8, since a row under another no longer works out its
+  arrow, and `fzn query` of everything from 47 to 35; a space whose newest 30,000 notes are all
+  under a hundred old ones, the worst case for the top, costs 5 to 10 ms, a parent looked up for
+  each, and `#house` on the line over a tagged note with 29,900 untagged notes under it, every one
+  walked through, 8 to 13, which is a known cost: a listed note with many notes under it that are
+  not listed is walked through whole, since any of them may have a listed note under it that comes
+  first, so it bites only on a line of holds over such a hub, and a page's wasm, slower than native,
+  may take more than a frame there. Why a drawing and not a tree: what was missing was being seen,
+  not being stored, and a tree of notes makes a parent a second kind of link beside the one there
+  is, puts a note in one place where the link chord puts it in two, and changes the line format, for
+  what the links already hold. What it costs: a note filed in two places shows in one; moving a note
+  to another parent is still the link chord in each place, where an outliner has Tab and Shift-Tab,
+  and Tab here goes in; a hub at the top is drawn whole, where what was written in it was listed at
+  the top newest first; Enter does one more thing, which the drawing shows; and the rows under a
+  deleted note stand a level up until the list is made again, and then go to the top. Weighed: a
+  tree, reversing "Graph, not tree", for the reasons above; a mark on a row with notes under it,
+  which says there is something and not what, and is a count by another name; folding, which hides
+  the follow-up that "Where you are is the whole path" brought into sight, keeps a state per note
+  and wants a key and a mark, where going in already folds; the notes under a note grouped after it
+  without indenting, which keeps every arrow; and a new row opened in a subtree linked to the path
+  alone, which is drawn in the subtree and jumps out of it when the list is made again.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -4024,6 +4033,10 @@ the app now does is described above; an entry repeats it only where the reason n
   should be told, moved to what the deleted note linked to, or offered for deletion with it, use
   decides. Drawn as a tree, they stand a level up where the deleted note was until the list is made
   again, and then go to the top, each at its own place in the order, so the question is now seen.
+- A link made by brackets and the link made by where a note was written are the same link, so taking
+  out the brackets that name the note a row is drawn under drops the link that put it there too, and
+  the note leaves its place. Telling them apart would mean keeping where each link came from; until
+  a dropped link is felt, it is undone by putting the brackets back or by the link chord.
 - Moving a note to another note. Today that is the link chord in each place, two chords. Whether
   it wants a key of its own, and which, given Tab goes in and Shift-Tab is left alone, use decides.
 - Whether a cut head on a page too narrow to read it beside the list wants more than `body` to read
