@@ -415,6 +415,18 @@ pub struct Row {
     /// The listed note the row is drawn under, if any.
     #[serde(skip)]
     pub(crate) under: Option<String>,
+    /// The note the row stands at in the space's order, where that is not its own: the note not
+    /// listed that it is under its drawn parent through. A new row beside it, or a move past it,
+    /// is placed by that note.
+    #[serde(skip)]
+    pub(crate) stands: Option<String>,
+}
+
+impl Row {
+    /// The note the row stands at in the space's order.
+    pub(crate) fn stands(&self) -> &str {
+        self.stands.as_deref().unwrap_or(&self.id)
+    }
 }
 
 /// The note under the cursor as it now reads. There is one whenever the cursor is on a row.

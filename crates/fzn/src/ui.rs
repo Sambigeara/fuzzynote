@@ -1080,11 +1080,11 @@ struct Selected {
 }
 
 /// The row the cursor is on, `head` being its head as it is now typed: one row, however long its
-/// head or its tail, drawn in as far as the row is, the head bold, and at the right a `¶` when the note has a body and the day
-/// it was `created` at, the day it belongs to. The head is a one-line field, `caret` letters in,
-/// read from its start while `left` is `None` and scrolled sideways under the caret once a key
-/// has moved it (see [`sidescrolled`]); the tail follows it as far as there is room, as off the
-/// cursor.
+/// head or its tail, drawn in as far as the row is, the head bold, and at the right a `¶` when the
+/// note has a body and the day it was `created` at, the day it belongs to. The head is a one-line
+/// field, `caret` letters in, read from its start while `left` is `None` and scrolled sideways
+/// under the caret once a key has moved it (see [`sidescrolled`]); the tail follows it as far as
+/// there is room, as off the cursor.
 fn selected_row(
     row: &Row,
     head: &str,

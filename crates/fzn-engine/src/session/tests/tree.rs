@@ -517,38 +517,207 @@ fn a_command_lists_the_notes_in_the_order_the_app_draws_them() {
     assert_eq!(heads, drawn);
 }
 
+/// A space of notes, each as its id, its links, whether it is archived and the note it is placed
+/// after, opened on a session.
+fn space(notes: &[(String, Vec<String>, bool, Option<String>)]) -> Session {
+    let mut kept = Notes::new();
+    for (at, (id, links, archived, after)) in notes.iter().enumerate() {
+        kept.apply(Record {
+            links: links.clone(),
+            archived: *archived,
+            after: after.clone(),
+            created: Some(Moment::utc(1_000 + at as i64)),
+            updated: Some(Moment::utc(1_000 + at as i64)),
+            ..Record::new(id.clone(), format!("note {id}"))
+        });
+    }
+    Session::new(
+        Box::new(Stopped::default()),
+        "dev",
+        Weights::default(),
+        kept,
+    )
+}
+
+/// The tree a session draws of what is not archived and `holds` keeps, from `root`, cut at
+/// `limit`: each note's id, depth, the note it is under and the note it stands at.
+fn drawn_tree(
+    s: &Session,
+    holds: fn(&str) -> bool,
+    root: Option<&str>,
+    limit: usize,
+) -> Vec<(String, usize, Option<String>, String)> {
+    let listed = |r: &Record| !r.deleted && !r.archived && holds(&r.id);
+    s.tree(&listed, root, limit)
+        .into_iter()
+        .map(|(r, level, under, stands): Drawn| {
+            let under = under.map(|u| u.id.clone());
+            (r.id.clone(), level, under, stands.id.clone())
+        })
+        .collect()
+}
+
+/// Asserts that a list cut anywhere draws what the whole list draws up to there.
+fn cut_as_whole(s: &Session, holds: fn(&str) -> bool, root: Option<&str>) {
+    let whole = drawn_tree(s, holds, root, usize::MAX);
+    for k in 1..=whole.len() + 2 {
+        let cut = drawn_tree(s, holds, root, k);
+        assert_eq!(cut, whole[..k.min(whole.len())], "cut at {k}");
+    }
+}
+
 #[test]
-fn a_list_cut_and_one_drawn_whole_draw_the_same_tree() {
+fn a_list_cut_anywhere_draws_what_the_whole_list_draws_up_to_there() {
+    // A listed note under an archived one, which links back to it before the note it is under.
+    let note = |id: &str, links: &[&str], archived: bool| {
+        let links = links.iter().map(|&l| l.to_owned()).collect();
+        (id.to_owned(), links, archived, None)
+    };
+    let s = space(&[
+        note("n5", &[], false),
+        note("n1", &[], true),
+        note("n7", &["n2", "n1", "n5"], true),
+        note("n2", &["n7"], false),
+        note("n3", &["n2"], false),
+    ]);
+    assert_eq!(drawn_tree(&s, |_| true, None, usize::MAX).len(), 3);
+    cut_as_whole(&s, |_| true, None);
+
+    // Spaces made at random, with archived notes, rings, notes under several notes and notes
+    // placed after others, cut anywhere, at the top and from a note, with and without a line.
+    let mut seed = 7_u64;
+    let mut next = move |n: u64| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) % n
+    };
+    let some: fn(&str) -> bool = |id| !id.ends_with('3');
+    for _ in 0..400 {
+        let n = 4 + next(14);
+        let mut notes = Vec::new();
+        for i in 0..n {
+            let mut links: Vec<String> = Vec::new();
+            for _ in 0..next(4) {
+                let link = format!("n{}", next(n));
+                if link != format!("n{i}") && !links.contains(&link) {
+                    links.push(link);
+                }
+            }
+            let after = (next(3) == 0).then(|| format!("n{}", next(n)));
+            notes.push((format!("n{i}"), links, next(4) == 0, after));
+        }
+        let s = space(&notes);
+        let root = format!("n{}", next(n));
+        for holds in [|_: &str| true, some] {
+            cut_as_whole(&s, holds, None);
+            cut_as_whole(&s, holds, Some(&root));
+        }
+    }
+}
+
+/// The radiators in `#house` with the bleeding ticked, so that the key stands where it stood.
+fn ticked(s: &mut Session) {
+    valves(s, " #house");
+    go_to(s, "#house");
+    select(s, "[ ] Bleed the bedroom radiator #house");
+    s.act(Action::Archive);
+    s.act(Action::Select(None));
+}
+
+#[test]
+fn a_move_past_a_row_standing_where_a_ticked_note_stood_goes_past_it() {
+    let mut s = session();
+    ticked(&mut s);
+    select(&mut s, "[ ] Fit the new valve on the landing #house");
+    s.act(Action::Shift(-1));
+    assert_ne!(s.notes.get("fit").unwrap().after.as_deref(), Some("fit"));
+    assert_eq!(s.selected().unwrap().id, "fit");
+    let up = [
+        "    Check the pressure first",
+        "    [ ] Fit the new valve on the landing",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+    ];
+    assert_eq!(drawn(&s)[2..5], up);
+    assert_eq!(remade(&mut s)[2..5], up);
+
+    // The row standing where the ticked note stood moves by it.
+    select(&mut s, "[ ] Buy a radiator key #house");
+    s.act(Action::Shift(-1));
+    assert_eq!(s.status, "moved");
+    assert_eq!(s.selected().unwrap().id, "key");
+    let up = [
+        "    Check the pressure first",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "    [ ] Fit the new valve on the landing",
+    ];
+    assert_eq!(remade(&mut s)[2..5], up);
+    select(&mut s, "[ ] Buy a radiator key #house");
+    s.act(Action::Shift(1));
+    assert_eq!(
+        remade(&mut s)[3],
+        "    [ ] Fit the new valve on the landing"
+    );
+}
+
+#[test]
+fn a_row_opened_beside_one_standing_where_a_ticked_note_stood_stays_there() {
+    let mut s = session();
+    ticked(&mut s);
+    select(&mut s, "[ ] Buy a radiator key #house");
+    s.act(Action::Write);
+    edited(&mut s, "Drain it #house");
+    let written = [
+        "    Check the pressure first",
+        "    [ ] Buy a radiator key  → [x] Bleed the bedroom radiator",
+        "    Drain it",
+        "    [ ] Fit the new valve on the landing",
+    ];
+    assert_eq!(drawn(&s)[2..6], written);
+    assert_eq!(remade(&mut s)[2..6], written);
+}
+
+#[test]
+fn a_note_written_under_one_the_place_only_links_to_is_in_the_place_too() {
+    let mut s = session();
+    put(&mut s, "pump", "Pump", &[], 1_000);
+    put(&mut s, "seal", "New seal", &["pump"], 2_000);
+    put(&mut s, "boiler", "Boiler", &["pump", "seal"], 3_000);
+    go_to(&mut s, "Boiler");
+    assert_eq!(drawn(&s), ["Pump", "  New seal"]);
+    select(&mut s, "Pump");
+    s.act(Action::Write);
+    edited(&mut s, "Gasket");
+    let gasket = s.field.as_ref().unwrap().id.clone();
+    assert_eq!(s.notes.get(&gasket).unwrap().links, ["pump", "boiler"]);
+    assert_eq!(remade(&mut s), ["Pump", "  Gasket", "  New seal"]);
+
+    // Under a note that is under the place, it links to that note alone.
+    put(&mut s, "valve", "Valve", &["boiler"], 4_000);
+    put(&mut s, "washer", "Washer", &["valve"], 5_000);
+    select(&mut s, "Valve");
+    s.act(Action::Write);
+    edited(&mut s, "Order a spare");
+    let spare = s.field.as_ref().unwrap().id.clone();
+    assert_eq!(s.notes.get(&spare).unwrap().links, ["valve"]);
+}
+
+#[test]
+fn a_row_being_written_under_a_note_deleted_elsewhere_is_written_under_what_that_was_under() {
     let mut s = session();
     valves(&mut s, "");
-    put(&mut s, "pump", "Pump", &["seal"], 2_000);
-    put(&mut s, "seal", "New seal", &["pump"], 2_001);
-    put(&mut s, "gasket", "Gasket", &["seal", "valves"], 2_002);
-    put(
-        &mut s,
-        "porch",
-        "Sweep the porch",
-        &["garden", "oil"],
-        2_003,
-    );
-    let mut bleed = s.notes.get("bleed").unwrap().clone();
-    bleed.archived = true;
-    s.commit(bleed);
-    let listed = |r: &Record| !r.deleted && !r.archived;
-    let read = |drawn: Vec<Drawn>| -> Vec<(String, usize, Option<String>)> {
-        drawn
-            .into_iter()
-            .map(|(r, level, under)| (r.id.clone(), level, under.map(|u| u.id.clone())))
-            .collect()
-    };
-    let whole = read(s.tree(&listed, None, usize::MAX));
-    let cut = read(s.tree(&listed, None, 1_000));
-    assert_eq!(whole, cut);
-    assert_eq!(
-        whole.len(),
-        s.notes.records().filter(|r| !r.archived).count()
-    );
-    let whole = read(s.tree(&listed, Some("valves"), usize::MAX));
-    let cut = read(s.tree(&listed, Some("valves"), 1_000));
-    assert_eq!(whole, cut, "rooted at a note too");
+    select(&mut s, "loft");
+    s.act(Action::Write);
+    assert_eq!(s.selected().unwrap().under.as_deref(), Some("valves"));
+    let loft = s.notes.get("loft").unwrap().clone();
+    let downstairs = s.notes.get("downstairs").unwrap().clone();
+    // The note the new row is under goes, and so does its row.
+    let mut gone = theirs("valves", "Replace the radiator valves", 60);
+    gone.deleted = true;
+    s.absorb([gone]);
+    assert_eq!(s.selected().unwrap().under, None);
+    edited(&mut s, "Bleed the boiler");
+    let id = s.field.as_ref().unwrap().id.clone();
+    assert!(s.notes.get(&id).unwrap().links.is_empty());
+    assert!(loft.links == ["valves"] && downstairs.links == ["valves"]);
 }

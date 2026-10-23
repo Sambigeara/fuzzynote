@@ -86,13 +86,15 @@ impl Session {
 
     /// A note as the empty line lists it, with nothing to say why.
     pub(super) fn listed(&self, r: &Record) -> Row {
-        self.drawn(r, None, 0)
+        self.drawn((r, 0, None, r))
     }
 
     /// A note as a list in the space's order draws it: `level` deep, under the listed note
-    /// `under`, which its arrow then leaves out, since the drawing says it. Past the deepest a row
-    /// is drawn, the drawing no longer says it, and the arrow does.
-    fn drawn(&self, r: &Record, under: Option<&str>, level: usize) -> Row {
+    /// `under`, which its arrow then leaves out, since the drawing says it, and standing where
+    /// `stands` is in the space's order. Past the deepest a row is drawn, the drawing no longer
+    /// says it, and the arrow does.
+    fn drawn(&self, (r, level, under, stands): Drawn) -> Row {
+        let under = under.map(|u| u.id.as_str());
         let has_body = text::has_body(&r.text);
         Row {
             id: r.id.clone(),
@@ -108,6 +110,7 @@ impl Session {
             depth: level.min(DEEPEST),
             level,
             under: under.map(str::to_owned),
+            stands: (stands.id != r.id).then(|| stands.id.clone()),
         }
     }
 
@@ -160,17 +163,18 @@ impl Session {
             {
                 continue;
             }
-            stack.push((r, 0, None));
-            while let Some((r, level, under)) = stack.pop() {
+            stack.push((r, 0, None, r));
+            while let Some((r, level, under, stands)) = stack.pop() {
                 if out.len() >= limit {
                     break;
                 }
                 if !drawn.insert(std::ptr::from_ref(r)) {
                     continue;
                 }
-                out.push((r, level, under));
+                out.push((r, level, under, stands));
                 let below = lists.below(r, &walk);
-                stack.extend(below.into_iter().rev().map(|c| (c, level + 1, Some(r))));
+                let below = below.into_iter().rev();
+                stack.extend(below.map(|(c, stands)| (c, level + 1, Some(r), stands)));
             }
             stack.clear();
         }
@@ -234,7 +238,7 @@ impl Session {
             return self
                 .tree(&listed, None, limit)
                 .into_iter()
-                .map(|(r, level, under)| self.drawn(r, under.map(|u| u.id.as_str()), level))
+                .map(|drawn| self.drawn(drawn))
                 .collect();
         }
         let opts = SearchOptions {
@@ -330,7 +334,7 @@ impl Session {
                         usize::MAX,
                     )
                     .into_iter()
-                    .map(|r| (r, 0, None))
+                    .map(|r| (r, 0, None, r))
                     .collect(),
                 None => {
                     let listed =
@@ -340,7 +344,8 @@ impl Session {
             };
             let rows = held
                 .into_iter()
-                .filter_map(|(r, level, under)| {
+                .filter_map(|drawn| {
+                    let r = drawn.0;
                     // How it is linked is a fact too, and the one thing said about it, but that
                     // it links here, which being in the place says already. A note under the
                     // place through another note is drawn under it, or has its arrow to say which.
@@ -352,7 +357,7 @@ impl Session {
                             .filter(|&&how| how != "links here")
                             .map(|&how| how.to_owned())
                             .collect(),
-                        ..self.drawn(r, under.map(|u| u.id.as_str()), level)
+                        ..self.drawn(drawn)
                     })
                 })
                 .collect();
@@ -516,6 +521,7 @@ impl Session {
             depth: 0,
             level: 0,
             under: None,
+            stands: None,
         }
     }
 
@@ -568,13 +574,22 @@ impl Session {
             let row = &mut self.rows[i];
             row.level -= 1;
             row.depth = row.level.min(DEEPEST);
+            // What was right under it now stands where it stood, as the list made again has it
+            // when it was walked through.
             if row.under.as_deref() == Some(id) {
                 row.under.clone_from(&gone.under);
+                row.stands = Some(gone.stands().to_owned());
             }
             let under = unsaid(row.under.as_deref(), row.level).map(str::to_owned);
             if let Some(record) = self.notes.get(&self.rows[i].id) {
                 self.rows[i].links = self.link_heads_besides(record, under.as_deref());
             }
+        }
+        // A new row being written under it is now written under what it was under.
+        if let Some(field) = self.field.as_mut()
+            && field.under.as_deref() == Some(id)
+        {
+            field.under.clone_from(&gone.under);
         }
         // What the line only finds begins where it did, at the row that took this one's place,
         // and is set apart only after a fact, as when the list is made.
@@ -718,8 +733,10 @@ impl Session {
     }
 }
 
-/// A note as a list drawn as a tree has it: how deep it is, and the listed note it is under.
-pub(super) type Drawn<'a> = (&'a Record, usize, Option<&'a Record>);
+/// A note as a list drawn as a tree has it: how deep it is, the listed note it is under, and the
+/// note it stands at in the space's order, which is itself, or the note it is under through that
+/// is not listed.
+pub(super) type Drawn<'a> = (&'a Record, usize, Option<&'a Record>, &'a Record);
 
 /// Whether a note is one to list, the archived ones too if asked.
 fn kept(r: &Record, archived: bool) -> bool {
@@ -804,16 +821,19 @@ impl<'s> Lists<'s, '_> {
             .map(|(i, (_, r))| (r.id.as_str(), i))
             .collect();
         let mut above = Vec::with_capacity(n);
+        let mut stand = Vec::with_capacity(n);
         let mut below = vec![Vec::new(); n];
         let mut stands = false;
         for (i, &(place, r)) in held.iter().enumerate() {
             let found = self.above_by(r, |id| at.get(id).copied());
-            if let Some((p, via)) = found {
+            let via = found.and_then(|(_, via)| via);
+            if let Some((p, _)) = found {
                 let place = via.and_then(|via| walk.place(&via.id)).unwrap_or(place);
                 stands |= via.is_some();
                 below[p].push((place, i));
             }
             above.push(found.map(|(p, _)| p));
+            stand.push(via.unwrap_or(r));
         }
         // What is under a note through one not listed stands where that one does.
         if stands {
@@ -857,7 +877,8 @@ impl<'s> Lists<'s, '_> {
                     continue;
                 }
                 let under = above[i].filter(|_| level > 0).map(|p| held[p]);
-                out.push((held[i], level, under));
+                let stands = if under.is_some() { stand[i] } else { held[i] };
+                out.push((held[i], level, under, stands));
                 stack.extend(below[i].iter().rev().map(|&c| (c, level + 1)));
             }
         }
@@ -897,43 +918,43 @@ impl<'s> Lists<'s, '_> {
         false
     }
 
-    /// The listed notes drawn right under a note, in the space's order: those linking to it, and
-    /// those linking to what is not listed and is under it in turn.
-    fn below(&self, r: &'s Record, walk: &Walk) -> Vec<&'s Record> {
+    /// The listed notes drawn right under a note, in the space's order, each with the note it
+    /// stands at: those linking to it, and those linking to what is not listed and links to it in
+    /// turn, however deep. Every note not listed that links there is walked through, since a note
+    /// is under what its own links put it under, whatever the note walked through is under.
+    fn below(&self, r: &'s Record, walk: &Walk) -> Vec<(&'s Record, &'s Record)> {
         let notes = &self.session.notes;
         let mut below = Vec::new();
-        // What is walked through, which is seldom anything: each note of it once, so that a ring
-        // of notes not listed ends the walk.
+        // What is walked through, each note of it once, so that a ring of notes not listed ends
+        // the walk.
         let mut through = vec![r];
-        let mut passed = vec![r];
+        let mut passed: HashSet<*const Record> = HashSet::from([std::ptr::from_ref(r)]);
         while let Some(at) = through.pop() {
             for id in self.session.engine.linking_to(&at.id) {
                 let Some(c) = notes.get(id) else {
                     continue;
                 };
-                if Some(id) == self.root {
+                if Some(id) == self.root || !passed.insert(std::ptr::from_ref(c)) {
+                    continue;
+                }
+                if !self.has(c) {
+                    through.push(c);
                     continue;
                 }
                 let Some((above, via)) = self.above_via(c) else {
                     continue;
                 };
-                if !std::ptr::eq(above, r) {
-                    continue;
-                }
-                if self.has(c) {
+                if std::ptr::eq(above, r) {
                     // What is under it through a note not listed stands where that one does.
-                    let place = walk.place(&c.id);
-                    let stands = via.and_then(|via| walk.place(&via.id)).or(place);
-                    below.push((stands, place, c));
-                } else if !passed.iter().any(|&p| std::ptr::eq(p, c)) {
-                    passed.push(c);
-                    through.push(c);
+                    let stands = via.unwrap_or(c);
+                    below.push((walk.place(&stands.id), walk.place(&c.id), c, stands));
                 }
             }
         }
-        // A note linking to two notes walked through is found by each.
-        below.sort_unstable_by_key(|&(stands, place, _)| (stands, place));
-        below.dedup_by(|a, b| std::ptr::eq(a.2, b.2));
-        below.into_iter().map(|(_, _, c)| c).collect()
+        below.sort_unstable_by_key(|&(stands, place, _, _)| (stands, place));
+        below
+            .into_iter()
+            .map(|(_, _, c, stands)| (c, stands))
+            .collect()
     }
 }

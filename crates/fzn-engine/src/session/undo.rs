@@ -389,14 +389,21 @@ impl Session {
         let Some(to) = self.sibling(from, by) else {
             return;
         };
-        let Some(note) = self.selected_record().cloned() else {
+        // A row is moved, and passes another, by the note it stands at in the space's order,
+        // which is not its own where it is under its note through one not listed.
+        let row = self.rows[from].id.clone();
+        let (id, past) = (self.rows[from].stands(), self.rows[to].stands());
+        if id == past {
+            return;
+        }
+        let Some(note) = self.notes.get(id).cloned() else {
             return;
         };
         let id = note.id.clone();
         let order = self.notes.order();
         let at = |id: &str| order.iter().position(|r| r.id == id);
         let ahead = |at: usize| at.checked_sub(1).map(|i| order[i].id.clone());
-        let (Some(at), Some(past)) = (at(&id), at(&self.rows[to].id)) else {
+        let (Some(at), Some(past)) = (at(&id), at(past)) else {
             return;
         };
         let after = if to < from {
@@ -404,6 +411,9 @@ impl Session {
         } else {
             Some(order[past].id.clone())
         };
+        if after.as_ref() == Some(&id) {
+            return;
+        }
         let followed = ahead(at);
         // Oldest placed first, so that each placed after the one before it keeps its order.
         let hanging: Vec<Record> = order
@@ -439,6 +449,6 @@ impl Session {
         self.redo.clear();
         self.status = "moved".into();
         self.refresh(false);
-        self.reselect(&id);
+        self.reselect(&row);
     }
 }

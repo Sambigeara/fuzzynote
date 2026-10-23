@@ -41,7 +41,7 @@ pub(super) struct Writing {
     pub(super) from_line: bool,
     /// The note a new row is drawn under, in a list drawn as a tree, which it links to in place
     /// of the note you are in.
-    under: Option<String>,
+    pub(super) under: Option<String>,
 }
 
 impl Writing {
@@ -414,21 +414,24 @@ impl Session {
         self.stale = true;
     }
 
-    /// The first version of the new note being written in the field, linked to the note its row
-    /// is drawn under, or else to the note being looked around, and placed where its row was
-    /// opened, so that it stays there when the list is made again: at the top from the line, and
-    /// from a row directly after the note before it among the notes beside it, or first among
-    /// them directly before the next. In a flat list that is after the row above. Its row is
-    /// where it was opened, since whatever moves out of a place leaves the row first, and the
-    /// list holds still while the cursor is on it.
+    /// The first version of the new note being written in the field, linked to the note its row is
+    /// drawn under, or else to the note being looked around. Drawn under a note that is in the
+    /// place only by the note you are in linking to it, it links to the note you are in as well,
+    /// after the one it is drawn under, so that it is in the place it was written in. It is placed
+    /// where its row was opened, so that it stays there when the list is made again: at the top
+    /// from the line, and from a row directly after the note before it among the notes beside it,
+    /// or first among them directly before the next. In a flat list that is after the row above.
+    /// Its row is where it was opened, since whatever moves out of a place leaves the row first,
+    /// and the list holds still while the cursor is on it.
     fn created(&self, field: &Writing, text: String) -> Record {
-        let around = field.under.as_ref().or(self.place_note());
-        let links = self.engine.links_on_save(
-            &field.id,
-            "",
-            &text,
-            around.map_or(&[], std::slice::from_ref),
-        );
+        let around: Vec<String> = match (&field.under, self.place_note()) {
+            (Some(under), Some(here)) if !self.is_under(under, here) => {
+                vec![under.clone(), here.clone()]
+            }
+            (Some(under), _) => vec![under.clone()],
+            (None, here) => here.into_iter().cloned().collect(),
+        };
+        let links = self.engine.links_on_save(&field.id, "", &text, &around);
         Record {
             links,
             created: Some(field.opened),
@@ -439,7 +442,27 @@ impl Session {
         }
     }
 
-    /// The note a new row is placed after, for it to stay where it was opened.
+    /// Whether one note is under another: it links to it, or to a note that is under it, however
+    /// deep, through archived notes too.
+    fn is_under(&self, id: &str, above: &str) -> bool {
+        let mut seen = std::collections::HashSet::from([id]);
+        let mut next = vec![id];
+        while let Some(at) = next.pop() {
+            for link in self.notes.get(at).map_or(&[][..], |r| &r.links) {
+                if link == above {
+                    return true;
+                }
+                if seen.insert(link) {
+                    next.push(link);
+                }
+            }
+        }
+        false
+    }
+
+    /// The note a new row is placed after, for it to stay where it was opened. A row beside it
+    /// is placed by the note it stands at, which is not its own where it is under its note
+    /// through one not listed.
     fn placed_after(&self, id: &str) -> Option<String> {
         let at = self.rows.iter().position(|r| r.id == id)?;
         let row = &self.rows[at];
@@ -450,7 +473,7 @@ impl Session {
                 break;
             }
             if r.under == row.under {
-                return Some(r.id.clone());
+                return Some(r.stands().to_owned());
             }
         }
         // First, it goes where a move up puts a note: after the note the next one follows.
@@ -462,7 +485,7 @@ impl Session {
             return Some(above.id.clone());
         };
         let walk = self.notes.walk();
-        let place = walk.place(&next.id)?;
+        let place = walk.place(next.stands())?;
         let before = place.checked_sub(1)?;
         walk.records().nth(before).map(|r| r.id.clone())
     }
@@ -694,6 +717,7 @@ impl Session {
                 depth: level.min(DEEPEST),
                 level,
                 under: under.clone(),
+                stands: None,
             },
         );
         self.cursor = Some(at);
