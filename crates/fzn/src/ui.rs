@@ -1048,10 +1048,15 @@ fn score_of(row: &Row, shown: bool) -> String {
     }
 }
 
+/// How far a row is drawn in: two columns for each level it is drawn under another.
+fn indent(row: &Row) -> String {
+    "  ".repeat(row.depth)
+}
+
 /// A row of the list as it is when the cursor is not on it: the head as the row shows it, then as
 /// much of the tail as there is room for. The head is cut only when it alone does not fit.
 fn row_line(row: &Row, scores: bool, width: usize) -> Line<'static> {
-    let score = score_of(row, scores);
+    let score = indent(row) + &score_of(row, scores);
     let room = width.saturating_sub(2 + score.width());
     let head = fit(row.shown.as_deref().unwrap_or(&row.head), room);
     let rest = room - head.width();
@@ -1075,7 +1080,7 @@ struct Selected {
 }
 
 /// The row the cursor is on, `head` being its head as it is now typed: one row, however long its
-/// head or its tail, the head bold, and at the right a `¶` when the note has a body and the day
+/// head or its tail, drawn in as far as the row is, the head bold, and at the right a `¶` when the note has a body and the day
 /// it was `created` at, the day it belongs to. The head is a one-line field, `caret` letters in,
 /// read from its start while `left` is `None` and scrolled sideways under the caret once a key
 /// has moved it (see [`sidescrolled`]); the tail follows it as far as there is room, as off the
@@ -1088,7 +1093,7 @@ fn selected_row(
     scores: bool,
     width: usize,
 ) -> Selected {
-    let score = score_of(row, scores);
+    let score = indent(row) + &score_of(row, scores);
     let date = created.map_or_else(String::new, |m| time::format_day(m.day()));
     let right = [if row.has_body { "¶" } else { "" }, &date]
         .into_iter()
@@ -4945,5 +4950,109 @@ mod tests {
         assert_eq!(field(&app), None);
         assert_eq!(app.device.view().cursor, None);
         done(&space);
+    }
+
+    /// The house's radiators as they are written: a note, and two rooms written in it, then a
+    /// note beside it. One step out, the list draws the rooms under the note.
+    fn radiators(app: &mut App) {
+        write(app, "Order heating oil");
+        write(app, "Replace the radiator valves");
+        press(app, KeyCode::Down, false);
+        press(app, KeyCode::Tab, false);
+        write(app, "upstairs");
+        write(app, "downstairs");
+        press(app, KeyCode::Esc, false);
+    }
+
+    #[test]
+    fn a_row_drawn_under_another_is_two_columns_in_a_level() {
+        let (mut app, space) = app();
+        radiators(&mut app);
+        assert!(path(&app).is_empty());
+        let shot = screen(&mut app, 60, 12);
+        assert_eq!(
+            shot.rows[1..5],
+            [
+                " Replace the radiator valves",
+                "   downstairs",
+                "   upstairs",
+                " Order heating oil",
+            ]
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn the_cursor_on_a_row_drawn_in_is_drawn_in_with_it() {
+        let (mut app, space) = app();
+        radiators(&mut app);
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Down, false);
+        }
+        let shot = screen(&mut app, 60, 12);
+        assert!(
+            shot.rows[3].starts_with("   upstairs  "),
+            "{:?}",
+            shot.rows[3]
+        );
+        assert_eq!(shot.cursor, (11, 3), "after the head, past the indent");
+
+        // Enter on it opens a row beside it, at its level, and the caret is there too. It is the
+        // last under its note, so Enter again takes it out a level, and the foot says so.
+        press(&mut app, KeyCode::Enter, false);
+        let shot = screen(&mut app, 60, 12);
+        assert_eq!(shot.rows[4], "", "a new row, empty");
+        assert_eq!(shot.cursor, (3, 4));
+        assert!(
+            shot.rows[11].starts_with(" ↵ out a level"),
+            "{:?}",
+            shot.rows
+        );
+        press(&mut app, KeyCode::Enter, false);
+        let shot = screen(&mut app, 60, 12);
+        assert_eq!(shot.cursor, (1, 4));
+        assert!(!shot.rows[11].contains("out a level"), "{:?}", shot.rows);
+        done(&space);
+    }
+
+    #[test]
+    fn a_row_is_drawn_in_no_further_than_the_fourth_level() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler overhaul");
+        for head in [
+            "[ ] Bleed the radiators",
+            "[ ] Buy a radiator key",
+            "Ask at the hardware shop",
+            "Ring the plumber",
+        ] {
+            press(&mut app, KeyCode::Down, false);
+            press(&mut app, KeyCode::Tab, false);
+            write(&mut app, head);
+        }
+        while !path(&app).is_empty() {
+            press(&mut app, KeyCode::Esc, false);
+        }
+        press(&mut app, KeyCode::Esc, false);
+        let shot = screen(&mut app, 70, 12);
+        assert_eq!(
+            shot.rows[1..6],
+            [
+                " Boiler overhaul",
+                "   [ ] Bleed the radiators",
+                "     [ ] Buy a radiator key",
+                "       Ask at the hardware shop",
+                "       Ring the plumber  → Ask at the hardware shop",
+            ]
+        );
+        done(&space);
+    }
+
+    #[test]
+    fn a_row_drawn_in_is_cut_to_the_columns_left_beside_its_indent() {
+        let mut row = a_row("Fit the new valve on the landing");
+        row.depth = 3;
+        let line = row_line(&row, false, 20).to_string();
+        assert_eq!(line, "       Fit the new…");
+        assert!(line.width() <= 20);
     }
 }

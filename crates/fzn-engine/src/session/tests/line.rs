@@ -213,7 +213,10 @@ fn a_note_written_around_another_is_linked_by_id_and_listed_first() {
         "what is linked, the last written on top, and nothing the engine suggests"
     );
     assert!(s.rows.iter().all(|r| r.linked));
-    assert!(s.rows[0].reasons[0].starts_with("links here"));
+    assert!(
+        s.rows[0].reasons.is_empty(),
+        "being here says it links here"
+    );
     assert!(s.rows[1].reasons[0].starts_with("linked from here"));
     let new = s.notes.get(&s.rows[0].id).unwrap().clone();
     assert_eq!(new.text, "some new note", "the text is what was typed");
@@ -227,7 +230,8 @@ fn a_note_written_around_another_is_linked_by_id_and_listed_first() {
     assert_eq!(s.line, "");
     assert_eq!(s.status, "created");
 
-    // Renaming the hub breaks nothing, and from outside the note says what it is linked to.
+    // Renaming the hub breaks nothing, and from outside the note is drawn under it, or in a
+    // list of what the line finds says what it is linked to.
     let hub = s.notes.get("hub").unwrap().clone();
     s.commit(Record {
         text: "Training App\nthe plan".into(),
@@ -236,6 +240,12 @@ fn a_note_written_around_another_is_linked_by_id_and_listed_first() {
     s.refresh(false);
     assert_eq!(heads(&s)[..2], ["some new note", "Profile"]);
     s.act(Action::Back);
+    let row = s.rows.iter().find(|r| r.head == "some new note").unwrap();
+    assert_eq!(
+        (row.under.as_deref(), &row.links[..]),
+        (Some("hub"), &[][..])
+    );
+    type_in(&mut s, "some new");
     let row = s.rows.iter().find(|r| r.head == "some new note").unwrap();
     assert_eq!(row.links, ["Training App"]);
 }
@@ -294,12 +304,13 @@ fn brackets_typed_into_a_note_link_it_by_id() {
     put(&mut s, "prog", "Kettlebell Programme\nweek one", &[], 2_000);
     let typed = "follow [[kettlebell programme]] and [[Nowhere]] today";
     add(&mut s, typed);
-    let new = s.rows[0].id.clone();
+    let new = s.selected().unwrap().id.clone();
     let held = s.notes.get(&new).unwrap();
     assert_eq!(held.links, ["prog"]);
     assert_eq!(held.text, typed, "the text is left as typed");
+    s.act(Action::Select(None));
     go_into(&mut s, "Kettlebell Programme");
-    assert!(s.rows[0].linked && s.rows[0].reasons[0].starts_with("links here"));
+    assert!(s.rows[0].linked && s.rows[0].reasons.is_empty());
 
     // Renamed, the target is still linked, and the note shows its new head.
     let prog = s.notes.get("prog").unwrap().clone();
@@ -308,6 +319,7 @@ fn brackets_typed_into_a_note_link_it_by_id() {
         ..prog
     });
     s.act(Action::Back);
+    type_in(&mut s, "follow");
     let row = s.rows.iter().find(|r| r.id == new).unwrap();
     assert_eq!(row.links, ["Strength Programme"]);
 }
@@ -520,20 +532,12 @@ fn only_what_applies_is_offered() {
     type_in(&mut s, "squat");
     assert_eq!(labels(&s)[0], "write", "with something on the line");
     clear(&mut s);
+    // Drawn under Profile with nothing beside it, it has nowhere to move.
     select(&mut s, "trainingapp");
     assert_eq!(
         labels(&s),
         [
-            "new note",
-            "body",
-            "editor",
-            "go in",
-            "archive",
-            "delete",
-            "copy",
-            "move down",
-            "undo",
-            "up"
+            "new note", "body", "editor", "go in", "archive", "delete", "copy", "undo", "up"
         ]
     );
     assert_eq!(

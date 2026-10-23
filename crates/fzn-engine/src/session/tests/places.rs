@@ -732,10 +732,9 @@ fn with_nothing_on_the_line_a_place_lists_only_its_facts_in_the_order_kept_and_n
     );
     for row in &s.rows {
         assert!(row.linked && row.score.is_none());
-        assert_eq!(
-            row.reasons,
-            ["links here"],
-            "how it is linked, and nothing scored"
+        assert!(
+            row.reasons.is_empty(),
+            "nothing scored, and that it links here goes without saying"
         );
     }
     s.act(Action::Select(Some(0)));
@@ -1375,15 +1374,8 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     assert_eq!(path(&s), ["#house", "Boiler overhaul", "[ ]"]);
     assert_eq!(s.line, "");
     assert_eq!(
-        read(&s),
-        [
-            (
-                "[ ] Buy a radiator key",
-                vec!["[ ] Bleed the radiators"],
-                vec![]
-            ),
-            ("[ ] Bleed the radiators", vec![], vec!["links here"]),
-        ]
+        drawn(&s),
+        ["[ ] Bleed the radiators", "  [ ] Buy a radiator key"]
     );
 
     s.act(Action::Back);
@@ -1391,11 +1383,8 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     assert_eq!(s.line, "[ ]");
     clear(&mut s);
     assert_eq!(
-        heads(&s),
-        [
-            "[ ] Buy a radiator key #house",
-            "[ ] Bleed the radiators #house"
-        ]
+        drawn(&s),
+        ["[ ] Bleed the radiators", "  [ ] Buy a radiator key"]
     );
 
     s.act(Action::Back);
@@ -1403,12 +1392,12 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     assert_eq!(s.line, "boiler overhaul");
     clear(&mut s);
     assert_eq!(
-        heads(&s),
+        drawn(&s),
         [
-            "[ ] Buy a radiator key #house",
-            "[ ] Bleed the radiators #house",
-            "Order oil #house",
-            "Boiler overhaul #house"
+            "Order oil",
+            "Boiler overhaul",
+            "  [ ] Bleed the radiators",
+            "    [ ] Buy a radiator key"
         ],
         "all three by their tag"
     );
@@ -1430,11 +1419,11 @@ fn unlinking_a_note_takes_what_is_under_it_out_of_the_place_with_it() {
     overhaul(&mut s);
     go_to(&mut s, "House");
     assert_eq!(
-        heads(&s),
+        drawn(&s),
         [
-            "[ ] Buy a radiator key",
-            "[ ] Bleed the radiators",
-            "Boiler overhaul"
+            "Boiler overhaul",
+            "  [ ] Bleed the radiators",
+            "    [ ] Buy a radiator key"
         ]
     );
     select(&mut s, "Boiler overhaul");
@@ -1489,12 +1478,12 @@ fn a_delete_in_the_middle_takes_what_was_under_it_where_it_stands_and_undo_puts_
     s.act(Action::Delete);
     assert_eq!(
         heads(&s),
-        ["Boots by the door", "Sweep the porch"],
+        ["Sweep the porch", "Boots by the door"],
         "what was in the place only by being under it goes with it"
     );
     assert_eq!(
         s.selected().map(|r| r.head.as_str()),
-        Some("Sweep the porch"),
+        Some("Boots by the door"),
         "the cursor on the row that took the last one's place"
     );
     assert_eq!(s.notes.get("bleed").unwrap().links, ["overhaul"]);
@@ -1510,6 +1499,8 @@ fn an_arrow_is_drawn_again_when_the_note_it_names_changes() {
     overhaul(&mut s);
     go_to(&mut s, "Boiler overhaul");
     let key = |s: &Session| s.rows.iter().find(|r| r.id == "key").unwrap().links.clone();
+    assert!(key(&s).is_empty(), "drawn under what it names");
+    s.act(Action::Type("radiator".into()));
     assert_eq!(key(&s), ["[ ] Bleed the radiators"]);
     select(&mut s, "[ ] Bleed the radiators");
     s.act(Action::Archive);
@@ -1549,9 +1540,9 @@ fn a_note_gone_into_by_name_from_a_place_is_not_under_it_and_its_search_comes_ba
     assert_eq!(
         heads(&s),
         [
-            "[ ] Buy a radiator key",
+            "Boiler overhaul",
             "[ ] Bleed the radiators",
-            "Boiler overhaul"
+            "[ ] Buy a radiator key"
         ],
         "neither is under House"
     );
@@ -1568,13 +1559,17 @@ fn a_name_finds_one_hop_down_and_going_in_shows_every_depth() {
     assert_eq!(
         read(&s),
         [
-            (
-                "[ ] Buy a radiator key",
-                vec!["[ ] Bleed the radiators"],
-                vec![]
-            ),
-            ("[ ] Bleed the radiators", vec![], vec!["links here"]),
+            ("[ ] Bleed the radiators", vec![], vec![]),
+            ("[ ] Buy a radiator key", vec![], vec![]),
             ("House", vec![], vec!["linked from here"]),
+        ]
+    );
+    assert_eq!(
+        drawn(&s),
+        [
+            "[ ] Bleed the radiators",
+            "  [ ] Buy a radiator key",
+            "House"
         ]
     );
 }

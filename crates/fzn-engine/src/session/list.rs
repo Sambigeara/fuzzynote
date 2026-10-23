@@ -8,12 +8,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::engine::{self, Hit, SearchOptions};
 use crate::query::{Label, Query};
-use crate::record::Record;
+use crate::record::{Record, Walk};
 use crate::score::Scorer;
 use crate::text;
 
 use super::path::Step;
-use super::{FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
+use super::{DEEPEST, FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
 
 impl Session {
     /// Recomputes the list from the line and the path. `reset` moves the cursor back to the
@@ -81,11 +81,18 @@ impl Session {
         self.notes
             .order()
             .into_iter()
-            .filter(move |r| !r.deleted && (archived || !r.archived))
+            .filter(move |r| kept(r, archived))
     }
 
     /// A note as the empty line lists it, with nothing to say why.
     pub(super) fn listed(&self, r: &Record) -> Row {
+        self.drawn(r, None, 0)
+    }
+
+    /// A note as a list in the space's order draws it: `level` deep, under the listed note
+    /// `under`, which its arrow then leaves out, since the drawing says it. Past the deepest a row
+    /// is drawn, the drawing no longer says it, and the arrow does.
+    fn drawn(&self, r: &Record, under: Option<&str>, level: usize) -> Row {
         let has_body = text::has_body(&r.text);
         Row {
             id: r.id.clone(),
@@ -95,10 +102,79 @@ impl Session {
             archived: r.archived,
             has_body,
             linked: false,
-            links: self.link_heads(r),
+            links: self.link_heads_besides(r, unsaid(under, level)),
             reasons: Vec::new(),
             score: None,
+            depth: level.min(DEEPEST),
+            level,
+            under: under.map(str::to_owned),
         }
+    }
+
+    /// The notes of a list in the space's order as it draws them, at most `limit`, each with how
+    /// deep it is and the listed note it is under. `listed` says which notes the list has, and
+    /// `root` is the note you are in, which is the top. A note is under the first note it links
+    /// to that is listed, and failing one, under the nearest listed note above the first note it
+    /// links to, walked through what is not listed; with nothing listed above it, or the note you
+    /// are in, it is at the top. The top is in the space's order, and each note is followed by
+    /// what is under it, at any depth, the notes under one note in the space's order too. A ring
+    /// of notes each under the next, which nothing at the top reaches, is drawn from the note of
+    /// it that comes first, where that one comes.
+    ///
+    /// A list that is cut, as the top is, reads only as many notes as it draws, since drawing the
+    /// whole space to keep the first few hundred rows costs ten times what they do: the notes
+    /// under a note are found by what links to it, and put in order by where each is in the
+    /// walk, which is kept beside it. A list that is not cut, a place's or a command's, is drawn
+    /// whole in one pass over it, which costs less than a search from each of its notes.
+    pub(super) fn tree<'a>(
+        &'a self,
+        listed: &dyn Fn(&Record) -> bool,
+        root: Option<&str>,
+        limit: usize,
+    ) -> Vec<Drawn<'a>> {
+        let walk = self.notes.walk();
+        let lists = Lists {
+            session: self,
+            listed,
+            root,
+        };
+        if limit == usize::MAX {
+            let held = walk.records().enumerate().filter(|(_, r)| lists.has(r));
+            return lists.whole(&walk, held.collect());
+        }
+        let mut out = Vec::new();
+        let mut drawn: HashSet<*const Record> = HashSet::new();
+        // The notes found to be under something at the top, so that the notes under one are not
+        // each walked up past it again.
+        let mut topped: HashSet<*const Record> = HashSet::new();
+        let mut stack = Vec::new();
+        for r in walk.records() {
+            if out.len() >= limit {
+                break;
+            }
+            if !lists.has(r) || drawn.contains(&std::ptr::from_ref(r)) {
+                continue;
+            }
+            if let Some(above) = lists.above(r)
+                && !lists.heads_ring(r, above, &walk, &mut topped)
+            {
+                continue;
+            }
+            stack.push((r, 0, None));
+            while let Some((r, level, under)) = stack.pop() {
+                if out.len() >= limit {
+                    break;
+                }
+                if !drawn.insert(std::ptr::from_ref(r)) {
+                    continue;
+                }
+                out.push((r, level, under));
+                let below = lists.below(r, &walk);
+                stack.extend(below.into_iter().rev().map(|c| (c, level + 1, Some(r))));
+            }
+            stack.clear();
+        }
+        out
     }
 
     /// The notes that hold what the line holds, at most `limit`, in the order the line lists them
@@ -131,8 +207,9 @@ impl Session {
 
     /// What the line lists at the top of the space, at most `limit`. With nothing to rank by it
     /// is the notes that hold what the line holds, with nothing to say why, as a place lists what
-    /// is in it: in the order the space keeps them in, which on an empty line is the top of the
-    /// space, or on a line of time in time order. Otherwise it is what the line finds among them.
+    /// is in it: in the order the space keeps them in, drawn as a tree, which on an empty line is
+    /// the top of the space, or on a line of time flat in time order. Otherwise it is what the
+    /// line finds among them.
     fn found(&self, query: &Query, archived: bool, limit: usize) -> Vec<Row> {
         if !query.ranks() {
             let held: Option<HashSet<&str>> = (!query.is_empty()).then(|| {
@@ -146,10 +223,18 @@ impl Session {
                 held.as_ref()
                     .is_none_or(|held| held.contains(r.id.as_str()))
             };
+            if query.timed().is_some() {
+                return self
+                    .ordered(query, archived, holds, limit)
+                    .into_iter()
+                    .map(|r| self.listed(r))
+                    .collect();
+            }
+            let listed = |r: &Record| kept(r, archived) && holds(r);
             return self
-                .ordered(query, archived, holds, limit)
+                .tree(&listed, None, limit)
                 .into_iter()
-                .map(|r| self.listed(r))
+                .map(|(r, level, under)| self.drawn(r, under.map(|u| u.id.as_str()), level))
                 .collect();
         }
         let opts = SearchOptions {
@@ -211,13 +296,13 @@ impl Session {
     }
 
     /// The place being looked around. With nothing on the line to rank by it is what is in it
-    /// and holds what the line holds, its facts in the order the space keeps them in and nothing
-    /// the engine suggests, as the top of the space is: what is under its note at any depth or
-    /// linked from it, and carries all of its labels. With something to rank by it is what the
-    /// line finds in its neighbourhood: the note the line names, then the facts that match, then
-    /// what else the engine finds there that matches, all of them holding what the line holds.
-    /// With it comes the first of what is only found there, if a fact comes before it, where a
-    /// face sets the two apart.
+    /// and holds what the line holds, its facts in the order the space keeps them in, drawn as a
+    /// tree from its note, and nothing the engine suggests, as the top of the space is: what is
+    /// under its note at any depth or linked from it, and carries all of its labels. With
+    /// something to rank by it is what the line finds in its neighbourhood: the note the line
+    /// names, then the facts that match, then what else the engine finds there that matches, all
+    /// of them holding what the line holds. With it comes the first of what is only found there,
+    /// if a fact comes before it, where a face sets the two apart.
     fn in_place(&self, query: &Query) -> (Vec<Row>, Option<String>) {
         let note = self.place_note().map(String::as_str);
         let labels = self.narrowing(query.every_task);
@@ -236,22 +321,38 @@ impl Session {
                 .into_iter()
                 .map(|(note, link)| (note.id.as_str(), link))
                 .collect();
-            let rows = self
-                .ordered(
-                    query,
-                    archived,
-                    |r| facts.contains_key(r.id.as_str()),
-                    usize::MAX,
-                )
+            let held: Vec<Drawn> = match query.timed() {
+                Some(_) => self
+                    .ordered(
+                        query,
+                        archived,
+                        |r| facts.contains_key(r.id.as_str()),
+                        usize::MAX,
+                    )
+                    .into_iter()
+                    .map(|r| (r, 0, None))
+                    .collect(),
+                None => {
+                    let listed =
+                        |r: &Record| kept(r, archived) && facts.contains_key(r.id.as_str());
+                    self.tree(&listed, note, usize::MAX)
+                }
+            };
+            let rows = held
                 .into_iter()
-                .filter_map(|r| {
-                    // How it is linked is a fact too, and the one thing said about it. A note
-                    // under the place through another note has its arrow to say which.
+                .filter_map(|(r, level, under)| {
+                    // How it is linked is a fact too, and the one thing said about it, but that
+                    // it links here, which being in the place says already. A note under the
+                    // place through another note is drawn under it, or has its arrow to say which.
                     let link = facts.get(r.id.as_str())?;
                     Some(Row {
                         linked: true,
-                        reasons: link.iter().map(|&text| text.to_owned()).collect(),
-                        ..self.listed(r)
+                        reasons: link
+                            .iter()
+                            .filter(|&&how| how != "links here")
+                            .map(|&how| how.to_owned())
+                            .collect(),
+                        ..self.drawn(r, under.map(|u| u.id.as_str()), level)
                     })
                 })
                 .collect();
@@ -323,11 +424,16 @@ impl Session {
     /// linked to by id. The note being looked around is left out, since everything on the list
     /// is about it.
     pub(super) fn link_heads(&self, record: &Record) -> Vec<String> {
+        self.link_heads_besides(record, None)
+    }
+
+    /// The same, leaving out too the note its row is drawn under, which the drawing names.
+    pub(super) fn link_heads_besides(&self, record: &Record, under: Option<&str>) -> Vec<String> {
         let around = self.place_note();
         record
             .links
             .iter()
-            .filter(|&id| Some(id) != around)
+            .filter(|&id| Some(id) != around && Some(id.as_str()) != under)
             .filter_map(|id| self.notes.get(id))
             .map(|target| self.arrow(record.head(), target.head()))
             .collect()
@@ -343,7 +449,8 @@ impl Session {
             .filter_map(|(at, row)| {
                 let record = self.notes.get(&row.id)?;
                 let links_it = record.links.iter().any(|l| l == id);
-                links_it.then(|| (at, self.link_heads(record)))
+                let under = unsaid(row.under.as_deref(), row.level);
+                links_it.then(|| (at, self.link_heads_besides(record, under)))
             })
             .collect();
         for (at, links) in redrawn {
@@ -406,6 +513,9 @@ impl Session {
                 })
                 .collect(),
             score: Some(hit.score),
+            depth: 0,
+            level: 0,
+            under: None,
         }
     }
 
@@ -446,7 +556,26 @@ impl Session {
     pub(super) fn drop_row(&mut self, id: &str) -> Option<usize> {
         self.stale = true;
         let at = self.rows.iter().position(|r| r.id == id)?;
-        self.rows.remove(at);
+        let gone = self.rows.remove(at);
+        // What was drawn under it comes up a level where it stands, as the lines under a heading
+        // taken out of a document close up, and what was right under it is under what it was
+        // under. Each says again what the drawing no longer does.
+        let below = self.rows[at..]
+            .iter()
+            .take_while(|r| r.level > gone.level)
+            .count();
+        for i in at..at + below {
+            let row = &mut self.rows[i];
+            row.level -= 1;
+            row.depth = row.level.min(DEEPEST);
+            if row.under.as_deref() == Some(id) {
+                row.under.clone_from(&gone.under);
+            }
+            let under = unsaid(row.under.as_deref(), row.level).map(str::to_owned);
+            if let Some(record) = self.notes.get(&self.rows[i].id) {
+                self.rows[i].links = self.link_heads_besides(record, under.as_deref());
+            }
+        }
         // What the line only finds begins where it did, at the row that took this one's place,
         // and is set apart only after a fact, as when the list is made.
         if self.finds_from.as_deref() == Some(id) {
@@ -562,10 +691,249 @@ impl Session {
     /// a place, and none of what the line finds, which is in the order of its scores, nor of a
     /// line of time, which is in time order.
     pub(super) fn in_order(&self) -> usize {
-        if self.parsed.ranks() || self.parsed.timed().is_some() {
-            0
-        } else {
-            self.rows.len()
+        if self.nests() { self.rows.len() } else { 0 }
+    }
+
+    /// The row a move takes the row at `at` past: the note `by` places along among the notes
+    /// beside it, under the note it is drawn under, or at the top, stopping at the first and the
+    /// last. None where the row cannot be moved, or there is no note beside it that way.
+    pub(super) fn sibling(&self, at: usize, by: i64) -> Option<usize> {
+        if at >= self.in_order() {
+            return None;
         }
+        let under = &self.rows[at].under;
+        let beside: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| &self.rows[i].under == under)
+            .collect();
+        let from = beside.iter().position(|&i| i == at)?;
+        let to = (from as i64 + by).clamp(0, beside.len() as i64 - 1) as usize;
+        (to != from).then(|| beside[to])
+    }
+
+    /// Whether the list is in the order the space keeps its notes in, and so is drawn as a
+    /// tree: whether the line, as it was read when the list was made, neither ranks nor is a
+    /// line of time.
+    pub(super) fn nests(&self) -> bool {
+        !self.parsed.ranks() && self.parsed.timed().is_none()
+    }
+}
+
+/// A note as a list drawn as a tree has it: how deep it is, and the listed note it is under.
+pub(super) type Drawn<'a> = (&'a Record, usize, Option<&'a Record>);
+
+/// Whether a note is one to list, the archived ones too if asked.
+fn kept(r: &Record, archived: bool) -> bool {
+    !r.deleted && (archived || !r.archived)
+}
+
+/// The note a row's arrow leaves out because the drawing says it: the one it is drawn under,
+/// unless it is deeper than it is drawn.
+pub(super) fn unsaid(under: Option<&str>, level: usize) -> Option<&str> {
+    under.filter(|_| level <= DEEPEST)
+}
+
+/// A list in the space's order, as its tree is drawn: which notes it has, and the note you are
+/// in, if any, which is the top.
+struct Lists<'s, 'f> {
+    session: &'s Session,
+    listed: &'f dyn Fn(&Record) -> bool,
+    root: Option<&'f str>,
+}
+
+impl<'s> Lists<'s, '_> {
+    fn has(&self, r: &Record) -> bool {
+        (self.listed)(r) && Some(r.id.as_str()) != self.root
+    }
+
+    /// The listed note a note is drawn under, or none at the top.
+    fn above(&self, r: &'s Record) -> Option<&'s Record> {
+        self.above_via(r).map(|(above, _)| above)
+    }
+
+    /// The same, with the note walked through that is right under it, where the note is under it
+    /// through notes not listed: where the note stands among those beside it, as it did while
+    /// that one was listed.
+    fn above_via(&self, r: &'s Record) -> Option<(&'s Record, Option<&'s Record>)> {
+        let notes = &self.session.notes;
+        self.above_by(r, |id| notes.get(id).filter(|target| self.has(target)))
+    }
+
+    /// The listed note a note is drawn under, as `find` finds a listed note by its id, or none at
+    /// the top: the first it links to that is listed, and failing one, what is above the first
+    /// it links to, found the same way. A link to the note you are in is the top.
+    fn above_by<T>(
+        &self,
+        r: &'s Record,
+        find: impl Fn(&str) -> Option<T>,
+    ) -> Option<(T, Option<&'s Record>)> {
+        let mut at = r;
+        let mut passed: Vec<&'s Record> = Vec::new();
+        loop {
+            let mut through = None;
+            for link in &at.links {
+                let link = link.as_str();
+                if Some(link) == self.root {
+                    return None;
+                }
+                if link == r.id {
+                    continue;
+                }
+                if let Some(found) = find(link) {
+                    return Some((found, passed.last().copied()));
+                }
+                if through.is_none() {
+                    through = self.session.notes.get(link);
+                }
+            }
+            let next = through?;
+            if passed.iter().any(|&p| std::ptr::eq(p, next)) {
+                return None;
+            }
+            passed.push(next);
+            at = next;
+        }
+    }
+
+    /// The tree of every listed note, drawn in one pass over them: `held` in the space's order,
+    /// each with where it is in the walk.
+    fn whole(&self, walk: &Walk, held: Vec<(usize, &'s Record)>) -> Vec<Drawn<'s>> {
+        let n = held.len();
+        let at: HashMap<&str, usize> = held
+            .iter()
+            .enumerate()
+            .map(|(i, (_, r))| (r.id.as_str(), i))
+            .collect();
+        let mut above = Vec::with_capacity(n);
+        let mut below = vec![Vec::new(); n];
+        let mut stands = false;
+        for (i, &(place, r)) in held.iter().enumerate() {
+            let found = self.above_by(r, |id| at.get(id).copied());
+            if let Some((p, via)) = found {
+                let place = via.and_then(|via| walk.place(&via.id)).unwrap_or(place);
+                stands |= via.is_some();
+                below[p].push((place, i));
+            }
+            above.push(found.map(|(p, _)| p));
+        }
+        // What is under a note through one not listed stands where that one does.
+        if stands {
+            for notes in &mut below {
+                notes.sort_unstable();
+            }
+        }
+        let below: Vec<Vec<usize>> = below
+            .into_iter()
+            .map(|notes| notes.into_iter().map(|(_, i)| i).collect())
+            .collect();
+        let held: Vec<&Record> = held.into_iter().map(|(_, r)| r).collect();
+        // What the top reaches, so that a ring, which it does not, is drawn where it comes.
+        let mut reached = vec![false; n];
+        let mut stack: Vec<usize> = (0..n).filter(|&i| above[i].is_none()).collect();
+        while let Some(i) = stack.pop() {
+            if !std::mem::replace(&mut reached[i], true) {
+                stack.extend(&below[i]);
+            }
+        }
+        let heads_ring = |i: usize| {
+            let mut climbed = vec![i];
+            while let Some(next) = above[climbed[climbed.len() - 1]] {
+                if let Some(from) = climbed.iter().position(|&c| c == next) {
+                    return climbed[from..].iter().min() == Some(&i);
+                }
+                climbed.push(next);
+            }
+            false
+        };
+        let mut drawn = vec![false; n];
+        let mut out = Vec::with_capacity(n);
+        let mut stack = Vec::new();
+        for top in 0..n {
+            if drawn[top] || (above[top].is_some() && (reached[top] || !heads_ring(top))) {
+                continue;
+            }
+            stack.push((top, 0));
+            while let Some((i, level)) = stack.pop() {
+                if std::mem::replace(&mut drawn[i], true) {
+                    continue;
+                }
+                let under = above[i].filter(|_| level > 0).map(|p| held[p]);
+                out.push((held[i], level, under));
+                stack.extend(below[i].iter().rev().map(|&c| (c, level + 1)));
+            }
+        }
+        out
+    }
+
+    /// Whether a note under `above` is where a ring is drawn from: nothing at the top is above
+    /// it, and it comes first in the space's order of the ring above it. What is found to be
+    /// under something at the top is put in `topped`.
+    fn heads_ring(
+        &self,
+        r: &'s Record,
+        above: &'s Record,
+        walk: &Walk,
+        topped: &mut HashSet<*const Record>,
+    ) -> bool {
+        if topped.contains(&std::ptr::from_ref(above)) {
+            topped.insert(std::ptr::from_ref(r));
+            return false;
+        }
+        let mut climbed = vec![r];
+        let mut next = Some(above);
+        while let Some(at) = next {
+            if topped.contains(&std::ptr::from_ref(at)) {
+                break;
+            }
+            if let Some(from) = climbed.iter().position(|&c| std::ptr::eq(c, at)) {
+                let head = climbed[from..]
+                    .iter()
+                    .min_by_key(|c| walk.place(&c.id).unwrap_or(usize::MAX));
+                return head.is_some_and(|&head| std::ptr::eq(head, r));
+            }
+            climbed.push(at);
+            next = self.above(at);
+        }
+        topped.extend(climbed.into_iter().map(std::ptr::from_ref));
+        false
+    }
+
+    /// The listed notes drawn right under a note, in the space's order: those linking to it, and
+    /// those linking to what is not listed and is under it in turn.
+    fn below(&self, r: &'s Record, walk: &Walk) -> Vec<&'s Record> {
+        let notes = &self.session.notes;
+        let mut below = Vec::new();
+        // What is walked through, which is seldom anything: each note of it once, so that a ring
+        // of notes not listed ends the walk.
+        let mut through = vec![r];
+        let mut passed = vec![r];
+        while let Some(at) = through.pop() {
+            for id in self.session.engine.linking_to(&at.id) {
+                let Some(c) = notes.get(id) else {
+                    continue;
+                };
+                if Some(id) == self.root {
+                    continue;
+                }
+                let Some((above, via)) = self.above_via(c) else {
+                    continue;
+                };
+                if !std::ptr::eq(above, r) {
+                    continue;
+                }
+                if self.has(c) {
+                    // What is under it through a note not listed stands where that one does.
+                    let place = walk.place(&c.id);
+                    let stands = via.and_then(|via| walk.place(&via.id)).or(place);
+                    below.push((stands, place, c));
+                } else if !passed.iter().any(|&p| std::ptr::eq(p, c)) {
+                    passed.push(c);
+                    through.push(c);
+                }
+            }
+        }
+        // A note linking to two notes walked through is found by each.
+        below.sort_unstable_by_key(|&(stands, place, _)| (stands, place));
+        below.dedup_by(|a, b| std::ptr::eq(a.2, b.2));
+        below.into_iter().map(|(_, _, c)| c).collect()
     }
 }

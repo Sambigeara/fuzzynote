@@ -276,12 +276,15 @@ pub struct Notes {
 /// walked once than slotted in a note at a time.
 const ARRIVALS_KEPT: usize = 16;
 
-/// The order as it is kept: each note named by where it is in id order; the notes that notes are
-/// placed after and that are not held, which the walk would have to be made again for; whether
-/// a cycle was walked, whose head a newer note under it may change; and how many notes have been
-/// put in as they arrived since it was last read.
+/// The order as it is kept: each note named by where it is in id order; where each note is in
+/// the walk, by the same name, so that a list drawn as a tree can put the notes under a note in
+/// the order without walking it again; the notes that notes are placed after and that are not
+/// held, which the walk would have to be made again for; whether a cycle was walked, whose head a
+/// newer note under it may change; and how many notes have been put in as they arrived since it
+/// was last read.
 struct Order {
     walk: Vec<u32>,
+    place: Vec<u32>,
     waiting: HashSet<String>,
     cyclic: bool,
     arrivals: Cell<usize>,
@@ -367,6 +370,7 @@ impl Notes {
             order.waiting.insert(after.to_owned());
         }
         order.walk.insert(slot, at as u32);
+        order.place = places(&order.walk);
         true
     }
 
@@ -433,11 +437,44 @@ impl Notes {
     /// Two devices moving at once can make a cycle, which nothing at the top reaches. It is
     /// listed as if it were at the top, with what hangs from it, so that no note is lost.
     pub fn order(&self) -> Vec<&Record> {
+        self.walk().records().collect()
+    }
+
+    /// The order with where each note is in it, which is kept beside it.
+    pub(crate) fn walk(&self) -> Walk<'_> {
         let all: Vec<&Record> = self.newest.values().collect();
         let order = self.order.get_or_init(|| walk_order(&all));
         order.arrivals.set(0);
-        order.walk.iter().map(|&i| all[i as usize]).collect()
+        Walk { all, order }
     }
+}
+
+/// The order as [`Notes::walk`] reads it: every note in it, and where any note is.
+pub(crate) struct Walk<'a> {
+    all: Vec<&'a Record>,
+    order: &'a Order,
+}
+
+impl<'a> Walk<'a> {
+    /// Every note in the order it is listed, as [`Notes::order`] has them.
+    pub(crate) fn records(&self) -> impl Iterator<Item = &'a Record> + '_ {
+        self.order.walk.iter().map(|&i| self.all[i as usize])
+    }
+
+    /// Where a note is in the order, tombstones counted.
+    pub(crate) fn place(&self, id: &str) -> Option<usize> {
+        let i = self.all.binary_search_by(|r| r.id.as_str().cmp(id)).ok()?;
+        Some(self.order.place[i] as usize)
+    }
+}
+
+/// Where each note is in a walk, by where it is in id order.
+fn places(walk: &[u32]) -> Vec<u32> {
+    let mut place = vec![0; walk.len()];
+    for (at, &i) in walk.iter().enumerate() {
+        place[i as usize] = at as u32;
+    }
+    place
 }
 
 /// The order of `all`, which is in id order, each note named by where it is there, so that
@@ -516,11 +553,12 @@ fn walk_order(all: &[&Record]) -> Order {
         }
         runs.sort_by(|(a, _), (b, _)| newest(a, b));
     }
-    let walk = runs
+    let walk: Vec<u32> = runs
         .into_iter()
         .flat_map(|(_, run)| walked[run].iter().map(|&i| i as u32))
         .collect();
     Order {
+        place: places(&walk),
         walk,
         waiting,
         cyclic,
@@ -904,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn the_order_kept_is_the_order_walked_afresh_whatever_arrives_in_whatever_order() {
+    fn the_order_kept_and_where_each_note_is_in_it_are_as_walked_afresh_whatever_arrives() {
         for seed in 0..250u64 {
             let mut seed = seed;
             let mut next = |n: u64| {
@@ -939,6 +977,10 @@ mod tests {
                         afresh.apply(version.clone());
                     }
                     assert_eq!(order(&notes), order(&afresh), "seed {seed}, step {step}");
+                    let walk = notes.walk();
+                    for (at, r) in walk.records().enumerate() {
+                        assert_eq!(walk.place(&r.id), Some(at), "seed {seed}, step {step}");
+                    }
                 }
             }
         }

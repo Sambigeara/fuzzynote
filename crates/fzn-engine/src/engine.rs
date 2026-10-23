@@ -424,6 +424,19 @@ impl Engine {
             .is_some_and(|doc| doc.lower.contains(&text::lowercase(typed)))
     }
 
+    /// The ids of the notes linking to a note, archived ones among them, from the index, so that
+    /// a list drawn as a tree finds what is under a note without reading every note.
+    pub(crate) fn linking_to(&self, id: &str) -> impl Iterator<Item = &str> {
+        self.index
+            .docs_with(&Label::Link(id.to_owned()))
+            .iter()
+            .filter_map(|&d| {
+                self.docs[d as usize]
+                    .as_ref()
+                    .map(|doc| doc.note.id.as_str())
+            })
+    }
+
     /// A note's id and the notes that link to it.
     fn named(&self, d: DocId) -> Option<(&str, &[DocId])> {
         let doc = self.docs.get(d as usize)?.as_ref()?;

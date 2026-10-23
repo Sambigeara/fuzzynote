@@ -18,6 +18,7 @@ mod places;
 mod restore;
 mod shown;
 mod tasks;
+mod tree;
 
 /// Midday on Tuesday 2026-10-13, in UTC.
 const NOON: Moment = Moment {
@@ -81,6 +82,20 @@ fn put(s: &mut Session, id: &str, text: &str, links: &[&str], updated: i64) {
 
 fn heads(s: &Session) -> Vec<&str> {
     s.rows.iter().map(|r| r.head.as_str()).collect()
+}
+
+/// The list as a face draws it: each row two spaces in a level, as it reads, with its arrows.
+fn drawn(s: &Session) -> Vec<String> {
+    s.rows
+        .iter()
+        .map(|r| {
+            let mut line = "  ".repeat(r.depth) + r.shown.as_deref().unwrap_or(&r.head);
+            for link in &r.links {
+                line += &format!("  → {link}");
+            }
+            line
+        })
+        .collect()
 }
 
 fn select(s: &mut Session, head: &str) {

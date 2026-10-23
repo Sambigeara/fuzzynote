@@ -252,10 +252,13 @@ button, input, textarea { font: inherit; color: inherit; }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
 }
 
+/* A row drawn under another is 1.25rem in a level, to the fourth, which is about five letters of
+   a phone's forty. A task's box sits after the indent. */
 .row {
   position: relative;
   min-height: var(--row);
   padding: calc((var(--row) - 1.5em) / 2) var(--gap);
+  padding-inline-start: calc(var(--gap) + var(--depth, 0) * 1.25rem);
   contain: content;
   cursor: default;
 }
@@ -877,7 +880,10 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
     line-height: 1.5;
     text-align: center;
   }
-  .row { padding-inline: var(--gutter); }
+  .row {
+    padding-inline: var(--gutter);
+    padding-inline-start: calc(var(--gutter) + var(--depth, 0) * 1.25rem);
+  }
 
   #foot {
     width: 100%;

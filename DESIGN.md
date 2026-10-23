@@ -9,7 +9,8 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
 
 ## Principles
 - One flat space of notes. No folders, no documents, no tree. Structure is a graph: the links you
-  make and the links the engine finds.
+  make and the links the engine finds, and a list in your own order draws it as a tree, each note
+  under the note it was written in. The notes are no tree.
 - The input is the search is the composer. Typing is finding; Enter is creating.
 - A note is text. Its first line is its head. There is no separate "line" and "note".
 - Instant. Every keystroke resolves within a frame over tens of thousands of notes. Nothing on the
@@ -113,8 +114,9 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   the notes that mention the day or were written on it, and counts as a date and not as the numbers
   in it. The old `Mon, Jan 2, 2006` form is still read.
 - **Context inheritance**: where you are is what you are talking about. A note created at the end of
-  a path inherits the path, and nothing else does: it links to the last note on it and carries every
-  label on it; the notes on the path are not copied, since a note's place lists all that is under
+  a path inherits the path, and nothing else does: it links to the last note on it, or, opened under
+  a row of a list drawn as a tree, to the note that row puts it under, and carries every label on
+  it; the notes on the path are not copied, since a note's place lists all that is under
   it. This is what prefix prepending used to do, without a tree and without the typing: the old
   ` >> ` prefix was this context written by hand on every line, and Ctrl-P pasted it. The rules are
   under "Zoom and places".
@@ -150,13 +152,13 @@ no network call, so the same code runs in a terminal, in a browser tab and in a 
   an action and from versions arriving alike, since a version from elsewhere can change the head
   under the caret.
 - Out: the *view*, which is everything there is to paint: the path, the line and what its date words
-  and spans stand for, the rows with their reasons, each with the head it shows off the cursor and
-  whether it is a task and ticked, where what a place only finds begins, where the cursor is, the
-  note under it as it is being written and when it was written, the note you are in, what just
-  happened, what is offered for the tag, person or bracketed head the caret ends, and what can be
-  asked for where the cursor is, each with what to call it there. A face puts its own key or button
-  beside each. What the view says is worked out once an action or an arrival is done with, so a face
-  may ask for it as often as it paints.
+  and spans stand for, the rows with their reasons, each with the head it shows off the cursor,
+  whether it is a task and ticked, and how deep it is drawn, where what a place only finds begins,
+  where the cursor is, the note under it as it is being written and when it was written, the note
+  you are in, what just happened, what is offered for the tag, person or bracketed head the caret
+  ends, and what can be asked for where the cursor is, each with what to call it there. A face puts
+  its own key or button beside each. What the view says is worked out once an action or an arrival
+  is done with, so a face may ask for it as often as it paints.
 - Out, when a face asks: the path as *steps*, for a face about to be reloaded under the person to
   keep and give back, `[{"note":"…","search":"boi"},{"label":"#house","search":"#house"}]`: each
   note by its id and each label as it was typed, with the search each was found with. Given back,
@@ -258,12 +260,16 @@ added to the engine until daily use asks for it.
   it was written; one placed after a note no version is held for sits at the top until that one
   arrives. Deleted notes, and archived ones while hidden, are walked through and not listed, so what
   was placed after them keeps its place. A cycle, which two devices moving at once can make, is
-  listed as if it were at the top, so that no note is lost. Enter on a row places the new note after
-  that row in its first version; Enter on the line, and a note written from the line, place it at
-  the top. An edit never moves a note. A move is one note alone: down places it after the row below,
-  and up after the note the row above follows in the space's order, or at the top, so that it lands
-  beside the row it passes and goes past nothing else, even among a place's facts, where the notes
-  between two facts are not shown. What was placed after it is placed after the note it followed
+  listed as if it were at the top, so that no note is lost. Enter on a row places the new note in
+  its first version directly after the note before it among its siblings, the notes drawn under the
+  same note, or, first among them, directly before the next, after the note that one follows in the
+  space's order; in a flat list it goes after the row above. Enter on the line, and a note written
+  from the line, place it at the top. An edit never moves a note. A move is one note alone, among
+  its siblings: down places it after the next sibling, and up after the note the previous sibling
+  follows in the space's order, or at the top, so that it lands beside the sibling it passes and
+  goes past nothing else, even among a place's facts, where the notes between two facts are not
+  shown. What is drawn under it goes with it, since the drawing is made from links and not from
+  where notes are placed. What was placed after it is placed after the note it followed
   instead, oldest first, so a run written under a note stays together and no cycle is made. A move
   is one entry to undo, though it writes a version of every note it places; moving the top up, or
   the last down, writes nothing. Undo takes back only the side a change made, so undoing a move
@@ -272,7 +278,8 @@ added to the engine until daily use asks for it.
   arrives that does not plainly go first where it lands, as one written here always does; typing
   into a note keeps it. While the space holds a cycle, or once more than sixteen notes have arrived
   since it was last read, as when a space comes from the relay at once, it is walked again when next
-  read.
+  read. Where each note is in the walk is kept beside it, so that the notes drawn under a note are
+  put in the order without walking it again.
 - **Lines are sealed before they are kept.** What goes into a log, and so to the relay, is not the
   snapshot but an envelope around it: `{"s":1,"c":"…"}`, where `c` is a random 24-byte nonce and
   then the snapshot encrypted with XChaCha20-Poly1305 under the space's key, base64. The key is 32
@@ -550,9 +557,12 @@ change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typ
 hands expect. Enter opens a new row directly under it, its head the field, as the original's Enter
 added a line under the current one, unless the head has a date word or `/task` still to be written
 out: then Enter writes it out and the cursor stays on the row, the caret at the end, and the next
-Enter opens the row under. Ctrl-O opens the body, which in the terminal is your editor and
-in the browser a sheet over the page that holds the whole note; on the line in a note it opens the
-note you are in (see "Zoom and places"). Tab goes in. Right and Left are the
+Enter opens the row under. In a list drawn as a tree the new row is written as it is drawn: the
+first of the notes drawn under the row, if there are any, and otherwise beside the row, under what
+it is under, linked to the note it is drawn under. Ctrl with an arrow moves the note among the notes
+beside it, all that is drawn under it going with it. Ctrl-O opens the body, which in the terminal is
+your editor and in the browser a sheet over the page that holds the whole note; on the line in a
+note it opens the note you are in (see "Zoom and places"). Tab goes in. Right and Left are the
 caret's, on the line and in a head, and nothing else. Undo puts the head back as it was when the
 cursor landed, and otherwise takes back the last change, which for a row is the whole visit, one key
 for both. A chord acts on the note as it reads.
@@ -607,25 +617,28 @@ kept when it closes. So Enter, type, Enter, type, Enter, type, Esc writes a list
 from any row, each note on every device as it is typed. A new row left with nothing in its head but
 what it opened with goes when the cursor leaves it, the arrow landing past where it was; one never
 typed into reaches neither the log nor the relay, and one typed into and cleared has its deletion
-written and leaves nothing to undo. Enter on such a row does nothing: there is already an empty row
-to write in. A head cleared to be typed again is not written while it is empty, and a note emptied
-is deleted when the cursor leaves it, or when an empty file comes back from the editor; undo brings
-it back. Backspace on a row with nothing in its head takes the row away and goes up to the row
-above, or onto the line, as it takes an empty line away in any editor; a note with a body stays,
-since the body is not in the head to see. A note stays where it was written, and an edit never moves
-it. The list holds still while the cursor walks it: nothing is put into it or moved in it, so that
-the arrow that leaves a head lands where it was aimed, and a note new from elsewhere is listed when
-the cursor comes back to the line. What changes shows at once. A row whose note goes from the list,
-deleted, or ticked or archived where what is archived is hidden, is taken away where it stands,
-whether that was done here, by Ctrl-D or a tick or `delete` in the page's foot, or on another
-device; the rest of the list stays as it was, rows and order, until it is next made for another
-reason, so that the notes listed only for what the deleted note said, found by its name, stay listed
-until then. Any other note changed elsewhere has its row drawn again where it stands, as it now
-reads. The cursor on a row that goes goes to the row that took its place, or to the row above when
-it was the last, or onto the line when no row is left; undo brings the note back where it was with
-the cursor on it. A row being written in, a head typed into or a body open, is not taken from under
-the hands when its note goes elsewhere: it goes once the cursor leaves it. A note emptied and left
-goes the same way, the arrow landing past its row.
+written and leaves nothing to undo. Enter on such a row does nothing, since there is already an
+empty row to write in, unless it is the last of the rows drawn under its note: then Enter takes it
+out a level where it stands, as Enter on an empty item at the end of a list does in a document, and
+the foot offers it there, and only there, as `out a level`. A head cleared to be typed again is not
+written while it is empty, and a note emptied is deleted when the cursor leaves it, or when an empty
+file comes back from the editor; undo brings it back. Backspace on a row with nothing in its head
+takes the row away and goes up to the row above, or onto the line, as it takes an empty line away in
+any editor; a note with a body stays, since the body is not in the head to see. A note stays where
+it was written, and an edit never moves it. The list holds still while the cursor walks it: nothing
+is put into it or moved in it, so that the arrow that leaves a head lands where it was aimed, and a
+note new from elsewhere is listed when the cursor comes back to the line. What changes shows at
+once. A row whose note goes from the list, deleted, or ticked or archived where what is archived is
+hidden, is taken away where it stands, whether that was done here, by Ctrl-D or a tick or `delete`
+in the page's foot, or on another device, and what was drawn under it comes up a level where it
+stands, saying again what the drawing no longer does; the rest of the list stays as it was, rows and
+order, until it is next made for another reason, so that the notes listed only for what the deleted
+note said, found by its name, stay listed until then. Any other note changed elsewhere has its row
+drawn again where it stands, as it now reads. The cursor on a row that goes goes to the row that
+took its place, or to the row above when it was the last, or onto the line when no row is left; undo
+brings the note back where it was with the cursor on it. A row being written in, a head typed into
+or a body open, is not taken from under the hands when its note goes elsewhere: it goes once the
+cursor leaves it. A note emptied and left goes the same way, the arrow landing past its row.
 
 ### The line
 The line has one grammar, read in the engine so that both faces have it: words find and everything
@@ -709,8 +722,9 @@ so `#house a` lists what `#house` lists. With words as well, they rank among the
 the scores, span or not. The note the line names has to hold it too. Inside a place, the line
 narrows the place's facts and its finds alike, and a line of labels in a place lists the facts that
 carry them. The rows of a line with nothing to rank by and no span are in the space's order, so they
-can be moved as the rows of an empty line can; the rows of a line of time are not, and are not
-moved. Enter writes the line as it reads: quotes, `~` and spans stay as typed, date words are
+are drawn as a tree, each note under the note it is under among what holds, and can be moved as the
+rows of an empty line can; the rows of a line of time are not, are flat with their arrows, and are
+not moved. Enter writes the line as it reads: quotes, `~` and spans stay as typed, date words are
 written out, after a span's dots too, and `/task` is written as the box at the start of the head, so
 that `Bleed the radiators /task` writes `[ ] Bleed the radiators`. A line of labels alone is the
 exception: it is the name of a place, and Enter goes into it as Tab does and writes nothing.
@@ -773,12 +787,12 @@ label.
 
 The list works as the top of the space does. With nothing on the line to rank by it is what is in
 the place and holds what the line holds, its facts in the order the space keeps them in, or with a
-span in time order, however many, and nothing the engine suggests; a row linked to the note says
-how, `links here`, `linked from here` or `linked both ways`, a row under it through another note has
-its arrow to say which, and nothing is scored. Typing words finds: the note the line names first,
-then the place's facts that match, then what the engine finds in its neighbourhood that matches,
-each best first with its reasons and each holding what the line holds, and a row of nothing between
-the last fact and the first find, where the view says the finds begin. Around a note the
+span in time order, however many, and nothing the engine suggests; a row is drawn under what it is
+under, the place's note being the top, and says `linked from here` or `linked both ways` where the
+note you are in links to it, and nothing is scored. Typing words finds: the note the line names
+first, then the place's facts that match, then what the engine finds in its neighbourhood that
+matches, each best first with its reasons and each holding what the line holds, and a row of nothing
+between the last fact and the first find, where the view says the finds begin. Around a note the
 neighbourhood is what shares its tags and people, words and dates, or links to the same things, with
 only the notes carrying the labels counted as facts; around labels alone it is what their words
 find.
@@ -847,9 +861,10 @@ it in the sheet or the editor, or on another device. One deleted here says
 list steps you out once the cursor is back on the line, since the list holds still till then. What
 was under a note that goes leaves what it was under, keeping the labels of the path it was written
 at, and a note deleted in a place takes with it, each where it stands, the rows that were in the
-place only by being under it, the rest of the list staying as it was; undo puts them back. A note
-deleted on another device takes them only once the list is made again, since the list holds still
-while the cursor walks it. Any arrow on the list that names a note changed or gone is drawn again at
+place only by being under it, the rest of the list staying as it was; undo puts them back. Where
+they stay, what was drawn under a row that goes comes up a level where it stands. A note deleted on
+another device takes them only once the list is made again, since the list holds still while the
+cursor walks it. Any arrow on the list that names a note changed or gone is drawn again at
 once.
 
 ### Terminal
@@ -874,19 +889,19 @@ app stays, and `fzn` with no terminal to draw on says so in one sentence. Tab go
 caret is, and Right at the end of the text does nothing. Shift-Tab is not bound. Ctrl-I is Tab,
 Ctrl-M Enter and Ctrl-[ Escape, as a terminal sends them unless asked to tell them apart, and where
 it is asked they are bound so. Up and Down move the cursor, PageUp and PageDown by ten; Ctrl-Up and
-Ctrl-Down move the note under the cursor a row, the cursor with it. Ctrl-U undoes and Ctrl-Y redoes,
-Ctrl-K links or unlinks the note under the cursor, Ctrl-C copies its first URL (or its head), Ctrl-/
-opens the URL, Ctrl-B shows scores. Ctrl-Y and Ctrl-K are the page's keys for redo and link, and the
-footer names them, `^Y redo` and `^K link`, so that one set is learned for both faces; Ctrl-R and
-Ctrl-L, fzn's own, do the same (see "Redo, link and showing what is archived have keys on the
-page"). Ctrl-_ and Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one byte, which
-crossterm reads as Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived; under the
-kitty flags Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The line and
-the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W, and
-Ctrl-Backspace as Ctrl-W where the terminal tells it from Backspace. A paste goes into the line or
-the head at the caret as one change, its tabs and line breaks made spaces and the breaks at its ends
-dropped. Escape comes back a rung at a time: off the row, writing out its date words, off the text
-on the line, out of the place, and twice on an empty line outside one quits, the first saying
+Ctrl-Down move the note under the cursor past the note beside it, the cursor with it. Ctrl-U undoes
+and Ctrl-Y redoes, Ctrl-K links or unlinks the note under the cursor, Ctrl-C copies its first URL
+(or its head), Ctrl-/ opens the URL, Ctrl-B shows scores. Ctrl-Y and Ctrl-K are the page's keys for
+redo and link, and the footer names them, `^Y redo` and `^K link`, so that one set is learned for
+both faces; Ctrl-R and Ctrl-L, fzn's own, do the same (see "Redo, link and showing what is archived
+have keys on the page"). Ctrl-_ and Ctrl-7 open it too: a terminal sends Ctrl-/ and Ctrl-_ as one
+byte, which crossterm reads as Ctrl-7, so the `^_` the footer named until 2026-10-17 never arrived;
+under the kitty flags Ctrl-_ comes as Control and Shift with the minus key, which is bound too. The
+line and the head take the usual editing keys: Home and End or Ctrl-A and Ctrl-E, Delete, Ctrl-W,
+and Ctrl-Backspace as Ctrl-W where the terminal tells it from Backspace. A paste goes into the line
+or the head at the caret as one change, its tabs and line breaks made spaces and the breaks at its
+ends dropped. Escape comes back a rung at a time: off the row, writing out its date words, off the
+text on the line, out of the place, and twice on an empty line outside one quits, the first saying
 `Escape again to quit`. Ctrl-Q quits from anywhere, writing out the head first. While a tag, a
 person or a head is offered, Tab and Enter take the one in bold, Up and Down choose and Escape
 closes it; Shift-Enter on a row still ticks.
@@ -900,6 +915,7 @@ fits, since a note written there carries every label on it, and past that its mi
 app sets no window title. The line is the first row, after a dim `>` in the column the rows leave
 empty, so that its text lines up with theirs; what its date words and spans stand for is shown after
 it, dimmed, `→ Fri 2026-10-16` or `→ Mon 2026-10-12 18:00 – now`. The rows follow the line directly,
+a row drawn under another two columns further in a level, to the fourth, so six columns at most,
 each a head and then, dimmed, a `¶` if it has a body, the names of what it links to after an arrow,
 and its reasons joined by `·`; the row the cursor is on has the terminal's cursor at the end of its
 head, before the path's labels where they end it, or on the `…` of a head it cuts, the head in bold,
@@ -998,45 +1014,47 @@ results arrive. A faint hairline under the line sets it apart from the rows. The
 caret and, under it in faint grey, the heads at the top of the list fading out by the eighth; at a
 phone's width they run the list's height, faded at its foot as the list is, and scroll, since a
 phone has no arrows to walk onto the rest. As you type, what is found takes their place; only a row
-that is new fades in, and nothing else moves. A row is one line, wider than a phone's, wherever the
-cursor is: a head longer than its row ends in `…` off the cursor, and on it fades at the edge that
-hides it, as a field does (see "A row is one line, and a long head is read beside it" and *Writing
-in a row*). The document never scrolls, at any width: the list scrolls under the line. Only the rows
-that can be seen are made: those that fit and twenty more, at least twenty past the cursor, and
-fifty more whenever the list is scrolled to within two rows of its end; a new list starts again from
-what fits, at its top, and a row made because the list was scrolled or walked to it does not fade
-in. The path, in a place, is in the margin above the line, `main › Boiler`: the space's name and
-then each step, each a way back to it, the first to the top, a note's step read as its row is. No
-step is wider than 22rem, a longer one cut at that. Every step shows while the path fits its box, at
-any width; past that it gives up its middle to one `…`, the oldest step after the space first, as
-the terminal's does, and the space and the last step share the cut of what still does not fit. The
-tab's title stays `fzn`, or `fzn · garden` in another space. Paper, ink and two greys, and one
-colour, a muted blue, for a link; light or dark by the system's preference. What is offered for a
-tag or a person being typed floats under the word, from its mark, or for a name in brackets from its
-first letter, over the rows, or over the word where under would reach the foot: a small sheet, the
-sheet's paper and shadow with a hairline round it, its words soft and the one Tab takes in ink and
-heavier, as the head under the cursor is. On a page at least 75rem wide the body of what the cursor
-is on is read beside the list, 30rem wide and growing to 38rem past 100rem: the note under the
-cursor, and the whole of its head, above the body, when its row cuts it, or with the cursor on the
-line in a place the note you are in. It is rendered as markdown, in the soft grey, from the top of
-the first row's text, with no border, scrolled on its own and faded at its foot as the list is. A
-narrower page has no room for it: a note's body, and the whole of a head its row cuts, are read
-there by opening it, and the note you are in is read above the line, rendered, under the path and in
-the path's smaller size, clamped to six lines, its foot faded as the list's is only when it is cut,
-and a tap on it opens its body in the sheet, as a click does on it read beside the list, a link in
-it opening only the link, so that where you are is all above the line and what is found follows it
-directly; the margin grows downwards only for a body longer than it has room for. While the sheet
-holds the note you are in, it is not read above the line as well but keeps its room there, so that
-nothing moves as the sheet opens and closes, and the list stays scrolled where the line left it, the
-row put under the cursor for the sheet coming and going without moving what is in sight. At a
-phone's width, 640px and under, the column is the screen's width with the line at the top, the note
-you are in is clamped to three lines and, on a touch screen, hidden while the keyboard is up, and
-the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the room, and
-a field there has the focus almost always. A head there is read whole, on as many lines as it takes,
-since there is no room beside the list to read the rest in: every row leaves the arrow's room at its
-end, whether or not it has the arrow, so that a head wraps the same on the cursor as off it, and the
-row under the cursor keeps its tail with its date at the tail's end, so that walking the list moves
-nothing; a row with no tail has no date there.
+that is new fades in, and nothing else moves. A row drawn under another is 1.25rem further in a
+level, to the fourth, so 3.75rem at most, about five letters of a phone's forty, a task's box after
+the indent; at rest it is the one piece of structure the list shows. A row is one line, wider than a
+phone's, wherever the cursor is: a head longer than its row ends in `…` off the cursor, and on it
+fades at the edge that hides it, as a field does (see "A row is one line, and a long head is read
+beside it" and *Writing in a row*). The document never scrolls, at any width: the list scrolls under
+the line. Only the rows that can be seen are made: those that fit and twenty more, at least twenty
+past the cursor, and fifty more whenever the list is scrolled to within two rows of its end; a new
+list starts again from what fits, at its top, and a row made because the list was scrolled or walked
+to it does not fade in. The path, in a place, is in the margin above the line, `main › Boiler`: the
+space's name and then each step, each a way back to it, the first to the top, a note's step read as
+its row is. No step is wider than 22rem, a longer one cut at that. Every step shows while the path
+fits its box, at any width; past that it gives up its middle to one `…`, the oldest step after the
+space first, as the terminal's does, and the space and the last step share the cut of what still
+does not fit. The tab's title stays `fzn`, or `fzn · garden` in another space. Paper, ink and two
+greys, and one colour, a muted blue, for a link; light or dark by the system's preference. What is
+offered for a tag or a person being typed floats under the word, from its mark, or for a name in
+brackets from its first letter, over the rows, or over the word where under would reach the foot: a
+small sheet, the sheet's paper and shadow with a hairline round it, its words soft and the one Tab
+takes in ink and heavier, as the head under the cursor is. On a page at least 75rem wide the body of
+what the cursor is on is read beside the list, 30rem wide and growing to 38rem past 100rem: the note
+under the cursor, and the whole of its head, above the body, when its row cuts it, or with the
+cursor on the line in a place the note you are in. It is rendered as markdown, in the soft grey,
+from the top of the first row's text, with no border, scrolled on its own and faded at its foot as
+the list is. A narrower page has no room for it: a note's body, and the whole of a head its row
+cuts, are read there by opening it, and the note you are in is read above the line, rendered, under
+the path and in the path's smaller size, clamped to six lines, its foot faded as the list's is only
+when it is cut, and a tap on it opens its body in the sheet, as a click does on it read beside the
+list, a link in it opening only the link, so that where you are is all above the line and what is
+found follows it directly; the margin grows downwards only for a body longer than it has room for.
+While the sheet holds the note you are in, it is not read above the line as well but keeps its room
+there, so that nothing moves as the sheet opens and closes, and the list stays scrolled where the
+line left it, the row put under the cursor for the sheet coming and going without moving what is in
+sight. At a phone's width, 640px and under, the column is the screen's width with the line at the
+top, the note you are in is clamped to three lines and, on a touch screen, hidden while the keyboard
+is up, and the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has
+the room, and a field there has the focus almost always. A head there is read whole, on as many
+lines as it takes, since there is no room beside the list to read the rest in: every row leaves the
+arrow's room at its end, whether or not it has the arrow, so that a head wraps the same on the
+cursor as off it, and the row under the cursor keeps its tail with its date at the tail's end, so
+that walking the list moves nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
@@ -1213,23 +1231,23 @@ body, though while the keyboard is up a tap in the head is the caret's. The box 
 task is drawn in its row on every width, the row under the cursor's too but while the caret is at
 the start of its words, when it shows as typed, and a tap or a click on it ticks the task where it
 reads, the cursor and the caret staying where they were; its room for a finger grows into the margin
-before it and stops short of the head's first letter. It is drawn a little larger than a letter, so
-that it reads at a glance, and sits on its head's first line with its middle on the middle of the
-capitals, as the font measures them, in a row and in a body read alike (see "A task's box sits by
-the font's measures"). The `›` at the end of the selected row goes into the note and the one after
-the line into what the line names; a link in a row opens and leaves the cursor where it was; a word
-offered is taken with a tap; the path is the way back, and so is the phone's own back gesture. The
-keyboard is the person's: the page moves the focus between fields while one has it, and otherwise
-gives it only for something that asked to write, a finger on a head's words, a key pressed on a
-keyboard joined to the device, or the word `new note`; no control takes the focus, on any width, so
-the words, what is offered, the cross, the arrows, the path's steps and a task's box act on where
-the cursor is and leave the keyboard as it was. The caret is drawn where the cursor is whether or
-not the keyboard is up, still while it is down. There is no gesture of the app's own: tap, scroll
-and the system's back are the whole of it. A manifest and an icon let the page be added to a home
-screen as an app of its own, the browser's bars in the paper's colour, opening the space it was
-added from, under the name it was added under. The passphrase's field waits for a tap, with the
-resting caret at its start, the keyboard's key says `go`, and a word `open` under the sentence opens
-the space.
+before it, which in a row drawn in is the indent, and stops short of the head's first letter. It is
+drawn a little larger than a letter, so that it reads at a glance, and sits on its head's first line
+with its middle on the middle of the capitals, as the font measures them, in a row and in a body
+read alike (see "A task's box sits by the font's measures"). The `›` at the end of the selected row
+goes into the note and the one after the line into what the line names; a link in a row opens and
+leaves the cursor where it was; a word offered is taken with a tap; the path is the way back, and so
+is the phone's own back gesture. The keyboard is the person's: the page moves the focus between
+fields while one has it, and otherwise gives it only for something that asked to write, a finger on
+a head's words, a key pressed on a keyboard joined to the device, or the word `new note`; no control
+takes the focus, on any width, so the words, what is offered, the cross, the arrows, the path's
+steps and a task's box act on where the cursor is and leave the keyboard as it was. The caret is
+drawn where the cursor is whether or not the keyboard is up, still while it is down. There is no
+gesture of the app's own: tap, scroll and the system's back are the whole of it. A manifest and an
+icon let the page be added to a home screen as an app of its own, the browser's bars in the paper's
+colour, opening the space it was added from, under the name it was added under. The passphrase's
+field waits for a tap, with the resting caret at its start, the keyboard's key says `go`, and a word
+`open` under the sentence opens the space.
 
 *Several tabs.* Each tab open on a space is a client of its own, with its own cursor and path and a
 log of its own. Where the browser gives the page Web Locks, a tab holds the lowest slot no other tab
@@ -1276,7 +1294,8 @@ the app now does is described above; an entry repeats it only where the reason n
 
 - **Graph, not tree.** Prefix paths are not syntax. Explicit structure is flat labels and links:
   tags, people, links. No note contains another. The old ` >> ` convention imports as plain text and
-  is found by the lexical scorer.
+  is found by the lexical scorer. Revised 2026-10-23 by "A list in your order is drawn as a tree":
+  no note contains another, and that stays true; a list in your order draws the graph as a tree.
 
 - **No manual ordering (provisional).** The list was to be recency plus pins, so the position CRDT
   went, pending Sam's confirmation. Reversed 2026-10-15 by "Where a note sits is kept".
@@ -1289,7 +1308,9 @@ the app now does is described above; an entry repeats it only where the reason n
   nothing is typed and no key is pressed for it. The explicit chord is a correction. There is no
   marking of links while drafting: to put a draft somewhere, go there and write it, and the line
   comes with you. A Tab-to-link was considered and dropped, because it was one more thing to
-  remember for a flow position already covers.
+  remember for a flow position already covers. Revised 2026-10-23 by "A list in your order is drawn
+  as a tree": a row's place in a drawn tree is a position too, so a row opened there links to what
+  it is drawn under.
 
 - **The engine sees only what the text carries, plus where you were.** Words, tags, dates and
   position are the free signals. The paths you walk between notes are the next one: going from A to
@@ -1538,7 +1559,9 @@ the app now does is described above; an entry repeats it only where the reason n
   cursor leaves it, the arrow landing past it as if the row had not been there. It takes nothing
   from the line, where the original prepended the search text to the new line: a place links what is
   written in it, which is the revival's way of saying what a note is about, and a search is not a
-  place.
+  place. Revised 2026-10-23 by "A list in your order is drawn as a tree": it now takes its place in
+  the tree from the row, the first of the notes under it or beside it, and still nothing from the
+  line.
 
 - **Backspace on an empty row takes it away.** Decided 2026-10-14, at Sam's direction. It steps up,
   to the row above or onto the line. It is what Backspace does to an empty line everywhere, and it
@@ -1732,7 +1755,10 @@ the app now does is described above; an entry repeats it only where the reason n
   once listed was never built; moving a note to the top is what it was for. The order is walked
   afresh each time the list is made, O(n log n) in the notes: 5 to 7 ms over 30,000 notes in a
   release build, against under 1 ms for the sort by `updated` it replaces, so nothing is cached.
-  Revised 2026-10-16 by "The order is kept": the walk is kept between lists.
+  Revised 2026-10-16 by "The order is kept": the walk is kept between lists. Revised 2026-10-23 by
+  "A list in your order is drawn as a tree": Enter places a new note directly after the note before
+  it among its siblings, or first among them directly before the next, and a move goes among
+  siblings, all under the note going with it.
 
 - **Stamps are kept to the millisecond.** Decided 2026-10-15, at Sam's direction, revising what the
   logical clock of "Per-note last-writer-wins stays, for now" steps by, the times in the line
@@ -1809,7 +1835,8 @@ the app now does is described above; an entry repeats it only where the reason n
   when typing. Since every row on an empty line is a fact, all of them can be moved, and Ctrl-L
   there can only unlink; a note to link is one the line found. Revised 2026-10-22 by "Where you are
   is the whole path": what is in a note's place is everything under it however deep, and what it
-  links to.
+  links to. Revised 2026-10-23 by "A list in your order is drawn as a tree": the empty line's list
+  is drawn as a tree, and `links here` is no longer said.
 
 - **A place is the last note on the path and the labels after it.** Decided 2026-10-15, agreed with
   Sam, replacing "a note on the path starts afresh … in `#house › Boiler › today` only today counts"
@@ -2394,6 +2421,8 @@ the app now does is described above; an entry repeats it only where the reason n
   1, a label alone from 7 to 3, Enter from 9 to 3, letters from 18 to 8 and a phrase from 17 to 8.
   What is still over 5 ms there is a word of two letters being typed, whose prefix expands to
   hundreds of words; bounding that changes the ranking, and waits for a measurement on a real space.
+  Revised 2026-10-23 by "A list in your order is drawn as a tree": where each note is in the walk is
+  kept beside the walk.
 
 - **The line is a query, and a snapshot is a write.** Decided 2026-10-16, agreed with Sam, revising
   "Export takes the line" and "The snapshot line is the way in and out, for good".
@@ -2665,7 +2694,8 @@ the app now does is described above; an entry repeats it only where the reason n
   takes only its row too, and so does a note ticked, archived or deleted on another device. Revised
   2026-10-22 by "Where you are is the whole path": in a place, a delete takes too the rows that were
   there only by being under the deleted note, each where it stands, and every arrow that named the
-  note is drawn again.
+  note is drawn again. Revised 2026-10-23 by "A list in your order is drawn as a tree": what was
+  drawn under the row comes up a level where it stands.
 
 - **`/task` is a way of typing the box.** Decided 2026-10-17, at Sam's direction, revising "A date
   is text, and `/fri` is a way of typing one" where it says there is no second expansion. The box is
@@ -3242,7 +3272,9 @@ the app now does is described above; an entry repeats it only where the reason n
   to act in the same moment, and the row is seen to go. Weighed: making the whole list again on any
   arrival, which reorders what the line ranks and puts new notes above the cursor; and leaving the
   row under the cursor until the cursor leaves it whether or not it was being written in, which
-  leaves a note done elsewhere under the cursor with nothing to say why.
+  leaves a note done elsewhere under the cursor with nothing to say why. Revised 2026-10-23 by "A
+  list in your order is drawn as a tree": what was drawn under the row comes up a level where it
+  stands.
 
 - **The page says its name in its address.** Decided 2026-10-18, at Sam's direction, revising "The
   phone is a frame with a bar" where it says a home-screen app reaches a space under a name only
@@ -3780,6 +3812,9 @@ the app now does is described above; an entry repeats it only where the reason n
   jump as a link; labels read through links, which makes `#house` one thing on the line and another
   as a place; the box kept to the labels after the note, which loses the follow-up as before; a
   depth limit, a number to remember; and only the links made by writing, a second kind of link.
+  Revised 2026-10-23 by "A list in your order is drawn as a tree": a row under the place through
+  another note is drawn under it, and its arrow is dropped.
+
 - **A note's head is offered inside brackets.** Decided 2026-10-23, at Sam's ask, revising "The tags
   a word starts are offered as it is typed" and the Model's bracket rule of 2026-10-13, where a
   `[[head]]` named only a note whose whole head it was. A link typed in brackets linked only if the
@@ -3838,6 +3873,67 @@ the app now does is described above; an entry repeats it only where the reason n
   unlinkable by name; offering whole heads only, which left out every task and every note written in
   a place; and naming by the name alone, without the whole head first, which would let `[[Order
   oil]]` link a labelled note as well as the one actually called that.
+
+- **A list in your order is drawn as a tree.** Decided 2026-10-23, at Sam's ask, revising "Graph,
+  not tree" in what a list shows, "Position is the link", "A new row opens under any row" and "Where
+  a note sits is kept" in where a new row and a move land, "The order is kept" in what is kept
+  beside the walk, "A place lists what is in it; typing finds" and "Where you are is the whole path"
+  in what a row in a place says, and "A delete leaves the list where it was" and "A row whose note
+  goes is taken away where it stands" for what was drawn under a row that goes. In `#house`, Replace
+  the radiator valves was written and gone into, and upstairs and downstairs written there. One step
+  out the list read `upstairs → Replace the radiator valves`, `downstairs → Replace the radiator
+  valves`, `Replace the radiator valves`: peers of what they were under, above it, each saying so in
+  grey, and the note they were under said nothing of them. Sam read it as a loose relation and wrote
+  the next pair as notes of their own; the relation was there and could not be seen. Now a list in
+  the space's order, the one an empty line or a line of nothing but holds lists at the top and in a
+  place, the open and done tasks among them, draws each note under the first note it links to that
+  is listed, or failing one under the nearest listed note above the first note it links to, walked
+  through archived notes and notes that do not hold the line, a level in, the notes beside one
+  another in the space's order and all under each following it; in a note's place a link to the note
+  you are in is the top. A note under another through one not listed stands among those beside it
+  where that one stands, so a task ticked leaves its subtask where the list made again puts it,
+  under the ticked task's own parent and naming it. Nothing is folded, since a follow-up written in
+  a task is to stay in sight a step out. The arrow goes where the drawing says the same thing, and
+  so does `links here`; an arrow to any other note stays, `linked from here` and `linked both ways`
+  stay, and a list of scores or of time is flat with its arrows, since its order is the point.
+  `fzn query` lists in the app's order, a subtree after its parent, with no depth. Enter on a row
+  writes the new note as it is drawn: beside the row, under what the row is under, or, on a row with
+  notes drawn under it, first among them, under it, linked to the note it is drawn under in place of
+  the path's last and carrying the path's labels; it is placed directly after the note before it
+  among the notes beside it, or first among them directly before the next, so it is where it was
+  drawn when the list is made again. Enter on a new row left empty, the last under its note, takes
+  it out a level where it stands, and the foot offers that there and nowhere else, as `out a level`.
+  So a run written inside a subtree stays there, as "Where a note sits is kept" asked of a run
+  written under a row, and a run written inside a place reads inside it from outside. A move goes
+  among the notes beside it, taking all under it along, and the foot offers it only where there is a
+  note beside it that way. Depth stops at the fourth level, two columns a level in the terminal and
+  1.25rem on the page, a task's box after the indent, and a note deeper is drawn at the fourth with
+  its arrow. The notes are as they were: a link is the target's id held on the note, a note under
+  two listed notes is drawn once, under the one it links to first, which for a note written in place
+  is where it was written, and a ring is drawn from its note that comes first, which keeps its
+  arrow. No version is written for any of it and the line format does not change; a build from
+  before lists the same notes flat. The top is drawn only as far as its 500 rows, each note's place
+  in the walk being kept beside the walk and the notes under a note found by what links to it; a
+  list that is not cut, a place's or a command's, is drawn whole in one pass. On the synthetic space
+  of 30,000 notes, in release, an empty line went from 0.75 ms to 1.1, its order from 0.2 to 0.7, a
+  line of `#house` stayed about 3.5, `#house` as a place went from about 54 to about 45 and the hub
+  of 4,000 from 9 to 8, since a row under another no longer works out its arrow, and `fzn query` of
+  everything from 47 to 35; a space whose newest 30,000 notes are all under a hundred old ones, the
+  worst case for the top, costs 11 ms, a parent looked up for each. Why a drawing and not a tree:
+  what was missing was being seen, not being stored, and a tree of notes makes a parent a second
+  kind of link beside the one there is, puts a note in one place where the link chord puts it in
+  two, and changes the line format, for what the links already hold. What it costs: a note filed in
+  two places shows in one; moving a note to another parent is still the link chord in each place,
+  where an outliner has Tab and Shift-Tab, and Tab here goes in; a hub at the top is drawn whole,
+  where what was written in it was listed at the top newest first; Enter does one more thing, which
+  the drawing shows; and the rows under a deleted note stand a level up until the list is made
+  again, and then go to the top. Weighed: a tree, reversing "Graph, not tree", for the reasons
+  above; a mark on a row with notes under it, which says there is something and not what, and is a
+  count by another name; folding, which hides the follow-up that "Where you are is the whole path"
+  brought into sight, keeps a state per note and wants a key and a mark, where going in already
+  folds; the notes under a note grouped after it without indenting, which keeps every arrow; and a
+  new row opened in a subtree linked to the path alone, which is drawn in the subtree and jumps out
+  of it when the list is made again.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -3922,7 +4018,10 @@ the app now does is described above; an entry repeats it only where the reason n
   gone, and are found by their own words and the labels they were written with from then on, so the
   notes written in a place whose note is deleted are scattered back into the space. Whether they
   should be told, moved to what the deleted note linked to, or offered for deletion with it, use
-  decides.
+  decides. Drawn as a tree, they stand a level up where the deleted note was until the list is made
+  again, and then go to the top, each at its own place in the order, so the question is now seen.
+- Moving a note to another note. Today that is the link chord in each place, two chords. Whether
+  it wants a key of its own, and which, given Tab goes in and Shift-Tab is left alone, use decides.
 - Whether a cut head on a page too narrow to read it beside the list wants more than `body` to read
   it whole, and whether a head being written on a phone should stop growing its row (see "A row is
   one line, and a long head is read beside it"); use decides.

@@ -8,7 +8,8 @@ use crate::record::Record;
 use crate::text;
 use crate::time::{Day, Moment};
 
-use super::{Action, Effect, Row, Session};
+use super::list::unsaid;
+use super::{Action, DEEPEST, Effect, Row, Session};
 
 /// The note under the cursor as it is being written: what it now reads, and what it was. One
 /// lasts as long as one visit of the cursor to a row, and everything it writes in that time is
@@ -38,6 +39,9 @@ pub(super) struct Writing {
     pub(super) entry: Option<usize>,
     /// The note you are in, its body opened from the line: closing it goes back to the line.
     pub(super) from_line: bool,
+    /// The note a new row is drawn under, in a list drawn as a tree, which it links to in place
+    /// of the note you are in.
+    under: Option<String>,
 }
 
 impl Writing {
@@ -54,6 +58,7 @@ impl Writing {
             label: String::new(),
             entry: None,
             from_line: false,
+            under: None,
         }
     }
 
@@ -170,6 +175,7 @@ impl Session {
     /// when leaving took that note away, so that it does not fall on a neighbour.
     pub(super) fn on_field(&mut self, action: Action) -> Option<Action> {
         let today = self.today();
+        let steps_out = self.steps_out().is_some();
         let Some(field) = self.field.as_mut() else {
             return Some(action);
         };
@@ -278,6 +284,10 @@ impl Session {
                     self.onto_line();
                 }
             }
+            // Enter on a new row left empty, the last under its note, takes it out a level where
+            // it stands, as Enter on an empty item at the end of a list does in a document. It is
+            // already where it is then drawn, since it was the end of what is under that note.
+            Action::Write if steps_out => self.step_out(),
             // A new note with nothing in it is already an empty row to write in, and has nowhere
             // to go in to and nothing to act on; leaving it for a chord would take the row away.
             Action::Write
@@ -404,12 +414,15 @@ impl Session {
         self.stale = true;
     }
 
-    /// The first version of the new note being written in the field, linked to the note being
-    /// looked around and placed after the row above its own, or at the top. That is where its
-    /// row was opened, since whatever moves out of a place leaves the row first, and the list
-    /// holds still while the cursor is on it.
+    /// The first version of the new note being written in the field, linked to the note its row
+    /// is drawn under, or else to the note being looked around, and placed where its row was
+    /// opened, so that it stays there when the list is made again: at the top from the line, and
+    /// from a row directly after the note before it among the notes beside it, or first among
+    /// them directly before the next. In a flat list that is after the row above. Its row is
+    /// where it was opened, since whatever moves out of a place leaves the row first, and the
+    /// list holds still while the cursor is on it.
     fn created(&self, field: &Writing, text: String) -> Record {
-        let around = self.place_note();
+        let around = field.under.as_ref().or(self.place_note());
         let links = self.engine.links_on_save(
             &field.id,
             "",
@@ -421,13 +434,82 @@ impl Session {
             created: Some(field.opened),
             updated: Some(self.host.now()),
             archived: text::task(&text) == Some(true),
-            after: self
-                .rows
-                .iter()
-                .position(|r| r.id == field.id)
-                .and_then(|i| i.checked_sub(1))
-                .map(|i| self.rows[i].id.clone()),
+            after: self.placed_after(&field.id),
             ..Record::new(field.id.clone(), text)
+        }
+    }
+
+    /// The note a new row is placed after, for it to stay where it was opened.
+    fn placed_after(&self, id: &str) -> Option<String> {
+        let at = self.rows.iter().position(|r| r.id == id)?;
+        let row = &self.rows[at];
+        let above = self.rows[..at].last()?;
+        // The note before it among the notes beside it, unless it is the first of them.
+        for r in self.rows[..at].iter().rev() {
+            if row.under.as_ref() == Some(&r.id) {
+                break;
+            }
+            if r.under == row.under {
+                return Some(r.id.clone());
+            }
+        }
+        // First, it goes where a move up puts a note: after the note the next one follows.
+        let next = self.rows[at + 1..]
+            .iter()
+            .find(|r| r.level <= row.level)
+            .filter(|r| r.under == row.under);
+        let Some(next) = next else {
+            return Some(above.id.clone());
+        };
+        let walk = self.notes.walk();
+        let place = walk.place(&next.id)?;
+        let before = place.checked_sub(1)?;
+        walk.records().nth(before).map(|r| r.id.clone())
+    }
+
+    /// Where the new row under the cursor, left empty, goes when Enter takes it out a level: how
+    /// deep, and under what. Only the last of the rows under a note goes out, and not one at the
+    /// top.
+    pub(super) fn steps_out(&self) -> Option<(usize, Option<String>)> {
+        if !self.field.as_ref().is_some_and(Writing::blank) {
+            return None;
+        }
+        let at = self.cursor?;
+        let row = self.rows.get(at)?;
+        let under = row.under.as_ref()?;
+        if self
+            .rows
+            .get(at + 1)
+            .is_some_and(|next| next.under == row.under)
+        {
+            return None;
+        }
+        let parent = self.rows.iter().find(|r| &r.id == under)?;
+        Some((parent.level, parent.under.clone()))
+    }
+
+    /// Takes the new row under the cursor out a level where it stands. What was kept of it, as
+    /// when it was typed in and cleared, is taken back, since it was linked where it was.
+    fn step_out(&mut self) {
+        let Some((level, under)) = self.steps_out() else {
+            return;
+        };
+        if self
+            .field
+            .as_ref()
+            .is_some_and(|f| self.notes.get(&f.id).is_some())
+        {
+            self.unwrite_new();
+        }
+        if let Some(at) = self.cursor
+            && let Some(row) = self.rows.get_mut(at)
+        {
+            row.level = level;
+            row.depth = level.min(DEEPEST);
+            row.under.clone_from(&under);
+        }
+        if let Some(field) = self.field.as_mut() {
+            field.under = under;
         }
     }
 
@@ -582,6 +664,18 @@ impl Session {
         let opened = self.host.now();
         let label = self.inherit(String::new(), opened.day());
         let at = at.min(self.rows.len());
+        // In a list drawn as a tree it is written as it is drawn: the first of the notes drawn
+        // under the row it was opened from, if there are any, and otherwise beside that row,
+        // under what it is under.
+        let (level, under) = match at.checked_sub(1).and_then(|i| self.rows.get(i)) {
+            Some(above) if self.nests() => match self.rows.get(at) {
+                Some(below) if below.under.as_ref() == Some(&above.id) => {
+                    (above.level + 1, Some(above.id.clone()))
+                }
+                _ => (above.level, above.under.clone()),
+            },
+            _ => (0, None),
+        };
         self.rows.insert(
             at,
             Row {
@@ -591,18 +685,22 @@ impl Session {
                 task: None,
                 archived: false,
                 has_body: false,
-                // Written here, it will be linked to the last note on the path, and carry its
-                // labels.
+                // Written here, it will be linked to the last note on the path, or to the note it
+                // is drawn under, and carry the path's labels.
                 linked: !self.path.is_empty(),
                 links: Vec::new(),
                 reasons: Vec::new(),
                 score: None,
+                depth: level.min(DEEPEST),
+                level,
+                under: under.clone(),
             },
         );
         self.cursor = Some(at);
         self.field = Some(Writing {
             new: true,
             label: label.clone(),
+            under,
             ..Writing::new(id, label, opened)
         });
     }
@@ -775,10 +873,15 @@ impl Session {
             return;
         };
         let body = text::has_body(&record.text);
+        let under = self
+            .rows
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| unsaid(r.under.as_deref(), r.level));
         let (head, shown, links) = (
             record.head().to_owned(),
             self.shown(record.head()),
-            self.link_heads(record),
+            self.link_heads_besides(record, under),
         );
         let task = text::task(&record.text);
         if let Some(row) = self.rows.iter_mut().find(|r| r.id == id) {

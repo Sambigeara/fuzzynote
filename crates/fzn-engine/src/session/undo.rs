@@ -373,22 +373,22 @@ impl Session {
         self.leave_facts();
     }
 
-    /// Moves the note under the cursor `by` rows of the list as it is shown, as the original's
-    /// move up and move down did, one note alone. Down, it is placed after the row it passes;
-    /// up, after the note that row follows in the space's order, or at the top. Either way it
-    /// lands beside that row, in any view, filtered or not, and goes past nothing else. What was
-    /// placed after it is placed instead after the note it followed, so that a run written under
-    /// it stays where it was, in its order, and no cycle is made. The whole is one change to
-    /// undo, which puts the note back after the note it followed.
+    /// Moves the note under the cursor `by` places among the notes beside it, those drawn under
+    /// the same note or at the top, as the original's move up and move down did, one note alone;
+    /// what is drawn under it goes with it, since that is drawn from its links and not from where
+    /// it is placed. Down, it is placed after the note it passes; up, after the note that one
+    /// follows in the space's order, or at the top. Either way it lands beside that note, in any
+    /// view, filtered or not, and goes past nothing else. What was placed after it is placed
+    /// instead after the note it followed, so that a run written under it stays where it was, in
+    /// its order, and no cycle is made. The whole is one change to undo, which puts the note back
+    /// after the note it followed.
     pub(super) fn shift(&mut self, by: i64) {
-        let rows = self.in_order();
-        let Some(from) = self.cursor.filter(|&i| i < rows) else {
+        let Some(from) = self.cursor else {
             return;
         };
-        let to = (from as i64 + by).clamp(0, rows as i64 - 1) as usize;
-        if to == from {
+        let Some(to) = self.sibling(from, by) else {
             return;
-        }
+        };
         let Some(note) = self.selected_record().cloned() else {
             return;
         };

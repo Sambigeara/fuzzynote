@@ -88,10 +88,22 @@
 //! what was listed beside it, found by its name, does not go with it, and a note changed
 //! elsewhere is drawn again where it stands.
 //!
-//! Where a note sits is kept, as it was in the original: a note opened under a row is placed
-//! after it, one opened or written from the line at the top, and it stays there on every device.
-//! An edit never moves a note; moving one is asked for, a row at a time, and what was written
-//! under it stays where it was.
+//! A list in the space's order, the one an empty line or a line of nothing but holds makes at the
+//! top or in a place, draws each note under the note it is under, a level in: the first note it
+//! links to that is listed, or failing one the nearest listed note above that, walked through what
+//! is not listed. In a note's place a link to the note you are in is the top. What is under a note
+//! follows it, the notes beside one another in the space's order, and a row's arrow leaves out
+//! what the drawing says. A list of scores or of time stays flat with its arrows, since its order
+//! is the point. The tree is drawn from the links and nothing of it is stored, so a note is
+//! written as it is drawn: a row opened under a row with notes drawn under it is the first of
+//! them, and one opened under any other is beside it, each linked to what it is drawn under.
+//!
+//! Where a note sits is kept, as it was in the original: a note opened under a row is placed where
+//! it is drawn, after the note before it among those beside it or, first among them, before the
+//! next, which in a flat list is after the row above; one opened or written from the line is at
+//! the top, and it stays there on every device. An edit never moves a note; moving one is asked
+//! for, a place at a time among the notes beside it, all under it going with it, and what was
+//! placed after it stays where it was.
 //!
 //! A face owns none of this. It says what was asked for, as an [`Action`], carries out the
 //! [`Effect`]s that come back, and paints the [`View`]. Which key or gesture asks for what is the
@@ -130,6 +142,9 @@ use undo::Change;
 const TOP_LIMIT: usize = 500;
 const FOUND_LIMIT: usize = 60;
 const PLACE_LIMIT: usize = 200;
+/// How deep a row is drawn at most, the top being none: a note deeper is drawn this deep, and its
+/// arrow says what it is under, since the drawing no longer does.
+const DEEPEST: usize = 3;
 
 /// What a session needs from the machine it runs on.
 pub trait Host {
@@ -156,16 +171,19 @@ pub enum Action {
     Move(i64),
     /// Put the cursor on this row of the list, or on the line.
     Select(Option<usize>),
-    /// Move the note under the cursor down the list by this many rows, or up it, and keep the
-    /// cursor on it. Only where the list is in the order notes are kept in: with nothing on the
-    /// line, at the top or in a place.
+    /// Move the note under the cursor this many places down among the notes beside it, those
+    /// drawn under the same note or at the top, or up, with all that is drawn under it, and keep
+    /// the cursor on it. Only where the list is in the order notes are kept in: with nothing on
+    /// the line to rank by and no time on it, at the top or in a place.
     Shift(i64),
     /// Turn the line into a note, linked to the note being looked around, and put the cursor on
     /// it. With nothing on the line, open a new note at the top of the list to write in place.
     /// A line of labels and nothing else is never written: it is gone into as `GoIn` goes, and
     /// nothing happens where `GoIn` would go nowhere. On a row, write out its date words and open
-    /// a new note under it to write in place; or, if its head has a date word or `/task` still to
-    /// write out, write those out and stay.
+    /// a new note under it to write in place, written as it is drawn in a list drawn as a tree:
+    /// the first of the notes drawn under the row, if there are any, and otherwise beside it; or,
+    /// if its head has a date word or `/task` still to write out, write those out and stay. On a
+    /// new row left empty, the last under its note, take it out a level where it stands.
     Write,
     /// Go into the note under the cursor. On the line, go into what the line names: each tag,
     /// person or day of a line of nothing else, one after another, or else the one note it is the
@@ -381,11 +399,22 @@ pub struct Row {
     pub linked: bool,
     /// The heads, as they are now and as a row here shows them, of the notes this one is linked
     /// to by id. The note being looked around is left out, since everything on the list is about
-    /// it, so a row under it through another note says which.
+    /// it, and so is the note the row is drawn under, which the drawing says, so a row under the
+    /// place through a note it is not drawn under says which.
     pub links: Vec<String>,
     /// Why the note is listed.
     pub reasons: Vec<String>,
     pub score: Option<f32>,
+    /// How deep the row is drawn, under how many of the rows above it, from none to three. A list
+    /// in the space's order draws each note under the listed note it is under; any other list is
+    /// flat, and every row of it is at none.
+    pub depth: usize,
+    /// How deep the row is, however deep it is drawn.
+    #[serde(skip)]
+    pub(crate) level: usize,
+    /// The listed note the row is drawn under, if any.
+    #[serde(skip)]
+    pub(crate) under: Option<String>,
 }
 
 /// The note under the cursor as it now reads. There is one whenever the cursor is on a row.
@@ -861,9 +890,14 @@ impl Session {
         }
         match (self.selected(), field) {
             (Some(row), Some(field)) => {
-                // A new note with nothing in it is already an empty row to write in.
-                // A head with a word still to write out writes it out first.
-                if !blank {
+                // A new note with nothing in it is already an empty row to write in, and the last
+                // under its note goes out a level. A head with a word still to write out writes
+                // it out first.
+                if blank {
+                    if self.steps_out().is_some() {
+                        offer(Action::Write, "out a level");
+                    }
+                } else {
                     offer(
                         Action::Write,
                         match (field.has_words(self.today()), zoomed) {
@@ -906,12 +940,12 @@ impl Session {
                     if !text::facts(&field.text).urls.is_empty() {
                         offer(Action::OpenUrl, "open URL");
                     }
-                    let rows = self.in_order();
-                    if let Some(i) = self.cursor.filter(|&i| i < rows) {
-                        if i > 0 {
+                    // A move goes among the notes beside the row, so only where there is one.
+                    if let Some(i) = self.cursor {
+                        if self.sibling(i, -1).is_some() {
                             offer(Action::Shift(-1), "move up");
                         }
-                        if i + 1 < rows {
+                        if self.sibling(i, 1).is_some() {
                             offer(Action::Shift(1), "move down");
                         }
                     }

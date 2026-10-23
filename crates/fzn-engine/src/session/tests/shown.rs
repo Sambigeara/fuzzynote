@@ -113,7 +113,11 @@ fn every_label_on_the_path_is_hidden_from_a_row_its_arrow_and_the_path() {
     assert_eq!(shown(&s, "[ ] Pump #house"), Some("[ ] Pump"));
     let seal = s.rows.iter().find(|r| r.id == "seal").unwrap();
     assert_eq!(seal.shown.as_deref(), Some("[ ] New seal"));
+    assert!(seal.links.is_empty(), "drawn under what it is under");
+    type_in(&mut s, "seal");
+    let seal = s.rows.iter().find(|r| r.id == "seal").unwrap();
     assert_eq!(seal.links, ["[ ] Pump"], "the arrow, its box kept");
+    clear(&mut s);
     go_to(&mut s, "[ ]");
     go_into(&mut s, "[ ] Pump #house");
     assert_eq!(path(&s), ["#house", "Boiler", "[ ]", "[ ] Pump"]);
@@ -126,11 +130,12 @@ fn every_label_on_the_path_is_hidden_from_a_row_its_arrow_and_the_path() {
     assert_eq!(path(&s), ["#house", "[ ] Pump"]);
 
     // At the top nothing is on the path, and an arrow leaves off only what its row's own head
-    // ends with, since the row says that.
+    // ends with, since the row says that. Words on the line list it flat, with its arrows.
     s.act(Action::Back);
     s.act(Action::Back);
     clear(&mut s);
     assert!(path(&s).is_empty());
+    type_in(&mut s, "pump");
     let links = |s: &Session, id: &str| s.rows.iter().find(|r| r.id == id).unwrap().links.clone();
     assert_eq!(links(&s, "seal"), ["[ ] Pump"]);
     assert_eq!(links(&s, "pump"), ["# Boiler"]);

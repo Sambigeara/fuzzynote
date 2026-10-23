@@ -1239,6 +1239,11 @@ function paintRows() {
     const apart = i === view.finds_from;
     li.classList.toggle('apart', apart);
     li.classList.toggle('archived', row.archived);
+    // How deep the row is drawn, which the stylesheet turns into its indent.
+    if (li.dataset.depth !== String(row.depth)) {
+      li.dataset.depth = row.depth;
+      li.style.setProperty('--depth', row.depth);
+    }
     // A new note with nothing in it has nowhere to go in to, so its row has no arrow.
     li.classList.toggle('blank', selected && field?.fresh != null);
     const k = rowKey(row, selected, apart);

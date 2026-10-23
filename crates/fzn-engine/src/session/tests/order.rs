@@ -115,7 +115,9 @@ fn a_note_moves_among_the_facts_of_a_place() {
     select(&mut s, "a garden");
     assert!(!labels(&s).contains(&"move down"), "the facts end here");
     s.act(Action::Back);
-    assert_eq!(heads(&s), ["House", "Order oil", "a garden", "Boiler"]);
+    assert_eq!(heads(&s), ["Boiler", "House", "Order oil", "a garden"]);
+    let order: Vec<&str> = s.notes.order().iter().map(|r| r.head()).collect();
+    assert_eq!(order, ["House", "Order oil", "a garden", "Boiler"]);
 }
 
 #[test]
@@ -286,9 +288,9 @@ fn a_fact_moved_up_goes_past_the_fact_above_it_and_nothing_else() {
         heads(&s)[..3],
         ["Bleed the radiators", "Order oil", "a garden"]
     );
-    s.act(Action::Back);
+    let order: Vec<&str> = s.notes.order().iter().map(|r| r.head()).collect();
     assert_eq!(
-        heads(&s),
+        order,
         [
             "Bleed the radiators",
             "House",

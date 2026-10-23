@@ -823,13 +823,7 @@ fn a_note_written_in_an_open_task_among_the_open_tasks_is_listed_back_among_them
 
     s.act(Action::Back);
     assert_eq!(path(&s), ["#work", "#review", "[ ]"]);
-    assert_eq!(
-        heads(&s),
-        [
-            "[ ] Order fence posts #work #review",
-            "[ ] Fix the fence #work #review"
-        ]
-    );
+    assert_eq!(drawn(&s), ["[ ] Fix the fence", "  [ ] Order fence posts"]);
 
     select(&mut s, "[ ] Fix the fence #work #review");
     s.act(Action::Archive);
