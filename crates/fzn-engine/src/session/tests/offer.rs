@@ -719,3 +719,79 @@ fn a_name_taken_and_saved_links_the_note_it_names() {
         .clone();
     assert_eq!(new.links, ["bleed"]);
 }
+
+#[test]
+fn a_link_by_name_is_dropped_with_its_brackets_though_a_whole_head_now_has_the_name() {
+    let mut s = session();
+    put(&mut s, "t", "[ ] Bleed the radiators #house", &[], 1_000);
+    put(
+        &mut s,
+        "a",
+        "Call about [[Bleed the radiators]]",
+        &["t"],
+        2_000,
+    );
+    put(&mut s, "plain", "Bleed the radiators", &[], 3_000);
+    select(&mut s, "Call about [[Bleed the radiators]]");
+    let effects = edited(&mut s, "Call about the radiators");
+    assert!(kept(&effects)[0].links.is_empty());
+}
+
+#[test]
+fn a_tag_after_brackets_left_open_is_offered_as_the_text_reads_it() {
+    let mut s = session();
+    tagged(&mut s);
+    typed(&mut s, "see [[ the #ho");
+    assert_eq!(words(&s), ["#house"]);
+}
+
+#[test]
+fn nothing_is_offered_inside_a_name_whose_brackets_are_closed_further_on() {
+    let mut s = session();
+    housed(&mut s);
+    type_in(&mut s, "[[ord foo]]");
+    s.act(Action::At(5));
+    assert_eq!(offered(&s), None);
+}
+
+#[test]
+fn taking_a_name_before_one_closing_bracket_writes_only_the_other() {
+    let mut s = session();
+    housed(&mut s);
+    type_in(&mut s, "[[ord]");
+    s.act(Action::At(5));
+    s.take_caret();
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "[[Order oil]]");
+    assert_eq!(s.take_caret().line, Some("[[Order oil]]".len()));
+}
+
+#[test]
+fn a_name_typed_whole_is_offered_first_and_the_longer_ones_after_it() {
+    let mut s = session();
+    headed(&mut s);
+    put(&mut s, "call", "Call about it", &["service"], 7_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "[[boiler");
+    assert_eq!(
+        words(&s),
+        ["Boiler", "Boiler service"],
+        "the service is linked to more, and still comes second"
+    );
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "[[Boiler]]");
+}
+
+#[test]
+fn a_tag_typed_whole_is_offered_first_and_the_longer_ones_after_it() {
+    let mut s = session();
+    tagged(&mut s);
+    put(&mut s, "earth", "An earth #foxes", &[], 7_000);
+    put(&mut s, "cubs", "Cubs #foxes", &[], 8_000);
+    put(&mut s, "night", "At night #foxes", &[], 9_000);
+    s.act(Action::Select(None));
+    typed(&mut s, "#fox");
+    assert_eq!(words(&s), ["#fox", "#foxes"]);
+    s.act(Action::Take(None));
+    assert_eq!(s.line, "#fox ");
+}

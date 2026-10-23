@@ -17,7 +17,7 @@ pub enum Label {
     /// The id of a note this one is linked to.
     Link(String),
     /// The note's own head, normalised, so that a `[[head]]` typed into a text can be resolved
-    /// to it when the text is saved, and offered while it is typed.
+    /// to it when the text is saved, before any note only called so.
     Head(String),
     /// The note's head without its box and the labels that end it, normalised: what brackets
     /// name it by when no note's head is the name whole, and what is offered while it is typed.

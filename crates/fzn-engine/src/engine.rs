@@ -629,13 +629,20 @@ impl Engine {
     /// end them. Brackets are a way of typing a link and nothing more: the link itself is the id,
     /// held on the note that was saved.
     pub fn named_in(&self, text: &str) -> Vec<String> {
+        self.named_by(text, true)
+    }
+
+    /// The notes a text names in brackets, by the tiers `named_in` reads them by, or if not
+    /// `tiered` by either tier: every note whose whole head or whose name a bracketed name is.
+    fn named_by(&self, text: &str, tiered: bool) -> Vec<String> {
         let mut named = Vec::new();
         for name in text::facts(text).links {
-            let mut docs = self.index.docs_with(&Label::Head(name.clone()));
-            if docs.is_empty() {
-                docs = self.index.docs_with(&Label::Bare(name));
-            }
-            for &d in docs {
+            let whole = self.index.docs_with(&Label::Head(name.clone()));
+            let called = match tiered && !whole.is_empty() {
+                true => &[][..],
+                false => self.index.docs_with(&Label::Bare(name)),
+            };
+            for &d in whole.iter().chain(called) {
                 if let Some(doc) = self.docs[d as usize].as_ref()
                     && !named.contains(&doc.note.id)
                 {
@@ -648,12 +655,15 @@ impl Engine {
 
     /// The links a note holds once its text is saved. Every note the new text names in brackets
     /// is linked, a link whose brackets were taken out of the text is dropped, and links made
-    /// any other way are kept. A note does not link to itself.
+    /// any other way are kept. A note does not link to itself. Whether brackets were taken out is
+    /// asked of either tier, since which tier names a note can change between saves, as a note
+    /// whose whole head is a name is written after a link was made by that name.
     pub fn links_on_save(&self, id: &str, old: &str, new: &str, links: &[String]) -> Vec<String> {
-        let (before, after) = (self.named_in(old), self.named_in(new));
+        let (before, still) = (self.named_by(old, false), self.named_by(new, false));
+        let after = self.named_in(new);
         let mut links: Vec<String> = links
             .iter()
-            .filter(|l| !before.contains(l) || after.contains(l))
+            .filter(|l| !before.contains(l) || still.contains(l))
             .cloned()
             .collect();
         for l in after {
@@ -725,8 +735,9 @@ impl Engine {
     }
 
     /// The tags or the people that `start` starts, as they are written with their mark, at most
-    /// `limit`: those carried by the most notes first, then those carried by the note written
-    /// last, then in order. The note `besides` names is not counted, since it is the one being
+    /// `limit`: the one typed whole first, if there is one, so that taking takes what was typed,
+    /// then those carried by the most notes, then those carried by the note written last, then in
+    /// order. The note `besides` names is not counted, since it is the one being
     /// written and its word is the one still being typed. An archived note still carries what it
     /// says, so it counts.
     pub(crate) fn labels_starting(
@@ -758,7 +769,12 @@ impl Engine {
             })
             .collect();
         found.sort_by(|a, b| {
-            b.0.cmp(&a.0)
+            let typed = |found: &(usize, Option<Moment>, String)| {
+                matches!(start, Label::Tag(tag) | Label::Mention(tag) if found.2[1..] == **tag)
+            };
+            typed(b)
+                .cmp(&typed(a))
+                .then(b.0.cmp(&a.0))
                 .then(b.1.cmp(&a.1))
                 .then_with(|| a.2.cmp(&b.2))
         });
@@ -767,8 +783,9 @@ impl Engine {
     }
 
     /// The names that `start`, normalised as a bracketed name is, starts, each written as its
-    /// newest note has it with its spaces collapsed, at most `limit`: those of the notes most
-    /// linked to first, then those of the note written last, then in order. A note is named as
+    /// newest note has it with its spaces collapsed, at most `limit`: the one typed whole first,
+    /// if there is one, then those of the notes most linked to, then those of the note written
+    /// last, then in order. A note is named as
     /// brackets name it, without its box and the labels that end it, and a name is counted for
     /// the notes brackets naming it would link to: those whose whole head it is, if any are, and
     /// otherwise every note it names, since brackets link to every one of them. The note
@@ -786,10 +803,10 @@ impl Engine {
         let besides_links = besides
             .and_then(|d| self.docs[d as usize].as_ref())
             .map_or(&[][..], |doc| doc.note.links.as_slice());
-        let start = Label::Bare(start.to_owned());
+        let from = Label::Bare(start.to_owned());
         let mut found: Vec<(usize, Option<Moment>, &str, DocId)> = self
             .index
-            .labels_starting(&start)
+            .labels_starting(&from)
             .filter_map(|(label, docs)| {
                 let Label::Bare(name) = label else {
                     return None;
@@ -818,8 +835,13 @@ impl Engine {
             })
             .collect();
         type Found<'a> = (usize, Option<Moment>, &'a str, DocId);
-        let order =
-            |a: &Found, b: &Found| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then_with(|| a.2.cmp(b.2));
+        let order = |a: &Found, b: &Found| {
+            (b.2 == start)
+                .cmp(&(a.2 == start))
+                .then(b.0.cmp(&a.0))
+                .then(b.1.cmp(&a.1))
+                .then_with(|| a.2.cmp(b.2))
+        };
         // Only the first few are wanted, so they are found before they are put in order.
         if found.len() > limit && limit > 0 {
             found.select_nth_unstable_by(limit - 1, order);

@@ -27,10 +27,10 @@
 // the line, out of the place. Control with an arrow moves the note on the row up or down the list.
 // Everything else is a word in the foot, moving a note included, and only what applies right now
 // gets one; a word a key also asks for has the key written after it, where there is a pointer to
-// read it with. The chords are the terminal's wherever a browser lets them go, and where it
-// does not, the terminal names the page's, so that the two faces are one set of keys to learn.
-// While a tag or a person is typed, or a note's head inside `[[`, what the space has that it starts
-// floats under it, and Tab or Enter takes the one marked (see paintOffer).
+// read it with. The chords are the terminal's wherever a browser lets them go, and where it does
+// not, the terminal names the page's, so that the two faces are one set of keys to learn. While a
+// tag or a person is typed, or a note's name inside `[[`, what the space has that it starts floats
+// under it, and Tab or Enter takes the one marked (see paintOffer).
 //
 // The painting is kept cheap because it runs on every keystroke: only the rows that can be seen
 // are made, rows are keyed by id and their nodes reused, nothing measures the page but the caret,
@@ -1870,11 +1870,11 @@ function headEdges() {
   if (frame?.classList.contains('edit')) edges(editor.scrollDOM, frame);
 }
 
-// What is offered for the tag, person or bracketed head the caret ends: a short list floating under
-// the word, its words starting under the word's mark, or a head's under where the head starts, the
-// one Tab takes marked as the cursor's row is. Its words are painted with the rest; where it goes is
-// measured with the caret, in the same read (see placeCaret). It is under the word, or over it where
-// under would reach the foot. A press on one takes it, and leaves the focus in the field.
+// What is offered for the tag, person or bracketed name the caret ends: a short list floating under
+// the word, its words starting under the word's mark, or a name's under where the name starts, the
+// one Tab takes marked as the cursor's row is. Its words are painted with the rest; where it goes
+// is measured with the caret, in the same read (see placeCaret). It is under the word, or over it
+// where under would reach the foot. A press on one takes it, and leaves the focus in the field.
 const offerNode = $('offer');
 let offerAt = null;
 function paintOffer() {

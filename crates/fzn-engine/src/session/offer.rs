@@ -1,9 +1,10 @@
-//! What is offered while a tag or a person is typed, or a note's head inside brackets: the ones
-//! the space already has that start with what is typed, and a key to take one. It is a part of its own because it is the one thing
-//! the session keeps that follows the face's caret, which the session is otherwise never told:
-//! the face says where the caret is after typing, and only typing opens what is offered, so that
-//! a word walked past with the arrows is not offered for, and a word closed with Escape stays
-//! closed until it is typed into again. Anything else asked for closes it.
+//! What is offered while a tag or a person is typed, or a note's name inside brackets: the ones
+//! the space already has that start with what is typed, and a key to take one. It is a part of
+//! its own because it is the one thing the session keeps that follows the face's caret, which the
+//! session is otherwise never told: the face says where the caret is after typing, and only typing
+//! opens what is offered, so that a word walked past with the arrows is not offered for, and a
+//! word closed with Escape stays closed until it is typed into again. Anything else asked for
+//! closes it.
 
 use serde::Serialize;
 
@@ -15,20 +16,21 @@ use super::{Action, Caret, Session};
 /// The most that is offered at once.
 const OFFERED: usize = 5;
 
-/// What is offered to complete the tag, person or bracketed head the caret ends, while it is
+/// What is offered to complete the tag, person or bracketed name the caret ends, while it is
 /// offered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Offer {
     /// The tags or the people, as they are written with their mark, `#food` or `@joe`: those of
-    /// the space that start with the word, carried by the most notes first. Or the names of
-    /// notes, as brackets name them and their rows read them, without the box and the labels
-    /// that end them, cut as an arrow's head is, of the notes most linked to first.
+    /// the space that start with the word, the one typed whole first and then those carried by the
+    /// most notes. Or the names of notes, as brackets name them and their rows read them, without
+    /// the box and the labels that end them, cut as an arrow's head is: the one typed whole first
+    /// and then those of the notes most linked to.
     pub words: Vec<String>,
     /// The one Tab or Enter takes, as an index into `words`.
     pub chosen: usize,
     /// Where the word's mark is, in characters, in the line or the head, so that a face can draw
-    /// what is offered under the word. For a head it is where the head starts, after the
-    /// brackets, so that a face draws a head as it draws a tag, under what it completes.
+    /// what is offered under the word. For a name it is where the name starts, after the
+    /// brackets, so that a face draws a name as it draws a tag, under what it completes.
     pub from: usize,
     /// Where the word ends, in characters, which is where the caret was when it was offered.
     #[serde(skip)]
@@ -36,7 +38,7 @@ pub struct Offer {
     /// What taking each writes, which for a name is the name whole and not as it is drawn.
     #[serde(skip)]
     written: Vec<String>,
-    /// Whether these are heads, which taking closes with brackets rather than a space.
+    /// Whether these are names, which taking closes with brackets rather than a space.
     #[serde(skip)]
     heads: bool,
 }
@@ -82,7 +84,7 @@ fn ending(text: &str, at: usize, on_line: bool) -> Option<(usize, Label)> {
     (end == at).then_some((from, label))
 }
 
-/// Where the head being typed in brackets starts, in characters, if the caret at `at` is after an
+/// Where the name being typed in brackets starts, in characters, if the caret at `at` is after an
 /// opening `[[` on its line that nothing has closed, read as a note's text reads brackets, with
 /// code passed over.
 fn bracketed(chars: &[char], at: usize) -> Option<usize> {
@@ -110,7 +112,26 @@ fn bracketed(chars: &[char], at: usize) -> Option<usize> {
     open
 }
 
-/// The head being typed from `from` to the caret at `at`, normalised as a bracketed name is, a
+/// Whether the brackets open before the caret at `at` are closed further on along its line, by a
+/// `]]` that is not straight after the caret, before any other `[[`: the caret is then inside a
+/// name already written, which taking would close a second time.
+fn closed_later(chars: &[char], at: usize) -> bool {
+    let end = chars[at..]
+        .iter()
+        .position(|&c| c == '\n')
+        .map_or(chars.len(), |i| at + i);
+    let rest = &chars[at..end];
+    for (k, pair) in rest.windows(2).enumerate() {
+        match pair {
+            ['[', '['] => return false,
+            [']', ']'] => return k > 0,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The name being typed from `from` to the caret at `at`, normalised as a bracketed name is, a
 /// space typed after it kept so that a word is known to be done. There is none if nothing but
 /// spaces is typed, if another `[[` or a `]]` comes between, if a `#` or a `|` does, which would
 /// make the rest a section or another name, if the caret is in code, or if it is in a word.
@@ -143,11 +164,10 @@ impl Session {
     }
 
     /// What is offered now that the face says the caret is at `at`: after typing, what the space
-    /// has that the word the caret ends starts, or inside brackets the heads that what is typed
-    /// in them starts; after the caret has only moved, what was offered,
-    /// for as long as the caret is still at the end of its word. The note being written does not
-    /// count, since its word is the one still being typed, and the word alone is nothing to
-    /// offer.
+    /// has that the word the caret ends starts, or inside brackets the names that what is typed in
+    /// them starts; after the caret has only moved, what was offered, for as long as the caret is
+    /// still at the end of its word. The note being written does not count, since its word is the
+    /// one still being typed, and the word alone is nothing to offer.
     pub(super) fn offered_at(&self, at: usize, was: Option<Offer>, typed: bool) -> Option<Offer> {
         if !typed {
             return was.filter(|offer| offer.to == at);
@@ -158,23 +178,16 @@ impl Session {
         if at > chars.len() {
             return None;
         }
-        // Inside brackets no tag or person is offered, since there they are part of the name.
+        // Inside brackets closed further on, the caret is in a name already written, where
+        // nothing is offered. Inside open ones a name is, and where none is, as when a `#` makes
+        // the rest a section, a tag or a person is, as a note's text would read one there.
         if let Some(from) = bracketed(&chars, at) {
-            let head = head_typed(&chars, from, at)?;
-            let written = self.engine.names_starting(&head, besides, OFFERED);
-            if written.is_empty() || written.len() == 1 && text::normalise_head(&written[0]) == head
-            {
+            if closed_later(&chars, at) {
                 return None;
             }
-            let words = written.iter().map(|name| text::fit(name, 40)).collect();
-            return Some(Offer {
-                words,
-                chosen: 0,
-                from,
-                to: at,
-                written,
-                heads: true,
-            });
+            if let Some(offer) = self.names_offered(&chars, from, at, besides) {
+                return Some(offer);
+            }
         }
         let (from, label) = ending(text, at, self.field.is_none())?;
         let words = self.engine.labels_starting(&label, besides, OFFERED);
@@ -196,10 +209,35 @@ impl Session {
         })
     }
 
+    /// What is offered for the name typed in brackets from `from` to the caret at `at`: the names
+    /// it starts, unless it is a name no note has, or the only one it starts.
+    fn names_offered(
+        &self,
+        chars: &[char],
+        from: usize,
+        at: usize,
+        besides: Option<&str>,
+    ) -> Option<Offer> {
+        let head = head_typed(chars, from, at)?;
+        let written = self.engine.names_starting(&head, besides, OFFERED);
+        if written.is_empty() || written.len() == 1 && text::normalise_head(&written[0]) == head {
+            return None;
+        }
+        let words = written.iter().map(|name| text::fit(name, 40)).collect();
+        Some(Offer {
+            words,
+            chosen: 0,
+            from,
+            to: at,
+            written,
+            heads: true,
+        })
+    }
+
     /// Puts the word offered, the chosen one or the one asked for, in place of the word the
     /// caret ends, with a space after it unless one follows already, and says where the caret
-    /// goes: after that space. A head is closed with brackets instead, unless they follow it
-    /// already, and the caret goes after them.
+    /// goes: after that space. A name is closed with brackets instead, as many as do not follow
+    /// it already, and the caret goes after them.
     pub(super) fn take(&mut self, offer: Offer, which: Option<usize>) -> Option<Caret> {
         let word = offer.written.get(which.unwrap_or(offer.chosen))?;
         let chars: Vec<char> = self.caret_text()?.chars().collect();
@@ -210,6 +248,7 @@ impl Session {
         let after: String = chars[offer.to..].iter().collect();
         let end = match (offer.heads, after.starts_with(char::is_whitespace)) {
             (true, _) if after.starts_with("]]") => "",
+            (true, _) if after.starts_with(']') => "]",
             (true, _) => "]]",
             (false, true) => "",
             (false, false) => " ",

@@ -109,7 +109,7 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   it starts with a box already; in a body it is left as typed, since a body's `- [ ]` is markdown's
   own. Any other slash is left alone, and a date word ends at the `..` of a span. The line shows the
   date a word stands for and holds with it. Saving a note, from the line or from the editor, writes
-  the date in its place, at the moment a `[[head]]` becomes a link. A date typed on the line holds
+  the date in its place, at the moment a `[[name]]` becomes a link. A date typed on the line holds
   the notes that mention the day or were written on it, and counts as a date and not as the numbers
   in it. The old `Mon, Jan 2, 2006` form is still read.
 - **Context inheritance**: where you are is what you are talking about. A note created at the end of
@@ -567,36 +567,37 @@ when the line is written; and after a word taken from what is offered. A body le
 caret in its editor.
 
 While a tag or a person is typed, on the line or in the head of a row, the tags or the people of the
-space that start with it are offered under it, at most five: those carried by the most notes first,
-then those on the note written last, then by name, archived notes counting, each written as the
-index holds it, `#food` or `@joe`. It opens when typing leaves the caret at the end of a word that
-starts with `#` or `@`, with a letter after the mark, and something other than the word itself
-starts with it; for this, and nothing else, a face says where the caret is after typing, and when it
-moves while something is offered. Tab or Enter takes the one marked, the first until Up or Down
-chooses another, stopping at either end: the word becomes it with a space after it and the caret
-after the space, so `#fo` Tab Tab goes into `#food`. Escape closes it and does nothing else, and it
-stays closed until the word is typed into again. Anything else closes it: a space or anything else
-that ends the word, the caret moved off its end, the cursor leaving, a body opening, an undo, or the
-text under it changed from elsewhere. More letters, or letters taken back, offer again; taking the
-mark closes it. While it is open the foot offers only taking, choosing and closing, and every other
-key means what it always does. An open body is offered nothing (see "The tags a word starts are
-offered as it is typed").
+space that start with it are offered under it, at most five: the one typed whole first, if there is
+one, then those carried by the most notes, then those on the note written last, then by name,
+archived notes counting, each written as the index holds it, `#food` or `@joe`. It opens when typing
+leaves the caret at the end of a word that starts with `#` or `@`, with a letter after the mark, and
+something other than the word itself starts with it; for this, and nothing else, a face says where
+the caret is after typing, and when it moves while something is offered. Tab or Enter takes the one
+marked, the first until Up or Down chooses another, stopping at either end: the word becomes it with
+a space after it and the caret after the space, so `#fo` Tab Tab goes into `#food`. Escape closes it
+and does nothing else, and it stays closed until the word is typed into again. Anything else closes
+it: a space or anything else that ends the word, the caret moved off its end, the cursor leaving, a
+body opening, an undo, or the text under it changed from elsewhere. More letters, or letters taken
+back, offer again; taking the mark closes it. While it is open the foot offers only taking, choosing
+and closing, and every other key means what it always does. An open body is offered nothing (see
+"The tags a word starts are offered as it is typed").
 
 A note's head is offered the same way inside brackets. Once typing leaves the caret after an opening
 `[[` on its line, with something typed after it, no `]]` or other `[[` between them and the caret,
-and the caret neither in code nor in a word, the notes of the space whose names start with what is
-typed are offered under it, from where the name starts. A note's name is what brackets name it by
-and its row reads in its place: its head without its box and the labels that end it, so `[[ble`
-offers `Bleed the radiators` for `[ ] Bleed the radiators #house`. It is matched in any case, spaces
-as one, as a bracketed name is when the note is saved; the notes most linked to come first, then the
-newest, then by name; archived notes count, the note being written never, and a name two notes share
-is offered once. Each is shown as it will be written, cut as an arrow's head is. A name brackets
-could not hold whole, one with a `#`, a `|` or a `]]` among its words, is not offered. Taking one
-writes the name after the `[[`, in the note's own case, closes it with `]]` unless that follows
-already, and puts the caret after the `]]`, so `[[ble` Tab is `[[Bleed the radiators]]`, and the
+no `]]` closing them further on, and the caret neither in code nor in a word, the notes of the space
+whose names start with what is typed are offered under it, from where the name starts. A note's name
+is what brackets name it by and its row reads in its place: its head without its box and the labels
+that end it, so `[[ble` offers `Bleed the radiators` for `[ ] Bleed the radiators #house`. It is
+matched in any case, spaces as one, as a bracketed name is when the note is saved; the notes most
+linked to come first, then the newest, then by name, except that a name typed whole comes first;
+archived notes count, the note being written never, and a name two notes share is offered once. Each
+is shown as it will be written, cut as an arrow's head is. A name brackets could not hold whole, one
+with a `#`, a `|` or a `]]` among its words, is not offered. Taking one writes the name after the
+`[[`, in the note's own case, closes it with `]]` unless that follows already, or with one `]` where
+one follows, and puts the caret after the `]]`, so `[[ble` Tab is `[[Bleed the radiators]]`, and the
 note links to the task once it is saved. Inside open brackets no tag or person is offered, since
-there it is part of the name. Every other rule is the tag's (see "A note's head is offered inside
-brackets").
+there it is part of the name. Every other rule is the tag's (see "The tags a word starts are offered
+as it is typed").
 
 A head is a version at every change, a new row's from its first letter, which creates the note with
 the moment Enter was pressed as its `created`, linked to the note being looked around and to
@@ -912,19 +913,18 @@ edge, as vim's `sidescrolloff` keeps them, and each edge that hides text shows `
 leaves it, it reads from its start again. The tail follows the head as far as it fits, cut with `…`
 as off the cursor, and the line scrolls as the head does once written in. What is offered for a tag
 or a person being typed is set on the rows under the line or the row being written, or on those
-above it where the list ends too soon, from the column of the word's mark, or for a head in
-brackets of its first letter, each of its rows cleared
-from edge to edge as a shell clears the rows under its prompt, and the one Tab takes is bold. The
-foot of the list is kept for the body of what the cursor is on: the note on its row, and a head its
-row cuts, whole, above the body; and on the line in a place the note you are in. It is a row of
-nothing, then up to five rows of the body, dimmed, set in two columns from the rows' text and cut
-with a `…` when it goes on. The rows are kept whatever the note holds, on a row and on the line in a
-place alike, so walking the list never changes how much of it is shown; on the line outside a place
-the list has the whole height. On a short screen they shrink, keeping the list at least half its
-room, and go when fewer than two would be left. One dim footer row names the chords that apply where
-the cursor is, `^V tick`, `Tab go in`, ending with Escape's next rung, `Esc clear`, `Esc back` or
-`Esc up`, or `Esc Esc quits` where there is none, and while something is offered only
-`Tab take  ↑↓ choose  Esc close`. A narrow terminal loses chords from
+above it where the list ends too soon, from the column of the word's mark, or for a name in brackets
+of its first letter, each of its rows cleared from edge to edge as a shell clears the rows under its
+prompt, and the one Tab takes is bold. The foot of the list is kept for the body of what the cursor
+is on: the note on its row, and a head its row cuts, whole, above the body; and on the line in a
+place the note you are in. It is a row of nothing, then up to five rows of the body, dimmed, set in
+two columns from the rows' text and cut with a `…` when it goes on. The rows are kept whatever the
+note holds, on a row and on the line in a place alike, so walking the list never changes how much of
+it is shown; on the line outside a place the list has the whole height. On a short screen they
+shrink, keeping the list at least half its room, and go when fewer than two would be left. One dim
+footer row names the chords that apply where the cursor is, `^V tick`, `Tab go in`, ending with
+Escape's next rung, `Esc clear`, `Esc back` or `Esc up`, or `Esc Esc quits` where there is none, and
+while something is offered only `Tab take ↑↓ choose Esc close`. A narrow terminal loses chords from
 the middle, never the first or the way back. A status row above it exists only while there is
 something to say, each key clearing what the one before said, and where the body has its rows it
 takes the last of them, so that the list keeps its height. Nothing says how many notes there are or
@@ -1012,32 +1012,31 @@ any width; past that it gives up its middle to one `…`, the oldest step after 
 the terminal's does, and the space and the last step share the cut of what still does not fit. The
 tab's title stays `fzn`, or `fzn · garden` in another space. Paper, ink and two greys, and one
 colour, a muted blue, for a link; light or dark by the system's preference. What is offered for a
-tag or a person being typed floats under the word, from its mark, or for a head in brackets from its
-first letter, over the rows, or over the word
-where under would reach the foot: a small sheet, the sheet's paper and shadow with a hairline round
-it, its words soft and the one Tab takes in ink and heavier, as the head under the cursor is. On a
-page at least 75rem wide the body of what the cursor is on is read beside the list, 30rem wide and
-growing to 38rem past 100rem: the note under the cursor, and the whole of its head, above the body,
-when its row cuts it, or with the cursor on the line in a place the note you are in. It is rendered
-as markdown, in the soft grey, from the top of the first row's text, with no border, scrolled on its
-own and faded at its foot as the list is. A narrower page has no room for it: a note's body, and the
-whole of a head its row cuts, are read there by opening it, and the note you are in is read above
-the line, rendered, under the path and in the path's smaller size, clamped to six lines, its foot
-faded as the list's is only when it is cut, and a tap on it opens its body in the sheet, as a click
-does on it read beside the list, a link in it opening only the link, so that where you are is all
-above the line and what is found follows it directly; the margin grows downwards only for a body
-longer than it has room for. While the sheet holds the note you are in, it is not read above the
-line as well but keeps its room there, so that nothing moves as the sheet opens and closes, and the
-list stays scrolled where the line left it, the row put under the cursor for the sheet coming and
-going without moving what is in sight. At a phone's width, 640px and under, the column is the
-screen's width with the line at the top, the note you are in is clamped to three lines and, on a
-touch screen, hidden while the keyboard is up, and the foot is a bar (see "Keys"). A narrow window
-with a mouse keeps it in sight: it has the room, and a field there has the focus almost always. A
-head there is read whole, on as many lines as it takes, since there is no room beside the list to
-read the rest in: every row leaves the arrow's room at its end, whether or not it has the arrow, so
-that a head wraps the same on the cursor as off it, and the row under the cursor keeps its tail with
-its date at the tail's end, so that walking the list moves nothing; a row with no tail has no date
-there.
+tag or a person being typed floats under the word, from its mark, or for a name in brackets from its
+first letter, over the rows, or over the word where under would reach the foot: a small sheet, the
+sheet's paper and shadow with a hairline round it, its words soft and the one Tab takes in ink and
+heavier, as the head under the cursor is. On a page at least 75rem wide the body of what the cursor
+is on is read beside the list, 30rem wide and growing to 38rem past 100rem: the note under the
+cursor, and the whole of its head, above the body, when its row cuts it, or with the cursor on the
+line in a place the note you are in. It is rendered as markdown, in the soft grey, from the top of
+the first row's text, with no border, scrolled on its own and faded at its foot as the list is. A
+narrower page has no room for it: a note's body, and the whole of a head its row cuts, are read
+there by opening it, and the note you are in is read above the line, rendered, under the path and in
+the path's smaller size, clamped to six lines, its foot faded as the list's is only when it is cut,
+and a tap on it opens its body in the sheet, as a click does on it read beside the list, a link in
+it opening only the link, so that where you are is all above the line and what is found follows it
+directly; the margin grows downwards only for a body longer than it has room for. While the sheet
+holds the note you are in, it is not read above the line as well but keeps its room there, so that
+nothing moves as the sheet opens and closes, and the list stays scrolled where the line left it, the
+row put under the cursor for the sheet coming and going without moving what is in sight. At a
+phone's width, 640px and under, the column is the screen's width with the line at the top, the note
+you are in is clamped to three lines and, on a touch screen, hidden while the keyboard is up, and
+the foot is a bar (see "Keys"). A narrow window with a mouse keeps it in sight: it has the room, and
+a field there has the focus almost always. A head there is read whole, on as many lines as it takes,
+since there is no room beside the list to read the rest in: every row leaves the arrow's room at its
+end, whether or not it has the arrow, so that a head wraps the same on the cursor as off it, and the
+row under the cursor keeps its tail with its date at the tail's end, so that walking the list moves
+nothing; a row with no tail has no date there.
 
 *Back.* The path is the browser's history too: each step in, a note, a label or a body opened,
 pushes an entry holding its depth, so the browser's Back, a mouse's back button or a phone's back
@@ -3441,7 +3440,8 @@ the app now does is described above; an entry repeats it only where the reason n
   a design of its own; use decides. Weighed: the dim hint, rejected; wrapping arrows; leaving Enter
   to write; and offering every tag the word starts, which at one letter is more than can be read.
   Revised 2026-10-23 by "A note's head is offered inside brackets": a note's name typed in
-  brackets is offered the same way, ranked by the notes linking to it.
+  brackets is offered the same way, ranked by the notes linking to it, and a tag or a person typed
+  whole is offered first, so that Enter takes what was typed and Down reaches the longer ones.
 - **Code is literal.** Decided 2026-10-20, at Sam's report. A tag was read wherever a `#` met a
   letter, in code too, so a colour `#fff` in backticks, an `#include` in a block of C or a channel
   in a pasted command made a tag of the note: it was listed in that place, held by it on the line,
@@ -3794,45 +3794,50 @@ the app now does is described above; an entry repeats it only where the reason n
   `[[Bleed the radiators]]` links the task, and `[[Order oil]]` links `Order oil #house` unless some
   note's whole head is `Order oil`, which wins, as a head typed whole wins on the line. The index
   holds each note's name as a label of its own beside its head, kept in step with it, and a link
-  whose brackets are taken out is still dropped, since the same tiers read the old text. Completion
-  is the tag's offer with a second kind of word, and every rule of that one holds: it opens only by
-  typing, a caret walked onto it never opens it, Escape closes it until it is typed into again, Tab
-  or Enter takes the one marked, Up and Down choose and stop at the ends, a tap takes one on the
-  page, at most five, and the session decides it all. It opens on the line and in a head being
-  written, the places tags are offered, when typing leaves the caret after an opening `[[` on its
-  line with something typed after it, nothing between them a `]]` or another `[[`, and the caret
-  neither in code nor in a word. What is typed is matched against the start of each name, in any
-  case and with its spaces as one, as a bracketed name is resolved, so that a name taken always
-  links; a space typed after a word keeps it whole, so `[[boiler ` offers `Boiler service` and not
-  `Boiler`. A name brackets could not hold whole, one with a `#`, a `|` or a `]]` among its words,
-  is not offered, since taking it would write what does not link. The notes most linked to come
-  first, since the note many link to is the one most often named; then the newest, then by name; and
-  a name counts the links of the notes it would link, those whose whole head it is if any are, and
-  otherwise all it names. Archived notes count, since a link to a done task is a link, and the note
-  being written is never offered and its own links are not counted, since a note does not link to
-  itself. A name two notes share is offered once, written as the newer has it. Each is drawn as it
-  will be written, which is as its row reads, without its box, since a task being a task needs no
+  whose brackets are taken out is still dropped: the old text and the new are read through both
+  tiers for it, since which tier names a note can change between saves, as when a note whose whole
+  head is the name is written after a link was made by it. Completion is the tag's offer with a
+  second kind of word, and every rule of that one holds: it opens only by typing, a caret walked
+  onto it never opens it, Escape closes it until it is typed into again, Tab or Enter takes the one
+  marked, Up and Down choose and stop at the ends, a tap takes one on the page, at most five, and
+  the session decides it all. It opens on the line and in a head being written, the places tags are
+  offered, when typing leaves the caret after an opening `[[` on its line with something typed after
+  it, nothing between them a `]]` or another `[[`, no `]]` closing them further on, since the caret
+  is then inside a name already written, and the caret neither in code nor in a word; where no name
+  is offered inside brackets left open, a tag or a person is, as the text reads one there. What is
+  typed is matched against the start of each name, in any case and with its spaces as one, as a
+  bracketed name is resolved, so that a name taken always links; a space typed after a word keeps it
+  whole, so `[[boiler ` offers `Boiler service` and not `Boiler`. A name brackets could not hold
+  whole, one with a `#`, a `|` or a `]]` among its words, is not offered, since taking it would
+  write what does not link. The notes most linked to come first, since the note many link to is the
+  one most often named; then the newest, then by name; and a name typed whole comes before all of
+  them, so that Enter takes what was typed and Down reaches the longer names, which revises the tag
+  decision's ranking for tags and people too, since `#fox` typed whole was offered under `#foxes`;
+  and a name counts the links of the notes it would link, those whose whole head it is if any are,
+  and otherwise all it names. Archived notes count, since a link to a done task is a link, and the
+  note being written is never offered and its own links are not counted, since a note does not link
+  to itself. A name two notes share is offered once, written as the newer has it. Each is drawn as
+  it will be written, which is as its row reads, without its box, since a task being a task needs no
   mark here; cut to forty letters as an arrow's head is; and from where the name starts rather than
   from the brackets, so the faces draw it as they draw a tag and the view's `offer` is unchanged:
   `{"words":["Bleed the radiators"],"chosen":0,"from":13}` for `Call about [[ble`. Taking writes the
-  name whole, in the note's own case, closes the brackets with `]]` unless they follow already, and
-  puts the caret after them, with no space, since what follows a link is as often a comma as a word.
-  Inside open brackets no tag or person is offered, since there a `#` or an `@` is part of the name.
-  The index keeps how many notes link to each id beside the links' labels, so that each name the
-  typed start finds is asked its count without a label made for it; the names come from the index's
-  labels in order, as tags do, and nothing is kept between keys. Measured natively over 10,000
-  invented notes, a third of them tasks and half ending in a label: 66µs for a letter that starts
-  700 names, about as many as a common first letter starts, and 35µs for `boi` over 350; a letter
-  that starts a third of the space, 3,100 names, costs 850µs. It is dearer than a tag, whose letter
-  finds a few tags, since every name a letter starts is asked how often it is linked to; it is still
-  well inside a keystroke. Weighed: matching any word of a name, not only its start, which finds
-  `Boiler service` from `serv` but offers far more at one letter, ranks words against names, and
-  breaks the rule that what is typed is the start of what is taken; a fuzzy match, which would mend
-  a misspelling but offer what was not meant; offering by the search's own ranking, which costs a
-  search a key; leaving out archived notes, which would make a done task unlinkable by name;
-  offering whole heads only, which left out every task and every note written in a place; and naming
-  by the name alone, without the whole head first, which would let `[[Order oil]]` link a labelled
-  note as well as the one actually called that.
+  name whole, in the note's own case, closes the brackets with `]]` unless they follow already, or
+  with one `]` where one follows, and puts the caret after them, with no space, since what follows a
+  link is as often a comma as a word. The index keeps how many notes link to each id beside the
+  links' labels, so that each name the typed start finds is asked its count without a label made for
+  it; the names come from the index's labels in order, as tags do, and nothing is kept between keys.
+  Measured natively over 10,000 invented notes, a third of them tasks and half ending in a label:
+  66µs for a letter that starts 700 names, about as many as a common first letter starts, and 35µs
+  for `boi` over 350; a letter that starts a third of the space, 3,100 names, costs 850µs. It is
+  dearer than a tag, whose letter finds a few tags, since every name a letter starts is asked how
+  often it is linked to; it is still well inside a keystroke. Weighed: matching any word of a name,
+  not only its start, which finds `Boiler service` from `serv` but offers far more at one letter,
+  ranks words against names, and breaks the rule that what is typed is the start of what is taken; a
+  fuzzy match, which would mend a misspelling but offer what was not meant; offering by the search's
+  own ranking, which costs a search a key; leaving out archived notes, which would make a done task
+  unlinkable by name; offering whole heads only, which left out every task and every note written in
+  a place; and naming by the name alone, without the whole head first, which would let `[[Order
+  oil]]` link a labelled note as well as the one actually called that.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -3840,8 +3845,8 @@ the app now does is described above; an entry repeats it only where the reason n
   (milestone 4) decides.
 - Brackets that name a note which does not exist yet stay plain text until the note is saved again.
   Should creating the target link the notes that were waiting for it? The first link found missing
-  that way decides. Since names are offered as they are typed, a name nothing was
-  offered for while it was typed names nothing yet.
+  that way decides. Since names are offered as they are typed, a name nothing was offered for while
+  it was typed names nothing yet.
 - The carry rule ("the note contains what you typed" means it was a search) is a heuristic. Its bad
   case is clearing a one-word draft, which costs one word to retype; the case it must never produce
   is a note called `trai` under `trainingapp`. Daily use decides whether the rule holds.

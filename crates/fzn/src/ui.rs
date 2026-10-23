@@ -27,9 +27,10 @@
 //! Escape comes back a rung at a time: off the row, off the text on the line, out of the place, and
 //! on an empty line outside any place two of them quit. The footer shows only the keys that apply
 //! where the cursor is. Shift-Enter on a row ticks as Ctrl-V does, where the terminal can tell it
-//! from Enter. While a tag or a person is typed, or a note's head inside `[[`, what the space has
-//! that it starts is offered on the rows under it, and Tab or Enter takes the bold one; the device is told where the caret is
-//! after each key that types, since whether anything is offered is its to decide.
+//! from Enter. While a tag or a person is typed, or a note's name inside `[[`, what the space has
+//! that it starts is offered on the rows under it, and Tab or Enter takes the bold one; the device
+//! is told where the caret is after each key that types, since whether anything is offered is its
+//! to decide.
 //!
 //! A terminal sends some keys alike unless it is asked to tell them apart: Shift-Enter is Enter,
 //! and in some it is lost altogether. So where the terminal says it has the kitty keyboard
@@ -1476,7 +1477,7 @@ impl App {
     }
 
     /// Tells the device where the caret is, in characters, in the text the cursor is in, so that
-    /// what completes the tag, person or bracketed head it ends can be offered.
+    /// what completes the tag, person or bracketed name it ends can be offered.
     fn tell_caret(&mut self) -> Result<Flow> {
         let view = self.device.view();
         let at = match &view.field {
