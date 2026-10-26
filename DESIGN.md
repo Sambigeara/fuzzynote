@@ -1020,7 +1020,12 @@ results arrive. A faint hairline under the line sets it apart from the rows. The
 caret and, under it in faint grey, the heads at the top of the list fading out by the eighth; at a
 phone's width they run the list's height, faded at its foot as the list is, and scroll, since a
 phone has no arrows to walk onto the rest. As you type, what is found takes their place; only a row
-that is new fades in, and nothing else moves. A row drawn under another is a
+that is new fades in, and nothing else moves but what the person takes away or brings back on the
+page: a row ticked, archived or deleted fades where it stood and then the rows that stay slide to
+their places, a ticked parent's notes stepping out a level as they go, and the archived rows hidden
+or shown go and come the same way, room made first and then the rows as they come. Any key, any
+press, or a painting that moves a row finishes it all at once, and with reduced motion none of it
+runs (see "Rows that come and go at your word move into place"). A row drawn under another is a
 task's box and its gap further in a level, 1.45em at the row's size, to the fourth, so 4.35em at
 most, about six letters of a phone's forty: every row starts on its level's column, with its box or
 its first letter, the rows under a task start under its words, and at a phone's width a task's head
@@ -1607,7 +1612,9 @@ the app now does is described above; an entry repeats it only where the reason n
   it again, as plain grey text and never a badge. Revised 2026-10-18 by "A link is blue, and code
   has a wash": the page has one colour, for a link. Revised 2026-10-18 by "On a phone the resting
   list runs the screen": at a phone's width the resting heads run the list's height and scroll.
-  Revised 2026-10-20 by "A body's headings are sized by their level".
+  Revised 2026-10-20 by "A body's headings are sized by their level". Revised 2026-10-26 by "Rows
+  that come and go at your word move into place": what the person takes away or brings back on the
+  page moves into place, finished at once by the next key, press or painting that moves a row.
 
 - **A head is kept as it is typed.** Decided 2026-10-14, at Sam's direction, replacing the call in
   "A note is written in place" that a version is written when the row closes, and with it that a new
@@ -3975,6 +3982,36 @@ the app now does is described above; an entry repeats it only where the reason n
   guide lines down a parent's notes, which are a second structure to read and chrome on paper that
   has none; a mark on every plain row, as an outliner has, which puts a mark on every row to make
   the tasks' boxes line up; and tighter rows under a parent, where a row is one height, a thumb's.
+
+- **Rows that come and go at your word move into place.** Decided 2026-10-26, at Sam's ask, revising
+  "One cursor, no chrome" in "results that only fade in when new and otherwise hold still", and the
+  page's description under Browser, where only a row that is new faded in and nothing else moved. A
+  row ticked, archived or deleted went and the list closed up in one frame, and in a tree a ticked
+  parent's notes moved out a level at once, each gaining a grey arrow to it: three changes with
+  nothing to say how. Showing or hiding what is archived was the same, many rows at several levels
+  coming or going and the rest jumping round them. Now, only for the person's own tick, archive or
+  delete on the page, however asked for, and their own showing or hiding of the archived: the row
+  that goes stays where it was seen and fades out over 140ms, a task ticked showing its box ticked
+  as it fades, so the tick is seen, and a delete fading as it was; then the rows that stay move from
+  where they were to where they now are over 180ms, the rows below sliding up into the room and rows
+  whose level changed sliding sideways as well, and a row made now that was listed before moving
+  with the rows before it, so nothing pops into place while the rest slides. Hiding the archived is
+  the same with several rows leaving at once. Showing it is the mirror: the rows that stay slide to
+  their new places first, making room, and the archived rows that come fade in there after, all
+  together, 140ms; were they to fade in at once, or as new rows do, one after another, they would
+  appear in a gap still opening, over rows still moving. Room first and then the rows is the order
+  of taking away turned round, so that what moves is never under what fades. Any key, any press,
+  and any painting that changes which rows stand where finish all of it at once, the rows that go
+  gone and the rows that come fully shown; with reduced motion none of it runs. Why this does not
+  bring back what "hold still" kept out: nothing is still moving when the next key lands, and
+  typing, which is what repaints the list most, moves nothing. Rows that go for any other reason, a
+  note from elsewhere, undo or redo, typing on the line, going in or out, still just go. Weighed: a
+  fade alone, where the list still jumps and a tree's regrouping still cannot be followed; a slide
+  alone, where the row's going is not seen; both at once, the row fading under rows sliding over
+  it; and a beat holding the ticked row before it goes, as some task apps do, which holds the list
+  half a second against the next key, when the box is ticked in the fade anyway. What stays: undo
+  brings a row back fading in, as a new row does, and the rows below make room for it in a frame;
+  and the terminal draws the next frame as it is.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

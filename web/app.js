@@ -366,6 +366,7 @@ function act(action) {
     trouble(failures > 1 ? 'fzn needs reloading' : `fzn could not do that: ${cause}`);
     return;
   }
+  if (MOVES.includes(named(action))) moving = named(action);
   carryOut(todo);
 }
 
@@ -1182,12 +1183,139 @@ const takesFocus = (field) =>
   document.activeElement !== field &&
   !$('sheet-foot').contains(document.activeElement);
 
+// What the person takes away here, by ticking, archiving or deleting it or by hiding what is
+// archived, fades where it stood, and then the rows that stay slide to where they now are, a
+// ticked parent's notes stepping out a level as they go; what showing the archived brings back
+// fades in once the rows have made room for it, so it never appears in a gap still opening. Room
+// first and then the rows is the order of taking away turned round. Nothing else on the list moves
+// (see style.css), and this keeps to the reason: any key, any press, and any painting that changes
+// which rows stand where finish it all at once, so that nothing is still moving when the next key
+// lands, and typing, which repaints the list most, moves nothing. Rows that go for any other
+// reason, a note from elsewhere, undo, a line typed, just go. The rows made are read where they
+// stand before the painting and again after it, and only after one of these actions.
+const MOVES = ['archive', 'delete', 'show_archived'];
+const SLIDE = 180;
+// The action whose painting is to move, until that painting.
+let moving = null;
+// What is moving: its animations, the rows that are leaving, and where the rows stood as it began.
+let motion = null;
+// Where the rows stood as last seen, when an action paints on its way to the one that moves.
+let stock = null;
+const standing = () => `${view.finds_from}|${view.rows.map((row) => `${row.id}:${row.depth}`).join()}`;
+function settle() {
+  if (!motion) return;
+  for (const animation of motion.animations) animation.finish();
+  for (const li of motion.leaving) li.remove();
+  motion = null;
+}
+window.addEventListener('keydown', settle, true);
+window.addEventListener('pointerdown', settle, true);
+
+// Where each row made stands, whether it can be seen, and, for one that may go, the row as seen.
+function measure(going) {
+  const box = list.getBoundingClientRect();
+  const at = new Map();
+  for (const [id, li] of rows) {
+    if (!li.isConnected) continue;
+    const r = li.getBoundingClientRect();
+    const x = li.firstElementChild?.getBoundingClientRect().left ?? r.left;
+    const seen = r.bottom > box.top && r.top < box.bottom;
+    const as = id === going ? li.cloneNode(true) : li;
+    at.set(id, { li: as, top: r.top, left: r.left, width: r.width, x, seen });
+  }
+  return at;
+}
+
+// A row that goes is left on the list as it was seen, a copy, since the row itself may hold the
+// editor, which the painting takes back. A task ticked shows its box ticked as it fades.
+function ghost(li, action) {
+  const copy = li.cloneNode(true);
+  copy.querySelector('#caret')?.remove();
+  copy.classList.remove('in');
+  copy.classList.add('leaving');
+  copy.removeAttribute('aria-current');
+  copy.removeAttribute('data-id');
+  copy.setAttribute('aria-hidden', 'true');
+  copy.inert = true;
+  if (action === 'archive') copy.querySelector('.tick')?.classList.add('done');
+  return copy;
+}
+
+// The rows go from where they stood to where they are now. A row is placed after the rows that are
+// put in order, never among them, where the ordering would move every row after it. A row made now
+// that was listed before, brought into the rows made as the list closed up, moves with the row
+// before it, so that nothing pops into place while the rest slides.
+function slide(before, leaving, wanted, arriving) {
+  const box = list.getBoundingClientRect();
+  const style = getComputedStyle(document.documentElement);
+  const fade = parseFloat(style.getPropertyValue('--quick')) || 140;
+  const easing = style.getPropertyValue('--ease').trim() || 'ease-out';
+  const animations = [];
+  for (const { li, top, left, width } of leaving) {
+    li.style.top = `${top - box.top - list.clientTop + list.scrollTop}px`;
+    li.style.left = `${left - box.left - list.clientLeft}px`;
+    li.style.width = `${width}px`;
+    list.append(li);
+    const out = li.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fade, easing, fill: 'forwards' });
+    out.onfinish = () => li.remove();
+    animations.push(out);
+  }
+  const delay = leaving.length ? fade : 0;
+  const seen = (r) => r.bottom > box.top && r.top < box.bottom;
+  let carried = null;
+  let slid = false;
+  for (const li of wanted) {
+    if (arriving.includes(li)) continue;
+    const r = li.getBoundingClientRect();
+    const was = before.get(li.dataset.id);
+    let dx = carried?.dx ?? 0;
+    let dy = carried?.dy ?? 0;
+    if (was) {
+      dx = was.x - (li.firstElementChild?.getBoundingClientRect().left ?? r.left);
+      dy = was.top - r.top;
+      carried = { dx, dy };
+      if (!was.seen && !seen(r)) continue;
+    } else if (!seen(r)) continue;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+    slid = true;
+    const keyframes = [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }];
+    animations.push(li.animate(keyframes, { duration: SLIDE, delay, easing, fill: 'backwards' }));
+  }
+  const after = delay + (slid ? SLIDE : 0);
+  for (const li of arriving) {
+    if (!seen(li.getBoundingClientRect())) continue;
+    const keyframes = [{ opacity: 0 }, { opacity: 1 }];
+    animations.push(li.animate(keyframes, { duration: fade, delay: after, easing, fill: 'backwards' }));
+  }
+  if (!animations.length) return;
+  const now = { animations, leaving: leaving.map(({ li }) => li), stands: standing() };
+  motion = now;
+  Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
+    if (motion === now) motion = null;
+  });
+}
+
 function paintRows() {
   const field = view.field;
   const fieldId = view.cursor != null && field ? view.rows[view.cursor]?.id ?? null : null;
   const wasWhole = editor.whole;
   wasTyping = typing();
   quiet = true;
+
+  const action = moving;
+  moving = null;
+  if (motion && (action || standing() !== motion.stands)) settle();
+  const same = JSON.stringify([view.line, view.path]) === listFor;
+  const before = action && !still.matches && same ? (stock ?? measure()) : null;
+  if (action) stock = null;
+  const leaving = [];
+  const arriving = [];
+  if (before) {
+    const stays = new Set(view.rows.map((row) => row.id));
+    for (const [id, was] of before) {
+      if (!stays.has(id) && was.seen) leaving.push({ ...was, li: ghost(was.li, action) });
+    }
+  }
 
   // The cursor has left the row the editor was in: that row goes back to being read.
   const landed = fieldId !== editorIn;
@@ -1223,8 +1351,10 @@ function paintRows() {
       li.dataset.k = '';
       rows.set(row.id, li);
       // Only a row that is new to the list fades in, not one that was listed and is made now
-      // because the list was scrolled or walked down to it.
-      if (!still.matches && !field?.whole && !listed.has(row.id)) {
+      // because the list was scrolled or walked down to it; one that the archived being shown
+      // brings fades in after the rows have made room for it (see slide).
+      if (before && !listed.has(row.id)) arriving.push(li);
+      else if (!still.matches && !field?.whole && !listed.has(row.id)) {
         li.classList.add('in');
         li.style.setProperty('--i', Math.min(newcomers++, 8));
       }
@@ -1318,6 +1448,8 @@ function paintRows() {
     }
   } else if (!under && anew) list.scrollTop = 0;
   list.dataset.under = under;
+
+  if (before) slide(before, leaving, wanted, arriving);
 }
 
 // The words in the foot: what can be asked for where the cursor is. Moving has the arrows and a
@@ -2205,6 +2337,8 @@ function tick(at) {
   // A head being written keeps its caret, which landing on it again would put at its end.
   const writing = was != null && editorIn === was ? editor.selection() : null;
   holdFocus = true;
+  // The cursor's going to the task is not seen, so the task leaves as it was seen, off the cursor.
+  if (!still.matches) stock = measure(task);
   try {
     act({ select: at });
     act('archive');
@@ -2216,6 +2350,7 @@ function tick(at) {
     }
   } finally {
     holdFocus = false;
+    stock = null;
   }
   if (!had) return;
   wantsText = true;

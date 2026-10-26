@@ -5,11 +5,13 @@
  * column sits a little left of centre, so that a wide page has room beside it for the body of
  * what the cursor is on. The line sits a little above a third of the way down and never moves,
  * with a hairline under it; the margin above it is where the path goes. An open body is a sheet
- * over the page, which is dimmed behind it. What is already on the page never
- * animates: only a row that is new fades in, and nothing translates, because a keystroke repaints
- * the list and anything still in flight when the next key lands makes the list swim. The states
- * the page can be in are classes on the body, set by the painter; this file is what each of them
- * looks like. */
+ * over the page, which is dimmed behind it. What is already on the page holds still: a row that is
+ * new fades in, and otherwise only what the person takes away or brings back here moves, by a tick,
+ * an archive, a delete or the archived shown or hidden, the row that goes fading where it stood and
+ * the rest sliding to their places after it. A keystroke repaints the list, and anything still in
+ * flight when the next key lands makes the list swim, so any key, any press and any painting that
+ * moves a row finish all of it at once, and typing moves nothing. The states the page can be in are
+ * classes on the body, set by the painter; this file is what each of them looks like. */
 
 :root {
   --paper: #f8f7f4;
@@ -243,10 +245,13 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 
 /* The list. It reaches into the gutter by --gap on both sides, so that a row's text lines up with
-   the line's and a tap on the row's edge is still the row's. */
+   the line's and a tap on the row's edge is still the row's. A row sliding out a level does not
+   make it scroll sideways. */
 #list {
+  position: relative;
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   margin: 1rem calc(-1 * var(--gap)) 0;
   padding: 0 0 calc(2 * var(--row));
@@ -272,6 +277,8 @@ button, input, textarea { font: inherit; color: inherit; }
   animation-delay: calc(var(--i, 0) * 14ms);
 }
 @keyframes arrive { from { opacity: 0; } }
+/* A row taken away, left where it was seen while it fades (see slide in app.js). */
+.row.leaving { position: absolute; margin: 0; pointer-events: none; }
 
 /* In a zoom, what the line finds in the place and what it only finds there are set a row apart. */
 .row.apart { margin-top: var(--row); }
