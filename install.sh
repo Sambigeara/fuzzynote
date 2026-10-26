@@ -2,7 +2,7 @@
 # Installs fzn from a release: one static binary, put in ~/.local/bin, nothing else touched.
 #
 #   curl -fsSL https://github.com/Sambigeara/fuzzynote/releases/latest/download/install.sh | sh
-#   curl -fsSL ... | sh -s -- --version 0.46.1
+#   curl -fsSL ... | sh -s -- --version 0.46.2
 #   curl -fsSL ... | sh -s -- --system
 #
 # The archive for this machine is fetched, its SHA-256 is checked against the sum published
