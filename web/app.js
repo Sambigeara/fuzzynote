@@ -1227,13 +1227,14 @@ function measure(going) {
 }
 
 // A row that goes is left on the list as it was seen, a copy, since the row itself may hold the
-// editor, which the painting takes back. A task ticked shows its box ticked as it fades.
+// editor, which the painting takes back; one measured as it was seen is that copy already. It keeps
+// the cursor's look if it had it, and leaves the room it was set apart by, being placed where it
+// stood. A task ticked shows its box ticked as it fades.
 function ghost(li, action) {
-  const copy = li.cloneNode(true);
+  const copy = li.isConnected ? li.cloneNode(true) : li;
   copy.querySelector('#caret')?.remove();
-  copy.classList.remove('in');
+  copy.classList.remove('in', 'apart');
   copy.classList.add('leaving');
-  copy.removeAttribute('aria-current');
   copy.removeAttribute('data-id');
   copy.setAttribute('aria-hidden', 'true');
   copy.inert = true;
@@ -1251,21 +1252,27 @@ function slide(before, leaving, wanted, arriving) {
   const fade = parseFloat(style.getPropertyValue('--quick')) || 140;
   const easing = style.getPropertyValue('--ease').trim() || 'ease-out';
   const animations = [];
+  // Read before any row is put back, so that placing one does not lay the list out again for the next.
+  const top0 = list.scrollTop - box.top - list.clientTop;
+  const left0 = -box.left - list.clientLeft;
   for (const { li, top, left, width } of leaving) {
-    li.style.top = `${top - box.top - list.clientTop + list.scrollTop}px`;
-    li.style.left = `${left - box.left - list.clientLeft}px`;
+    li.style.top = `${top + top0}px`;
+    li.style.left = `${left + left0}px`;
     li.style.width = `${width}px`;
     list.append(li);
-    const out = li.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fade, easing, fill: 'forwards' });
+    // A row going fades slowly first and then quickly, so that it is seen as it was, its box
+    // ticked, before it goes; what comes and what slides settles the other way, quickly first.
+    const out = li.animate([{ opacity: 1 }, { opacity: 0 }], { duration: fade, easing: 'ease-in', fill: 'forwards' });
     out.onfinish = () => li.remove();
     animations.push(out);
   }
   const delay = leaving.length ? fade : 0;
   const seen = (r) => r.bottom > box.top && r.top < box.bottom;
+  const coming = new Set(arriving);
   let carried = null;
   let slid = false;
   for (const li of wanted) {
-    if (arriving.includes(li)) continue;
+    if (coming.has(li)) continue;
     const r = li.getBoundingClientRect();
     const was = before.get(li.dataset.id);
     let dx = carried?.dx ?? 0;
@@ -1305,8 +1312,8 @@ function paintRows() {
   const action = moving;
   moving = null;
   if (motion && (action || standing() !== motion.stands)) settle();
-  const same = JSON.stringify([view.line, view.path]) === listFor;
-  const before = action && !still.matches && same ? (stock ?? measure()) : null;
+  const asking = JSON.stringify([view.line, view.path]);
+  const before = action && !still.matches && asking === listFor ? (stock ?? measure()) : null;
   if (action) stock = null;
   const leaving = [];
   const arriving = [];
@@ -1326,7 +1333,6 @@ function paintRows() {
   }
   editorIn = fieldId;
 
-  const asking = JSON.stringify([view.line, view.path]);
   const anew = asking !== listFor;
   if (anew) {
     listFor = asking;
@@ -1443,8 +1449,11 @@ function paintRows() {
     const back = !under && was === hereFromLine && !anew;
     hereFromLine = !was && field?.whole && under === view.here?.id ? under : '';
     if (!hereFromLine && !back) {
-      if (under) rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      else list.scrollTop = 0;
+      // The list never scrolls sideways, though a row still sliding out a level would ask it to.
+      if (under) {
+        rows.get(under)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        list.scrollLeft = 0;
+      } else list.scrollTop = 0;
     }
   } else if (!under && anew) list.scrollTop = 0;
   list.dataset.under = under;
