@@ -1020,12 +1020,13 @@ results arrive. A faint hairline under the line sets it apart from the rows. The
 caret and, under it in faint grey, the heads at the top of the list fading out by the eighth; at a
 phone's width they run the list's height, faded at its foot as the list is, and scroll, since a
 phone has no arrows to walk onto the rest. As you type, what is found takes their place; only a row
-that is new fades in, and nothing else moves but what the person takes away or brings back on the
-page: a row ticked, archived or deleted fades where it stood and then the rows that stay slide to
-their places, a ticked parent's notes stepping out a level as they go, and the archived rows hidden
-or shown go and come the same way, room made first and then the rows as they come. Any key, any
-press, or a painting that moves a row finishes it all at once, and with reduced motion none of it
-runs (see "Rows that come and go at your word move into place"). A row drawn under another is a
+that is new fades in, and nothing else moves but what the person puts away or brings back on the
+page: a row ticked or archived fades where it stood and then the rows that stay slide to their
+places, a ticked parent's notes stepping out a level as they go, and the archived rows hidden or
+shown go and come the same way, room made first and then the rows as they come. Any key, any press,
+or a painting that moves a row finishes it all at once, and with reduced motion none of it runs
+(see "Rows that come and go at your word move into place"). A row deleted goes at once, and the
+list closes up in the same frame (see "A deleted row goes at once"). A row drawn under another is a
 task's box and its gap further in a level, 1.45em at the row's size, to the fourth, so 4.35em at
 most, about six letters of a phone's forty: every row starts on its level's column, with its box or
 its first letter, the rows under a task start under its words, and at a phone's width a task's head
@@ -4011,7 +4012,23 @@ the app now does is described above; an entry repeats it only where the reason n
   it; and a beat holding the ticked row before it goes, as some task apps do, which holds the list
   half a second against the next key, when the box is ticked in the fade anyway. What stays: undo
   brings a row back fading in, as a new row does, and the rows below make room for it in a frame;
-  and the terminal draws the next frame as it is.
+  and the terminal draws the next frame as it is. Revised 2026-10-26 by "A deleted row goes at
+  once": a delete is no longer one of them, and its row goes and the list closes up in one frame,
+  as before.
+- **A deleted row goes at once.** Decided 2026-10-26, at Sam's word on seeing it, revising "Rows
+  that come and go at your word move into place", which took a delete with a tick and an archive.
+  A deleted row faded where it stood for 140ms and then the rows below slid up into its room. A
+  tick's fade has something to show, the box ticked, and a note ticked or archived is put away, there
+  still with the archived shown. A delete has nothing to show and the note is meant gone, so a row
+  still fading after Ctrl-D was the page lingering on what it had been told to throw away, and a
+  run of deletes, a few rows cleared one after another, flashed each row just deleted. Now a delete
+  takes its row and the list closes up in the same frame, as it did before, and a deleted parent's
+  notes stand a level up at once. Weighed: the row going at once while the rows below still slide
+  up into its room, which keeps the slide's one use for a delete, following a deleted parent's
+  notes out a level, but opens a gap after the row has gone, motion after an act that wanted none.
+  What keeps its motion: archiving a note with no box, the same key and the same putting away as a
+  tick, which shows the row going where there is no tick to see; and the archived shown or hidden,
+  where nothing is thrown away.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -1183,17 +1183,18 @@ const takesFocus = (field) =>
   document.activeElement !== field &&
   !$('sheet-foot').contains(document.activeElement);
 
-// What the person takes away here, by ticking, archiving or deleting it or by hiding what is
-// archived, fades where it stood, and then the rows that stay slide to where they now are, a
-// ticked parent's notes stepping out a level as they go; what showing the archived brings back
-// fades in once the rows have made room for it, so it never appears in a gap still opening. Room
-// first and then the rows is the order of taking away turned round. Nothing else on the list moves
-// (see style.css), and this keeps to the reason: any key, any press, and any painting that changes
-// which rows stand where finish it all at once, so that nothing is still moving when the next key
-// lands, and typing, which repaints the list most, moves nothing. Rows that go for any other
-// reason, a note from elsewhere, undo, a line typed, just go. The rows made are read where they
-// stand before the painting and again after it, and only after one of these actions.
-const MOVES = ['archive', 'delete', 'show_archived'];
+// What the person takes away here, by ticking or archiving it or by hiding what is archived, fades
+// where it stood, and then the rows that stay slide to where they now are, a ticked parent's notes
+// stepping out a level as they go; what showing the archived brings back fades in once the rows
+// have made room for it, so it never appears in a gap still opening. Room first and then the rows
+// is the order of taking away turned round. Nothing else on the list moves (see style.css), and
+// this keeps to the reason: any key, any press, and any painting that changes which rows stand
+// where finish it all at once, so that nothing is still moving when the next key lands, and typing,
+// which repaints the list most, moves nothing. Rows that go for any other reason just go: a note
+// deleted, which is meant gone and has no tick to show as it goes, a note from elsewhere, undo, a
+// line typed. The rows made are read where they stand before the painting and again after it, and
+// only after one of these actions.
+const MOVES = ['archive', 'show_archived'];
 const SLIDE = 180;
 // The action whose painting is to move, until that painting.
 let moving = null;

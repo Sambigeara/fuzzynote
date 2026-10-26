@@ -6,12 +6,13 @@
  * what the cursor is on. The line sits a little above a third of the way down and never moves,
  * with a hairline under it; the margin above it is where the path goes. An open body is a sheet
  * over the page, which is dimmed behind it. What is already on the page holds still: a row that is
- * new fades in, and otherwise only what the person takes away or brings back here moves, by a tick,
- * an archive, a delete or the archived shown or hidden, the row that goes fading where it stood and
- * the rest sliding to their places after it. A keystroke repaints the list, and anything still in
- * flight when the next key lands makes the list swim, so any key, any press and any painting that
- * moves a row finish all of it at once, and typing moves nothing. The states the page can be in are
- * classes on the body, set by the painter; this file is what each of them looks like. */
+ * new fades in, and otherwise only what the person puts away or brings back here moves, by a tick,
+ * an archive or the archived shown or hidden, the row that goes fading where it stood and the rest
+ * sliding to their places after it; a row deleted just goes. A keystroke repaints the list, and
+ * anything still in flight when the next key lands makes the list swim, so any key, any press and
+ * any painting that moves a row finish all of it at once, and typing moves nothing. The states the
+ * page can be in are classes on the body, set by the painter; this file is what each of them looks
+ * like. */
 
 :root {
   --paper: #f8f7f4;
