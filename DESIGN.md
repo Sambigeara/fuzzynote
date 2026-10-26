@@ -1177,40 +1177,42 @@ is not also a word in the foot; clearing is, being Escape's next rung, which the
 with (see *Keys*).
 
 *Writing in a row.* The head of the row the cursor is on is the editor, the one the sheet holds,
-moved into the row as the cursor lands, with the day its note was written at the end of its row, a
-caret's width off the head, or at the end of its tail at a phone's width, and typing changes it; a
-note with a body has `¶` just before the date, since the tail, where the mark is off the cursor, is
-not there. It reads as the row reads off the cursor, heavier, on one line, its marks hidden, a
-task's box drawn and the path's labels left off, but for the span the selection touches, which shows
-its marks as typed, as in the sheet (see "A row's marks show only in the span being written"):
-emphasis, strong text, strikethrough or code with its marks, a link with its brackets and address,
-an address with its scheme, an escape with its backslash, and the head's lead, its box and the space
-after it or a heading's mark, while the caret is at the start of its words. Arriving touches
-nothing: as the cursor lands the head reads whole, its caret at the end and the page's block drawn
-there, where the terminal puts its cursor, until the caret moves or something is written, so that a
-head ending in a link does not show its address as the cursor walks past. In a place the place's
-labels at the end of a head read hidden until the caret goes into them, by End or Right; the caret
-lands before them, and what is typed there goes before them. Up, Down, the pages, Tab, Enter,
-Shift-Enter, Escape, Backspace on an empty head, Ctrl-Z and the chords are the session's, heard
-before the editor hears them; the letters, Left, Right, Home, End, a selection and the rest are the
-editor's, as in any field. The head is one line, wider than a phone's, a field that scrolls sideways
-under the caret: the text moves only when the caret would come within 2.5em, about five letters, of
-an edge, and an edge that hides text fades, from the moment the cursor lands; a long head is read
-from its start, its caret at the end past the edge and its block at the edge. A letter, Left or a
-paste at the end slides the text to show the end; Home shows the start; a press keeps the text where
-it is, puts the caret under the pointer and opens the span it lands in once it is let go; a drag
-selects, and past an edge scrolls towards the pointer; the middle and right buttons paste and offer
-Paste as in any field; and a newline pasted becomes a space. On a wide page the pane shows the whole
-head as it is typed. Left, the row reads from its start again, its scroll forgotten, as an address
-bar's is. At a phone's width the head wraps as the head read does, and a head being written grows
-its row as it wraps. Enter opens a new row under it; Ctrl-O, or `body` in the foot, opens the whole
-note in the sheet, a bounded overlay over the column with the page dimmed slightly behind it, which
-scrolls on its own, and in it Enter is a line break, Tab indents and Shift-Tab takes the indent
-back, the arrows move within it, and Esc closes it back onto the head. Leaving it for anywhere else
-on the page closes it, and a press on another row goes there; a press in its own margin, below its
-text, which puts the caret on its last line, or on its row behind it, does not, and nor does leaving the window, though the tab going out of sight writes
-what it holds. The words in the foot stay above the dimming, since they are about the note. There is
-no second editor: the editor goes from the row into the sheet as the body opens, for a long document
+moved into the row as the cursor lands, with the day its note was written at the end of its row, or
+at the end of its tail at a phone's width, and typing changes it; a note with a body has `¶` just
+before the date, since the tail, where the mark is off the cursor, is not there. It reads as the row
+reads off the cursor, heavier, on one line, its marks hidden, a task's box drawn and the path's
+labels left off, but for the span the selection touches, which shows its marks as typed, as in the
+sheet (see "A row's marks show only in the span being written"): emphasis, strong text,
+strikethrough or code with its marks, a link with its brackets and address, an address with its
+scheme, an escape with its backslash, and the head's lead, its box and the space after it or a
+heading's mark, while the caret is at the start of its words. Arriving touches nothing: as the
+cursor lands the head reads whole, its caret at the end and the page's block drawn there, where the
+terminal puts its cursor, until the caret moves or something is written, so that a head ending in a
+link does not show its address as the cursor walks past. In a place the place's labels at the end of
+a head read hidden until the caret goes into them, by End or Right; the caret lands before them, and
+what is typed there goes before them. Up, Down, the pages, Tab, Enter, Shift-Enter, Escape,
+Backspace on an empty head, Ctrl-Z and the chords are the session's, heard before the editor hears
+them; the letters, Left, Right, Home, End, a selection and the rest are the editor's, as in any
+field. The head is one line, wider than a phone's, a field that scrolls sideways under the caret:
+the text moves only when the caret would come within 2.5em, about five letters, of an edge, and an
+edge that hides text fades, from the moment the cursor lands; a long head is read from its start,
+its caret at the end past the edge and its block at the edge. A letter, Left or a paste at the end
+slides the text to show the end, and a caret's width after it, as the terminal leaves a column after
+the end, so that the block at the end stands after the last letter and never on it; Home shows the
+start; a press keeps the text where it is, puts the caret under the pointer and opens the span it
+lands in once it is let go; a drag selects, and past an edge scrolls towards the pointer; the middle
+and right buttons paste and offer Paste as in any field; and a newline pasted becomes a space. On a
+wide page the pane shows the whole head as it is typed. Left, the row reads from its start again,
+its scroll forgotten, as an address bar's is. At a phone's width the head wraps as the head read
+does, and a head being written grows its row as it wraps. Enter opens a new row under it; Ctrl-O, or
+`body` in the foot, opens the whole note in the sheet, a bounded overlay over the column with the
+page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break, Tab
+indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
+the head. Leaving it for anywhere else on the page closes it, and a press on another row goes there;
+a press in its own margin, below its text, which puts the caret on its last line, or on its row
+behind it, does not, and nor does leaving the window, though the tab going out of sight writes what
+it holds. The words in the foot stay above the dimming, since they are about the note. There is no
+second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
 list reads, its marks hidden and a task's box drawn but never pressed, but for the span the
 selection touches, which shows its marks where they stand, the marks in the faint grey and the text

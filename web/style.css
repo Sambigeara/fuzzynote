@@ -394,10 +394,12 @@ button, input, textarea { font: inherit; color: inherit; }
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em),
     transparent);
 }
-/* Wider than a phone the row under the cursor's date stands a caret's width further off its head,
-   so that the caret at the end of a head that fills the row does not touch it. */
+/* Wider than a phone a head being written has a caret's width after its end, as the terminal leaves
+   a column there, so that a head longer than its row scrolls far enough for the block at its end to
+   stand after the last letter rather than on it. A phone's head wraps instead, and wraps as it reads
+   off the cursor. */
 @media (min-width: 641px) {
-  .row[aria-current="true"] .main > .tail + * { margin-left: calc(0.55 * var(--note-size)); }
+  .edit .cm-editor .cm-content { padding-right: 0.55em; }
 }
 /* A body behind the row under the cursor, whose tail, where the mark is off the cursor, is not
    there. */
