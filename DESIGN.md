@@ -1020,9 +1020,12 @@ results arrive. A faint hairline under the line sets it apart from the rows. The
 caret and, under it in faint grey, the heads at the top of the list fading out by the eighth; at a
 phone's width they run the list's height, faded at its foot as the list is, and scroll, since a
 phone has no arrows to walk onto the rest. As you type, what is found takes their place; only a row
-that is new fades in, and nothing else moves. A row drawn under another is 1.25rem further in a
-level, to the fourth, so 3.75rem at most, about five letters of a phone's forty, a task's box after
-the indent; at rest it is the one piece of structure the list shows. A row is one line, wider than a
+that is new fades in, and nothing else moves. A row drawn under another is a
+task's box and its gap further in a level, 1.45em at the row's size, to the fourth, so 4.35em at
+most, about six letters of a phone's forty: every row starts on its level's column, with its box or
+its first letter, the rows under a task start under its words, and at a phone's width a task's head
+that wraps goes on under its words (see "A level is a box in"); at rest it is the one piece of
+structure the list shows. A row is one line, wider than a
 phone's, wherever the cursor is: a head longer than its row ends in `…` off the cursor, and on it
 fades at the edge that hides it, as a field does (see "A row is one line, and a long head is read
 beside it" and *Writing in a row*). The document never scrolls, at any width: the list scrolls under
@@ -3949,7 +3952,29 @@ the app now does is described above; an entry repeats it only where the reason n
   are is the whole path" brought into sight, keeps a state per note and wants a key and a mark,
   where going in already folds; the notes under a note grouped after it without indenting, which
   keeps every arrow; and a new row opened in a subtree linked to the path alone, which is drawn in
-  the subtree and jumps out of it when the list is made again.
+  the subtree and jumps out of it when the list is made again. Revised 2026-10-26 by "A level is a
+  box in": on the page a level is a task's box and its gap, 1.45em at the row's size, where it was
+  1.25rem with the box after the indent; the terminal keeps two columns.
+
+- **A level is a box in.** Decided 2026-10-26, at Sam's ask, revising "A list in your order is drawn
+  as a tree" in how far in a level is on the page. A level was 1.25rem, 20px, and a task's box with
+  its gap 1.45em, about 24.65px at the row's 17px: two measures 5px apart. So the boxes stood on a
+  20px step and the words after a box 25px on, and on the desktop the rows started at eight left
+  edges, 264, 284, 289, 304, 309, 324, 329 and 349, each nearly but not quite under another; a
+  task's notes started under its box, just short of its words, and a plain note and a task beside it
+  started their words 25px apart. Now there is one grid: a level is the width of a task's box and its
+  gap, one measure that the box and the indent both read, so that they cannot drift apart again.
+  Every row starts on its level's column, with its box or its first letter, and the rows under a task
+  start under its words: 264, 289, 313, 338 and 363 on the same page, each a level's column. At a
+  phone's width a task's head that wraps goes on under its words, not under its box, on the cursor
+  as off it, so a head still wraps the same on the cursor as off it. What it costs: the fourth level
+  is about 4.35em in, about 74px at the row's size where it was 60, about six letters of a phone's
+  forty rather than five. The terminal keeps two columns a level: on a character grid the offset is
+  a whole cell, so nothing nearly lines up there; two columns read as a nested list in plain text;
+  and four, a box and its space, would push a plain note's notes in a long way for no box. Weighed:
+  guide lines down a parent's notes, which are a second structure to read and chrome on paper that
+  has none; a mark on every plain row, as an outliner has, which puts a mark on every row to make
+  the tasks' boxes line up; and tighter rows under a parent, where a row is one height, a thumb's.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -34,6 +34,10 @@
   --meta-size: 0.8125rem;
   --quick: 140ms;
   --ease: cubic-bezier(.2, .7, .2, 1);
+  /* A task's box and the gap after it, which is also how far in a level is drawn, so that the rows
+     under a task start under its words. It is in em, which resolves at the row that reads it. */
+  --box: 0.95em;
+  --step: calc(var(--box) + 0.5em);
   --caret: rgb(27 26 24 / 0.32);
   --select: rgb(27 26 24 / 0.12);
   --rule: rgb(27 26 24 / 0.1);
@@ -252,13 +256,14 @@ button, input, textarea { font: inherit; color: inherit; }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2 * var(--row)), transparent);
 }
 
-/* A row drawn under another is 1.25rem in a level, to the fourth, which is about five letters of
-   a phone's forty. A task's box sits after the indent. */
+/* A row drawn under another is a task's box and its gap further in a level, to the fourth, which is
+   about six letters of a phone's forty. So every row starts on its level's column, with its box or
+   its first letter, and the rows under a task start under its words. */
 .row {
   position: relative;
   min-height: var(--row);
   padding: calc((var(--row) - 1.5em) / 2) var(--gap);
-  padding-inline-start: calc(var(--gap) + var(--depth, 0) * 1.25rem);
+  padding-inline-start: calc(var(--gap) + var(--depth, 0) * var(--step));
   contain: content;
   cursor: default;
 }
@@ -314,9 +319,9 @@ button, input, textarea { font: inherit; color: inherit; }
 .tick {
   position: relative;
   display: inline-block;
-  width: 0.95em;
-  height: 0.95em;
-  margin: 0 0.5em 0 0;
+  width: var(--box);
+  height: var(--box);
+  margin: 0 calc(var(--step) - var(--box)) 0 0;
   padding: 0;
   border: 1px solid var(--faint);
   border-radius: 2px;
@@ -866,6 +871,13 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
     overflow-wrap: anywhere;
   }
   .edit .cm-content { flex-shrink: 1; }
+  /* A task's wrapped lines go on under its words, not under its box, read and written alike, so
+     that the rows under it and its own lines start on one column. */
+  .row .head:has(> .tick),
+  .edit .cm-line:has(> .tick) {
+    padding-left: var(--step);
+    text-indent: calc(-1 * var(--step));
+  }
   .tail { order: 1; flex: 1 1 0; }
   .row[aria-current="true"] .tail { display: block; }
   .row time { order: 2; margin-left: auto; }
@@ -882,7 +894,7 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
   }
   .row {
     padding-inline: var(--gutter);
-    padding-inline-start: calc(var(--gutter) + var(--depth, 0) * 1.25rem);
+    padding-inline-start: calc(var(--gutter) + var(--depth, 0) * var(--step));
   }
 
   #foot {
