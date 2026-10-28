@@ -231,6 +231,9 @@ pub enum Action {
     Copy,
     /// Open the first URL in the note under the cursor.
     OpenUrl,
+    /// Go into the note this name in brackets names, `Boiler` for `[[Boiler]]`, leaving the note
+    /// under the cursor as any step away does: a link in an open body followed.
+    Follow(String),
     Undo,
     Redo,
     /// List archived notes too, or stop.
@@ -305,6 +308,7 @@ impl Action {
             | Action::Back
             | Action::Copy
             | Action::OpenUrl
+            | Action::Follow(_)
             | Action::ShowArchived
             | Action::ShowScores
             | Action::Restore(_)
@@ -733,6 +737,7 @@ impl Session {
             Action::Shift(by) => self.shift(by),
             Action::Copy => self.copy(),
             Action::OpenUrl => self.open_url(),
+            Action::Follow(name) => self.follow_link(&name),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::ShowArchived => {

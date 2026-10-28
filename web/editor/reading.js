@@ -395,6 +395,11 @@ const read = ViewPlugin.fromClass(
   },
 );
 
+// Whether the span from `from` to `to` shows its marks, being written in: the selection touches it
+// and the text has been moved in since it was arrived at, as the reading judges it.
+export const writtenIn = (view, from, to) =>
+  !view.plugin(read)?.arrived && view.state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+
 // Whether an update opened or closed a mark, which moves the caret's letters.
 export const readingMoved = (update) => !!update.view.plugin(read)?.moved;
 

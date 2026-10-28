@@ -1214,8 +1214,10 @@ behind it, does not, and nor does leaving the window, though the tab going out o
 it holds. The words in the foot stay above the dimming, since they are about the note. There is no
 second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
-list reads, its marks hidden and a task's box drawn but never pressed, but for the span the
-selection touches, which shows its marks where they stand, the marks in the faint grey and the text
+list reads, its marks hidden and a task's box drawn but never pressed, a link read followed by a
+press, an address in a tab of its own with the body left open and `[[Boiler]]` into Boiler as Tab
+goes, the body written as it closes, but for the span the selection touches, which shows its marks
+where they stand, a press on it the caret's, the marks in the faint grey and the text
 in ink, headings and strong text heavier, the first three levels of heading larger, emphasis
 slanted, code in the monospace; a body opens reading whole, as a head is landed on; soft wrap, step
 undo, a grey selection, and vim mode for the body, for the browser that asked for it with the word
@@ -4031,6 +4033,23 @@ the app now does is described above; an entry repeats it only where the reason n
   What keeps its motion: archiving a note with no box, the same key and the same putting away as a
   tick, which shows the row going where there is no tick to see; and the archived shown or hidden,
   where nothing is thrown away.
+
+- **A link read in the open body is followed.** Decided 2026-10-28, at Sam's ask, extending "A line
+  of the open body reads until it is written in". A link in a row and in the body beside the list
+  opened on a press, but in the sheet a press on one only put the caret in its words, so a body
+  read with its links in blue had links that went nowhere. Now a press on a link the sheet reads,
+  its marks hidden, follows it, as a row's does: an address the page follows opens in a tab of its
+  own and the body stays open, the caret where it was; and `[[Boiler]]` goes into Boiler as Tab on
+  its row would, the body written as it closes on the way and the path one step longer, so that
+  Escape comes back out. A name that names no note, or several, goes nowhere and says so, `no
+  note is called Garage` or `2 notes are called Garage`. A link the selection touches is being
+  written in, as the sheet reads a span, and a press on it is the caret's; to put the caret in a
+  link read, it goes in from beside it, or the arrows walk in. The engine resolves
+  the name, as brackets are resolved when a note is saved, so the page holds no index of names;
+  the terminal has nothing to follow it with, since its body is in your editor. Weighed: a
+  modifier with the press, which a phone has not and which the rest of the page never asks for;
+  and following only addresses, leaving `[[Boiler]]` as typed, which left the one link that is
+  fzn's own the one that could not be followed.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

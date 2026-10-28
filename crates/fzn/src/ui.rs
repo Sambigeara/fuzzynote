@@ -329,8 +329,9 @@ fn key_for(action: &Action, keys: Keys) -> &'static str {
         // Typing and the editor ask for the rest, not a key. A body is written in the editor here,
         // so opening one in place has no key either. Backspace on an empty row asks for Erase,
         // and the footer does not name it, since taking an empty line away is what Backspace
-        // does everywhere.
+        // does everywhere. A link is followed only from the page's body, by a press on it.
         Action::Open
+        | Action::Follow(_)
         | Action::Type(_)
         | Action::Edited(_)
         | Action::Save { .. }

@@ -197,6 +197,31 @@ impl Session {
             || self.engine.contains(&id, &typed)
             || self.engine.searched(&id, &self.parsed);
         let head = self.step_name(&id).unwrap_or_else(|| row.head.clone());
+        self.go_into(id, head, searched);
+    }
+
+    /// Goes into the one note a name in brackets names, as Tab on its row would, the line kept
+    /// for the way back: following a link is picking its target.
+    pub(super) fn follow_link(&mut self, name: &str) {
+        let Ok(id) = self.named_one(name) else {
+            return;
+        };
+        if let Some(head) = self.step_name(&id) {
+            self.go_into(id, head, true);
+        }
+    }
+
+    /// The one note a name in brackets names, or why it names none to follow: it names no note,
+    /// or several.
+    pub(super) fn named_one(&self, name: &str) -> Result<String, String> {
+        match &self.engine.named_in(&format!("[[{name}]]"))[..] {
+            [id] => Ok(id.clone()),
+            [] => Err(format!("no note is called {name}")),
+            named => Err(format!("{} notes are called {name}", named.len())),
+        }
+    }
+
+    fn go_into(&mut self, id: String, head: String, searched: bool) {
         let step = Step::Note {
             id,
             head,

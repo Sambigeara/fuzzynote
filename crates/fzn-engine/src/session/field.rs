@@ -174,6 +174,13 @@ impl Session {
     /// back to be done as it would be. One that asks for the note under the cursor is dropped
     /// when leaving took that note away, so that it does not fall on a neighbour.
     pub(super) fn on_field(&mut self, action: Action) -> Option<Action> {
+        // A link that leads nowhere leaves the note as it is, its body open, and says why.
+        if let Action::Follow(name) = &action
+            && let Err(why) = self.named_one(name)
+        {
+            self.status = why;
+            return None;
+        }
         let today = self.today();
         let steps_out = self.steps_out().is_some();
         let Some(field) = self.field.as_mut() else {

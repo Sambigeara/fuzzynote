@@ -1674,3 +1674,44 @@ fn a_reason_and_a_status_name_a_note_as_its_row_reads() {
     s.act(Action::Undo);
     assert_eq!(s.status, "undid: Ring the engineer");
 }
+
+#[test]
+fn a_link_followed_from_an_open_body_writes_the_body_and_goes_into_the_note_it_names() {
+    let mut s = session();
+    boiler(&mut s);
+    select(&mut s, "Order oil #house");
+    s.act(Action::Open);
+    edited(&mut s, "Order oil #house\nask about [[boiler]] first");
+    s.act(Action::Follow("boiler".into()));
+    assert_eq!(
+        path(&s),
+        ["Boiler"],
+        "named in any case, as brackets name it"
+    );
+    assert_eq!(
+        s.notes.get("oil").unwrap().text,
+        "Order oil #house\nask about [[boiler]] first",
+        "the body is written as it is left"
+    );
+    assert_eq!(s.notes.get("oil").unwrap().links, ["boiler"]);
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+
+    // A name for no note, or one two notes share, goes nowhere, leaves the body open, and says
+    // why.
+    select(&mut s, "Order oil #house");
+    s.act(Action::Open);
+    s.act(Action::Follow("Nowhere".into()));
+    assert!(field(&s).is_some_and(|(_, _, whole)| whole));
+    assert_eq!(
+        (path(&s).len(), s.status.as_str()),
+        (0, "no note is called Nowhere")
+    );
+    put(&mut s, "g1", "Garage", &[], NOON.secs());
+    put(&mut s, "g2", "garage", &[], NOON.secs());
+    s.act(Action::Follow("Garage".into()));
+    assert_eq!(
+        (path(&s).len(), s.status.as_str()),
+        (0, "2 notes are called Garage")
+    );
+}

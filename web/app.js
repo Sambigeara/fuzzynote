@@ -844,6 +844,13 @@ const editorHooks = {
     if (!event.target.isConnected) return;
     leftFor(event);
   },
+  // A link in the body followed: an address opens apart from the page and the body stays open, as
+  // a link anywhere else opens; a note's name goes into the note, the body written as it closes.
+  onFollow: ({ url, name }) => {
+    if (url) return window.open(url, '_blank', 'noopener,noreferrer');
+    act({ follow: name });
+    follow();
+  },
   // Vim's write keeps the body as it stands and stays; its quits close it, and the one with a
   // bang first puts the note back as it was when the cursor landed on it. Each is done once vim
   // has finished with the key that asked for it, since vim goes on with the editor after its

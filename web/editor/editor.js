@@ -30,7 +30,7 @@ import {
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { between, follows, highlighter, language, line, markdown } from './render.js';
-import { asHead, fromPage, readEnd, readWhereNotWritten, readingMoved } from './reading.js';
+import { asHead, fromPage, readEnd, readWhereNotWritten, readingMoved, writtenIn } from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -132,6 +132,26 @@ const linksMarked = ViewPlugin.define(
   { decorations: (plugin) => plugin.marks },
 );
 
+// What a press at a position in a body follows, if it lands on a link read rather than written
+// in: an address the page follows, as `{ url }`, or a note's name in brackets, as `{ name }`. A link
+// whose marks show is being written in, and a press there is the caret's.
+function linkAt(view, pos) {
+  const { state } = view;
+  for (const side of [1, -1]) {
+    for (let node = syntaxTree(state).resolveInner(pos, side); node; node = node.parent) {
+      const text = (n) => state.sliceDoc(n.from, n.to);
+      let found = null;
+      if (node.name === 'Bracketed') found = { name: state.sliceDoc(node.from + 2, node.to - 2) };
+      else if (node.name === 'Link' || node.name === 'Image') {
+        const url = node.getChildren('URL').find((u) => u.from > between(node)[1]);
+        if (url && follows(text(url))) found = { url: text(url) };
+      } else if (node.name === 'URL' && follows(text(node))) found = { url: text(node) };
+      if (found) return writtenIn(view, node.from, node.to) ? null : found;
+    }
+  }
+  return null;
+}
+
 let current = null;
 
 // `:q!` reaches `q` with the bang left over as its argument.
@@ -210,8 +230,20 @@ export function mount(hooks, foot) {
   // A body wraps, and its keys are an editor's: Enter is a newline and no more, with or without
   // Shift. Ctrl-O does nothing here, so that it never reaches the browser's file dialog. Tab
   // indents and Shift-Tab takes the indent back, as in any editor, rather than moving the focus off
-  // the page's text: Escape, `:q` or the word in the foot is the way out.
+  // the page's text: Escape, `:q` or the word in the foot is the way out. A press on a link read
+  // follows it, and the caret stays where it was.
   const body = () => [
+    EditorView.domEventHandlers({
+      mousedown(event, view) {
+        if (event.button !== 0) return false;
+        const at = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        const link = at == null ? null : linkAt(view, at);
+        if (!link) return false;
+        event.preventDefault();
+        hooks.onFollow(link);
+        return true;
+      },
+    }),
     vimSlot.of(vimKeys()),
     keymap.of([
       { key: 'Enter', run: insertNewline, shift: insertNewline },
