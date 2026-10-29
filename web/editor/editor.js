@@ -65,17 +65,20 @@ const oneLine = EditorState.transactionFilter.of((tr) => {
 
 // A block of code is set in the monospace a line at a time, fences and all, as far as the view
 // reaches. The highlighting cannot give it the face, since a language's own starts afresh inside
-// the block.
+// the block. A table's lines are marked too, whatever the caret does, since in the sheet they and
+// a block of code's take its whole width where a line of prose keeps the column's measure.
 const codeLine = Decoration.line({ class: 'hl-code' });
+const tableLine = Decoration.line({ class: 'md-table' });
 const codeLines = (view) => {
   const lines = new RangeSetBuilder();
   const { doc } = view.state;
   syntaxTree(view.state).iterate({
     ...view.viewport,
     enter(node) {
-      if (node.name !== 'FencedCode' && node.name !== 'CodeBlock') return;
+      const kind = { FencedCode: codeLine, CodeBlock: codeLine, Table: tableLine }[node.name];
+      if (!kind) return;
       for (let line = doc.lineAt(node.from); ; line = doc.line(line.number + 1)) {
-        lines.add(line.from, line.from, codeLine);
+        lines.add(line.from, line.from, kind);
         if (line.to >= node.to) return false;
       }
     },

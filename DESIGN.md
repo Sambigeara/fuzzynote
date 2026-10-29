@@ -1205,7 +1205,9 @@ and right buttons paste and offer Paste as in any field; and a newline pasted be
 wide page the pane shows the whole head as it is typed. Left, the row reads from its start again,
 its scroll forgotten, as an address bar's is. At a phone's width the head wraps as the head read
 does, and a head being written grows its row as it wraps. Enter opens a new row under it; Ctrl-O, or
-`body` in the foot, opens the whole note in the sheet, a bounded overlay over the column with the
+`body` in the foot, opens the whole note in the sheet, a bounded overlay over the column and the
+room beside it, its prose held to the column's measure and a table's or a block of code's lines
+given its whole width (see "A wide line has the sheet's width"), with the
 page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break, Tab
 indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
 the head. Leaving it for anywhere else on the page closes it, and a press on another row goes there;
@@ -1941,7 +1943,8 @@ the app now does is described above; an entry repeats it only where the reason n
   text, since CodeMirror sticks its panels to the foot of whatever scrolls the editor, which was the
   page, so with a long body open Escape then `:` put the prompt over a line of the note; the editor
   is given the sheet's foot for its panels instead, one extension in its source and 64 bytes in the
-  bundle.
+  bundle. Revised 2026-10-29 by "A wide line has the sheet's width": wider than a phone the sheet
+  reaches over the room beside the column.
 
 - **A body's markdown is rendered where it is read and styled where it is written.** Decided
   2026-10-15, agreed with Sam, revising "The body is a CodeMirror editor, loaded when a body first
@@ -3408,7 +3411,8 @@ the app now does is described above; an entry repeats it only where the reason n
   list stops at 38rem, and the column, and the sheet an opened body is read in, which follows it,
   at 50rem. The shape is as it was, one column left of centre with a third of the room on its left
   and the body beside it, and nothing is new on the page. Below a page 100rem wide nothing changes,
-  so a laptop and a phone are as they were.
+  so a laptop and a phone are as they were. Revised 2026-10-29 by "A wide line has the sheet's
+  width": the sheet reaches over the room beside the column, and only its prose follows the column.
 
 - **Enter on a line of labels goes in.** Decided 2026-10-19, at Sam's direction, revising "Enter
   with text on the line takes the cursor to the note it wrote" and "`/task` is a way of typing the
@@ -4050,6 +4054,26 @@ the app now does is described above; an entry repeats it only where the reason n
   modifier with the press, which a phone has not and which the rest of the page never asks for;
   and following only addresses, leaving `[[Boiler]]` as typed, which left the one link that is
   fzn's own the one that could not be followed.
+
+- **A wide line has the sheet's width.** Decided 2026-10-29, at Sam's ask, revising "A wide page
+  widens the column", where the sheet an opened body is read in followed the column to its cap,
+  and "An open body is a sheet over the page", where the sheet was about the size the body had in
+  the page. A table in a body was read in the sheet at the column's measure, 38rem on a laptop, so
+  each row of a five-column table of radiator readings wrapped onto two lines and its columns could
+  not be followed down. Now, wider than a phone, the sheet reaches from the column's left edge to
+  the window's margin, and no further than the column and the body beside it together, which on a
+  wide page is where that body ends; it covers what the dimming already hid. A line of prose keeps
+  the column's measure inside it, and a table's lines and a block of code's take the whole width,
+  wrapping only past it. The left edge does not move, so the text starts where the row was and
+  nothing moves as the sheet opens. At 1440 pixels the sheet's text is 1107 pixels wide and its
+  prose 608, as before. On a phone the sheet was already the frame and is unchanged. Weighed: a
+  sheet simply wider, which fits a table only by giving prose lines of 110 to 150 letters; a
+  table's lines kept from wrapping, which widens the editor and scrolls the whole sheet, prose and
+  all, sideways, since CodeMirror cannot scroll one line alone without a widget, which "A line of
+  the open body reads until it is written in" turned down; and the sheet centred on the page,
+  which would move the text away from the row it opened from. A selection across lines of prose is
+  shaded to the sheet's right edge rather than the prose's, as CodeMirror draws a selection, and
+  that is kept.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
