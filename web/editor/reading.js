@@ -423,6 +423,7 @@ class Drawn extends WidgetType {
   toDOM() {
     const box = document.createElement('div');
     box.className = 'md-table-read';
+    box.style.setProperty('--lines', this.source.split('\n').length);
     box.append(body(this.source));
     return box;
   }

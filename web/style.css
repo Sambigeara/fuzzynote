@@ -555,11 +555,11 @@ a:hover { text-decoration-color: currentColor; }
 body.resting .row .head a,
 .task.done a { color: color-mix(in oklab, var(--link) 40%, var(--faint)); }
 
-/* A body open: a sheet over the column and the room beside it, the page dimmed slightly behind it,
-   which holds the whole note at its natural weight and scrolls on its own. It reaches from the
-   column's left edge to the window's margin, no further than the column and the body beside it
-   together; a line of prose keeps the column's measure inside it, and a table's lines and a block
-   of code's take the whole width, so that a table's rows do not wrap where the room is there. It is placed from the top and given its
+/* A body open: a sheet over the page, which holds the whole note at its natural weight and scrolls
+   on its own. Wider than a phone it is the page, from the top to the foot, edge to edge, with no
+   card, shadow or dimming, its text starting at the column's left edge, so that nothing moves
+   sideways as it opens; a line keeps the column's measure, and a table drawn or being written takes
+   the room there is, no further than the column and the body beside it together. It is placed from the top and given its
    height, never pinned to the foot of the screen, where iOS Safari misplaces what is pinned around
    its keyboard. The words in the foot stay above the dimming, since they are about the note. The
    editor's text fills the sheet below the words, as a page does, so that a press there is the
@@ -570,10 +570,7 @@ body.resting .row .head a,
   z-index: 2;
   top: var(--sheet-top);
   left: calc(var(--left) - var(--sheet-pad));
-  width: calc(
-    min(100% - var(--left) - var(--gutter) - var(--sheet-pad), var(--measure) + 3rem + var(--pane)) +
-      2 * var(--sheet-pad)
-  );
+  width: calc(min(var(--measure), 100% - 2 * var(--gutter)) + 2 * var(--sheet-pad));
   height: calc(100dvh - var(--sheet-top) - 4.5rem);
   display: flex;
   flex-direction: column;
@@ -604,18 +601,32 @@ body.resting .row .head a,
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
-#sheet .cm-line:not(.hl-code, .md-table) { max-width: var(--measure); }
-/* A table drawn in the open body is as high as its source: a row is a line, and its head's rule
-   sits in the middle of the line the row of dashes takes. Wider than the sheet, it scrolls
-   sideways on its own. */
-.md-table-read { overflow-x: auto; scrollbar-width: thin; cursor: text; }
-.md-table-read table { border-collapse: collapse; }
-.md-table-read :is(th, td) { padding: 0 1.25em 0 0; text-align: left; vertical-align: top; }
-.md-table-read th { padding-bottom: calc(0.5lh - 1px); border-bottom: 1px solid var(--rule); }
-.md-table-read tr:nth-child(2) td { padding-top: 0.5lh; }
+#sheet .cm-line:not(.md-table) { max-width: var(--measure); }
+/* A table drawn in the open body is as high as its source, as many lines as it has: the line the
+   row of dashes takes is shared out among its rows, a quarter of it each side of its head's rule.
+   Wider than the room, it scrolls sideways on its own: its width is the editor's, never the
+   table's, which would widen the editor and the prose with it. */
+.md-table-read { width: 0; min-width: 100%; overflow-x: auto; scrollbar-width: thin; cursor: text; }
+.md-table-read table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  height: calc(var(--lines) * 1lh);
+}
+/* A row is one line, as in its source, however narrow the room: a cell that wrapped would shrink
+   to a letter a line in the editor, which lets a word break anywhere. */
+.md-table-read :is(th, td) {
+  padding: 0 1.75em 0 0;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.md-table-read :is(th, td):last-child { padding-right: 0; }
+.md-table-read th { padding-bottom: 0.25lh; vertical-align: bottom; border-bottom: 1px solid var(--rule); }
+.md-table-read tr:nth-child(2) td { padding-top: 0.25lh; }
 @supports not (height: 1lh) {
-  .md-table-read th { padding-bottom: calc(0.75em - 1px); }
-  .md-table-read tr:nth-child(2) td { padding-top: 0.75em; }
+  .md-table-read table { height: calc(var(--lines) * 1.5em); }
+  .md-table-read th { padding-bottom: 0.375em; }
+  .md-table-read tr:nth-child(2) td { padding-top: 0.375em; }
 }
 .cm-editor.cm-focused { outline: none; }
 .cm-editor .cm-cursorLayer, .cm-editor .cm-vimCursorLayer, .cm-editor .cm-fat-cursor { display: none; }
@@ -635,6 +646,30 @@ body.resting .row .head a,
 }
 #sheet-foot .cm-vim-panel { padding: 0; font: var(--meta-size) / 1.5 var(--face); }
 #sheet-foot .cm-vim-panel input { font: inherit; color: var(--ink); padding: 0; }
+/* Wider than a phone the open body is the page above the foot: the room a card left round the text
+   only showed how far its edge stood from it. The text fades at the foot, as the list does, and
+   the last line can be scrolled clear of the words there. Its head is set a little heavier, as it
+   was on its row. */
+@media (min-width: 641px) {
+  #buffer {
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: calc(100dvh - 3.25rem - env(safe-area-inset-bottom));
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  body:has(#buffer:not([hidden])) { background: var(--sheet); }
+  #sheet {
+    padding: clamp(2rem, 8vh, 5rem) var(--gutter) 6rem var(--left);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+  }
+  #sheet > .cm-editor { width: min(100%, var(--measure) + 3rem + var(--pane)); }
+  #sheet .cm-content > .cm-line:first-child { font-weight: 500; }
+  #sheet-foot .cm-panels { padding-left: var(--left); }
+}
 
 /* Highlighting, the same in the body's editor and in code read, where it is set in ink: marks
    and punctuation faint, comments faint and slanting, what strings, numbers and constants say
@@ -1048,8 +1083,8 @@ body.locked #lower, body.locked #hints, body.locked #way { display: none !import
    its foot is not under the keyboard. */
 @media (hover: none) and (pointer: coarse) and (min-width: 641px) {
   #buffer {
-    top: calc(var(--vvt, 0px) + var(--sheet-top));
-    height: calc(var(--vvh, 100dvh) - var(--sheet-top) - 4.5rem);
+    top: var(--vvt, 0px);
+    height: calc(var(--vvh, 100dvh) - 3.25rem - env(safe-area-inset-bottom));
   }
 }
 

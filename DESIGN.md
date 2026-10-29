@@ -1205,15 +1205,14 @@ and right buttons paste and offer Paste as in any field; and a newline pasted be
 wide page the pane shows the whole head as it is typed. Left, the row reads from its start again,
 its scroll forgotten, as an address bar's is. At a phone's width the head wraps as the head read
 does, and a head being written grows its row as it wraps. Enter opens a new row under it; Ctrl-O, or
-`body` in the foot, opens the whole note in the sheet, a bounded overlay over the column and the
-room beside it, its prose held to the column's measure and a table's or a block of code's lines
-given its whole width (see "A wide line has the sheet's width"), with the
-page dimmed slightly behind it, which scrolls on its own, and in it Enter is a line break, Tab
+`body` in the foot, opens the whole note in the sheet, which is the page above the foot, top to
+foot and edge to edge, its text starting at the column's left edge and its lines held to the
+column's measure, but for a table's, which take the room there is (see "An open body is the page");
+it scrolls on its own, fading at its foot as the list does, and in it Enter is a line break, Tab
 indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
-the head. Leaving it for anywhere else on the page closes it, and a press on another row goes there;
-a press in its own margin, below its text, which puts the caret on its last line, or on its row
-behind it, does not, and nor does leaving the window, though the tab going out of sight writes what
-it holds. The words in the foot stay above the dimming, since they are about the note. There is no
+the head. A press in its own margin, below or beside its text, which puts the caret on the line
+nearest, does not close it, and nor does leaving the window, though the tab going out of sight
+writes what it holds. The words in the foot stay, since they are about the note. There is no
 second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
 list reads, its marks hidden and a task's box drawn but never pressed, a table drawn with its
@@ -1234,8 +1233,8 @@ coordinates, in a head and in a body, a block, and in vim's insert mode a bar. V
 command is at the foot of the sheet, under the text and a hairline. The editor is fetched as the
 page starts, beside the engine, and nothing is painted until it is here. The `editor` the engine
 offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and the bar
-the sheet's colour while it is open; a wider touch screen keeps it in the column, sized from the
-frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting the
+the sheet's colour while it is open; a wider touch screen has it as the page, sized from the frame.
+On a touch screen it opens without the keyboard, which a tap in the text raises; putting the
 keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it closes
 it.
 
@@ -1946,7 +1945,8 @@ the app now does is described above; an entry repeats it only where the reason n
   page, so with a long body open Escape then `:` put the prompt over a line of the note; the editor
   is given the sheet's foot for its panels instead, one extension in its source and 64 bytes in the
   bundle. Revised 2026-10-29 by "A wide line has the sheet's width": wider than a phone the sheet
-  reaches over the room beside the column.
+  reaches over the room beside the column; and by "An open body is the page": wider than a phone
+  the sheet is the page, with no card and no dimming.
 
 - **A body's markdown is rendered where it is read and styled where it is written.** Decided
   2026-10-15, agreed with Sam, revising "The body is a CodeMirror editor, loaded when a body first
@@ -4077,6 +4077,8 @@ the app now does is described above; an entry repeats it only where the reason n
   which would move the text away from the row it opened from. A selection across lines of prose is
   shaded to the sheet's right edge rather than the prose's, as CodeMirror draws a selection, and
   that is kept.
+  Revised the same day by "An open body is the page": the sheet is the page, and a block of
+  code keeps the measure.
 
 - **A table in the open body is drawn.** Decided 2026-10-29, at Sam's ask, reversing the part of
   "A line of the open body reads until it is written in" that left a table in the sheet as typed,
@@ -4102,6 +4104,33 @@ the app now does is described above; an entry repeats it only where the reason n
   not drawn, and only then does the height change. Weighed: a wider body beside the list, which
   moves the column off its third and changes the page's shape; and a table opened alone over the
   page, a second surface with a key of its own.
+  Revised the same day by "An open body is the page": a drawn row does not wrap, and a table
+  wider than the room scrolls sideways.
+
+- **An open body is the page.** Decided 2026-10-29, at Sam's word on seeing the two before it on
+  a laptop, revising "An open body is a sheet over the page", "A wide line has the sheet's width"
+  and "A table in the open body is drawn". The sheet was a card over the dimmed page, from a
+  quarter of the way down to above the foot, and once it reached the window's margin its edge
+  stood far past the text: prose ended at the measure, a table further on and a block of code's
+  band at the card's edge, three right edges and an empty half, which the card's outline drew the
+  eye to; and the rule under a drawn table's head stood a whole empty line from its rows. Sam asked
+  for an open body that cleanly fills the room there is, and a review by a designer's eye agreed it
+  was the card, not the wide table, that read badly. Now, wider than a phone, the open body is the
+  page as it is on a phone: from the top of the window to the foot, edge to edge, in the sheet's
+  colour, with no card, shadow, rounding or dimming, its text starting at the column's left edge so
+  that nothing moves sideways as it opens, and its foot fading as the list's does, with room to
+  scroll its last line clear of the words there. Its lines keep the column's measure, a block of
+  code's band among them, so that every shaded shape has one right edge; only a table takes more,
+  as a figure on a page does, no further than the column and the body beside it together. A drawn
+  table is as high as its source by its height, the line of its dashes shared among its rows and a
+  quarter of a line each side of its head's rule; its columns are further apart, its figures of
+  one width, and a row does not wrap, so a table wider than the room scrolls sideways on its own,
+  never widening the prose. Its head is set a little heavier, as it was on its row. What it costs:
+  the list is not seen while a body is open, so a press on a row behind it is gone on a laptop as
+  on a phone, and Escape or `done` is the way back; and a line of code longer than the measure
+  wraps. Weighed: prose across the whole width, 135 letters a line at 1440 pixels, past reading;
+  the card kept and centred, which leaves the empty room and moves the text from the row it opened
+  from; and code across the whole width, a grey slab to the margin.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
