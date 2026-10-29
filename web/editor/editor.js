@@ -155,6 +155,86 @@ function linkAt(view, pos) {
   return null;
 }
 
+// Bold, italic and code, as the chords of every editor make them: wrapped round what is selected,
+// or taken off when it is one span of them already, its marks outside the selection or just inside
+// it, and round nothing with the caret between when nothing is selected, a second press taking the
+// pair off again. A run of stars is read as a run, so italic on bold text makes `***x***`, and
+// taking either off leaves the other. Whether marks make a span is the parse's to say, so that
+// ` and ` between `*a*` and `*b*` is not taken for the words of one.
+const SPANS = ['Emphasis', 'StrongEmphasis', 'InlineCode'];
+const marked = (mark) => (view) => {
+  const { state } = view;
+  const tree = syntaxTree(state);
+  const n = mark.length;
+  // Whether `k` marks round a span hold this one: bold in two or three stars, italic in one or
+  // three, code in one backtick.
+  const holds = (k) => (mark[0] !== '*' ? k === 1 : n === 2 ? k >= 2 : k === 1 || k === 3);
+  const run = (from, to, back) => {
+    const text = state.sliceDoc(from, to);
+    let k = 0;
+    while (k < 3 && text[back ? text.length - 1 - k : k] === mark[0]) k++;
+    return k;
+  };
+  // Whether one span runs from `from` to `to`, its marks and all.
+  const span = (from, to) => {
+    for (let node = tree.resolveInner(from, 1); node; node = node.parent) {
+      if (node.from === from && node.to === to && SPANS.includes(node.name)) return true;
+      if (node.from < from) return false;
+    }
+    return false;
+  };
+  const kept = (range, from, to) =>
+    range.anchor > range.head ? EditorSelection.range(to, from) : EditorSelection.range(from, to);
+  const changes = state.changeByRange((range) => {
+    const { from, to } = range;
+    if (from === to && state.sliceDoc(from - n, to + n) === mark + mark) {
+      return { changes: { from: from - n, to: to + n }, range: EditorSelection.cursor(from - n) };
+    }
+    const out = Math.min(run(Math.max(0, from - 3), from, true), run(to, to + 3, false));
+    if (from < to && holds(out) && span(from - out, to + out)) {
+      return {
+        changes: [{ from: from - n, to: from }, { from: to, to: to + n }],
+        range: kept(range, from - n, to - n),
+      };
+    }
+    const within = to - from > 2 * n ? Math.min(run(from, to, false), run(from, to, true)) : 0;
+    if (holds(within) && span(from, to)) {
+      return {
+        changes: [{ from, to: from + n }, { from: to - n, to }],
+        range: kept(range, from, to - 2 * n),
+      };
+    }
+    return {
+      changes: [{ from, insert: mark }, { from: to, insert: mark }],
+      range: kept(range, from + n, to + n),
+    };
+  });
+  view.dispatch(state.update(changes, { scrollIntoView: true, userEvent: 'input' }));
+  return true;
+};
+
+// A yank goes to the system's clipboard as well as vim's register, as vim's `clipboard=unnamedplus`
+// sends it, so that what `y` takes can be pasted anywhere; `p` still puts what vim holds. Only a
+// yank: a delete sent there too would throw away what was copied elsewhere at every `x`. A page a
+// relay serves over plain http has no clipboard to write to, so there the yank is the browser's
+// copy, given the text, which needs no field and leaves the focus in the note.
+const registers = Vim.getRegisterController();
+const pushed = registers.pushText.bind(registers);
+const toClipboard = (text) => {
+  if (navigator.clipboard) return navigator.clipboard.writeText(text).catch(() => {});
+  const give = (event) => {
+    event.clipboardData.setData('text/plain', text);
+    event.preventDefault();
+  };
+  document.addEventListener('copy', give, { once: true });
+  document.execCommand('copy');
+  document.removeEventListener('copy', give);
+};
+registers.pushText = (name, operator, ...rest) => {
+  pushed(name, operator, ...rest);
+  if (operator === 'yank' && !name) toClipboard(registers.unnamedRegister.toString());
+};
+
 let current = null;
 
 // `:q!` reaches `q` with the bang left over as its argument.
@@ -234,7 +314,9 @@ export function mount(hooks, foot) {
   // Shift. Ctrl-O does nothing here, so that it never reaches the browser's file dialog. Tab
   // indents and Shift-Tab takes the indent back, as in any editor, rather than moving the focus off
   // the page's text: Escape, `:q` or the word in the foot is the way out. A press on a link read
-  // follows it, and the caret stays where it was; one on a drawn table goes into its cell.
+  // follows it, and the caret stays where it was; one on a drawn table goes into its cell. Mod-B,
+  // Mod-I and Mod-E make bold, italic and code; in vim's normal mode away from a Mac those chords
+  // are vim's scrolls and jump, and vim has them first.
   const body = () => [
     EditorView.domEventHandlers({
       mousedown(event, view) {
@@ -255,6 +337,12 @@ export function mount(hooks, foot) {
         hooks.onFollow(link);
         return true;
       },
+      // The pointer says a link read can be followed, by the rule a press follows it by.
+      mousemove(event, view) {
+        const at = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        view.contentDOM.classList.toggle('on-link', at != null && !!linkAt(view, at));
+      },
+      mouseleave: (event, view) => view.contentDOM.classList.remove('on-link'),
     }),
     vimSlot.of(vimKeys()),
     keymap.of([
@@ -264,6 +352,9 @@ export function mount(hooks, foot) {
       { key: 'Mod-z', run: undo },
       { key: 'Mod-y', mac: 'Mod-Shift-z', run: redo },
       { key: 'Mod-Shift-z', run: redo },
+      { key: 'Mod-b', run: marked('**') },
+      { key: 'Mod-i', run: marked('*') },
+      { key: 'Mod-e', run: marked('`') },
       ...standardKeymap,
     ]),
     history(),

@@ -1223,12 +1223,13 @@ goes, the body written as it closes, but for the span the selection touches, whi
 where they stand, a press on it the caret's, the marks in the faint grey and the text
 in ink, headings and strong text heavier, the first three levels of heading larger, emphasis
 slanted, code in the monospace; a body opens reading whole, as a head is landed on; soft wrap, step
-undo, a grey selection, and vim mode for the body, for the browser that asked for it with the word
+undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and
+code, a pointer over a link that a press follows, and vim mode for the body, for the browser that asked for it with the word
 `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is not
 offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's
 long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`,
 `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back first,
-and `:w` writes and stays, scrolled where it was. The page's caret is drawn from the editor's
+and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard too. The page's caret is drawn from the editor's
 coordinates, in a head and in a body, a block, and in vim's insert mode a bar. Vim's prompt for a
 command is at the foot of the sheet, under the text and a hairline. The editor is fetched as the
 page starts, beside the engine, and nothing is painted until it is here. The `editor` the engine
@@ -4079,6 +4080,8 @@ the app now does is described above; an entry repeats it only where the reason n
   that is kept.
   Revised the same day by "An open body is the page": the sheet is the page, and a block of
   code keeps the measure.
+  Revised again the same day by "The open body keeps an editor's habits": a selection is shaded
+  to the measure.
 
 - **A table in the open body is drawn.** Decided 2026-10-29, at Sam's ask, reversing the part of
   "A line of the open body reads until it is written in" that left a table in the sheet as typed,
@@ -4131,6 +4134,34 @@ the app now does is described above; an entry repeats it only where the reason n
   wraps. Weighed: prose across the whole width, 135 letters a line at 1440 pixels, past reading;
   the card kept and centred, which leaves the empty room and moves the text from the row it opened
   from; and code across the whole width, a grey slab to the margin.
+
+- **The open body keeps an editor's habits.** Decided 2026-10-29, at Sam's ask, revising "A wide
+  line has the sheet's width" where it kept a selection shaded to the edge of the text. Four things the hands expect of any
+  editor were missing from the open body. A selection dragged across a paragraph that wraps was
+  shaded to the window's margin, since CodeMirror shades every line a selection crosses to the
+  edge of the editor's text and that edge had gone out to where a table reaches: now the text is
+  held to the column's measure, and a table, drawn or being written, reaches past it to the room
+  beside, so the shading stops where the prose does, as it does in any editor with a measure. Over
+  a link that a press would follow, a web address or `[[Boiler]]` read, the pointer is a hand,
+  judged by the rule the press is, and over a link being written it is the text's. Mod-B, Mod-I
+  and Mod-E, Cmd on a Mac and Ctrl elsewhere, wrap what is selected in `**`, `*` or a backtick, as
+  every editor's chords do and Cmd-E does code in GitHub, Notion and Slack; pressed again they take
+  it off, and with nothing selected they write the pair with the caret between. A run of stars is
+  read as a run, so italic on bold makes `***boiler***`, and either taken off leaves the other;
+  whether marks make one span is the parse's to say, so the words between `*a*` and `*b*` are not
+  taken for an italic, and a second press on a pair just written takes it off. In
+  vim's normal mode away from a Mac those chords are vim's scrolls and jump, which vim keeps. And
+  vim's yank is copied to the system's clipboard as well as to vim's register, as vim's
+  `clipboard=unnamedplus` does, so what `y` takes pastes anywhere; `p` still puts what vim holds,
+  and a delete or a change is not copied there, which would throw away what was copied elsewhere at
+  every `x`; a page served over plain http, which has no clipboard to write to, copies it by the
+  browser's own copy instead. What it costs: a selection across a table being written, whose rows
+  reach past the measure, is shaded only to the measure, since CodeMirror shades to the edge of the
+  text, and only drawing the selection anew would mend it. Weighed: a selection drawn line by line
+  to each line's own end, which CodeMirror does not offer and the browser's own selection does not
+  do either; a chord for a link, which on the
+  page is Ctrl-K's already; and every register sent to the clipboard, vim's way in full, for the
+  reason given.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

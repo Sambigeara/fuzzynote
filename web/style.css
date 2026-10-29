@@ -601,12 +601,18 @@ body.resting .row .head a,
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
-#sheet .cm-line:not(.md-table) { max-width: var(--measure); }
+/* The body's text keeps the column's measure, and a table drawn or being written reaches past it
+   to the editor's width. The text itself is held, not only its lines, since a selection across
+   lines is shaded to the edge of the text. */
+#sheet > .cm-editor { container-type: inline-size; }
+#sheet .cm-content { max-width: var(--measure); }
+#sheet :is(.cm-line.md-table, .md-table-read) { width: 100cqw; min-width: 0; }
+#sheet .cm-content.on-link { cursor: pointer; }
 /* A table drawn in the open body is as high as its source, as many lines as it has: the line the
    row of dashes takes is shared out among its rows, a quarter of it each side of its head's rule.
    Wider than the room, it scrolls sideways on its own: its width is the editor's, never the
-   table's, which would widen the editor and the prose with it. */
-.md-table-read { width: 0; min-width: 100%; overflow-x: auto; scrollbar-width: thin; cursor: text; }
+   table's. */
+.md-table-read { overflow-x: auto; scrollbar-width: thin; cursor: text; }
 .md-table-read table {
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
