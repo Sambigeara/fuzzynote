@@ -1216,7 +1216,9 @@ behind it, does not, and nor does leaving the window, though the tab going out o
 it holds. The words in the foot stay above the dimming, since they are about the note. There is no
 second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
-list reads, its marks hidden and a task's box drawn but never pressed, a link read followed by a
+list reads, its marks hidden and a task's box drawn but never pressed, a table drawn with its
+columns aligned in the sheet's whole width and as high as its source, a press on a cell or an arrow
+into it showing it as typed, a link read followed by a
 press, an address in a tab of its own with the body left open and `[[Boiler]]` into Boiler as Tab
 goes, the body written as it closes, but for the span the selection touches, which shows its marks
 where they stand, a press on it the caret's, the marks in the faint grey and the text
@@ -3591,7 +3593,8 @@ the app now does is described above; an entry repeats it only where the reason n
   phone's keyboard, is untested (see Open questions). Revised 2026-10-20 by "A body's marks show
   only in the span being written": the open body shows marks by span, and none of the telling a walk
   from a write above remains. Revised 2026-10-20 by "A body's headings are sized by their level": a
-  body sizes its first three levels.
+  body sizes its first three levels. Revised 2026-10-29 by "A table in the open body is drawn":
+  a table read is drawn, not shown as typed.
 
 - **A body's marks show only in the span being written.** Decided 2026-10-20, at Sam's direction
   after trying it, revising "A line of the open body reads until it is written in". In use the line
@@ -4074,6 +4077,31 @@ the app now does is described above; an entry repeats it only where the reason n
   which would move the text away from the row it opened from. A selection across lines of prose is
   shaded to the sheet's right edge rather than the prose's, as CodeMirror draws a selection, and
   that is kept.
+
+- **A table in the open body is drawn.** Decided 2026-10-29, at Sam's ask, reversing the part of
+  "A line of the open body reads until it is written in" that left a table in the sheet as typed,
+  and with it the weighing there of a full preview with tables drawn as widgets. With the sheet
+  given the room beside the column, a table's rows stood on a line each, but as their source, pipes
+  and dashes, and the only place a table was drawn was the body beside the list, too narrow on a
+  laptop for five columns of radiator readings. Sam wanted a formatted table read clearly in the
+  most room the page has. Now a table in the open body that the selection does not touch is drawn
+  as the body beside the list draws one, its columns aligned as its row of dashes says, in the
+  sheet's whole width, and scrolled sideways on its own where it is wider still; once the selection
+  touches it, it is shown as typed, which is the rule every other span of the sheet keeps, and a
+  body opens with its tables drawn. The reasons the widget was turned down are answered one by
+  one. A drawn table is as high as its source, each row a line and the rule under its head in the
+  middle of the line the dashes take, so nothing above or below it moves as the caret goes in or
+  out: measured in Chromium, the line under a five-row table stood at the same pixel either way. A
+  press on a cell puts the caret at the start of that cell's words as typed, so a press is mapped
+  back without a map, by the row and the column pressed. The arrows and vim's `j` and `k` step
+  over what stands in for whole lines, so a step from the line just above a table to the line just
+  below it, or back, lands in its first row or its last at the same column, and shows it. And it
+  is made by a state field beside the reading, which a table needs since it replaces whole lines.
+  A link drawn in a cell opens as any link read does. A table inside a quote or a list, which does
+  not start and end its lines, stays as typed. A row wider than the sheet wraps in its source and
+  not drawn, and only then does the height change. Weighed: a wider body beside the list, which
+  moves the column off its third and changes the page's shape; and a table opened alone over the
+  page, a second surface with a key of its own.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

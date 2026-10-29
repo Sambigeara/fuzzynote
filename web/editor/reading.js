@@ -24,21 +24,22 @@
 //
 // Nothing here changes the text. Decorations hide marks and draw in their place, so the note, its
 // undo, a copy and a paste are the source. Only marks are hidden, and a place's labels, and each
-// only within its own line, since a decoration given by a plugin may not cover a line break. A line
-// read is as high as written but for what its marks take once wrapped, a heading's size being its
-// line's and a fence's line its band. Tables and what a block of code holds stay as they are
-// styled, being read best as typed, and raw HTML, a link's definition and `[[Boiler]]` stay as
-// typed, as they are read. A box drawn in a body is not pressed: a press on it puts the caret
+// only within its own line, since a decoration given by a plugin may not cover a line break; a
+// table in a body, drawn in place of its lines, is the one exception, and is made apart (see
+// `tables`). A line read is as high as written but for what its marks take once wrapped, a
+// heading's size being its line's and a fence's line its band. What a block of code holds stays as
+// it is styled, being read best as typed, and raw HTML, a link's definition and `[[Boiler]]` stay
+// as typed, as they are read. A box drawn in a body is not pressed: a press on it puts the caret
 // beside it, as a press anywhere does.
 //
 // While a composition is under way the marks hold still, moved only with the text, so that no mark
 // opens or closes beside what an input method is writing; they are read again once it has ended.
 // So they do while a press is held, and the span it lands in opens once it is let go.
 
-import { Annotation, Facet, RangeSet } from '@codemirror/state';
-import { Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
+import { Annotation, EditorSelection, EditorState, Facet, RangeSet, StateField } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { between, follows } from './render.js';
+import { between, body, follows } from './render.js';
 
 // The text is a row's head, and these are the place's labels its row reads without, if any, as
 // the engine says them: what its head says past what it shows.
@@ -403,5 +404,104 @@ export const writtenIn = (view, from, to) =>
 // Whether an update opened or closed a mark, which moves the caret's letters.
 export const readingMoved = (update) => !!update.view.plugin(read)?.moved;
 
+// A table in the open body is drawn as the body beside the list draws it, in the sheet's whole
+// width, until the selection touches it, when it is shown as typed, as any span is; a text just
+// arrived at touches nothing. It stands in for whole lines, which only a state field may replace,
+// so it is apart from the reading above. A drawn table is as high as its source, its head's rule
+// taking the room of the row of dashes, so that nothing moves as the caret goes in or out; a press
+// on it puts the caret in the cell pressed (see `cellAt`), and the arrows walk into it (see
+// `walkIn`). One that does not start and end its
+// lines, inside a quote or a list, is shown as typed.
+class Drawn extends WidgetType {
+  constructor(source) {
+    super();
+    this.source = source;
+  }
+  eq(other) {
+    return other.source === this.source;
+  }
+  toDOM() {
+    const box = document.createElement('div');
+    box.className = 'md-table-read';
+    box.append(body(this.source));
+    return box;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+function drawn(state, arrived) {
+  if (state.facet(asHead)) return Decoration.none;
+  const { doc, selection } = state;
+  const out = [];
+  syntaxTree(state).iterate({
+    enter(ref) {
+      if (ref.name !== 'Table') return;
+      const to = doc.lineAt(ref.to).to;
+      const whole = doc.lineAt(ref.from).from === ref.from && doc.sliceString(ref.to, to).trim() === '';
+      const touched = !arrived && selection.ranges.some((r) => r.from <= to && r.to >= ref.from);
+      if (whole && !touched) {
+        const widget = new Drawn(doc.sliceString(ref.from, to));
+        out.push(Decoration.replace({ widget, block: true }).range(ref.from, to));
+      }
+      return false;
+    },
+  });
+  return Decoration.set(out);
+}
+
+const tables = StateField.define({
+  create: (state) => ({ arrived: true, tables: drawn(state, true) }),
+  update(value, tr) {
+    const arrived = value.arrived && !((tr.selection || tr.docChanged) && !tr.annotation(fromPage));
+    const moved = tr.docChanged || tr.selection || arrived !== value.arrived;
+    if (!moved && syntaxTree(tr.startState) === syntaxTree(tr.state)) return value;
+    return { arrived, tables: drawn(tr.state, arrived) };
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => value.tables),
+});
+
+// An arrow, or vim's `j` or `k`, steps over what stands in for whole lines, and a drawn table would
+// be walked past unread; so a step from the line just above a table to the line just below it, or
+// back, lands in its first row, or its last, at the same column, which shows it as typed.
+const walkIn = EditorState.transactionFilter.of((tr) => {
+  const was = tr.startState.selection.main;
+  if (!tr.selection || tr.docChanged || tr.annotation(fromPage) || tr.isUserEvent('select.pointer')) return tr;
+  const now = tr.selection.main;
+  if (!was.empty || !now.empty || tr.selection.ranges.length > 1) return tr;
+  const { doc } = tr.startState;
+  const [from, to] = [doc.lineAt(was.head), doc.lineAt(now.head)];
+  let into = null;
+  tr.startState.field(tables).tables.between(0, doc.length, (start, end) => {
+    const [first, last] = [doc.lineAt(start).number, doc.lineAt(end).number];
+    if (from.number === first - 1 && to.number === last + 1) into = doc.line(first);
+    if (from.number === last + 1 && to.number === first - 1) into = doc.line(last);
+  });
+  if (!into) return tr;
+  const column = Math.min(was.head - from.from, into.length);
+  return [tr, { selection: EditorSelection.cursor(into.from + column), sequential: true }];
+});
+
+// Where a press on a drawn table puts the caret: at the start of the words of the cell pressed,
+// in its row as typed, the row of dashes passed over.
+export function cellAt(view, target) {
+  const box = target.closest?.('.md-table-read');
+  const cell = target.closest?.('th, td');
+  if (!box) return null;
+  const from = view.posAtDOM(box);
+  if (!cell) return from;
+  const row = cell.parentElement.rowIndex;
+  const line = view.state.doc.lineAt(from).number + (row === 0 ? 0 : row + 1);
+  if (line > view.state.doc.lines) return from;
+  const { text, from: start } = view.state.doc.line(line);
+  const pipes = [...text.matchAll(/(?<!\\)\|/g)].map((m) => m.index);
+  const lead = /^\s*\|/.test(text) ? 1 : 0;
+  const index = cell.cellIndex + lead - 1;
+  let at = index < 0 ? 0 : (pipes[index] ?? text.length - 1) + 1;
+  while (text[at] === ' ') at++;
+  return start + Math.min(at, text.length);
+}
+
 // Everything a note needs to read where it is not written.
-export const readWhereNotWritten = [read];
+export const readWhereNotWritten = [read, tables, walkIn];

@@ -30,7 +30,7 @@ import {
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { between, follows, highlighter, language, line, markdown } from './render.js';
-import { asHead, fromPage, readEnd, readWhereNotWritten, readingMoved, writtenIn } from './reading.js';
+import { asHead, cellAt, fromPage, readEnd, readWhereNotWritten, readingMoved, writtenIn } from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -234,11 +234,20 @@ export function mount(hooks, foot) {
   // Shift. Ctrl-O does nothing here, so that it never reaches the browser's file dialog. Tab
   // indents and Shift-Tab takes the indent back, as in any editor, rather than moving the focus off
   // the page's text: Escape, `:q` or the word in the foot is the way out. A press on a link read
-  // follows it, and the caret stays where it was.
+  // follows it, and the caret stays where it was; one on a drawn table goes into its cell.
   const body = () => [
     EditorView.domEventHandlers({
       mousedown(event, view) {
         if (event.button !== 0) return false;
+        const cell = cellAt(view, event.target);
+        if (cell != null) {
+          // A link drawn in it opens by its own click, as a link read anywhere on the page does.
+          event.preventDefault();
+          if (event.target.closest('a')) return true;
+          view.dispatch({ selection: { anchor: cell }, userEvent: 'select.pointer' });
+          view.focus();
+          return true;
+        }
         const at = view.posAtCoords({ x: event.clientX, y: event.clientY });
         const link = at == null ? null : linkAt(view, at);
         if (!link) return false;

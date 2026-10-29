@@ -605,6 +605,18 @@ body.resting .row .head a,
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
 #sheet .cm-line:not(.hl-code, .md-table) { max-width: var(--measure); }
+/* A table drawn in the open body is as high as its source: a row is a line, and its head's rule
+   sits in the middle of the line the row of dashes takes. Wider than the sheet, it scrolls
+   sideways on its own. */
+.md-table-read { overflow-x: auto; scrollbar-width: thin; cursor: text; }
+.md-table-read table { border-collapse: collapse; }
+.md-table-read :is(th, td) { padding: 0 1.25em 0 0; text-align: left; vertical-align: top; }
+.md-table-read th { padding-bottom: calc(0.5lh - 1px); border-bottom: 1px solid var(--rule); }
+.md-table-read tr:nth-child(2) td { padding-top: 0.5lh; }
+@supports not (height: 1lh) {
+  .md-table-read th { padding-bottom: calc(0.75em - 1px); }
+  .md-table-read tr:nth-child(2) td { padding-top: 0.75em; }
+}
 .cm-editor.cm-focused { outline: none; }
 .cm-editor .cm-cursorLayer, .cm-editor .cm-vimCursorLayer, .cm-editor .cm-fat-cursor { display: none; }
 /* The editor's own theme sets its selection by a longer selector, and puts its style after this
