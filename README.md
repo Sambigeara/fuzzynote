@@ -36,7 +36,7 @@ curl -fsSL https://github.com/Sambigeara/fuzzynote/releases/latest/download/inst
 ```
 
 puts one static binary in `~/.local/bin` (`sh -s -- --system` for `/usr/local/bin`,
-`--version 0.47.1` to pin one, `--uninstall` to remove it), after checking its SHA-256. Run it
+`--version 0.47.2` to pin one, `--uninstall` to remove it), after checking its SHA-256. Run it
 again to take up a release. There are builds for Linux on x86_64 and arm64, and for Apple
 silicon; anything else builds from source as above.
 
