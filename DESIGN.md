@@ -804,6 +804,9 @@ find.
 
 Stepping back never throws away what you typed: a line written inside stays on the way out, and the
 search comes back only to an empty line, or to one that still reads as the last step back left it.
+A place gone into from a row puts the cursor back on that row on the way out, the list as it was
+round it, while the note is still listed and the line comes back as it was left; a line you typed
+inside keeps the cursor, since its next letter is for the line.
 Esc with text on the line clears it, and only on an empty line steps back, so that inside a place
 "found it, clear, stay" is one key; the session offers `clear` as the way back while the line has
 text and `back` once it is empty. A path steps back the same however it was made: each label gone
@@ -849,7 +852,8 @@ not of the row, which holds still with the list: on an empty line an unlinked no
 and a note to link is one that typing found. It is a correction, not the mechanism, and with no note
 on the path, at the top or inside labels alone, it has nothing to do and says so. Tab on a head
 again walks a hop further, and on a place already on the path goes back to it, so the path never
-repeats; stepping back goes one hop, onto the line. This is the ego graph as a flat list; following
+repeats; stepping back goes one hop, and the cursor back to the row it went in from (see "Stepping
+back puts the cursor back on its row"). This is the ego graph as a flat list; following
 a link is picking its target here.
 
 On the line in a note's place, the body chord opens the note you are in, as it opens a row's: in the
@@ -4162,6 +4166,24 @@ the app now does is described above; an entry repeats it only where the reason n
   do either; a chord for a link, which on the
   page is Ctrl-K's already; and every register sent to the clipboard, vim's way in full, for the
   reason given.
+
+- **Stepping back puts the cursor back on its row.** Decided 2026-10-31, at Sam's ask, revising
+  "Zoom and places", where stepping back went one hop onto the line, as the spec had said since
+  places were made and no decision gave a reason for; the test that held it said only "so that what
+  is asked next is asked of the line". Walked twenty rows down a garden list, Tab on a task and
+  Escape back out, the cursor was on the line at the top and the twenty rows were to walk again.
+  Now a note gone into from its row, by Tab or by following a link from its open body, keeps that
+  row with its step, and stepping back out of it, by Escape, the page's path or the phone's back,
+  puts the cursor back on that row, the list made as it was round it, so the view is the one left:
+  measured in both faces, the row came back at the same place on the screen. A step back over
+  several steps goes to the row the first step left was gone into from. The line comes back as it
+  did, the search or what was there; but where it is text typed inside, the cursor stays on the
+  line, since a letter typed next belongs to the line and would otherwise land in a note. A note
+  gone into from the line, or one no longer listed, steps out onto the line as before, and so does
+  a note on the path that goes elsewhere. From the row, Escape goes to the line and then out, the
+  rungs it already climbs. Weighed: keeping the scroll and not the cursor, which leaves the line
+  holding the keys and the eye on a row it cannot reach; and keeping the row's place in the list by
+  number, which lands elsewhere once the list changes underneath.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

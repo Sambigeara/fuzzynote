@@ -90,27 +90,6 @@ fn the_cursor_moves_between_the_line_and_the_list() {
 }
 
 #[test]
-fn stepping_back_out_of_a_note_lands_on_the_line() {
-    let mut s = session();
-    add(&mut s, "kettlebell swings");
-    add(&mut s, "kettlebell press");
-    s.act(Action::Type("kettlebell".into()));
-    s.act(Action::Move(1));
-    s.act(Action::GoIn);
-    assert_eq!(s.path.len(), 1);
-    assert_eq!(s.line, "");
-    s.act(Action::Back);
-    assert!(s.path.is_empty());
-    assert_eq!(s.line, "kettlebell");
-    assert_eq!(
-        s.cursor, None,
-        "so that what is asked next is asked of the line"
-    );
-    s.act(Action::Back);
-    assert_eq!(s.line, "kettlebell", "with nowhere to step back to");
-}
-
-#[test]
 fn going_into_a_note_already_on_the_path_goes_back_to_it() {
     let mut s = session();
     put(
@@ -144,7 +123,11 @@ fn going_into_a_note_already_on_the_path_goes_back_to_it() {
     go_into(&mut s, "trainingapp");
     assert_eq!(path(&s), ["trainingapp"], "back to it, not a fourth step");
     assert_eq!(s.line, "pro", "the line as it was at that depth");
-    assert_eq!(s.cursor, None);
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Profile"),
+        "and the cursor on the row the next step was gone into from"
+    );
 
     // With something on the line, the line stays as it is.
     clear(&mut s);
@@ -396,7 +379,11 @@ fn a_search_clears_on_the_way_in_and_comes_back_on_the_way_out() {
     s.act(Action::Back);
     assert!(s.path.is_empty());
     assert_eq!(s.line, "trai");
-    assert_eq!(s.cursor, None, "on the line");
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("trainingapp"),
+        "on the row it was gone into from"
+    );
 }
 
 #[test]

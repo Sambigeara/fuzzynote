@@ -659,6 +659,7 @@ fn going_into_a_new_note_with_text_goes_into_the_note_it_is() {
 
     // One with no text has nowhere to go in to, and the row stays to be written in.
     s.act(Action::Back);
+    s.act(Action::Select(None));
     s.act(Action::Write);
     assert!(s.act(Action::GoIn).is_empty());
     assert!(path(&s).is_empty());

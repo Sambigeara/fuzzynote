@@ -1715,3 +1715,38 @@ fn a_link_followed_from_an_open_body_writes_the_body_and_goes_into_the_note_it_n
         (0, "2 notes are called Garage")
     );
 }
+
+#[test]
+fn stepping_back_out_of_a_note_gone_into_from_its_row_puts_the_cursor_back_on_that_row() {
+    let mut s = session();
+    boiler(&mut s);
+    let order: Vec<String> = heads(&s).into_iter().map(String::from).collect();
+    go_into(&mut s, "Pressure dropped #house");
+    assert_eq!(path(&s), ["Pressure dropped #house"]);
+    assert_eq!(s.cursor, None, "inside, the cursor is on the line");
+    s.act(Action::Back);
+    assert_eq!(heads(&s), order, "the list is as it was");
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Pressure dropped #house")
+    );
+
+    // From a search, the search comes back with the cursor on the row it found.
+    s.act(Action::Select(None));
+    type_in(&mut s, "oil");
+    go_into(&mut s, "Order oil #house");
+    s.act(Action::Back);
+    assert_eq!(s.line, "oil");
+    s.act(Action::Back);
+    assert_eq!(s.line, "oil", "with nowhere to step back to");
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Order oil #house")
+    );
+
+    // A note gone into from the line is stepped out of onto the line, as before.
+    go_to(&mut s, "Boiler");
+    assert_eq!(path(&s), ["Boiler"]);
+    s.act(Action::Back);
+    assert_eq!(s.cursor, None);
+}

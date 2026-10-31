@@ -23,10 +23,13 @@ use super::{KeptStep, Session};
 /// if typed alone, so that a path steps back the same however it was made. A draft carried in has
 /// nothing to put back: it is still on the line.
 pub(super) enum Step {
+    /// `from` is the note whose row the cursor was on when it was gone into, for the cursor to
+    /// come back to on the way out.
     Note {
         id: String,
         head: String,
         search: Option<String>,
+        from: Option<String>,
     },
     /// `written` is the label as it was typed, and as it is added to a note: `#house`, `@joe`,
     /// `2026-10-16`.
@@ -98,10 +101,12 @@ impl Step {
         }
     }
 
-    /// The search it was found with, to put back on the way out.
-    fn into_search(self) -> Option<String> {
+    /// The search it was found with, to put back on the way out, and the note whose row the
+    /// cursor goes back to.
+    fn into_return(self) -> (Option<String>, Option<String>) {
         match self {
-            Step::Note { search, .. } | Step::Label { search, .. } => search,
+            Step::Note { search, from, .. } => (search, from),
+            Step::Label { search, .. } => (search, None),
         }
     }
 }
@@ -197,7 +202,8 @@ impl Session {
             || self.engine.contains(&id, &typed)
             || self.engine.searched(&id, &self.parsed);
         let head = self.step_name(&id).unwrap_or_else(|| row.head.clone());
-        self.go_into(id, head, searched);
+        let from = Some(id.clone());
+        self.go_into(id, head, searched, from);
     }
 
     /// Goes into the one note a name in brackets names, as Tab on its row would, the line kept
@@ -206,8 +212,9 @@ impl Session {
         let Ok(id) = self.named_one(name) else {
             return;
         };
+        let from = self.selected().map(|row| row.id.clone());
         if let Some(head) = self.step_name(&id) {
-            self.go_into(id, head, true);
+            self.go_into(id, head, true, from);
         }
     }
 
@@ -221,11 +228,12 @@ impl Session {
         }
     }
 
-    fn go_into(&mut self, id: String, head: String, searched: bool) {
+    fn go_into(&mut self, id: String, head: String, searched: bool, from: Option<String>) {
         let step = Step::Note {
             id,
             head,
             search: None,
+            from,
         };
         if let Some(at) = self.path.iter().position(|s| s.is(&step)) {
             self.back_to(at + 1);
@@ -304,6 +312,7 @@ impl Session {
                 id: note.id.clone(),
                 head: self.step_name(&note.id).unwrap_or_default(),
                 search: None,
+                from: None,
             });
         }
         places.retain(|place| !self.path.last().is_some_and(|s| s.is(place)));
@@ -372,7 +381,12 @@ impl Session {
                         continue;
                     };
                     let id = note;
-                    Step::Note { id, head, search }
+                    Step::Note {
+                        id,
+                        head,
+                        search,
+                        from: None,
+                    }
                 }
                 KeptStep::Label { label, search } => {
                     let query = Query::read(&label, today);
@@ -450,10 +464,13 @@ impl Session {
 
     /// Steps back out to `depth` places on the path, onto the line, so that what is asked next is
     /// asked of the line and not of a note.
+    /// Steps back to `depth` places, the cursor going back to the row it was on when the first
+    /// place left behind was gone into, if that note is still listed, and otherwise onto the line.
     pub(super) fn back_to(&mut self, depth: usize) {
         if depth < self.path.len() {
-            self.cut_path(depth);
+            let from = self.cut_path(depth);
             self.refresh(true);
+            self.cursor = from.and_then(|id| self.rows.iter().position(|r| r.id == id));
         }
     }
 
@@ -461,16 +478,20 @@ impl Session {
     /// gets back the search that the first place left behind was found with, which is what the
     /// line held at that depth. A line that still reads as the last step out left it is as good
     /// as empty, since nothing of it is the writer's: so two steps out of a path made in one Tab
-    /// end with the outer search, as two out of one made a step at a time do.
-    pub(super) fn cut_path(&mut self, depth: usize) {
+    /// end with the outer search, as two out of one made a step at a time do. Says the note whose
+    /// row the cursor was on when that place was gone into, if it was gone into from a row and the
+    /// line is not the writer's, whose next letter is for the line.
+    pub(super) fn cut_path(&mut self, depth: usize) -> Option<String> {
         let left = self.path.split_off(depth);
         let untouched = self.line.trim().is_empty() || self.returned == self.line;
-        if let Some(search) = left.into_iter().next().and_then(Step::into_search)
+        let (search, from) = left.into_iter().next().map(Step::into_return)?;
+        if let Some(search) = search
             && untouched
         {
             self.returned.clone_from(&search);
             self.line = search;
         }
+        from.filter(|_| untouched)
     }
 
     /// How deep the path goes before the first note on it that has gone, deleted here or on

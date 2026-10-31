@@ -2239,6 +2239,9 @@ mod tests {
         assert_eq!(path(&app).len(), 1);
         press(&mut app, KeyCode::Esc, false);
         assert!(path(&app).is_empty(), "then out of the note");
+        assert!(on_note(&app), "back on the row it was gone into from");
+        press(&mut app, KeyCode::Esc, false);
+        assert!(!on_note(&app), "and off it");
 
         assert!(matches!(
             press(&mut app, KeyCode::Esc, false),
@@ -4954,7 +4957,7 @@ mod tests {
     }
 
     /// The house's radiators as they are written: a note, and two rooms written in it, then a
-    /// note beside it. One step out, the list draws the rooms under the note.
+    /// note beside it. One step out, onto the line, the list draws the rooms under the note.
     fn radiators(app: &mut App) {
         write(app, "Order heating oil");
         write(app, "Replace the radiator valves");
@@ -4962,6 +4965,7 @@ mod tests {
         press(app, KeyCode::Tab, false);
         write(app, "upstairs");
         write(app, "downstairs");
+        press(app, KeyCode::Esc, false);
         press(app, KeyCode::Esc, false);
     }
 
