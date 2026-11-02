@@ -444,6 +444,11 @@ pub struct Field<'a> {
     /// opened with, whose row goes if the cursor leaves it so: after a task's box and before the
     /// labels at the end. Backspace there takes the row away. None for any other note.
     pub fresh: Option<usize>,
+    /// The row was opened new and the cursor has not left it since, typed into or not. A face
+    /// cannot tell such a row from any other once a letter is typed, and it has nothing of its own
+    /// to read until it is left, so in a note's place it reads the note you are in for the whole
+    /// visit, and writing a list there does not flash that note away at each first letter.
+    pub new: bool,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
     /// When the note was written, as it is held: the day it belongs to, which a day label and a
@@ -859,6 +864,7 @@ impl Session {
             field: self.field.as_ref().map(|field| Field {
                 text: &field.text,
                 fresh: field.blank().then(|| field.start()),
+                new: field.new,
                 whole: field.whole,
                 created: self.notes.get(&field.id).and_then(|r| r.created),
             }),

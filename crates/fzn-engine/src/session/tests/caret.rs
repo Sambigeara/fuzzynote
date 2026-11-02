@@ -202,6 +202,7 @@ fn backspace_on_an_empty_row_lands_on_the_row_above_with_the_caret_at_its_end() 
 fn going_into_what_the_line_names_clears_it_with_the_caret_at_its_start() {
     let mut s = session();
     three(&mut s);
+    put(&mut s, "bleed", "Bleed the radiators", &["boiler"], 4_000);
     type_in(&mut s, "Boiler");
     s.take_caret();
     s.act(Action::GoIn);

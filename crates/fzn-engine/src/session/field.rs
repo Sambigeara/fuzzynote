@@ -22,7 +22,7 @@ pub(super) struct Writing {
     original: String,
     /// The row was opened as a new note in this visit, so that left with nothing in it but its
     /// label it goes rather than being deleted.
-    new: bool,
+    pub(super) new: bool,
     /// The body is open: the field holds the whole note and not only its head.
     pub(super) whole: bool,
     /// Typed into in this visit, whether or not what was typed has been written out, and not

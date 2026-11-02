@@ -941,6 +941,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         serde_json::json!({
             "text": "Boiler\nthe plan",
             "fresh": null,
+            "new": false,
             "whole": false,
             "created": "1970-01-01T00:50:00.000Z"
         })
@@ -956,12 +957,16 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     s.act(Action::Open);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(view["field"]["whole"], true);
+    // Boiler lists nothing, so going into it opens a row to write in, its field fresh.
     s.act(Action::GoIn);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(
         view["here"],
         serde_json::json!({"id": "hub", "text": "Boiler\nthe plan"})
     );
+    assert_eq!(view["field"]["fresh"], 0);
+    s.act(Action::Select(None));
+    let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(view["field"], serde_json::Value::Null);
 
     let effect = Effect::Editor {

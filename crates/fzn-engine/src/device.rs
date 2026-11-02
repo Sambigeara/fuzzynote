@@ -1080,9 +1080,12 @@ mod tests {
         net.act(0, Action::Type("quoted".into()));
         assert_eq!(heads(&net.devices[0]), ["engineer quoted 240"]);
 
-        // Going into a note and writing there links to it, on the other device too.
+        // Going into a note and writing there links to it, on the other device too. It lists
+        // nothing, so going in opens a row to write in; this leaves it for the line, as Escape
+        // does, and writes from there.
         net.act(0, Action::Move(1));
         net.act(0, Action::GoIn);
+        net.act(0, Action::Select(None));
         net.act(0, Action::Type("booked for friday".into()));
         net.act(0, Action::Write);
         net.act(1, Action::Type("booked".into()));

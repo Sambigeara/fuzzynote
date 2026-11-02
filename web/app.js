@@ -1694,28 +1694,37 @@ function paintBody(node, says) {
 }
 
 // The body of what the cursor is on, beside the list, which the page shows only when it is wide
-// enough to have room for it: the note under the cursor as it is being written, and on the line
-// the note you are in, which is then not read above the line as well. A note landed on is read
-// from its top. With the body open the sheet has it, and the pane says nothing. Above the body it
-// reads the whole of a head its row cuts, as the row would read it uncut, and as it is typed once
-// it is written in; a head the row shows whole is not read twice. The two are parts of their own,
-// so that a letter typed in a long head reads the head again and never the body.
+// enough to have room for it: the note under the cursor as it is being written, and on the line the
+// note you are in, which is then not read above the line as well. A new row has nothing of its own
+// to read until the cursor leaves it, so in a note's place it reads the note you are in as the line
+// does, typed into or not, and writing a list there never blanks the pane; once left, it is a row
+// like any other. A note landed on is read from its top. With the body open the sheet has it, and
+// the pane says nothing. Above the body it reads the whole of a head its row cuts, as the row would
+// read it uncut, and as it is typed once it is written in; a head the row shows whole is not read
+// twice. The two are parts of their own, so that a letter typed in a long head reads the head again
+// and never the body.
 const paneHead = $('pane-head');
 const paneBody = $('pane-body');
+const readsHere = () => {
+  const field = view.field;
+  if (!field) return view.cursor == null;
+  return !!view.here && field.new && !field.whole && bodyOf(field.text) === '';
+};
 function paneSays() {
   const field = view.field;
   if (!wide.matches || field?.whole) return '';
-  return field ? bodyOf(field.text) : view.here ? bodyOf(view.here.text) : '';
+  if (field && !readsHere()) return bodyOf(field.text);
+  return view.here ? bodyOf(view.here.text) : '';
 }
-// The pane reads the note you are in while the cursor is on the line and it has something to read,
-// and only then does a click on it open that note (see openHere).
-const paneReadsHere = (says = paneSays()) => view.cursor == null && says !== '';
+// The pane reads the note you are in while the cursor is on the line or on a new row and it has
+// something to read, and only then does a click on it open that note (see openHere).
+const paneReadsHere = (says = paneSays()) => readsHere() && says !== '';
 function paintPane() {
   const says = paneSays();
   paintBody(paneBody, says);
   pane.classList.toggle('here', paneReadsHere(says));
   paintPaneHead();
-  const under = (view.cursor != null ? view.rows[view.cursor]?.id : view.here?.id) ?? '';
+  const under = (readsHere() ? view.here?.id : view.rows[view.cursor]?.id) ?? '';
   if (pane.dataset.under !== under) {
     pane.dataset.under = under;
     pane.scrollTop = 0;
@@ -2466,10 +2475,10 @@ list.addEventListener('animationend', (event) => event.target.classList.remove('
 
 // A tap on the note you are in, read above the line or beside the list, opens its body in the
 // sheet, as a second tap on a row opens the row's, unless it was on a link, which opens and does
-// nothing else. The body opened from the line is that note's, so a tap above the line with the
-// cursor on a row steps onto the line first. Beside the list it is the note you are in only while
-// the cursor is on the line and it has something to read, and a press that selected some of it was
-// for the selection.
+// nothing else. The body opened from the line is that note's, so a tap on it with the cursor on a
+// row steps onto the line first, a new row there going as leaving it does. Beside the list it is the
+// note you are in only while the cursor is on the line or on a new row and it has something to read,
+// and a press that selected some of it was for the selection.
 function openHere(event) {
   if (event.target.closest('a') || getSelection()?.type === 'Range' || !view?.here) return;
   if (view.cursor != null) act({ select: null });

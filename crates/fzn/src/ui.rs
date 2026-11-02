@@ -1778,13 +1778,20 @@ impl App {
         // body. It is kept whatever the note holds, and in a place on the line too, so that
         // walking the list never changes how much of it there is; at the top the line has the
         // whole height. The status row takes the last of the rows kept, so that it does not move
-        // the list either by coming or by going.
+        // the list either by coming or by going. A new row has nothing of its own to read until
+        // the cursor leaves it, typed into or not, so in a note's place it reads the place's note
+        // as the line does, and writing a list there never blanks the foot; a body written for
+        // it in the editor is its own, and is read.
+        let reads_here = view.field.as_ref().is_some_and(|field| {
+            field.new && !field.whole && head_and_body(field.text).1.is_empty()
+        }) && view.here.is_some();
         let read = match &view.field {
+            _ if reads_here => view.here.map(|here| here.text),
             Some(field) => Some(field.text),
             None if zoomed => Some(view.here.map_or("", |here| here.text)),
             None => None,
         };
-        let cut = selected.as_ref().is_some_and(|(_, painted)| painted.cut);
+        let cut = !reads_here && selected.as_ref().is_some_and(|(_, painted)| painted.cut);
         let status_row = usize::from(status.is_some());
         let preview = read.map_or(0, |_| preview_rows(height.saturating_sub(1 + y)));
         let bottom = height.saturating_sub(1 + if preview > 0 { preview + 1 } else { status_row });
@@ -2202,9 +2209,12 @@ mod tests {
         assert_eq!(text, "kettlebell swings");
         assert!(on_note(&app));
 
-        // On a note, Tab goes in. On the line, Enter writes, and what is written there is linked.
+        // On a note, Tab goes in, and into one with nothing under it opens a row to write in;
+        // Esc leaves it for the line. On the line, Enter writes, and what is written is linked.
         press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["kettlebell swings"]);
+        assert!(on_note(&app));
+        press(&mut app, KeyCode::Esc, false);
         write(&mut app, "two sets");
         assert_eq!(heads(&app), ["two sets"]);
         assert!(app.device.view().rows[0].linked);
@@ -2625,6 +2635,9 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Tab, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
+        // The note lists nothing, so the cursor is on a row opened to write in: the first Esc
+        // leaves it, and the second steps out.
+        press(&mut app, KeyCode::Esc, false);
         press(&mut app, KeyCode::Esc, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("trai", 4));
         done(&space);
@@ -2903,6 +2916,8 @@ mod tests {
         write(&mut app, "Boiler");
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Tab, false);
+        // Boiler lists nothing, so the cursor is on a row opened to write in, which Esc leaves.
+        press(&mut app, KeyCode::Esc, false);
         type_in(&mut app, "service");
         press(&mut app, KeyCode::Down, false);
         assert_eq!(
@@ -2939,6 +2954,8 @@ mod tests {
         type_in(&mut app, "Boiler");
         press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["Boiler #house"]);
+        // It lists nothing, so the cursor is on a row opened to write in, which Esc leaves.
+        press(&mut app, KeyCode::Esc, false);
         let Flow::Editor { id, text } = chord(&mut app, 'o') else {
             panic!("the note you are in was not handed over");
         };
@@ -4525,6 +4542,50 @@ mod tests {
             shot.rows
         );
         assert!(!shot.rows.iter().any(|r| r.contains("combi")));
+        done(&space);
+    }
+
+    #[test]
+    fn a_new_row_reads_the_note_you_are_in_at_the_foot_until_the_cursor_leaves_it() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, "Boiler\nThe combi under the stairs.");
+        press(&mut app, KeyCode::Esc, false);
+        type_in(&mut app, "Boiler");
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(path(&app), ["Boiler"]);
+        assert!(
+            on_note(&app),
+            "it lists nothing, so a row opens to write in"
+        );
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(
+            shot.rows[8], "   The combi under the stairs.",
+            "the place's: {:?}",
+            shot.rows
+        );
+
+        // Typed into, and on the next new row, it is still read, so a list written there never
+        // blanks the foot.
+        type_in(&mut app, "Drain the tank");
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(shot.rows[8], "   The combi under the stairs.");
+        press(&mut app, KeyCode::Enter, false);
+        type_in(&mut app, "Bleed the radiators");
+        let shot = screen(&mut app, 40, 12);
+        assert_eq!(shot.rows[8], "   The combi under the stairs.");
+
+        // Left and come back to, the row is a row like any other, and reads its own body.
+        press(&mut app, KeyCode::Up, false);
+        press(&mut app, KeyCode::Down, false);
+        assert_eq!(field(&app).as_deref(), Some("Bleed the radiators"));
+        let shot = screen(&mut app, 40, 12);
+        assert!(
+            shot.rows[8..11].iter().all(String::is_empty),
+            "{:?}",
+            shot.rows
+        );
         done(&space);
     }
 

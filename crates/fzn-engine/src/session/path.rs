@@ -242,7 +242,23 @@ impl Session {
         }
         let search = searched.then(|| std::mem::take(&mut self.line));
         self.path.push(step.found_with(search));
+        let depth = self.path.len();
         self.refresh(true);
+        self.write_in_if_empty(depth);
+    }
+
+    /// A note just gone into that lists nothing, with nothing carried in on the line, has
+    /// nothing to search and nothing to find again: what is done there is write, so a row opens
+    /// at the top to write in, as Enter on the empty line would open it. A label is searched in,
+    /// so it never does, and nor does a draft carried in, which waits on the line to be written.
+    /// `depth` is how deep the path went with the step just taken: a note on it gone elsewhere
+    /// cuts it back on the refresh, and then nothing was gone into.
+    fn write_in_if_empty(&mut self, depth: usize) {
+        let in_note = matches!(self.path.last(), Some(Step::Note { .. }));
+        let went = self.path.len() == depth;
+        if went && in_note && self.line.trim().is_empty() && self.rows.is_empty() {
+            self.draft_at(0);
+        }
     }
 
     /// Goes into what the line names, one place after another, as if each had been typed and Tab
@@ -255,16 +271,25 @@ impl Session {
         if places.is_empty() {
             return;
         }
+        // Only a place gone into afresh opens a row to write in, never one gone back to.
+        let mut afresh = None;
         for step in places {
             match self.path.iter().position(|s| s.is(&step)) {
-                Some(at) => self.path.truncate(at + 1),
+                Some(at) => {
+                    self.path.truncate(at + 1);
+                    afresh = None;
+                }
                 None => {
                     let line = std::mem::take(&mut self.line);
                     self.path.push(step.found_with_or(line));
+                    afresh = Some(self.path.len());
                 }
             }
         }
         self.refresh(true);
+        if let Some(depth) = afresh {
+            self.write_in_if_empty(depth);
+        }
     }
 
     /// What the line names to go into: each label of a line of labels and nothing else, in the

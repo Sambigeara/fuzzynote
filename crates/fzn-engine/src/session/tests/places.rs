@@ -1759,3 +1759,268 @@ fn stepping_back_out_of_a_note_gone_into_from_its_row_puts_the_cursor_back_on_th
     s.act(Action::Back);
     assert_eq!(s.cursor, None);
 }
+
+/// Two notes in `#house`, neither with anything under it, gone into from the line.
+fn in_the_house(s: &mut Session) {
+    put(s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    put(s, "oil", "Order oil #house", &[], 2_000);
+    go_to(s, "#house");
+}
+
+/// What the new row the cursor is on opened with, if it has nothing else in it.
+fn fresh_row(s: &Session) -> Option<String> {
+    let field = s.view().field?;
+    field.fresh.map(|_| field.text.to_owned())
+}
+
+#[test]
+fn going_into_a_note_that_lists_nothing_opens_a_row_to_write_in() {
+    let mut s = session();
+    in_the_house(&mut s);
+    select(&mut s, "Boiler overhaul #house");
+    s.take_caret();
+    let effects = s.act(Action::GoIn);
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"));
+    assert_eq!(s.cursor, Some(0), "the row is at the top");
+    assert_eq!(
+        s.take_caret(),
+        Caret {
+            line: None,
+            head: Some(0),
+        },
+        "the caret is where the writer's text goes, as for Enter"
+    );
+    assert!(kept(&effects).is_empty(), "nothing is written until typed");
+    assert_eq!(
+        s.view().here.map(|h| h.id),
+        Some("overhaul"),
+        "the note you are in is still the one to read"
+    );
+
+    edited(&mut s, "Drain the tank #house");
+    let drain = s.notes.get(&s.rows[0].id).unwrap();
+    assert_eq!(drain.text, "Drain the tank #house");
+    assert_eq!(drain.links, ["overhaul"], "it is written in the note");
+}
+
+#[test]
+fn going_into_a_note_with_notes_under_it_leaves_the_cursor_on_the_line() {
+    let mut s = session();
+    in_the_house(&mut s);
+    put(
+        &mut s,
+        "drain",
+        "Drain the tank #house",
+        &["overhaul"],
+        3_000,
+    );
+    go_to(&mut s, "#house");
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(s.cursor, None);
+    assert!(s.view().field.is_none());
+    assert_eq!(heads(&s), ["Drain the tank #house"]);
+}
+
+#[test]
+fn going_into_a_label_that_lists_nothing_leaves_the_cursor_on_the_line() {
+    let mut s = session();
+    in_the_house(&mut s);
+    go_to(&mut s, "#garden");
+    assert_eq!(path(&s), ["#house", "#garden"]);
+    assert!(s.rows.is_empty());
+    assert_eq!(s.cursor, None, "a label is searched in");
+    go_to(&mut s, "[x]");
+    assert_eq!(path(&s), ["#house", "#garden", "[x]"]);
+    assert_eq!(s.cursor, None);
+}
+
+#[test]
+fn a_draft_carried_into_a_note_that_lists_nothing_stays_on_the_line() {
+    let mut s = session();
+    in_the_house(&mut s);
+    type_in(&mut s, "boiler needs bleeding");
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(s.line, "boiler needs bleeding", "it was a draft");
+    assert_eq!(s.cursor, None, "it waits on the line to be written");
+    s.act(Action::Write);
+    let written = s.notes.get(&s.selected().unwrap().id).unwrap();
+    assert_eq!(written.text, "boiler needs bleeding #house");
+}
+
+#[test]
+fn escape_from_the_row_opened_on_the_way_in_goes_to_the_line_and_then_back_to_its_row() {
+    let mut s = session();
+    in_the_house(&mut s);
+    let order: Vec<String> = heads(&s).into_iter().map(String::from).collect();
+    go_into(&mut s, "Boiler overhaul #house");
+    let left = s.act(Action::Select(None));
+    assert!(kept(&left).is_empty());
+    assert_eq!(s.cursor, None);
+    assert!(s.rows.is_empty(), "the untouched row goes as it is left");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    s.act(Action::Back);
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(heads(&s), order);
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Boiler overhaul #house")
+    );
+    assert_eq!(s.notes.len(), 2);
+}
+
+#[test]
+fn stepping_back_from_the_row_opened_on_the_way_in_steps_out_and_writes_nothing() {
+    let mut s = session();
+    in_the_house(&mut s);
+    let order: Vec<String> = heads(&s).into_iter().map(String::from).collect();
+    go_into(&mut s, "Boiler overhaul #house");
+    let back = s.act(Action::Back);
+    assert!(kept(&back).is_empty(), "nothing reaches the log");
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(heads(&s), order, "the row goes with the step");
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Boiler overhaul #house"),
+        "back on the row gone in from"
+    );
+    assert_eq!(s.notes.len(), 2);
+
+    // A row typed into and cleared goes the same way, its deletion written.
+    go_into(&mut s, "Boiler overhaul #house");
+    let typed = edited(&mut s, "D #house");
+    let id = kept(&typed)[0].id.clone();
+    edited(&mut s, " #house");
+    let back = s.act(Action::Back);
+    let back = kept(&back);
+    assert!(
+        back.len() == 1 && back[0].id == id && back[0].deleted,
+        "{back:?}"
+    );
+    assert_eq!(path(&s), ["#house"]);
+    assert_eq!(heads(&s), order);
+    assert_eq!(s.notes.len(), 2);
+}
+
+#[test]
+fn a_new_row_says_it_is_new_until_the_cursor_leaves_it() {
+    let mut s = session();
+    in_the_house(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert!(s.view().field.is_some_and(|f| f.new));
+    edited(&mut s, "Drain the tank #house");
+    let field = s.view().field.unwrap();
+    assert!(
+        field.new && field.fresh.is_none(),
+        "typed into, it is still new, though no longer empty"
+    );
+    s.act(Action::Write);
+    edited(&mut s, "Bleed the radiators #house");
+    s.act(Action::Move(-1));
+    assert!(s.view().field.is_some_and(|f| !f.new), "left, it is a row");
+    s.act(Action::Move(1));
+    let field = s.view().field.unwrap();
+    assert_eq!(field.text, "Bleed the radiators #house");
+    assert!(!field.new, "and come back to, a row like any other");
+}
+
+#[test]
+fn a_kept_path_restored_into_a_note_that_lists_nothing_lands_on_the_line() {
+    let mut s = session();
+    in_the_house(&mut s);
+    s.act(Action::Restore(vec![
+        KeptStep::Label {
+            label: "#house".into(),
+            search: None,
+        },
+        KeptStep::Note {
+            note: "overhaul".into(),
+            search: None,
+        },
+    ]));
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(s.cursor, None);
+    assert!(s.view().field.is_none());
+}
+
+#[test]
+fn a_note_with_only_archived_notes_under_it_opens_a_row_unless_they_are_shown() {
+    let mut s = session();
+    in_the_house(&mut s);
+    put(
+        &mut s,
+        "drained",
+        "[x] Drain the tank #house",
+        &["overhaul"],
+        3_000,
+    );
+    let mut done = s.notes.get("drained").unwrap().clone();
+    done.archived = true;
+    s.commit(done);
+    go_to(&mut s, "#house");
+    go_into(&mut s, "Boiler overhaul #house");
+    assert!(s.view().field.is_some_and(|f| f.fresh.is_some()));
+    assert_eq!(s.rows.len(), 1, "the archived note is hidden");
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    s.act(Action::ShowArchived);
+    s.act(Action::Select(None));
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(heads(&s), ["[x] Drain the tank #house"]);
+    assert_eq!(
+        s.cursor, None,
+        "shown, it is listed, so the cursor lands on the line"
+    );
+}
+
+#[test]
+fn a_note_on_the_path_named_again_from_the_line_opens_no_row() {
+    let mut s = session();
+    in_the_house(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    go_to(&mut s, "#garden");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul", "#garden"]);
+    go_to(&mut s, "boiler overhaul #house");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"], "gone back to");
+    assert!(s.rows.is_empty());
+    assert_eq!(s.cursor, None);
+}
+
+#[test]
+fn following_a_link_lands_on_the_line_since_the_note_it_was_followed_from_is_listed_there() {
+    let mut s = session();
+    in_the_house(&mut s);
+    select(&mut s, "Order oil #house");
+    s.act(Action::Open);
+    edited(&mut s, "Order oil #house\nafter the [[Boiler overhaul]]");
+    s.act(Action::Follow("Boiler overhaul".into()));
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(
+        heads(&s),
+        ["Order oil #house"],
+        "it links here, so it is under"
+    );
+    assert_eq!(s.cursor, None);
+    s.act(Action::Back);
+    assert_eq!(
+        s.selected().map(|r| r.head.as_str()),
+        Some("Order oil #house"),
+        "back on the row the link was followed from"
+    );
+}
+
+#[test]
+fn tab_on_the_line_naming_a_note_that_lists_nothing_opens_a_row_to_write_in() {
+    let mut s = session();
+    in_the_house(&mut s);
+    go_to(&mut s, "boiler overhaul");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul"]);
+    assert_eq!(s.line, "", "the line was a search for it");
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"));
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    assert_eq!(s.line, "boiler overhaul", "the search comes back");
+    assert_eq!(s.cursor, None);
+}
