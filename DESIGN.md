@@ -307,8 +307,8 @@ added to the engine until daily use asks for it.
   of the space's key can be had (see Sync). What a relay can still do: withhold lines, or hand back
   an old prefix; it cannot forge, alter or reorder one.
 - **Who writes a space's directory.** Every client open on it, each a writer of its own: each
-  window, each command that writes beside them (`fzn apply`, `fzn tick`, `fzn untick`) and an
-  importer. A client takes the lowest free slot of a small pool for its life, `.writer` then
+  window, each command that writes beside them (`fzn apply`, `fzn tick`, `fzn untick`, `fzn write`)
+  and an importer. A client takes the lowest free slot of a small pool for its life, `.writer` then
   `.writer.1` and on, a lock on that file and the writer id kept in it, and appends only to the log
   that id names; the next holder of a slot goes on with its log, so the pool grows to the most
   clients ever open at once and no further. Nobody waits for a slot and nothing is locked per write.
@@ -317,26 +317,26 @@ added to the engine until daily use asks for it.
   each other, each in its own place, and how one lists what an importer or a command beside it
   wrote, saying `1 changed elsewhere`. A command asks for nothing: it takes the key kept for the
   space, says so when none is kept, and writes nothing when that key opens nothing there; with no
-  window open it takes slot 0. With a relay named and no window holding the keeper's lease, it
-  holds the lease for its run and syncs once (see "A device syncs by having a relay named");
-  commands take turns at that by a lock of their own, `.relay.command`, which windows never take,
-  so that a command finding the lease held knows a window holds it. Beside a window a command
-  connects to nothing, and what it writes reaches the relay through the keeper. Since a
-  log may be read while another process appends to it, every log is read only as far as its last
-  whole line, and an unfinished last line is cut only by the process about to append to that log. A
-  log is a file, not a link to one, so a file gone between listing the directory and reading it is a
-  log a compaction retired, and the directory is listed again for its successor. No client deletes a
-  log another slot writes, though a header from elsewhere retires it, since a copy of the directory
-  that wrote under the same id elsewhere may have left it holding lines nobody else has: its own
-  writer carries them into a new log, and keeps the new id, before it goes, as the replica keeps a
-  device's own log from a peer's header. Clients share a lock on `.lock`; a relay holds it alone, so
-  a relay asked to serve a space a client has open is refused, and so is a client opening a space a
-  relay holds. `fzn query` and `fzn export` take neither a lock nor a slot to read; with a relay
-  named and no window keeping the space in step, they first share the lock and take the lease and a
-  slot for the exchange, which keeps the relay's lines here, and let them go before they read.
-  Nothing else writes there: Syncthing and the like are not supported and not needed; the relay is
-  the way between machines. What arrives from the relay comes through the engine, which asks the
-  face to keep it.
+  window open it takes slot 0. With a relay named and no window holding the keeper's lease, it holds
+  the lease for its run and syncs once (see "A device syncs by having a relay named"); commands take
+  turns at that by a lock of their own, `.relay.command`, which windows never take, so that a
+  command finding the lease held knows a window holds it. Beside a window a command connects to
+  nothing, and what it writes reaches the relay through the keeper. Since a log may be read while
+  another process appends to it, every log is read only as far as its last whole line, and an
+  unfinished last line is cut only by the process about to append to that log. A log is a file, not
+  a link to one, so a file gone between listing the directory and reading it is a log a compaction
+  retired, and the directory is listed again for its successor. No client deletes a log another slot
+  writes, though a header from elsewhere retires it, since a copy of the directory that wrote under
+  the same id elsewhere may have left it holding lines nobody else has: its own writer carries them
+  into a new log, and keeps the new id, before it goes, as the replica keeps a device's own log from
+  a peer's header. Clients share a lock on `.lock`; a relay holds it alone, so a relay asked to
+  serve a space a client has open is refused, and so is a client opening a space a relay holds.
+  `fzn query` and `fzn export` take neither a lock nor a slot to read; with a relay named and no
+  window keeping the space in step, they first share the lock and take the lease and a slot for the
+  exchange, which keeps the relay's lines here, and let them go before they read. Nothing else
+  writes there: Syncthing and the like are not supported and not needed; the relay is the way
+  between machines. What arrives from the relay comes through the engine, which asks the face to
+  keep it.
 - **Later: a text CRDT per note** (Yrs, the Rust port of Yjs, or Loro). The log lines then carry
   sealed CRDT updates instead of sealed snapshots. The replica and the relay do not change, since
   they never read a line; the session and `Notes` do, since the session reads and makes `Record`s
@@ -349,21 +349,26 @@ added to the engine until daily use asks for it.
   read and taken away without the app; it takes no line, and given one it names `fzn query` and
   writes nothing. `fzn query LINE` writes what that line finds at the top of the space, archived
   notes too, in the order the app lists them, which its `--help` says, and never cut at the app's
-  500 rows. `fzn apply` takes such lines
-  back and writes each note as it then reads, by the session's rules for notes given from outside,
-  all or none, beside the open app; its lines are numbered as given, so a blank one before the end
-  is a line that is not a note. `fzn tick ID …` and `fzn untick ID …` do to the notes named, by the
-  ids `query` writes, what Ctrl-V does to a task, all or none, the flag deciding which way a task
-  goes. Each of the three writes out every note it was given as it now stands, the line `query`
-  would write, so a change comes with its receipt, and running it again writes nothing. Every
-  command says what went wrong on one line, `fzn: ` and why, and exits 1 when nothing was done and 2
-  when its arguments made no sense, without printing the manual. `fzn import-jsonl` is the way back
-  in for a whole export, a restore and not an edit, since it takes ids and times as they are given,
-  and `fzn import-markdown` reads a directory of pages (see "Imported pages become the notes they
-  would have been"); a plain file is not read as a log by being put in the directory, since it would
-  then be sent in the clear. When the logs carry CRDT updates this format stays. It carries the
-  facts beside the text as well as the text: the 2022 corpus is what it looks like when only the
-  text gets out (creation time survives on 7% of its notes).
+  500 rows. `fzn apply` takes such lines back and writes each note as it then reads, by the
+  session's rules for notes given from outside, all or none, beside the open app; its lines are
+  numbered as given, so a blank one before the end is a line that is not a note. `fzn tick ID …` and
+  `fzn untick ID …` do to the notes named, by the ids `query` writes, what Ctrl-V does to a task,
+  all or none, the flag deciding which way a task goes. `fzn write TEXT --in LINE …` writes one new
+  note as Enter on the line writes it, in the place the `--in` lines go into: from the top of the
+  space each is put on the line and gone into as Tab on the line goes into it, so the note takes the
+  place's labels and its link to the place's note by the session's own rules and by nothing
+  restated, and a line that goes nowhere, or text that only names a place, is said and nothing is
+  written; a body is apply's to write. Each of the four writes out every note it was given or wrote
+  as it now stands, the line `query` would write, so a change comes with its receipt, and running
+  apply, tick or untick again writes nothing. Every command says what went wrong on one line,
+  `fzn: ` and why, and exits 1 when nothing was done and 2 when its arguments made no sense, without
+  printing the manual. `fzn import-jsonl` is the way back in for a whole export, a restore and not
+  an edit, since it takes ids and times as they are given, and `fzn import-markdown` reads a
+  directory of pages (see "Imported pages become the notes they would have been"); a plain file is
+  not read as a log by being put in the directory, since it would then be sent in the clear. When
+  the logs carry CRDT updates this format stays. It carries the facts beside the text as well as the
+  text: the 2022 corpus is what it looks like when only the text gets out (creation time survives on
+  7% of its notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
 
@@ -495,24 +500,24 @@ relay all run the same code.
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with `--relay`.
   There is no command for it. While the app is open a thread keeps the space's logs in step with the
   relay, and the foot says only when that is not going. With no window holding the keeper's lease,
-  the commands that read and write notes, `query`, `export`, `apply`, `tick` and `untick`, sync once
-  each: they take the commands' turn, `.relay.command`, waiting while another command has it (at
-  most four greetings, past which the turn is said as the reason they are not synced), then the
-  lease, connect, carry messages until the device holds every line the relay said it holds (a log
-  forked with the relay apart), do their work, send what they wrote, and close once the relay has
-  closed too, letting the lease go after their last append. A relay out of reach, one that refuses,
-  and one silent for a greeting are said on one line, `fzn: not synced with nas.local: …`, and the
-  command goes on with this machine's copy; one that works says nothing. With several windows open
-  on a space, one holds the socket and keeps the relay's lines, the keeper, by a lease on `.relay`;
-  the others reach the relay through it, by way of the directory. The next window takes the lease
-  within a look of the keeper's going and reads what the last keeper kept before it appends, with
-  nothing handed over, since the directory is the state. A keeper that hands the terminal to an
-  editor lets the lease go first, since it hears and looks at nothing until the editor is done, and
-  tries to take it back at its next look after. The address may carry a token,
+  the commands that read and write notes, `query`, `export`, `apply`, `tick`, `untick` and `write`,
+  sync once each: they take the commands' turn, `.relay.command`, waiting while another command has
+  it (at most four greetings, past which the turn is said as the reason they are not synced), then
+  the lease, connect, carry messages until the device holds every line the relay said it holds (a
+  log forked with the relay apart), do their work, send what they wrote, and close once the relay
+  has closed too, letting the lease go after their last append. A relay out of reach, one that
+  refuses, and one silent for a greeting are said on one line, `fzn: not synced with nas.local: …`,
+  and the command goes on with this machine's copy; one that works says nothing. With several
+  windows open on a space, one holds the socket and keeps the relay's lines, the keeper, by a lease
+  on `.relay`; the others reach the relay through it, by way of the directory. The next window takes
+  the lease within a look of the keeper's going and reads what the last keeper kept before it
+  appends, with nothing handed over, since the directory is the state. A keeper that hands the
+  terminal to an editor lets the lease go first, since it hears and looks at nothing until the
+  editor is done, and tries to take it back at its next look after. The address may carry a token,
   `ws://joe:TOKEN@nas.local`, or `wss://joe:TOKEN@nas.local` for a relay behind a proxy that has
-  TLS, which is what lets a device make a space on the relay: it is read with
-  a URI parser, goes no further than the greeting (see "A connection"), and is never said, the
-  status row naming the relay by its host alone. With no relay named, nothing leaves the machine.
+  TLS, which is what lets a device make a space on the relay: it is read with a URI parser, goes no
+  further than the greeting (see "A connection"), and is never said, the status row naming the relay
+  by its host alone. With no relay named, nothing leaves the machine.
 - **The engine is where sync and the app meet.** A *device* is a session and a replica joined in
   memory, with the space's key, and it is in the engine as `Device`: the same code in the terminal,
   in a tab and in a test. A version the session wants kept is sealed, becomes a line of this
@@ -2498,7 +2503,9 @@ the app now does is described above; an entry repeats it only where the reason n
   is what a script or an agent checks, and a usage mistake no longer prints the manual. An MCP
   server, if one is wanted, is these commands as tools and nothing more. Revised 2026-10-17 by
   "Time on the line is time order": the order is time's on a line holding a span, so that a week
-  needs no `jq` to read in order.
+  needs no `jq` to read in order. Revised 2026-11-02 by "A note is written from outside as the
+  line writes it": writing a note, in a place or at the top, is a common case too, and has a word
+  of its own beside `tick` and `untick`.
 
 - **A client is a writer of its own, leased from a pool.** Decided 2026-10-16, at Sam's direction,
   reversing the rule that a space's directory is written by the app one window at a time and the
@@ -4236,6 +4243,34 @@ the app now does is described above; an entry repeats it only where the reason n
   `[x]` typed does that. Weighed: keeping the box and taking it out each time, the cost that asked
   for this; and a key to toggle the inherited box on a new row, one more thing to remember for what
   typing `[ ]` already says.
+
+- **A note is written from outside as the line writes it.** Decided 2026-11-02, at Sam's ask,
+  revising "The line is a query, and a snapshot is a write" (2026-10-16), which took `apply` over a
+  set of verbs and kept `tick` and `untick` as the common case, "shorter and safer than a `jq`
+  expression for what is done daily". Writing a note is that case too, and writing one in a place
+  meant typing the place's labels into its text and putting its note's id in `links` with `jq`,
+  the app's inheritance done again by hand, and wrong as soon as the app's rules move. Now
+  `fzn write TEXT --in LINE …` writes TEXT as Enter on the line writes it, in the place the `--in`
+  lines go into: from the top of the space each is put on the line and gone into as Tab on the line
+  goes into it, a line of labels into each label and any other line into the one note it names,
+  and then the text is put on the line and written. Date words and `/task` are written out,
+  brackets linked, and the place's labels and its note come from the session and from nothing
+  written for the command, so a place from outside is the Tabs that make it in the app, one rule.
+  It is the session driven through its own actions, as a face drives it, and writes beside the
+  open app and syncs as `apply` and `tick` do, saying the note as `query` would. An `--in` that
+  goes nowhere is said by what was given, and why: it names no place, or several notes, or where
+  it already is; nothing is written, exit 1; and so is text that is only labels, since Enter on
+  that goes into it and writes nothing. A label no note carries yet is a place all the same, since
+  Tab on a line of labels goes into a label whether or not anything is there, and starting a new
+  label is a real case; so `--in '#hoose'` writes the note in `#hoose`, and the note said back is
+  where the slip shows. Weighed: `apply` alone, which stays the way for bodies and edits; a path
+  as one string with `›` between its steps, a separator to type and to escape; a place's note
+  given by id, where the app names notes by their names and an id has to be looked up first; and
+  refusing a label no note carries, which would make a new label a thing the command cannot do.
+  What it costs: one more name. And `write`, unlike `apply`, `tick` and `untick`, does not write
+  nothing the second time: a script run twice writes the note twice, and a second note of a name
+  makes a later `--in` by that name name two notes and be refused. A mistyped label in `--in` is
+  written, as it would be by Tab in the app.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

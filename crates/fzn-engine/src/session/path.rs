@@ -278,10 +278,7 @@ impl Session {
     pub(super) fn places_named(&self) -> Vec<Step> {
         let query = &self.parsed;
         let mut places: Vec<Step> = Vec::new();
-        // A line of both boxes names nowhere to go: with archived hidden no note is both, and
-        // with it shown the line is `[x]` with a box too many.
-        let both = query.asks_done() && query.labels.iter().any(|t| t.label == Label::Open);
-        if both {
+        if self.both_boxes() {
             return places;
         }
         if query.only_labels() {
@@ -318,6 +315,30 @@ impl Session {
         }
         places.retain(|place| !self.path.last().is_some_and(|s| s.is(place)));
         places
+    }
+
+    /// Whether the line holds both boxes, which names nowhere to go: with archived hidden no note
+    /// is both, and with it shown the line is `[x]` with a box too many.
+    fn both_boxes(&self) -> bool {
+        let query = &self.parsed;
+        query.asks_done() && query.labels.iter().any(|t| t.label == Label::Open)
+    }
+
+    /// Why the line names nowhere to go, by the rules of [`Session::places_named`], for when it
+    /// names none: labels that are all where you are already, a name of the note you are in or
+    /// of several notes, or nothing to go into at all.
+    pub(crate) fn goes_nowhere(&self) -> String {
+        if self.both_boxes() {
+            return "names no place here".into();
+        }
+        if self.parsed.only_labels() {
+            return "names where it already is".into();
+        }
+        match self.named_here(&self.parsed).len() {
+            0 => "names no place here".into(),
+            1 => "names where it already is".into(),
+            n => format!("names {n} notes here"),
+        }
     }
 
     /// The notes the line names here, by the one rule the list and going in share, so that a

@@ -30,6 +30,7 @@ fzn [--space NAME] export               write every note, one to a line, oldest 
 fzn [--space NAME] apply [FILE]         write the notes given, from FILE or standard input
 fzn [--space NAME] tick ID [ID ...]     tick these tasks, by the ids query writes
 fzn [--space NAME] untick ID [ID ...]   bring these ticked tasks back
+fzn [--space NAME] write TEXT [--in LINE ...]  write TEXT as a note, in the place the lines go into
 fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
@@ -46,11 +47,11 @@ opens another, and creates it if it is new.
 The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Only fzn
 writes a space's directory. Several windows may have a space open at once on one machine, each
 in its own place, and what one writes the others list within a moment; query, export, apply,
-tick, untick and the importers work beside them. A relay, not copying files, is how a space gets
-from one machine to another. With a relay named and no window open on the space, query, export,
-apply, tick and untick sync with it once before they read or write, and send what they wrote
-before they end; a relay out of reach is said on one line, not synced with HOST, and they go on
-with this machine's copy.
+tick, untick, write and the importers work beside them. A relay, not copying files, is how a
+space gets from one machine to another. With a relay named and no window open on the space,
+query, export, apply, tick, untick and write sync with it once before they read or write, and
+send what they wrote before they end; a relay out of reach is said on one line, not synced with
+HOST, and they go on with this machine's copy.
 
 Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
 twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
@@ -81,6 +82,20 @@ the tasks named what Ctrl-V does, [ ] to [x] and archived, or back. All three ta
 for the space and never ask for the passphrase. import-jsonl is the way back in for a whole
 export: it takes the lines as they are, ids and times included, so it restores notes and does not
 edit them, and a file put in a space's directory is not read.
+
+write writes TEXT as a new note, as Enter on the line writes it: date words and /task are
+written out and [[brackets]] become links, and the note goes at the top of the place the --in
+lines go into, with that place's labels and linked to its note. From the top of the space, each
+--in LINE in turn is typed on the line and gone into as Tab goes: a line of labels into each
+label, and any other line into the one note it names. fzn write 'Bleed the radiators /task' --in
+'#house' writes [ ] Bleed the radiators #house, and with --in 'Boiler overhaul' instead the note
+is linked to the note named Boiler overhaul; --in '#house' --in '[ ]' is the place --in
+'#house [ ]' is. A line that goes nowhere, since it names no note or several, names where it
+already is, or is not one Tab goes into, is said, nothing is written, and write exits 1, and so is
+TEXT that is only labels, which names a place and not a note. A label is a place whether or not a
+note carries it yet, as in the app, so --in '#hoose' writes the note in #hoose; what was written
+is said, as query writes it, which is where to see it. Run twice, write writes two notes. It takes
+the key kept for the space as apply does, and writes no body: a body is written with apply.
 
 Exit status: 0 when done, 1 when nothing was written and why is said, 2 when the arguments made
 no sense.
@@ -124,6 +139,12 @@ their letters in order: ~bsv finds Boiler service.";
 /// What `fzn query` with nothing after it is told.
 const QUERY_NEEDS: &str = "query needs a line, as typed in the app";
 
+/// What `fzn write` with no text, or only spaces, is told.
+const WRITE_NEEDS: &str = "write needs the text of a note, as typed on the line";
+
+/// What `--in` with no line after it, or only spaces, is told.
+const IN_NEEDS: &str = "--in needs a line, as typed in the app";
+
 /// What the command line asked for.
 #[derive(Debug, PartialEq)]
 enum Cmd {
@@ -146,6 +167,11 @@ enum Cmd {
     Tick {
         ids: Vec<String>,
         done: bool,
+    },
+    /// A note written as the line writes it, in the place these lines go into.
+    Write {
+        text: String,
+        places: Vec<String>,
     },
     ImportJsonl(PathBuf),
     ImportMarkdown(PathBuf),
@@ -196,7 +222,22 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
         web: None,
         cmd: Cmd::Open,
     };
+    // After `write`, its text and each `--in` with its line, in any order among the flags. Every
+    // word that is not a flag is the text, which may start with one dash, as a line may.
+    let mut writing: Option<(Option<String>, Vec<String>)> = None;
     while let Some(arg) = args.next() {
+        let flag = arg.starts_with("--") || matches!(arg.as_str(), "-s" | "-h" | "-V");
+        if let Some((text, _)) = writing.as_mut()
+            && !flag
+        {
+            if text.is_some() {
+                return Err(usage(format!(
+                    "write takes one text, and {arg:?} is a second; quote the note as one"
+                )));
+            }
+            *text = Some(arg);
+            continue;
+        }
         match arg.as_str() {
             "--root" => parsed.root = Some(value(&mut args, "--root needs a directory")?),
             "-s" | "--space" => parsed.space = Some(value(&mut args, "--space needs a name")?),
@@ -245,6 +286,19 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
                     done: arg == "tick",
                 };
             }
+            "write" => writing = Some((None, Vec::new())),
+            "--in" if writing.is_some() => {
+                let line = value(&mut args, IN_NEEDS)?;
+                if line.trim().is_empty() {
+                    return Err(usage(IN_NEEDS));
+                }
+                if line.contains(['\n', '\r']) {
+                    return Err(usage("--in takes one line, as typed in the app"));
+                }
+                if let Some((_, places)) = writing.as_mut() {
+                    places.push(line);
+                }
+            }
             "import-jsonl" => {
                 parsed.cmd = Cmd::ImportJsonl(value(&mut args, "import-jsonl needs a file")?.into())
             }
@@ -254,6 +308,20 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
             }
             other => return Err(usage(format!("unknown argument {other:?}; see fzn --help"))),
         }
+    }
+    // Asked for the manual, or the version, the rest is not read for sense.
+    if let Some((text, places)) = writing
+        && !matches!(parsed.cmd, Cmd::Help | Cmd::Version)
+    {
+        let text = text
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| usage(WRITE_NEEDS))?;
+        if text.contains(['\n', '\r']) {
+            return Err(usage(
+                "write takes one line, a note's head; a body is written with apply",
+            ));
+        }
+        parsed.cmd = Cmd::Write { text, places };
     }
     Ok(parsed)
 }
@@ -325,7 +393,12 @@ fn run() -> Result<()> {
     // notes; the importers and key leave it be.
     let syncs = matches!(
         cmd,
-        Cmd::Open | Cmd::Query(_) | Cmd::Export | Cmd::Apply(_) | Cmd::Tick { .. }
+        Cmd::Open
+            | Cmd::Query(_)
+            | Cmd::Export
+            | Cmd::Apply(_)
+            | Cmd::Tick { .. }
+            | Cmd::Write { .. }
     );
     let env_relay = std::env::var("FZN_RELAY").ok();
     let named =
@@ -379,6 +452,13 @@ fn run() -> Result<()> {
                 store::Beside::open(&dir, &space, &config_dir, key, dial.as_ref())?;
             say(not_synced);
             say(beside.tick(&ids, done, &mut std::io::stdout().lock())?);
+        }
+        Cmd::Write { text, places } => {
+            let key = kept_key(&space, &config_dir)?;
+            let (beside, not_synced) =
+                store::Beside::open(&dir, &space, &config_dir, key, dial.as_ref())?;
+            say(not_synced);
+            say(beside.write(&places, &text, &mut std::io::stdout().lock())?);
         }
         Cmd::ImportJsonl(path) => {
             let mut into = importing(&dir, &space, &config_dir)?;
@@ -626,6 +706,77 @@ mod tests {
         assert_eq!(
             refused(&["query", "#house", "#garden"]),
             "unknown argument \"#garden\"; see fzn --help"
+        );
+    }
+
+    #[test]
+    fn write_takes_one_line_of_text_and_the_lines_that_make_its_place() {
+        let write = |text: &str, places: &[&str]| Cmd::Write {
+            text: text.into(),
+            places: places.iter().map(|&place| place.into()).collect(),
+        };
+        assert_eq!(
+            cmd(&["write", "Bleed the radiators"]),
+            write("Bleed the radiators", &[])
+        );
+        assert_eq!(
+            cmd(&[
+                "write",
+                "Bleed the radiators /task",
+                "--in",
+                "#house",
+                "--in",
+                "Boiler"
+            ]),
+            write("Bleed the radiators /task", &["#house", "Boiler"])
+        );
+        assert_eq!(
+            cmd(&["write", "--in", "#house [ ]", "Order oil"]),
+            write("Order oil", &["#house [ ]"])
+        );
+        assert_eq!(
+            cmd(&["write", "-2 tonight, cover the roses"]),
+            write("-2 tonight, cover the roses", &[]),
+            "a text may start with a dash"
+        );
+        // The space and the places may come anywhere after write, before the text or after it.
+        for args in [
+            &["write", "Order oil", "--space", "garden", "--in", "#house"][..],
+            &["write", "--in", "#house", "-s", "garden", "Order oil"],
+            &["write", "--space", "garden", "--in", "#house", "Order oil"],
+        ] {
+            let args = parsed(args).unwrap();
+            assert_eq!(
+                (args.space.as_deref(), args.cmd),
+                (Some("garden"), write("Order oil", &["#house"]))
+            );
+        }
+        assert_eq!(cmd(&["write", "--help"]), Cmd::Help);
+        assert_eq!(cmd(&["write", "Order oil", "-h"]), Cmd::Help);
+        let needs = "write needs the text of a note, as typed on the line";
+        assert_eq!(refused(&["write"]), needs);
+        assert_eq!(refused(&["write", "  "]), needs);
+        assert_eq!(refused(&["write", "--in", "#house"]), needs);
+        let in_needs = "--in needs a line, as typed in the app";
+        assert_eq!(refused(&["write", "Boiler", "--in"]), in_needs);
+        assert_eq!(refused(&["write", "Boiler", "--in", ""]), in_needs);
+        assert_eq!(refused(&["write", "Boiler", "--in", "  "]), in_needs);
+        assert_eq!(
+            refused(&["write", "Boiler", "--in", "#house\n[ ]"]),
+            "--in takes one line, as typed in the app"
+        );
+        assert_eq!(
+            refused(&["--in", "#house", "write", "Boiler"]),
+            "unknown argument \"--in\"; see fzn --help",
+            "--in is write's"
+        );
+        assert_eq!(
+            refused(&["write", "Order", "oil"]),
+            "write takes one text, and \"oil\" is a second; quote the note as one"
+        );
+        assert_eq!(
+            refused(&["write", "Boiler\nService it in May"]),
+            "write takes one line, a note's head; a body is written with apply"
         );
     }
 

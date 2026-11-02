@@ -192,6 +192,7 @@ fzn query '[x] /-mon.. #work'    # the tasks in #work done this week, in the ord
 fzn export > notes.jsonl         # every live note, one plain JSON line each, oldest first
 fzn tick ID ...                  # tick these tasks, by the ids query gives them
 fzn untick ID ...                # and bring them back
+fzn write 'Bleed the radiators /task' --in '#house' --in 'Boiler overhaul'   # a note, in a place
 fzn query '#old' | jq -c '.text |= sub("#old"; "#house")' | fzn apply   # a change, by jq
 fzn import-jsonl notes.jsonl     # the way back in: a restore, ids and times as they were
 fzn import-markdown ~/pages      # a directory of markdown pages
@@ -203,7 +204,9 @@ reads those lines back and writes each note as it then reads, by the app's own r
 written out, `[[brackets]]` made links, a task's box and its archived flag kept together. It
 writes all of them or none, refuses a note that changed after it was read, and writes out each
 note as it now stands. `tick` does what Ctrl-V does to a task, `[ ]` to `[x]` and archived, to
-every note it names or to none. `query`, `apply`, `tick` and `untick` work with fzn open on the
+every note it names or to none. `write` writes a note as Enter on the line writes it, in the place
+each `--in` line goes into in turn as Tab goes from the line, so it takes that place's labels and
+is linked to its note. `query`, `apply`, `tick`, `untick` and `write` work with fzn open on the
 space, which shows what they wrote within a second. With a relay named and fzn not open on the
 space, each of them and `export` syncs with the relay first, so `query` finds a note written in
 the browser and `tick` can tick it, and what they write goes to the relay before they end; with

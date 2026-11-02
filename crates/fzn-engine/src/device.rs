@@ -90,6 +90,16 @@ pub struct Editing {
     pub text: String,
 }
 
+/// Why [`Device::write`] wrote nothing. A place is told apart from the rest, so that a face can
+/// say which of what it was given was the place, in its own words for it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unwritten {
+    /// A place that goes nowhere, said from its line: `'Gutter' names 2 notes here`.
+    Place(String),
+    /// Anything else: the text, or the key.
+    Other(String),
+}
+
 /// What the face has to do after the device has taken something in.
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Todo {
@@ -344,6 +354,53 @@ impl Device {
         }
         let (notes, effects) = self.session.apply(given)?;
         Ok((self.todo(effects), notes))
+    }
+
+    /// Writes a note from outside as the line writes it, in the place these lines go into: from
+    /// the top of the space, each place is put on the line and gone into as Tab goes from the
+    /// line, and then the text is put on the line and written as Enter writes it, so that the
+    /// place's labels and its note come from the session's own rules and from nowhere else.
+    /// Gives back the note as it was written, with what the face is to do. A place that goes
+    /// nowhere, or text that is only the name of a place or is nothing, is refused before anything
+    /// is written.
+    pub fn write(
+        &mut self,
+        places: &[String],
+        text: &str,
+    ) -> Result<(Todo, Vec<Record>), Unwritten> {
+        if !self.key_verified() {
+            return Err(Unwritten::Other(WRONG_KEY.to_owned()));
+        }
+        let mut effects = self.session.act(Action::Restore(Vec::new()));
+        // The cursor is put back on the line before each line is typed, since going into a place
+        // may leave it on a row there; a row left untouched goes and writes nothing.
+        for place in places {
+            effects.extend(self.session.act(Action::Select(None)));
+            effects.extend(self.session.act(Action::Type(place.clone())));
+            let was = self.session.steps();
+            effects.extend(self.session.act(Action::GoIn));
+            if self.session.steps() == was {
+                let why = self.session.goes_nowhere();
+                return Err(Unwritten::Place(format!("'{place}' {why}")));
+            }
+        }
+        effects.extend(self.session.act(Action::Select(None)));
+        effects.extend(self.session.act(Action::Type(text.to_owned())));
+        if self.session.write_goes_in() {
+            let why = format!("'{text}' names a place and not a note");
+            return Err(Unwritten::Other(why));
+        }
+        let written = self.session.act(Action::Write);
+        let note = written.iter().rev().find_map(|effect| match effect {
+            Effect::Keep(version) => Some(version.clone()),
+            _ => None,
+        });
+        // Enter on a blank line opens a row to write in, which a command has no hands for.
+        let Some(note) = note else {
+            return Err(Unwritten::Other("there is no text to write".to_owned()));
+        };
+        effects.extend(written);
+        Ok((self.todo(effects), vec![note]))
     }
 
     /// What the face is to do about what the session asks for: each version it wants kept
@@ -1182,6 +1239,98 @@ mod tests {
             shut.apply(vec![Given::default()]),
             Err(WRONG_KEY.to_owned())
         );
+    }
+
+    #[test]
+    fn a_note_written_from_outside_is_written_as_enter_writes_it_in_the_place_given() {
+        let net = pair(&["Boiler overhaul #house"]);
+        let mut beside = device("dev-c");
+        beside.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        let places = ["#house".to_owned(), "Boiler overhaul".to_owned()];
+        let (todo, notes) = beside.write(&places, "Bleed the radiators /task").unwrap();
+        let [note] = &notes[..] else {
+            panic!("{notes:?}");
+        };
+        assert_eq!(note.text, "[ ] Bleed the radiators #house");
+        assert_eq!(note.links, ["dev-a-0001"]);
+        let kept: Vec<Record> = todo
+            .keep
+            .iter()
+            .flat_map(|kept| kept.lines.iter().map(|line| opened(line)))
+            .collect();
+        assert_eq!(kept, notes);
+    }
+
+    #[test]
+    fn a_note_is_not_written_from_outside_where_a_place_goes_nowhere_or_is_all_it_says() {
+        let net = pair(&["Boiler overhaul #house"]);
+        let mut beside = device("dev-c");
+        beside.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        let places = ["#house".to_owned(), "Radiators".to_owned()];
+        assert_eq!(
+            beside.write(&places, "Bleed the radiators"),
+            Err(Unwritten::Place(
+                "'Radiators' names no place here".to_owned()
+            ))
+        );
+        assert_eq!(
+            beside.write(&["#house".to_owned()], "#garden [ ]"),
+            Err(Unwritten::Other(
+                "'#garden [ ]' names a place and not a note".to_owned()
+            ))
+        );
+        assert_eq!(
+            beside.write(&[], "  "),
+            Err(Unwritten::Other("there is no text to write".to_owned()))
+        );
+        assert_eq!(beside.replica.lines("dev-c").len(), 0);
+    }
+
+    #[test]
+    fn a_place_written_into_from_outside_is_made_as_tab_makes_it_back_up_the_path_too() {
+        let net = pair(&["Boiler overhaul #house"]);
+        let mut beside = device("dev-c");
+        beside.load("dev-a", net.devices[0].replica.lines("dev-a").to_vec());
+        let lines = |lines: &[&str]| lines.iter().map(|&l| l.to_owned()).collect::<Vec<_>>();
+        let written = |beside: &mut Device, places: &[&str], text: &str| {
+            let (_, notes) = beside.write(&lines(places), text).unwrap();
+            notes[0].clone()
+        };
+
+        // Back up the path, the note is in #house and under no note.
+        let note = written(
+            &mut beside,
+            &["#house", "Boiler overhaul", "#house"],
+            "Order oil",
+        );
+        assert_eq!(
+            (note.text.as_str(), note.links.len()),
+            ("Order oil #house", 0)
+        );
+
+        // In the done tasks, it is written done.
+        let note = written(&mut beside, &["#house", "[x]"], "Fix the gate");
+        assert_eq!(note.text, "[x] Fix the gate #house");
+        assert!(note.archived);
+
+        // A label no note carries yet is a place all the same, as Tab goes into it.
+        let note = written(&mut beside, &["#hoose"], "Order oil");
+        assert_eq!(note.text, "Order oil #hoose");
+
+        // Text that names a note is a new note all the same, as Enter writes it.
+        let note = written(&mut beside, &[], "Boiler overhaul #house");
+        assert_ne!(note.id, "dev-a-0001");
+        assert_eq!(note.text, "Boiler overhaul #house");
+
+        // A place given again is where it already is, and so is the label it already has.
+        for places in [&["#house", "#house"][..], &["#house", "#house [ ]", "[ ]"]] {
+            let why = beside.write(&lines(places), "Order oil").unwrap_err();
+            let last = places[places.len() - 1];
+            assert_eq!(
+                why,
+                Unwritten::Place(format!("'{last}' names where it already is"))
+            );
+        }
     }
 
     #[test]

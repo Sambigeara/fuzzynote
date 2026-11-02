@@ -40,7 +40,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use fzn_engine::replica::{Header, names_a_log};
 use fzn_engine::seal::is_sealed;
-use fzn_engine::{Device, Given, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Weights};
+use fzn_engine::{
+    Device, Given, Key, Moment, Notes, Read, Record, Seal, Session, Todo, Unwritten, Weights,
+};
 
 use crate::config::DEVICE_FILE;
 use crate::sync::{Dial, Once};
@@ -391,6 +393,23 @@ impl Beside {
     /// refuses is said and nothing is written.
     pub fn apply(self, given: Vec<Given>, out: &mut impl Write) -> Result<Option<String>> {
         self.act(out, |device| device.apply(given))
+    }
+
+    /// Writes a note as Enter on the line writes it, in the place these lines go into, as
+    /// [`Device::write`] says, and then the note as it now stands. A place that goes nowhere is
+    /// said by the flag that gave it, and nothing is written.
+    pub fn write(
+        self,
+        places: &[String],
+        text: &str,
+        out: &mut impl Write,
+    ) -> Result<Option<String>> {
+        self.act(out, |device| {
+            device.write(places, text).map_err(|why| match why {
+                Unwritten::Place(why) => format!("--in {why}"),
+                Unwritten::Other(why) => why,
+            })
+        })
     }
 
     /// Does what the command asks of the device, keeps what it wrote, sends it to the relay when
@@ -1255,6 +1274,16 @@ pub(crate) mod tests {
         Ok(String::from_utf8(out).unwrap())
     }
 
+    /// Runs `fzn write` on a space, with no relay named, and gives back what it wrote out.
+    fn wrote(dir: &Path, places: &[&str], text: &str) -> Result<String> {
+        let places: Vec<String> = places.iter().map(|&place| place.to_owned()).collect();
+        let key = Key::from_bytes([7; 32]);
+        let (beside, _) = Beside::open(dir, "main", &config(dir), key, None)?;
+        let mut out = Vec::new();
+        beside.write(&places, text, &mut out)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
     /// The lines of a log.
     fn lines(dir: &Path, log: &str) -> Vec<String> {
         let text = fs::read_to_string(dir.join(format!("{log}.jsonl"))).unwrap_or_default();
@@ -1438,6 +1467,86 @@ pub(crate) mod tests {
                 .starts_with("the passphrase does not open main")
         );
         assert_eq!(lines(&dir, &slot_one(&dir)), log);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A space a window has open, with a note to write under and two notes of one name.
+    fn house(dir: &Path) -> Slot {
+        set_writer(dir, "3f9a01c2").unwrap();
+        let window = Slot::take(dir, &config(dir)).unwrap();
+        let mut app = open(dir, "3f9a01c2");
+        app.put(rec("boiler", "Boiler overhaul #house", 10))
+            .unwrap();
+        app.put(rec("gutter", "Gutter #house", 20)).unwrap();
+        app.put(rec("drain", "Gutter #garden", 30)).unwrap();
+        window
+    }
+
+    #[test]
+    fn write_writes_by_the_apps_rules_in_the_place_given_and_says_the_note_as_it_now_stands() {
+        let dir = temp_dir();
+        let _window = house(&dir);
+        let places = ["#house", "Boiler overhaul"];
+        let said = wrote(&dir, &places, "Bleed the radiators /task").unwrap();
+        let note = Record::read(said.trim_end().as_bytes()).unwrap();
+        assert_eq!(note.text, "[ ] Bleed the radiators #house");
+        assert_eq!(note.links, ["boiler"]);
+        assert_eq!(lines(&dir, &slot_one(&dir)).len(), 1, "one version");
+        let found = queried(&dir, "Bleed the radiators");
+        let line: serde_json::Value = serde_json::from_str(&said).unwrap();
+        assert_eq!(line, found[0], "said as query says it");
+
+        // A line of labels is the same place given at once or a label at a time.
+        let apart = wrote(&dir, &["#house", "[ ]"], "Order oil").unwrap();
+        let at_once = wrote(&dir, &["#house [ ]"], "Fix the gate").unwrap();
+        let text = |said: &str| Record::read(said.trim_end().as_bytes()).unwrap().text;
+        assert_eq!(text(&apart), "[ ] Order oil #house");
+        assert_eq!(text(&at_once), "[ ] Fix the gate #house");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_writes_nothing_when_a_place_goes_nowhere_and_says_which() {
+        let dir = temp_dir();
+        let _window = house(&dir);
+        for (places, why) in [
+            (&["Radiators"][..], "--in 'Radiators' names no place here"),
+            (
+                &["#house", "Radiators"],
+                "--in 'Radiators' names no place here",
+            ),
+            (&["Gutter"], "--in 'Gutter' names 2 notes here"),
+            (
+                &["#house", "Gutter", "Gutter"],
+                "--in 'Gutter' names where it already is",
+            ),
+            (
+                &["#house", "#house"],
+                "--in '#house' names where it already is",
+            ),
+            (
+                &["#house /-mon.."],
+                "--in '#house /-mon..' names no place here",
+            ),
+            (&["~bov"], "--in '~bov' names no place here"),
+        ] {
+            let said = wrote(&dir, places, "Bleed the radiators").unwrap_err();
+            assert_eq!(said.to_string(), format!("{why}, so nothing was written"));
+        }
+        assert!(lines(&dir, &slot_one(&dir)).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_refuses_a_line_of_labels_since_it_names_a_place() {
+        let dir = temp_dir();
+        let _window = house(&dir);
+        let said = wrote(&dir, &["Boiler overhaul"], "#house [ ]").unwrap_err();
+        assert_eq!(
+            said.to_string(),
+            "'#house [ ]' names a place and not a note, so nothing was written"
+        );
+        assert!(lines(&dir, &slot_one(&dir)).is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 
