@@ -728,6 +728,8 @@ fn a_note_written_under_one_the_place_only_links_to_is_in_the_place_too() {
     put(&mut s, "seal", "New seal", &["pump"], 2_000);
     put(&mut s, "boiler", "Boiler", &["pump", "seal"], 3_000);
     go_to(&mut s, "Boiler");
+    // Nothing is under Boiler, only linked from it, so a row opens, which Esc leaves.
+    s.act(Action::Select(None));
     assert_eq!(drawn(&s), ["Pump", "  New seal"]);
     select(&mut s, "Pump");
     s.act(Action::Write);

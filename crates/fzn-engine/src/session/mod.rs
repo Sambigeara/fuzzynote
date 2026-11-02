@@ -121,7 +121,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::Engine;
+use crate::engine::{Engine, Linked};
 use crate::query::Query;
 use crate::record::{Notes, Record};
 use crate::score::Weights;
@@ -427,6 +427,10 @@ pub struct Row {
     /// outermost.
     #[serde(skip)]
     pub(crate) through: Vec<String>,
+    /// How the note is linked to the note you are in, on the empty line in its place, where the
+    /// reasons say it in words. None anywhere else.
+    #[serde(skip)]
+    pub(crate) tie: Option<Linked>,
 }
 
 impl Row {
@@ -444,11 +448,6 @@ pub struct Field<'a> {
     /// opened with, whose row goes if the cursor leaves it so: after a task's box and before the
     /// labels at the end. Backspace there takes the row away. None for any other note.
     pub fresh: Option<usize>,
-    /// The row was opened new and the cursor has not left it since, typed into or not. A face
-    /// cannot tell such a row from any other once a letter is typed, and it has nothing of its own
-    /// to read until it is left, so in a note's place it reads the note you are in for the whole
-    /// visit, and writing a list there does not flash that note away at each first letter.
-    pub new: bool,
     /// The body is open: the text is to be shown and written whole, not only its head.
     pub whole: bool,
     /// When the note was written, as it is held: the day it belongs to, which a day label and a
@@ -495,6 +494,12 @@ pub struct View<'a> {
     pub here: Option<Here<'a>>,
     /// The note under the cursor as it is being written, if the cursor is on a row.
     pub field: Option<Field<'a>>,
+    /// The body to read is the note you are in, and not the field's: on the line in a note's
+    /// place, and on a new row there until the cursor leaves it, typed into or not, while no body
+    /// is written for it and its own is closed. A new row has nothing of its own to read until it
+    /// is left, and a face cannot tell one from any other once a letter is typed, so the session
+    /// says it, and writing a list in a note does not flash its body away at each first letter.
+    pub reads_here: bool,
     /// What is offered to complete the tag, person or bracketed name the caret ends, while it is
     /// offered.
     pub offer: Option<&'a Offer>,
@@ -864,12 +869,23 @@ impl Session {
             field: self.field.as_ref().map(|field| Field {
                 text: &field.text,
                 fresh: field.blank().then(|| field.start()),
-                new: field.new,
                 whole: field.whole,
                 created: self.notes.get(&field.id).and_then(|r| r.created),
             }),
+            reads_here: self.reads_here(),
             offer: self.offer.as_ref(),
         }
+    }
+
+    /// Whether the body to read is the note you are in, as [`View::reads_here`] says.
+    fn reads_here(&self) -> bool {
+        let here = self
+            .place_note()
+            .is_some_and(|id| self.notes.get(id).is_some());
+        here && self.field.as_ref().is_none_or(|field| {
+            let body = field.text.split_once('\n').map_or("", |(_, body)| body);
+            field.new && !field.whole && body.trim().is_empty()
+        })
     }
 
     /// Today, by the host's clock.

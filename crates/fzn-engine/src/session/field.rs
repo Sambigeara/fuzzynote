@@ -183,6 +183,7 @@ impl Session {
         }
         let today = self.today();
         let steps_out = self.steps_out().is_some();
+        let here = self.place_note().is_some();
         let Some(field) = self.field.as_mut() else {
             return Some(action);
         };
@@ -205,6 +206,14 @@ impl Session {
             // Typing clears what there was to redo, so on a row typed into there is nothing, and
             // leaving the row to say so would split its visit into two entries to undo.
             Action::Redo if self.redo.is_empty() => self.status = "nothing to redo".into(),
+            // A new row with nothing typed in it in a note's place reads the note you are in, so
+            // that is what its body opens, as on the line: the row goes as leaving it does, and the
+            // note you are in is opened from the line.
+            Action::Open | Action::Editor if here && !field.whole && field.blank() => {
+                self.leave();
+                self.onto_line();
+                return Some(action);
+            }
             Action::Open => field.whole = true,
             // The editor is handed the note as it now reads, and what it leaves is written with
             // what was typed here and what was written there.
@@ -738,6 +747,7 @@ impl Session {
                 level,
                 under: under.clone(),
                 through: Vec::new(),
+                tie: None,
             },
         );
         self.cursor = Some(at);

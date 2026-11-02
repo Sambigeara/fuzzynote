@@ -4,7 +4,7 @@
 //! a box gone into before its last note, and the place it lists is only the last note on it with
 //! the labels gone into after it.
 
-use crate::engine;
+use crate::engine::{self, Linked};
 use crate::note::Note;
 use crate::query::{Label, Query};
 use crate::record::Record;
@@ -56,6 +56,17 @@ impl Step {
             Step::Note { id, .. } => Some(id),
             Step::Label { .. } => None,
         }
+    }
+
+    /// Whether it is a box: the open tasks or the done ones.
+    pub(super) fn is_box(&self) -> bool {
+        matches!(
+            self,
+            Step::Label {
+                label: Label::Open | Label::Done,
+                ..
+            }
+        )
     }
 
     /// Whether it is the same place as another: the same note, or the same label in whatever
@@ -244,19 +255,26 @@ impl Session {
         self.path.push(step.found_with(search));
         let depth = self.path.len();
         self.refresh(true);
-        self.write_in_if_empty(depth);
+        self.write_in_if_nothing_under(depth);
     }
 
-    /// A note just gone into that lists nothing, with nothing carried in on the line, has
+    /// A note just gone into with nothing under it, with nothing carried in on the line, has
     /// nothing to search and nothing to find again: what is done there is write, so a row opens
-    /// at the top to write in, as Enter on the empty line would open it. A label is searched in,
-    /// so it never does, and nor does a draft carried in, which waits on the line to be written.
-    /// `depth` is how deep the path went with the step just taken: a note on it gone elsewhere
-    /// cuts it back on the refresh, and then nothing was gone into.
-    fn write_in_if_empty(&mut self, depth: usize) {
+    /// at the top to write in, as Enter on the empty line would open it, above what the note
+    /// links to. A note written in a note's place links to that note, so going into it lists
+    /// the note it was written in: what the empty line lists there is under the note unless its
+    /// row says only that the note links to it. A label is searched in, so it never does, and nor
+    /// does a draft carried in, which waits on the line to be written. `depth` is how deep the
+    /// path went with the step just taken: a note on it gone elsewhere cuts it back on the
+    /// refresh, and then nothing was gone into.
+    fn write_in_if_nothing_under(&mut self, depth: usize) {
         let in_note = matches!(self.path.last(), Some(Step::Note { .. }));
         let went = self.path.len() == depth;
-        if went && in_note && self.line.trim().is_empty() && self.rows.is_empty() {
+        let nothing_under = self
+            .rows
+            .iter()
+            .all(|row| row.tie == Some(Linked::FromHere));
+        if went && in_note && self.line.trim().is_empty() && nothing_under {
             self.draft_at(0);
         }
     }
@@ -288,7 +306,7 @@ impl Session {
         }
         self.refresh(true);
         if let Some(depth) = afresh {
-            self.write_in_if_empty(depth);
+            self.write_in_if_nothing_under(depth);
         }
     }
 
@@ -357,11 +375,11 @@ impl Session {
             return "names no place here".into();
         }
         if self.parsed.only_labels() {
-            return "names where it already is".into();
+            return "names the place already gone into".into();
         }
         match self.named_here(&self.parsed).len() {
             0 => "names no place here".into(),
-            1 => "names where it already is".into(),
+            1 => "names the place already gone into".into(),
             n => format!("names {n} notes here"),
         }
     }
@@ -499,13 +517,13 @@ impl Session {
         let from = self.place_from();
         let place_box = self.path[from..]
             .iter()
-            .rposition(boxed)
+            .rposition(Step::is_box)
             .map(|at| at + from);
         self.path
             .iter()
             .enumerate()
             .filter_map(move |(at, s)| match s {
-                Step::Label { .. } if boxed(s) && Some(at) != place_box => None,
+                Step::Label { .. } if s.is_box() && Some(at) != place_box => None,
                 Step::Label { label, written, .. } => Some((label, written.as_str())),
                 Step::Note { .. } => None,
             })
@@ -681,7 +699,7 @@ impl Session {
         let above = note.links.iter().find(|&target| {
             under
                 .iter()
-                .any(|(fact, how)| &fact.id == target && *how != Some("linked from here"))
+                .any(|(fact, how)| &fact.id == target && *how != Some(Linked::FromHere))
         })?;
         let above = self.notes.get(above)?;
         Some(text::fit(&self.arrow(note.head(), above.head()), 40))
@@ -694,15 +712,4 @@ impl Session {
             .map(|(label, _)| label.indexed(every_task))
             .collect()
     }
-}
-
-/// Whether a step on the path is a box: the open tasks or the done ones.
-pub(super) fn boxed(s: &Step) -> bool {
-    matches!(
-        s,
-        Step::Label {
-            label: Label::Open | Label::Done,
-            ..
-        }
-    )
 }

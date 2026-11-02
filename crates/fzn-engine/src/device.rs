@@ -1325,13 +1325,13 @@ mod tests {
         assert_ne!(note.id, "dev-a-0001");
         assert_eq!(note.text, "Boiler overhaul #house");
 
-        // A place given again is where it already is, and so is the label it already has.
+        // A place given again is the place already gone into, and so is a label it has.
         for places in [&["#house", "#house"][..], &["#house", "#house [ ]", "[ ]"]] {
             let why = beside.write(&lines(places), "Order oil").unwrap_err();
             let last = places[places.len() - 1];
             assert_eq!(
                 why,
-                Unwritten::Place(format!("'{last}' names where it already is"))
+                Unwritten::Place(format!("'{last}' names the place already gone into"))
             );
         }
     }

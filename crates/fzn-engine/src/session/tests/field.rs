@@ -359,9 +359,8 @@ fn what_arrives_while_the_cursor_is_on_the_list_is_listed_when_it_comes_back_to_
 
 #[test]
 fn the_editor_writes_a_draft() {
+    // At the top, where an untouched new row has no note you are in to open in its place.
     let mut s = session();
-    put(&mut s, "boiler", "Boiler", &[], 1_000);
-    go_into(&mut s, "Boiler");
     s.act(Action::Write);
     let id = s.rows[0].id.clone();
     assert_eq!(
@@ -383,7 +382,6 @@ fn the_editor_writes_a_draft() {
         (new.id.as_str(), new.text.as_str()),
         (id.as_str(), "bleed the radiators")
     );
-    assert_eq!(new.links, ["boiler"]);
     assert_eq!(s.status, "created");
     assert_eq!(
         field(&s),

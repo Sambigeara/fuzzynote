@@ -187,6 +187,8 @@ fn a_note_written_around_another_is_linked_by_id_and_listed_first() {
     put(&mut s, "hub", "trainingapp\nthe plan", &["profile"], 3_000);
     put(&mut s, "near", "trainingapp plan ideas", &[], 9_000_000_000);
     go_into(&mut s, "trainingapp");
+    // Nothing is under it, only linked from it, so going in opens a row, which Esc leaves.
+    s.act(Action::Select(None));
     assert_eq!(heads(&s), ["Profile"]);
 
     let kept = add(&mut s, "some new note");
@@ -247,6 +249,7 @@ fn linking_and_unlinking_the_note_under_the_cursor() {
     let hub = "trainingapp\nthe plan, see [[Profile]]";
     put(&mut s, "hub", hub, &["profile"], 3_000);
     go_into(&mut s, "trainingapp");
+    s.act(Action::Select(None));
     assert_eq!(heads(&s), ["Profile"]);
     type_in(&mut s, "trainingapp ");
     assert_eq!(heads(&s), ["Profile", "trainingapp plan ideas"]);
@@ -936,12 +939,12 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     assert_eq!(view["notes"], 1);
     assert_eq!(view["here"], serde_json::Value::Null);
     assert_eq!(view["offer"], serde_json::Value::Null);
+    assert_eq!(view["reads_here"], false);
     assert_eq!(
         view["field"],
         serde_json::json!({
             "text": "Boiler\nthe plan",
             "fresh": null,
-            "new": false,
             "whole": false,
             "created": "1970-01-01T00:50:00.000Z"
         })
@@ -957,7 +960,8 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
     s.act(Action::Open);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(view["field"]["whole"], true);
-    // Boiler lists nothing, so going into it opens a row to write in, its field fresh.
+    // Boiler has nothing under it, so going into it opens a row to write in, its field fresh,
+    // and what is read there is the note you are in.
     s.act(Action::GoIn);
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(
@@ -965,6 +969,7 @@ fn actions_and_the_view_go_over_a_wire_as_json() {
         serde_json::json!({"id": "hub", "text": "Boiler\nthe plan"})
     );
     assert_eq!(view["field"]["fresh"], 0);
+    assert_eq!(view["reads_here"], true);
     s.act(Action::Select(None));
     let view: serde_json::Value = serde_json::to_value(s.view()).unwrap();
     assert_eq!(view["field"], serde_json::Value::Null);

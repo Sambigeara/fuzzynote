@@ -449,7 +449,7 @@ impl Engine {
     /// those it links to that carry every label, or with no note the notes carrying them all.
     /// One under it through another note is not linked to it, and says nothing. They are a set,
     /// worked out from the links and the index and in no order; nothing is scored.
-    pub(crate) fn facts(&self, place: &Place, query: &Query) -> Vec<(&Note, Option<&'static str>)> {
+    pub(crate) fn facts(&self, place: &Place, query: &Query) -> Vec<(&Note, Option<Linked>)> {
         let Some(ties) = self.ties(place) else {
             return Vec::new();
         };
@@ -942,16 +942,38 @@ fn doc_labels(note: &Note, facts: &Facts) -> Vec<Label> {
     labels
 }
 
+/// How a note is linked to the note being looked around. It is a fact, and reads as one, but the
+/// session asks which it is, so it is held as which and read only where it is said.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Linked {
+    /// It links to the note.
+    Here,
+    /// The note links to it.
+    FromHere,
+    BothWays,
+}
+
+impl Linked {
+    /// How a row says it.
+    pub(crate) fn says(self) -> &'static str {
+        match self {
+            Linked::Here => "links here",
+            Linked::FromHere => "linked from here",
+            Linked::BothWays => "linked both ways",
+        }
+    }
+}
+
 /// How a note is linked to the note being looked around, from the notes that link to it and the
-/// notes it links to, each sorted. It is a fact, and reads as one.
-fn link_reason(links_in: &[DocId], links_out: &[DocId], d: DocId) -> Option<&'static str> {
+/// notes it links to, each sorted.
+fn link_reason(links_in: &[DocId], links_out: &[DocId], d: DocId) -> Option<Linked> {
     match (
         links_in.binary_search(&d).is_ok(),
         links_out.binary_search(&d).is_ok(),
     ) {
-        (true, true) => Some("linked both ways"),
-        (true, false) => Some("links here"),
-        (false, true) => Some("linked from here"),
+        (true, true) => Some(Linked::BothWays),
+        (true, false) => Some(Linked::Here),
+        (false, true) => Some(Linked::FromHere),
         (false, false) => None,
     }
 }
@@ -1030,7 +1052,7 @@ mod tests {
         let mut facts: Vec<(&str, Option<&str>)> = e
             .facts(&place, &Query::default())
             .into_iter()
-            .map(|(note, link)| (note.id.as_str(), link))
+            .map(|(note, link)| (note.id.as_str(), link.map(Linked::says)))
             .collect();
         facts.sort_unstable();
         facts

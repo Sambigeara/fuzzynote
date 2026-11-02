@@ -6,13 +6,13 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
-use crate::engine::{self, Hit, SearchOptions};
+use crate::engine::{self, Hit, Linked, SearchOptions};
 use crate::query::{Label, Query};
 use crate::record::{Record, Walk};
 use crate::score::Scorer;
 use crate::text;
 
-use super::path::{Step, boxed};
+use super::path::Step;
 use super::{DEEPEST, FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
 
 impl Session {
@@ -76,15 +76,13 @@ impl Session {
     /// before the last note on it or after: what is done is listed, though only the labels after
     /// the last note narrow, and only a box after it is written on what is written here.
     fn done_here(&self) -> bool {
-        self.path.iter().rev().find(|s| boxed(s)).is_some_and(|s| {
-            matches!(
-                s,
-                Step::Label {
-                    label: Label::Done,
-                    ..
-                }
-            )
-        })
+        matches!(
+            self.path.iter().rev().find(|s| s.is_box()),
+            Some(Step::Label {
+                label: Label::Done,
+                ..
+            })
+        )
     }
 
     /// The notes to list, in the order the space keeps them in, the archived ones too if asked.
@@ -122,6 +120,7 @@ impl Session {
             level,
             under: under.map(str::to_owned),
             through: through.iter().map(|t| t.id.clone()).collect(),
+            tie: None,
         }
     }
 
@@ -330,7 +329,7 @@ impl Session {
         };
         let archived = self.archived_listed(query);
         if !query.ranks() {
-            let facts: HashMap<&str, Option<&str>> = self
+            let facts: HashMap<&str, Option<Linked>> = self
                 .engine
                 .facts(&place, query)
                 .into_iter()
@@ -360,14 +359,15 @@ impl Session {
                     // How it is linked is a fact too, and the one thing said about it, but that
                     // it links here, which being in the place says already. A note under the
                     // place through another note is drawn under it, or has its arrow to say which.
-                    let link = facts.get(r.id.as_str())?;
+                    let link = *facts.get(r.id.as_str())?;
                     Some(Row {
                         linked: true,
                         reasons: link
-                            .iter()
-                            .filter(|&&how| how != "links here")
-                            .map(|&how| how.to_owned())
+                            .filter(|&how| how != Linked::Here)
+                            .map(|how| how.says().to_owned())
+                            .into_iter()
                             .collect(),
+                        tie: link,
                         ..self.drawn(drawn)
                     })
                 })
@@ -533,6 +533,7 @@ impl Session {
             level: 0,
             under: None,
             through: Vec::new(),
+            tie: None,
         }
     }
 

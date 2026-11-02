@@ -30,7 +30,7 @@ fzn [--space NAME] export               write every note, one to a line, oldest 
 fzn [--space NAME] apply [FILE]         write the notes given, from FILE or standard input
 fzn [--space NAME] tick ID [ID ...]     tick these tasks, by the ids query writes
 fzn [--space NAME] untick ID [ID ...]   bring these ticked tasks back
-fzn [--space NAME] write TEXT [--in LINE ...]  write TEXT as a note, in the place the lines go into
+fzn [--space NAME] write TEXT [--in LINE]...  write a note, in the place the lines go into
 fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
@@ -85,17 +85,17 @@ edit them, and a file put in a space's directory is not read.
 
 write writes TEXT as a new note, as Enter on the line writes it: date words and /task are
 written out and [[brackets]] become links, and the note goes at the top of the place the --in
-lines go into, with that place's labels and linked to its note. From the top of the space, each
---in LINE in turn is typed on the line and gone into as Tab goes: a line of labels into each
-label, and any other line into the one note it names. fzn write 'Bleed the radiators /task' --in
-'#house' writes [ ] Bleed the radiators #house, and with --in 'Boiler overhaul' instead the note
-is linked to the note named Boiler overhaul; --in '#house' --in '[ ]' is the place --in
-'#house [ ]' is. A line that goes nowhere, since it names no note or several, names where it
-already is, or is not one Tab goes into, is said, nothing is written, and write exits 1, and so is
-TEXT that is only labels, which names a place and not a note. A label is a place whether or not a
-note carries it yet, as in the app, so --in '#hoose' writes the note in #hoose; what was written
-is said, as query writes it, which is where to see it. Run twice, write writes two notes. It takes
-the key kept for the space as apply does, and writes no body: a body is written with apply.
+lines go into, with that place's labels and linked to its note. From the top of the space,
+each --in LINE in turn is typed on the line and gone into as Tab goes: a line of labels into
+each label, and any other line into the one note it names, so --in '#house' --in '[ ]' is the
+place --in '#house [ ]' is. fzn write 'Bleed the radiators /task' --in '#house' writes [ ] Bleed
+the radiators #house, and with --in 'Boiler overhaul' instead the note is linked to the note
+named Boiler overhaul. A line that goes nowhere (it names no note, several, or the place already
+gone into) is said and nothing is written, exit 1; so is TEXT that is only labels, which names a
+place and not a note. A label is a place whether or not a note carries it yet, as in the app,
+so --in '#hoose' writes the note in #hoose. The note written is said back as query writes it, so
+a mistyped label shows there. Run twice, write writes two notes. It takes the key kept for the
+space as apply does, and writes no body: a body is written with apply.
 
 Exit status: 0 when done, 1 when nothing was written and why is said, 2 when the arguments made
 no sense.
@@ -224,18 +224,16 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
     };
     // After `write`, its text and each `--in` with its line, in any order among the flags. Every
     // word that is not a flag is the text, which may start with one dash, as a line may.
-    let mut writing: Option<(Option<String>, Vec<String>)> = None;
+    let (mut writing, mut text, mut places) = (false, None, Vec::new());
     while let Some(arg) = args.next() {
         let flag = arg.starts_with("--") || matches!(arg.as_str(), "-s" | "-h" | "-V");
-        if let Some((text, _)) = writing.as_mut()
-            && !flag
-        {
+        if writing && !flag {
             if text.is_some() {
                 return Err(usage(format!(
                     "write takes one text, and {arg:?} is a second; quote the note as one"
                 )));
             }
-            *text = Some(arg);
+            text = Some(arg);
             continue;
         }
         match arg.as_str() {
@@ -286,8 +284,8 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
                     done: arg == "tick",
                 };
             }
-            "write" => writing = Some((None, Vec::new())),
-            "--in" if writing.is_some() => {
+            "write" => writing = true,
+            "--in" if writing => {
                 let line = value(&mut args, IN_NEEDS)?;
                 if line.trim().is_empty() {
                     return Err(usage(IN_NEEDS));
@@ -295,9 +293,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
                 if line.contains(['\n', '\r']) {
                     return Err(usage("--in takes one line, as typed in the app"));
                 }
-                if let Some((_, places)) = writing.as_mut() {
-                    places.push(line);
-                }
+                places.push(line);
             }
             "import-jsonl" => {
                 parsed.cmd = Cmd::ImportJsonl(value(&mut args, "import-jsonl needs a file")?.into())
@@ -310,9 +306,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
         }
     }
     // Asked for the manual, or the version, the rest is not read for sense.
-    if let Some((text, places)) = writing
-        && !matches!(parsed.cmd, Cmd::Help | Cmd::Version)
-    {
+    if writing && !matches!(parsed.cmd, Cmd::Help | Cmd::Version) {
         let text = text
             .filter(|text| !text.trim().is_empty())
             .ok_or_else(|| usage(WRITE_NEEDS))?;

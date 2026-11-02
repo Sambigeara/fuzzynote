@@ -1778,20 +1778,15 @@ impl App {
         // body. It is kept whatever the note holds, and in a place on the line too, so that
         // walking the list never changes how much of it there is; at the top the line has the
         // whole height. The status row takes the last of the rows kept, so that it does not move
-        // the list either by coming or by going. A new row has nothing of its own to read until
-        // the cursor leaves it, typed into or not, so in a note's place it reads the place's note
-        // as the line does, and writing a list there never blanks the foot; a body written for
-        // it in the editor is its own, and is read.
-        let reads_here = view.field.as_ref().is_some_and(|field| {
-            field.new && !field.whole && head_and_body(field.text).1.is_empty()
-        }) && view.here.is_some();
+        // the list either by coming or by going. The session says when what is read is the note
+        // you are in: on the line in a note's place, and on a new row there until it is left, so
+        // that writing a list there never blanks the foot.
         let read = match &view.field {
-            _ if reads_here => view.here.map(|here| here.text),
+            _ if view.reads_here => view.here.map(|here| here.text),
             Some(field) => Some(field.text),
-            None if zoomed => Some(view.here.map_or("", |here| here.text)),
-            None => None,
+            None => zoomed.then_some(""),
         };
-        let cut = !reads_here && selected.as_ref().is_some_and(|(_, painted)| painted.cut);
+        let cut = !view.reads_here && selected.as_ref().is_some_and(|(_, painted)| painted.cut);
         let status_row = usize::from(status.is_some());
         let preview = read.map_or(0, |_| preview_rows(height.saturating_sub(1 + y)));
         let bottom = height.saturating_sub(1 + if preview > 0 { preview + 1 } else { status_row });
@@ -2635,7 +2630,7 @@ mod tests {
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Tab, false);
         assert_eq!((line(&app).as_str(), app.cursor), ("", 0));
-        // The note lists nothing, so the cursor is on a row opened to write in: the first Esc
+        // Nothing is under the note, so the cursor is on a row opened to write in: the first Esc
         // leaves it, and the second steps out.
         press(&mut app, KeyCode::Esc, false);
         press(&mut app, KeyCode::Esc, false);
@@ -2916,7 +2911,7 @@ mod tests {
         write(&mut app, "Boiler");
         press(&mut app, KeyCode::Down, false);
         press(&mut app, KeyCode::Tab, false);
-        // Boiler lists nothing, so the cursor is on a row opened to write in, which Esc leaves.
+        // Nothing is under Boiler, so the cursor is on a row opened to write in, which Esc leaves.
         press(&mut app, KeyCode::Esc, false);
         type_in(&mut app, "service");
         press(&mut app, KeyCode::Down, false);
@@ -2954,8 +2949,9 @@ mod tests {
         type_in(&mut app, "Boiler");
         press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["Boiler #house"]);
-        // It lists nothing, so the cursor is on a row opened to write in, which Esc leaves.
-        press(&mut app, KeyCode::Esc, false);
+        // Nothing is under it, so the cursor is on a row opened to write in. Untouched, it reads
+        // the note you are in, and Ctrl-O hands that over as on the line, the row going.
+        assert!(on_note(&app));
         let Flow::Editor { id, text } = chord(&mut app, 'o') else {
             panic!("the note you are in was not handed over");
         };
@@ -4557,7 +4553,7 @@ mod tests {
         assert_eq!(path(&app), ["Boiler"]);
         assert!(
             on_note(&app),
-            "it lists nothing, so a row opens to write in"
+            "nothing is under it, so a row opens to write in"
         );
         let shot = screen(&mut app, 40, 12);
         assert_eq!(
@@ -4586,6 +4582,48 @@ mod tests {
             "{:?}",
             shot.rows
         );
+        done(&space);
+    }
+
+    #[test]
+    fn ctrl_o_on_an_untouched_new_row_hands_over_the_note_you_are_in_and_once_typed_its_own() {
+        let (mut app, space) = app();
+        write(&mut app, "Boiler");
+        press(&mut app, KeyCode::Down, false);
+        with_body(&mut app, "Boiler\nThe combi under the stairs.");
+        press(&mut app, KeyCode::Esc, false);
+        press(&mut app, KeyCode::Down, false);
+        press(&mut app, KeyCode::Tab, false);
+        assert_eq!(path(&app), ["Boiler"]);
+        assert!(
+            on_note(&app),
+            "nothing is under it, so a row opens to write in"
+        );
+        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
+            panic!("the note you are in was not handed over");
+        };
+        assert_eq!(text, "Boiler\nThe combi under the stairs.");
+        assert!(
+            !on_note(&app),
+            "the untouched row went, and the cursor is on the line"
+        );
+        app.act(Action::Save { id, text }).unwrap();
+        assert!(heads(&app).is_empty(), "nothing was written");
+
+        // Enter, a head, and Ctrl-O hands over the new note's own body.
+        press(&mut app, KeyCode::Enter, false);
+        type_in(&mut app, "Drain the tank");
+        let Flow::Editor { id, text } = chord(&mut app, 'o') else {
+            panic!("the new note was not handed over");
+        };
+        assert_eq!(text, "Drain the tank");
+        app.act(Action::Save {
+            id,
+            text: "Drain the tank\nOpen the valve at the bottom.".into(),
+        })
+        .unwrap();
+        assert!(on_note(&app));
+        assert_eq!(heads(&app), ["Drain the tank"]);
         done(&space);
     }
 

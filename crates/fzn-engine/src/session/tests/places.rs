@@ -745,6 +745,8 @@ fn with_nothing_on_the_line_a_place_lists_only_its_facts_in_the_order_kept_and_n
     go_to(&mut s, "#house");
     assert_eq!(path(&s), ["Boiler", "#house"]);
     go_to(&mut s, "Pressure dropped #house");
+    // It only links to Boiler, so nothing is under it, and a row opens, which Esc leaves.
+    s.act(Action::Select(None));
     assert_eq!(heads(&s), ["Boiler"]);
     assert_eq!(s.rows[0].reasons, ["linked from here"]);
 }
@@ -1732,7 +1734,11 @@ fn stepping_back_out_of_a_note_gone_into_from_its_row_puts_the_cursor_back_on_th
     let order: Vec<String> = heads(&s).into_iter().map(String::from).collect();
     go_into(&mut s, "Pressure dropped #house");
     assert_eq!(path(&s), ["Pressure dropped #house"]);
-    assert_eq!(s.cursor, None, "inside, the cursor is on the line");
+    assert_eq!(
+        s.cursor,
+        Some(0),
+        "nothing is under it, so the cursor is on a row opened to write in"
+    );
     s.act(Action::Back);
     assert_eq!(heads(&s), order, "the list is as it was");
     assert_eq!(
@@ -1774,7 +1780,7 @@ fn fresh_row(s: &Session) -> Option<String> {
 }
 
 #[test]
-fn going_into_a_note_that_lists_nothing_opens_a_row_to_write_in() {
+fn going_into_a_note_with_nothing_under_it_opens_a_row_to_write_in() {
     let mut s = session();
     in_the_house(&mut s);
     select(&mut s, "Boiler overhaul #house");
@@ -1824,7 +1830,7 @@ fn going_into_a_note_with_notes_under_it_leaves_the_cursor_on_the_line() {
 }
 
 #[test]
-fn going_into_a_label_that_lists_nothing_leaves_the_cursor_on_the_line() {
+fn going_into_a_label_with_nothing_in_it_leaves_the_cursor_on_the_line() {
     let mut s = session();
     in_the_house(&mut s);
     go_to(&mut s, "#garden");
@@ -1837,7 +1843,7 @@ fn going_into_a_label_that_lists_nothing_leaves_the_cursor_on_the_line() {
 }
 
 #[test]
-fn a_draft_carried_into_a_note_that_lists_nothing_stays_on_the_line() {
+fn a_draft_carried_into_a_note_with_nothing_under_it_stays_on_the_line() {
     let mut s = session();
     in_the_house(&mut s);
     type_in(&mut s, "boiler needs bleeding");
@@ -1905,29 +1911,61 @@ fn stepping_back_from_the_row_opened_on_the_way_in_steps_out_and_writes_nothing(
 }
 
 #[test]
-fn a_new_row_says_it_is_new_until_the_cursor_leaves_it() {
+fn the_note_you_are_in_is_read_on_a_new_row_until_the_cursor_leaves_it() {
     let mut s = session();
     in_the_house(&mut s);
+    assert!(!s.view().reads_here, "labels alone have no note to read");
     go_into(&mut s, "Boiler overhaul #house");
-    assert!(s.view().field.is_some_and(|f| f.new));
+    assert!(s.view().reads_here, "on the row opened on the way in");
     edited(&mut s, "Drain the tank #house");
-    let field = s.view().field.unwrap();
+    let view = s.view();
     assert!(
-        field.new && field.fresh.is_none(),
-        "typed into, it is still new, though no longer empty"
+        view.reads_here && view.field.is_some_and(|f| f.fresh.is_none()),
+        "typed into, it is still read, though the row is no longer empty"
     );
     s.act(Action::Write);
     edited(&mut s, "Bleed the radiators #house");
+    assert!(s.view().reads_here, "and on the next new row");
     s.act(Action::Move(-1));
-    assert!(s.view().field.is_some_and(|f| !f.new), "left, it is a row");
+    assert!(!s.view().reads_here, "left, it is a row");
     s.act(Action::Move(1));
-    let field = s.view().field.unwrap();
-    assert_eq!(field.text, "Bleed the radiators #house");
-    assert!(!field.new, "and come back to, a row like any other");
+    let view = s.view();
+    assert_eq!(view.field.unwrap().text, "Bleed the radiators #house");
+    assert!(!view.reads_here, "and come back to, a row like any other");
+    s.act(Action::Select(None));
+    assert!(s.view().reads_here, "on the line in a note's place");
+
+    // A body written for a new row is its own, and is read.
+    s.act(Action::Write);
+    let id = s.selected().unwrap().id.clone();
+    edited(&mut s, "Fill the tank #house");
+    s.act(Action::Open);
+    assert!(
+        !s.view().reads_here,
+        "its own body open, the sheet reads it"
+    );
+    s.act(Action::Close);
+    assert!(
+        s.view().reads_here,
+        "closed with none written, it is read again"
+    );
+    s.act(Action::Save {
+        id,
+        text: "Fill the tank #house\nto a bar and a half".into(),
+    });
+    assert!(!s.view().reads_here);
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    assert!(
+        !s.view().reads_here,
+        "at the top there is no note you are in"
+    );
 }
 
 #[test]
-fn a_kept_path_restored_into_a_note_that_lists_nothing_lands_on_the_line() {
+fn a_kept_path_restored_into_a_note_with_nothing_under_it_lands_on_the_line() {
     let mut s = session();
     in_the_house(&mut s);
     s.act(Action::Restore(vec![
@@ -2012,7 +2050,7 @@ fn following_a_link_lands_on_the_line_since_the_note_it_was_followed_from_is_lis
 }
 
 #[test]
-fn tab_on_the_line_naming_a_note_that_lists_nothing_opens_a_row_to_write_in() {
+fn tab_on_the_line_naming_a_note_with_nothing_under_it_opens_a_row_to_write_in() {
     let mut s = session();
     in_the_house(&mut s);
     go_to(&mut s, "boiler overhaul");
@@ -2023,4 +2061,229 @@ fn tab_on_the_line_naming_a_note_that_lists_nothing_opens_a_row_to_write_in() {
     s.act(Action::Back);
     assert_eq!(s.line, "boiler overhaul", "the search comes back");
     assert_eq!(s.cursor, None);
+}
+
+/// `#house` with a task in it and Boiler overhaul, which has a body and nothing under it.
+fn a_task_and_a_body(s: &mut Session) {
+    put(s, "bleed", "[ ] Bleed the radiators #house", &[], 1_000);
+    put(
+        s,
+        "overhaul",
+        "Boiler overhaul #house\nDrain it first, then refill.",
+        &[],
+        2_000,
+    );
+    go_to(s, "#house");
+}
+
+#[test]
+fn a_task_written_in_the_open_tasks_of_a_note_and_gone_into_opens_a_row_to_write_in() {
+    let mut s = session();
+    in_the_house(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    s.act(Action::Select(None));
+    go_to(&mut s, "[ ]");
+    assert_eq!(path(&s), ["#house", "Boiler overhaul", "[ ]"]);
+    s.act(Action::Write);
+    edited(&mut s, "[ ] Drain the tank #house");
+    s.act(Action::Select(None));
+    go_into(&mut s, "[ ] Drain the tank #house");
+    assert_eq!(path(&s).len(), 4);
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"), "{:?}", heads(&s));
+    assert_eq!(s.cursor, Some(0), "the row is at the top");
+    let below = &s.rows[1];
+    assert_eq!(
+        below.head, "Boiler overhaul #house",
+        "what it links to is listed below"
+    );
+    assert_eq!(below.reasons, ["linked from here"]);
+}
+
+#[test]
+fn a_plain_note_written_under_a_task_and_gone_into_opens_a_row_to_write_in() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_to(&mut s, "[ ]");
+    go_into(&mut s, "[ ] Bleed the radiators #house");
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"));
+    edited(&mut s, "The key is in the drawer #house");
+    s.act(Action::Select(None));
+    go_into(&mut s, "The key is in the drawer #house");
+    assert_eq!(
+        path(&s),
+        [
+            "#house",
+            "[ ]",
+            "[ ] Bleed the radiators",
+            "The key is in the drawer"
+        ]
+    );
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"));
+    assert_eq!(s.cursor, Some(0));
+    assert_eq!(
+        s.rows[1..]
+            .iter()
+            .map(|r| r.head.as_str())
+            .collect::<Vec<_>>(),
+        ["[ ] Bleed the radiators #house"]
+    );
+}
+
+#[test]
+fn a_note_linked_both_ways_or_with_a_note_under_it_lands_on_the_line() {
+    let mut s = session();
+    put(&mut s, "oil", "Order oil #house", &["overhaul"], 1_000);
+    put(
+        &mut s,
+        "overhaul",
+        "Boiler overhaul #house",
+        &["oil"],
+        2_000,
+    );
+    go_to(&mut s, "#house");
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(heads(&s), ["Order oil #house"]);
+    assert_eq!(s.rows[0].reasons, ["linked both ways"]);
+    assert_eq!(
+        s.cursor, None,
+        "the note it links to links back, so it is under"
+    );
+
+    // One it only links to, beside one under it.
+    put(&mut s, "gate", "Fix the gate #house", &[], 3_000);
+    put(&mut s, "tiles", "Fix the roof tiles #house", &[], 4_000);
+    put(
+        &mut s,
+        "gutter",
+        "Clear the gutters #house",
+        &["tiles"],
+        5_000,
+    );
+    let mut tiles = s.notes.get("tiles").unwrap().clone();
+    tiles.links = vec!["gate".into()];
+    s.commit(tiles);
+    go_to(&mut s, "#house");
+    go_into(&mut s, "Fix the roof tiles #house");
+    assert_eq!(s.cursor, None);
+    assert!(s.view().field.is_none());
+    assert_eq!(s.rows.len(), 2, "{:?}", heads(&s));
+}
+
+#[test]
+fn opening_the_body_of_an_untouched_new_row_in_a_note_opens_the_note_you_are_in() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert!(fresh_row(&s).is_some());
+    let opened = s.act(Action::Open);
+    assert!(kept(&opened).is_empty(), "the untouched row writes nothing");
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(
+        field.text,
+        "Boiler overhaul #house\nDrain it first, then refill."
+    );
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some("overhaul"));
+    s.act(Action::Close);
+    assert_eq!(s.cursor, None, "it closes back onto the line");
+    assert!(s.rows.is_empty(), "the row went, and so does the note's");
+    assert_eq!(s.notes.len(), 2);
+
+    // The editor is handed it the same way, and the cursor is on the line.
+    s.act(Action::Write);
+    assert!(fresh_row(&s).is_some());
+    let handed = s.act(Action::Editor);
+    assert!(
+        handed.iter().any(|e| matches!(
+            e,
+            Effect::Editor { id, .. } if id == "overhaul"
+        )),
+        "{handed:?}"
+    );
+    assert_eq!(s.cursor, None);
+    assert!(s.rows.is_empty());
+
+    // Typed into, the row's own body opens.
+    s.act(Action::Write);
+    edited(&mut s, "Drain the tank #house");
+    s.act(Action::Open);
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(field.text, "Drain the tank #house");
+}
+
+#[test]
+fn a_new_row_in_a_note_typed_into_and_handed_to_the_editor_is_written_in_that_note() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    edited(&mut s, "D #house");
+    let id = s.selected().unwrap().id.clone();
+    let handed = s.act(Action::Editor);
+    assert_eq!(
+        handed,
+        [Effect::Editor {
+            id: id.clone(),
+            text: "D #house".into()
+        }],
+        "typed into, it hands over its own"
+    );
+    let saved = s.act(Action::Save {
+        id: id.clone(),
+        text: "Drain the tank #house\nfrom the valve at the bottom\n".into(),
+    });
+    let [new] = kept(&saved)[..] else {
+        panic!("{saved:?}");
+    };
+    assert_eq!(new.id, id);
+    assert_eq!(
+        new.text,
+        "Drain the tank #house\nfrom the valve at the bottom"
+    );
+    assert_eq!(new.links, ["overhaul"], "it is written in the note");
+}
+
+#[test]
+fn a_new_row_typed_into_and_cleared_opens_the_note_you_are_in_and_leaves_no_note() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    let typed = edited(&mut s, "D #house");
+    let id = kept(&typed)[0].id.clone();
+    edited(&mut s, " #house");
+    assert!(fresh_row(&s).is_some(), "nothing but its labels is in it");
+    let opened = s.act(Action::Open);
+    let opened = kept(&opened);
+    assert!(
+        opened.len() == 1 && opened[0].id == id && opened[0].deleted,
+        "its deletion is written: {opened:?}"
+    );
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some("overhaul"));
+    s.act(Action::Close);
+    assert_eq!(s.cursor, None);
+    assert!(s.rows.is_empty());
+    assert_eq!(s.notes.len(), 2, "no note is left");
+}
+
+#[test]
+fn opening_the_body_of_a_new_row_where_there_is_no_note_you_are_in_opens_its_own() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    s.act(Action::Write);
+    assert!(fresh_row(&s).is_some());
+    s.act(Action::Open);
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(field.text, " #house", "in labels alone it is the row's own");
+    s.act(Action::Close);
+    s.act(Action::Select(None));
+    s.act(Action::Back);
+    assert!(path(&s).is_empty());
+    clear(&mut s);
+    s.act(Action::Write);
+    s.act(Action::Open);
+    let field = s.view().field.unwrap();
+    assert!(field.whole && field.text.is_empty(), "and at the top");
 }

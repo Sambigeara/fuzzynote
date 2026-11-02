@@ -1518,11 +1518,11 @@ pub(crate) mod tests {
             (&["Gutter"], "--in 'Gutter' names 2 notes here"),
             (
                 &["#house", "Gutter", "Gutter"],
-                "--in 'Gutter' names where it already is",
+                "--in 'Gutter' names the place already gone into",
             ),
             (
                 &["#house", "#house"],
-                "--in '#house' names where it already is",
+                "--in '#house' names the place already gone into",
             ),
             (
                 &["#house /-mon.."],
