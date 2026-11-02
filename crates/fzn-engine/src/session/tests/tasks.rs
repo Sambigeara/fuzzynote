@@ -804,7 +804,7 @@ fn fence(s: &mut Session) {
 }
 
 #[test]
-fn a_note_written_in_an_open_task_among_the_open_tasks_is_listed_back_among_them() {
+fn a_note_written_in_an_open_task_is_listed_back_among_the_open_tasks_only_if_given_its_box() {
     let mut s = session();
     fence(&mut s);
     type_in(&mut s, "#work #review [ ]");
@@ -815,20 +815,41 @@ fn a_note_written_in_an_open_task_among_the_open_tasks_is_listed_back_among_them
 
     s.act(Action::Write);
     let fresh = |s: &Session| s.view().field.map(|f| (f.text.to_owned(), f.fresh));
-    assert_eq!(fresh(&s), Some(("[ ]  #work #review".to_owned(), Some(4))));
+    assert_eq!(fresh(&s), Some((" #work #review".to_owned(), Some(0))));
     edited(&mut s, "[ ] Order fence posts #work #review");
     let posts = s.field.as_ref().unwrap().id.clone();
     s.act(Action::Select(None));
     assert_eq!(s.notes.get(&posts).unwrap().links, ["fence"]);
 
+    type_in(&mut s, "/task Buy fence paint");
+    s.act(Action::Write);
+    let paint = s.selected().unwrap().id.clone();
+    let held = s.notes.get(&paint).unwrap();
+    assert_eq!(held.text, "[ ] Buy fence paint #work #review");
+    assert_eq!(held.links, ["fence"]);
+    s.act(Action::Select(None));
+
     s.act(Action::Back);
     assert_eq!(path(&s), ["#work", "#review", "[ ]"]);
-    assert_eq!(drawn(&s), ["[ ] Fix the fence", "  [ ] Order fence posts"]);
+    assert_eq!(
+        drawn(&s),
+        [
+            "[ ] Fix the fence",
+            "  [ ] Buy fence paint",
+            "  [ ] Order fence posts"
+        ]
+    );
 
     select(&mut s, "[ ] Fix the fence #work #review");
     s.act(Action::Archive);
     s.act(Action::Select(None));
-    assert_eq!(heads(&s), ["[ ] Order fence posts #work #review"]);
+    assert_eq!(
+        heads(&s),
+        [
+            "[ ] Buy fence paint #work #review",
+            "[ ] Order fence posts #work #review"
+        ]
+    );
     let posts = s.notes.get(&posts).unwrap();
     assert_eq!(
         (posts.text.as_str(), posts.archived),
@@ -838,13 +859,13 @@ fn a_note_written_in_an_open_task_among_the_open_tasks_is_listed_back_among_them
 }
 
 #[test]
-fn a_box_taken_out_of_a_new_row_stays_out_and_the_note_stays_under_its_task() {
+fn a_note_written_in_an_open_task_is_not_a_task_and_stays_under_it() {
     let mut s = session();
     fence(&mut s);
     go_to(&mut s, "#work [ ]");
     go_into(&mut s, "[ ] Fix the fence #work #review");
     s.act(Action::Write);
-    assert_eq!(field(&s), Some(("[ ]  #work".to_owned(), true, false)));
+    assert_eq!(field(&s), Some((" #work".to_owned(), true, false)));
     edited(&mut s, "Measure the gap #work");
     let gap = s.field.as_ref().unwrap().id.clone();
     s.act(Action::Select(None));
@@ -864,7 +885,54 @@ fn a_box_taken_out_of_a_new_row_stays_out_and_the_note_stays_under_its_task() {
 }
 
 #[test]
-fn a_note_written_under_a_done_task_among_the_done_tasks_is_done_and_listed_where_it_was_written() {
+fn an_inherited_box_taken_out_of_a_new_row_among_the_open_tasks_stays_out() {
+    let mut s = session();
+    fence(&mut s);
+    go_to(&mut s, "#work [ ]");
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some(("[ ]  #work".to_owned(), true, false)));
+    edited(&mut s, "Call the timber yard #work");
+    let call = s.field.as_ref().unwrap().id.clone();
+    s.act(Action::Select(None));
+    let held = s.notes.get(&call).unwrap();
+    assert_eq!(held.text, "Call the timber yard #work");
+    assert!(
+        !heads(&s).contains(&"Call the timber yard #work"),
+        "not a task, so not among the open tasks"
+    );
+    s.act(Action::Back);
+    clear(&mut s);
+    assert!(heads(&s).contains(&"Call the timber yard #work"));
+}
+
+#[test]
+fn a_plain_note_written_under_a_task_is_named_by_what_its_row_reads_there() {
+    let mut s = session();
+    fence(&mut s);
+    go_to(&mut s, "#work [ ]");
+    go_into(&mut s, "[ ] Fix the fence #work #review");
+    s.act(Action::Write);
+    edited(&mut s, "Measure the gap #work");
+    s.act(Action::Select(None));
+    assert_eq!(drawn(&s), ["Measure the gap"]);
+
+    type_in(&mut s, "Measure the gap");
+    assert_eq!(s.rows[0].head, "Measure the gap #work");
+    assert_eq!(s.rows[0].reasons[0], "its name", "{:?}", s.rows[0].reasons);
+    s.act(Action::GoIn);
+    assert_eq!(
+        path(&s),
+        [
+            "#work",
+            "[ ]",
+            "[ ] Fix the fence #work #review",
+            "Measure the gap"
+        ]
+    );
+}
+
+#[test]
+fn a_note_written_under_a_done_task_is_plain_and_listed_where_it_was_written() {
     let mut s = session();
     fence(&mut s);
     select(&mut s, "[ ] Fix the fence #work #review");
@@ -878,32 +946,52 @@ fn a_note_written_under_a_done_task_among_the_done_tasks_is_done_and_listed_wher
         ["#work", "[x]", "[x] Fix the fence #work #review"]
     );
 
+    s.act(Action::Write);
+    assert_eq!(field(&s), Some((" #work".to_owned(), true, false)));
+    s.act(Action::Select(None));
+
     type_in(&mut s, "Return the post driver");
     s.act(Action::Write);
     let driver = s.selected().unwrap().id.clone();
     let held = s.notes.get(&driver).unwrap();
-    assert_eq!(held.text, "[x] Return the post driver #work");
+    assert_eq!(held.text, "Return the post driver #work");
     assert!(
-        held.archived && held.done.is_some(),
-        "done as it is written"
+        !held.archived && held.done.is_none(),
+        "the box is before the note, so it is not carried"
     );
+    assert_eq!(held.links, ["fence"]);
     s.act(Action::Select(None));
     assert_eq!(
         heads(&s),
-        ["[x] Return the post driver #work"],
-        "listed where it was written, though it is archived"
+        ["Return the post driver #work"],
+        "listed where it was written"
     );
 
-    // A span there measures when things were done, as with `[x]` on the line.
+    // A box typed there is the writer's. A span there measures when things were written, as in
+    // any note's place, since the done tasks are not the place's box: what was just written is
+    // found by it, done or not.
+    type_in(&mut s, "[x] Swept up the sawdust");
+    s.act(Action::Write);
+    s.act(Action::Select(None));
     type_in(&mut s, "/today..");
-    assert_eq!(heads(&s), ["[x] Return the post driver #work"]);
+    assert_eq!(
+        heads(&s),
+        [
+            "[x] Swept up the sawdust #work",
+            "Return the post driver #work"
+        ]
+    );
     s.act(Action::Back);
     assert_eq!(path(&s), ["#work", "[x]"]);
-    assert!(heads(&s).contains(&"[x] Return the post driver #work"));
+    assert!(heads(&s).contains(&"[x] Swept up the sawdust #work"));
+    assert!(
+        !heads(&s).contains(&"Return the post driver #work"),
+        "not done, so not among the done tasks"
+    );
 }
 
 #[test]
-fn the_box_nearest_the_end_of_the_path_is_the_one_a_note_inherits() {
+fn a_note_inherits_a_box_only_where_it_was_gone_into_after_the_last_note_on_the_path() {
     let mut s = session();
     fence(&mut s);
     go_to(&mut s, "#work [ ]");
@@ -914,7 +1002,11 @@ fn the_box_nearest_the_end_of_the_path_is_the_one_a_note_inherits() {
         ["#work", "[ ]", "[ ] Fix the fence #work #review", "[x]"]
     );
     s.act(Action::Write);
-    assert_eq!(field(&s), Some(("[x]  #work".to_owned(), true, false)));
+    assert_eq!(
+        field(&s),
+        Some(("[x]  #work".to_owned(), true, false)),
+        "the box after the note is the place"
+    );
     s.act(Action::Select(None));
 
     s.act(Action::Back);
@@ -927,8 +1019,8 @@ fn the_box_nearest_the_end_of_the_path_is_the_one_a_note_inherits() {
     s.act(Action::Write);
     assert_eq!(
         field(&s),
-        Some(("[ ]  #work #review".to_owned(), true, false)),
-        "with no box after the note, the one before it"
+        Some((" #work #review".to_owned(), true, false)),
+        "with no box after the note, none"
     );
     s.act(Action::Select(None));
 

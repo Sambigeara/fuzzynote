@@ -1642,8 +1642,8 @@ function paintPath() {
 
 // No step is wider than 22rem, a longer one cut at that. A path too long for its box gives up
 // its middle, the oldest step after the space first, into one `…`, as the terminal's does; what
-// still does not fit, the space and the last step share the cut of. Since a note written here
-// carries every label on the path, a step is hidden only when there is no room for it.
+// still does not fit, the space and the last step share the cut of. Since where you are is the
+// whole path, a step is hidden only when there is no room for it.
 function fitPath() {
   const path = $('path');
   if (path.hidden) return;

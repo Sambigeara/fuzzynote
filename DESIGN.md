@@ -115,8 +115,9 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   in it. The old `Mon, Jan 2, 2006` form is still read.
 - **Context inheritance**: where you are is what you are talking about. A note created at the end of
   a path inherits the path, and nothing else does: it links to the last note on it, or, opened under
-  a row of a list drawn as a tree, to the note that row puts it under, and carries every label on
-  it; the notes on the path are not copied, since a note's place lists all that is under
+  a row of a list drawn as a tree, to the note that row puts it under, and carries every label on it
+  but a box gone into before the last note, since what is written under a task is mostly about it
+  and not a task; the notes on the path are not copied, since a note's place lists all that is under
   it. This is what prefix prepending used to do, without a tree and without the typing: the old
   ` >> ` prefix was this context written by hand on every line, and Ctrl-P pasted it. The rules are
   under "Zoom and places".
@@ -689,23 +690,26 @@ all, and none of it changes how the words rank.
   read as `[ ]` is everywhere the line reads it, `/task #house` holding what `[ ] #house` holds and
   Tab going into it, and the line says `→ [ ]` beside it, where it says a date word's date.
 - A span, `START..END`, `START..` or `..END` with no spaces round the dots, holds the notes written
-  in it, and `..` as a word of its own is a span of all time. With `[x]` on the line, or on the
-  path, it holds the done tasks done in it instead, by `done`, or for a box ticked by hand and
-  never archived by `updated`: `[x] /-mon.. #work` is this week's done work, whenever it was
-  written. Each end is a date written out or a date word, with a 24-hour `HH:MM` after it if wanted:
-  `/-mon 18:00..` is since six on Monday evening, and `2026-10-01..2026-10-05` runs through the end
-  of the 5th; a span runs from the start of its first day or minute to the end of its last. A time
-  is read by the clock of the place each note was written in, as a note's day is, a note with no
-  moment to measure is in no span, and a time anywhere else on the line is words. The line says what
-  a span stands for where it says a date word's date, `→ Mon 2026-10-12 18:00 – now`; the engine
-  words both, so that the faces keep no calendar of their own, and an open start is `…`. A `-`
-  starting a word and straight before a span, `-..`, `-/-mon..` or `-2026-10-01..2026-10-05`, holds
-  what the span holds and lists it newest first, and the line says the span from its newest end, the
-  end the list starts at, `→ now – Mon 2026-10-12 18:00`, `-..` as `→ now – …`. What follows the `-`
-  is read as if it started the word, so `-/-mon..` is `/-mon..` turned over, and Enter writes it out
-  with its dash, `-2026-10-12..`. A `-` before anything but a span is what it was: before a word or
-  a date word it is words, `-/-mon` among them, and before a date written out it is a word and the
-  date still a day, so `-2026-10-01` holds the 1st.
+  in it, and `..` as a word of its own is a span of all time. With `[x]` on the line, or as the
+  place's box on the path, gone into after its last note or with no note on it, it holds the done
+  tasks done in it instead, by `done`, or for a box ticked by hand and never archived by `updated`:
+  `[x] /-mon.. #work` is this week's done work, whenever it was written. Under a done task, with
+  `[x]` before the last note, it holds what was written in it, as in any note's place, since what is
+  written there is not done. Each end is a date written out or a date word, with a 24-hour `HH:MM`
+  after it if wanted: `/-mon 18:00..` is since six on Monday evening, and `2026-10-01..2026-10-05`
+  runs through the end of the 5th; a span runs from the start of its first day or minute to the end
+  of its last. A time is read by the clock of the place each note was written in, as a note's day
+  is, a note with no moment to measure is in no span, and a time anywhere else on the line is words.
+  The line says what a span stands for where it says a date word's date,
+  `→ Mon 2026-10-12 18:00 – now`; the engine words both, so that the faces keep no calendar of their
+  own, and an open start is `…`. A `-` starting a word and straight before a span, `-..`, `-/-mon..`
+  or `-2026-10-01..2026-10-05`, holds what the span holds and lists it newest first, and the line
+  says the span from its newest end, the end the list starts at, `→ now – Mon 2026-10-12 18:00`,
+  `-..` as `→ now – …`. What follows the `-` is read as if it started the word, so `-/-mon..` is
+  `/-mon..` turned over, and Enter writes it out with its dash, `-2026-10-12..`. A `-` before
+  anything but a span is what it was: before a word or a date word it is words, `-/-mon` among them,
+  and before a date written out it is a word and the date still a day, so `-2026-10-01` holds the
+  1st.
 - `~` as the first thing on the line makes its words letters, found in order in heads, as the
   original's fuzzy found them: `~bsv` finds Boiler service. Every word of them must be there. They
   rank as fzf ranks: a letter at the start of a word earns more, twice as much for the first letter
@@ -767,28 +771,30 @@ where it was gone into from: `#house › Boiler`, not `#house › Boiler #house`
 A row shows its head without the path's labels where they end it, whether or not the note has a
 body, since the path already says them: inside `#house`, `Order oil #house` reads `Order oil`. They
 are every label on the path, which a note written there inherits; they come off in any order and any
-case, but only as whole words, `#House` for `#house` and not `#house,`. The box at the start stays;
-a head that would be left with nothing, or only its box, shows whole. The row under the cursor shows
-its text as it is in the terminal, and on the page reads without them until the caret goes into
-them; in both the caret lands before them, and what is typed there goes before them (see
-"Writing in a row" under Browser). A label only typed on the line hides nothing. The engine says the
-head each row shows, so neither face carries the rule. An arrow, a reason's `about` and a status
-read a note's head the same way, so under Boiler overhaul in `#house` a task under another reads
-`→ [ ] Bleed the radiators`; an arrow and a reason's `about` both leave off too the labels that end
-their row's own head, since the row says them, so at the top `[ ] Buy a radiator key #house` reads
-`→ [ ] Bleed the radiators`. A head is named without the labels that end it too, in a second tier:
-only when no note's whole head is what was typed, and inside a place only for a note that carries
-the path's labels, both for the list and for Tab, so that typing what a row reads is typing its
-name.
+case, but only as whole words, `#House` for `#house` and not `#house,`; a box before the last note
+is not among them, since it is not inherited. The box at the start stays; a head that would be left
+with nothing, or only its box, shows whole. The row under the cursor shows its text as it is in the
+terminal, and on the page reads without them until the caret goes into them; in both the caret lands
+before them, and what is typed there goes before them (see "Writing in a row" under Browser). A
+label only typed on the line hides nothing. The engine says the head each row shows, so neither face
+carries the rule. An arrow, a reason's `about` and a status read a note's head the same way, so
+under Boiler overhaul in `#house` a task under another reads `→ [ ] Bleed the radiators`; an arrow
+and a reason's `about` both leave off too the labels that end their row's own head, since the row
+says them, so at the top `[ ] Buy a radiator key #house` reads `→ [ ] Bleed the radiators`. A head
+is named without the labels that end it too, in a second tier: only when no note's whole head is
+what was typed, and inside a place only for a note that carries the path's labels, both for the list
+and for Tab, so that typing what a row reads is typing its name.
 
 The place is the last note on the path, if there is one, together with every label gone into after
 it. Labels before the note are written on what is written there but narrow nothing, so
-`#house › Boiler › today` lists what `Boiler › today` lists; only `[x]` anywhere on the path lists
-what is done. Its facts are the notes under the note, and the notes it links to, that carry every
-label after it: under it is every note that links to it, and every note that links to one of those,
-however deep, never the note itself. With no note on the path they are every note carrying all the
-labels, which for a day is every note written on it or mentioning it. A link is a fact and so is a
-label.
+`#house › Boiler › today` lists what `Boiler › today` lists; a box before it is not written on what
+is written there either. Only `[x]` anywhere on the path, as the box nearest its end, lists what is
+done, archived notes with it, so that inside a done task what was done under it is there to read
+beside what is written in it now. Its facts are the notes under the note, and the notes it links to,
+that carry every label after it: under it is every note that links to it, and every note that links
+to one of those, however deep, never the note itself. With no note on the path they are every note
+carrying all the labels, which for a day is every note written on it or mentioning it. A link is a
+fact and so is a label.
 
 The list works as the top of the space does. With nothing on the line to rank by it is what is in
 the place and holds what the line holds, its facts in the order the space keeps them in, or with a
@@ -824,22 +830,34 @@ been typed, unless the note carries it already: in its text, or for a day by bei
 since the day a note was written is its `created`. Among the open or done tasks the head starts with
 the box instead, since that is where a box is written, and among the done tasks the note is then a
 task done now, as any new note headed `[x]` is (see "A task is a note headed by its box"), so that
-something finished is logged straight into the week. A box the writer typed stays as typed, in any
-place and whatever is shown: `[x] Called the plumber` written in `#house › [ ]` is done, and `[ ]
-Clean the windows` written in `#house › [x]` is open. A note written from the line has the labels
-added as it is written; a new row opens with them already in its head, the caret where the writer's
-text goes, and a row with nothing in it but what it opened with, or a start of it, is empty, however
-it is spaced. The head ends with each label on the path it does not carry, in the order of the path:
-in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens `[ ] #house` with the
-caret after the box, in `#work › [x]` it opens `[x] #work`, and in `#house › today` a note reads
-`Order oil #house`. A zoom on today opens an empty row, one on `/fri` opens ` 2026-10-16`. Only a
-note created there inherits, and it inherits the whole path: in `Boiler › today` a new note links to
-Boiler and is of today by being written on it, in `Boiler › #house` a new row opens ` #house` and
-links to Boiler, in `#house › Boiler` a new row opens ` #house` and links to Boiler, and in
-`#house › Boiler overhaul › [ ] › [ ] Bleed the radiators` it opens `[ ] #house`, so it is listed in
-every place stepped back through. A note gone into because the place found it is not under the
-place's note: the search that found it comes back on the line on the way out and lists that note, so
-Tab goes back to what was written in it.
+something finished is logged straight into the week. That is so only where the box is the place,
+gone into after the last note on the path or with no note on it: a box gone into before the note is
+how the note was reached, and what is written under a task is mostly about it, not a task, so it
+gets no box. A box the writer typed stays as typed, in any place and whatever is shown:
+`[x] Called the plumber` written in `#house › [ ]` is done, and `[ ] Clean the windows` written in
+`#house › [x]` is open. A note written from the line has the labels added as it is written; a new
+row opens with them already in its head, the caret where the writer's text goes, and a row with
+nothing in it but what it opened with, or a start of it, is empty, however it is spaced. The head
+ends with each label on the path it does not carry, in the order of the path, the box but where it
+is the place: in `#house › @joe` a new row opens ` #house @joe`, in `#house › [ ]` it opens
+`[ ] #house` with the caret after the box, in `#work › [x]` it opens `[x] #work`, and in
+`#house › today` a note reads `Order oil #house`. A zoom on today opens an empty row, one on `/fri`
+opens ` 2026-10-16`. Only a note created there inherits, and it inherits the whole path but a box
+before its last note: in `Boiler › today` a new note links to Boiler and is of today by being
+written on it, in `Boiler › #house` a new row opens ` #house` and links to Boiler, in
+`#house › Boiler` a new row opens ` #house` and links to Boiler, in `#house › Boiler overhaul › [ ]`
+it opens `[ ] #house` and links to Boiler overhaul, and in
+`#house › Boiler overhaul › [ ] › [ ] Bleed the radiators` it opens ` #house` and links to Bleed the
+radiators: one step back, among the open tasks, it is not listed, and in Boiler overhaul and in
+`#house` it is drawn under its task. Typed with its box, `[ ] Buy a radiator key` or
+`/task Buy a radiator key`, it is a task, listed back among the open tasks. In
+`#work › [ ] › Fix the fence › #review` a new row opens ` #work #review`, and in
+`#work › [ ] › Fix the fence › [x]` it opens `[x] #work`, the box being after the note; of two boxes
+after it the one nearer the end is the place's. In `#work › [x] › [x] Fix the fence` what is written
+is plain, `Return the post driver #work`, neither done nor archived, and listed there all the same.
+A note gone into because the place found it is not under the place's note: the search that found it
+comes back on the line on the way out and lists that note, so Tab goes back to what was written in
+it.
 
 The link chord, Ctrl-K (or Ctrl-L) in the terminal and Ctrl-K or `link` / `unlink` in the page's
 foot, links the note under the cursor to the place's note or unlinks it, which takes it into the
@@ -920,7 +938,7 @@ The screen is flat: no borders, no boxes, the terminal's own colours. Everything
 columns the terminal draws it in, two for a Chinese letter, and the caret moves and Backspace takes
 a letter as it is drawn, an accent with its letter. The path is a dim row above the line and only in
 a place, headed by the space's name, ` main › Boiler › #house `, every step shown while the path
-fits, since a note written there carries every label on it, and past that its middle given up to one
+fits, since where you are is the whole path, and past that its middle given up to one
 `…`, the oldest step after the space first, as on the page; at the top there is no path row, and the
 app sets no window title. The line is the first row, after a dim `>` in the column the rows leave
 empty, so that its text lines up with theirs; what its date words and spans stand for is shown after
@@ -3846,7 +3864,10 @@ the app now does is described above; an entry repeats it only where the reason n
   as a place; the box kept to the labels after the note, which loses the follow-up as before; a
   depth limit, a number to remember; and only the links made by writing, a second kind of link.
   Revised 2026-10-23 by "A list in your order is drawn as a tree": a row under the place through
-  another note is drawn under it, and its arrow is dropped.
+  another note is drawn under it, and its arrow is dropped. Reversed in part 2026-11-02 by "A box is
+  inherited only where it is the place": a box gone into before the last note on the path is no
+  longer carried, so a note written under a task is not one, and one written under a done task is
+  not done.
 
 - **A note's head is offered inside brackets.** Decided 2026-10-23, at Sam's ask, revising "The tags
   a word starts are offered as it is typed" and the Model's bracket rule of 2026-10-13, where a
@@ -3978,7 +3999,10 @@ the app now does is described above; an entry repeats it only where the reason n
   keeps every arrow; and a new row opened in a subtree linked to the path alone, which is drawn in
   the subtree and jumps out of it when the list is made again. Revised 2026-10-26 by "A level is a
   box in": on the page a level is a task's box and its gap, 1.45em at the row's size, where it was
-  1.25rem with the box after the indent; the terminal keeps two columns.
+  1.25rem with the box after the indent; the terminal keeps two columns. Revised 2026-11-02 by "A
+  box is inherited only where it is the place": a follow-up written in a task is no longer in sight
+  one step out among the open tasks, not being one, but is drawn under its task wherever the task is
+  drawn.
 
 - **A level is a box in.** Decided 2026-10-26, at Sam's ask, revising "A list in your order is drawn
   as a tree" in how far in a level is on the page. A level was 1.25rem, 20px, and a task's box with
@@ -4184,6 +4208,34 @@ the app now does is described above; an entry repeats it only where the reason n
   rungs it already climbs. Weighed: keeping the scroll and not the cursor, which leaves the line
   holding the keys and the eye on a row it cannot reach; and keeping the row's place in the list by
   number, which lands elsewhere once the list changes underneath.
+
+- **A box is inherited only where it is the place.** Decided 2026-11-02, at Sam's ask, reversing, in
+  "Where you are is the whole path" (2026-10-22), the box a note inherits, "the box nearest the end
+  among them", and taking up the option that decision weighed and dropped, "the box kept to the
+  labels after the note, which loses the follow-up as before". Gone into the open tasks and then
+  into one of them, every row written there opened with a box, and most were taken out again: what
+  is written under a task is mostly notes about it, not tasks, as that decision's own count said,
+  none of 112 items nested under a task in the 2026 pages being a task. Now a note written at the
+  end of a path carries every label on it as before, but a box only where it was gone into after the
+  last note on the path, or where there is no note on it; of two boxes there, the one nearer the
+  end, as before. In `#house › [ ] › [ ] Bleed the radiators` a new row opens ` #house`, linked to
+  the task; in `#work › [ ] › Fix the fence › #review` it opens ` #work #review`; in
+  `#work › [ ] › Fix the fence › [x]` it still opens `[x] #work`. The same holds for `[x]`: a note
+  written under a done task is plain, neither done nor archived. A path through `[x]` still lists
+  what is done, archived notes with it, now so that what was done under a done task is there to read
+  beside what is written in it, and not because what is written there is done; so a span there
+  measures when things were written, as in any note's place, and when they were done only where
+  `[x]` is the place's box, since measuring by `done` under a done task would lose a note from the
+  list it was just written in. A box the writer types stays as typed, anywhere, as before. Only the
+  inherited labels change: what a row, its arrow and the path hide, and which notes a name finds in
+  a place, follow them, and none of these hid a leading box anyway. What it costs: a follow-up
+  written in a task is not among the open tasks one step back unless given its box; since "A list in
+  your order is drawn as a tree" (2026-10-23) it is drawn under its task wherever the task is drawn,
+  so it is not lost as it was before 2026-10-22, and `[ ]` or `/task` typed makes it a task.
+  Something finished under a done task is no longer logged into the week by being written there;
+  `[x]` typed does that. Weighed: keeping the box and taking it out each time, the cost that asked
+  for this; and a key to toggle the inherited box on a new row, one more thing to remember for what
+  typing `[ ]` already says.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

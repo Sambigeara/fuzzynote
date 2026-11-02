@@ -745,8 +745,8 @@ fn stop_telling_keys_apart() -> std::io::Result<()> {
 }
 
 /// Where you are: the space, then each place gone into, outermost first, in at most `max`
-/// columns. Every step is shown while the whole path fits, since a note written here carries
-/// every label on it. Past that the middle gives way to one `…`, the oldest step after the space
+/// columns. Every step is shown while the whole path fits, since where you are is the whole
+/// path. Past that the middle gives way to one `…`, the oldest step after the space
 /// first, as on the page, so that the space and where you are stay. What still does not fit is
 /// cut, the space being a step like the others, so that a long name cannot crowd out the place:
 /// every step gets an equal share of the room, and what a short step does not use goes to the

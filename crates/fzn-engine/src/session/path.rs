@@ -1,7 +1,8 @@
 //! The path: the places gone into, and what a note written at its end inherits from it. It is a
 //! part of its own because the path is what every list and every new note is relative to, and it
-//! is read two ways that are best kept side by side: a note written there inherits all of it, and
-//! the place it lists is only the last note on it with the labels gone into after it.
+//! is read two ways that are best kept side by side: a note written there inherits all of it but
+//! a box gone into before its last note, and the place it lists is only the last note on it with
+//! the labels gone into after it.
 
 use crate::engine;
 use crate::note::Note;
@@ -14,9 +15,9 @@ use super::{KeptStep, Session};
 
 /// A step of the path: what was gone into, a note or a label typed on the line, with the search
 /// it was found with. A note written at the end of the path inherits every label on it, at the end
-/// of its head or the box at its start, and links to the last note on it. Labels gone into one
-/// after another are one place, with the last note before them if there is one: the last note on
-/// the path and the labels after it are the place looked around.
+/// of its head or the box at its start, but a box gone into before the last note on it, and links
+/// to that note. Labels gone into one after another are one place, with the last note before them
+/// if there is one: the last note on the path and the labels after it are the place looked around.
 ///
 /// `search` is the search the step was found with, put back on the way out if the line is empty
 /// by then. A label gone into from a line of several was found with itself as it is written, as
@@ -427,36 +428,38 @@ impl Session {
     /// with that note. Labels before it narrow nothing, so a note lists the same however it was
     /// reached.
     pub(super) fn labels_here(&self) -> impl Iterator<Item = (&Label, &str)> + Clone {
-        let from = self
-            .path
+        self.path[self.place_from()..]
+            .iter()
+            .filter_map(|s| match s {
+                Step::Label { label, written, .. } => Some((label, written.as_str())),
+                Step::Note { .. } => None,
+            })
+    }
+
+    /// Where the place's labels start on the path: just after its last note, or at its start.
+    fn place_from(&self) -> usize {
+        self.path
             .iter()
             .rposition(|s| s.note().is_some())
-            .map_or(0, |at| at + 1);
-        self.path[from..].iter().filter_map(|s| match s {
-            Step::Label { label, written, .. } => Some((label, written.as_str())),
-            Step::Note { .. } => None,
-        })
+            .map_or(0, |at| at + 1)
     }
 
     /// The labels a note written here carries and a row here hides, as they were typed: every
-    /// label on the path, outermost first, before its last note and after. Of two boxes on it, the
-    /// one nearer the end is the path's, since a note has one box.
+    /// label on the path, outermost first, before its last note and after, but for a box, which
+    /// is carried only where it is the place: gone into after the last note, or with no note on
+    /// the path. What is written under a task is mostly about it, not a task itself. Of two boxes
+    /// there, the one nearer the end is the place's, since a note has one box.
     pub(super) fn path_labels(&self) -> impl Iterator<Item = (&Label, &str)> + Clone {
-        let boxed = |s: &Step| {
-            matches!(
-                s,
-                Step::Label {
-                    label: Label::Open | Label::Done,
-                    ..
-                }
-            )
-        };
-        let last_box = self.path.iter().rposition(boxed);
+        let from = self.place_from();
+        let place_box = self.path[from..]
+            .iter()
+            .rposition(boxed)
+            .map(|at| at + from);
         self.path
             .iter()
             .enumerate()
             .filter_map(move |(at, s)| match s {
-                Step::Label { .. } if boxed(s) && Some(at) != last_box => None,
+                Step::Label { .. } if boxed(s) && Some(at) != place_box => None,
                 Step::Label { label, written, .. } => Some((label, written.as_str())),
                 Step::Note { .. } => None,
             })
@@ -645,4 +648,15 @@ impl Session {
             .map(|(label, _)| label.indexed(every_task))
             .collect()
     }
+}
+
+/// Whether a step on the path is a box: the open tasks or the done ones.
+pub(super) fn boxed(s: &Step) -> bool {
+    matches!(
+        s,
+        Step::Label {
+            label: Label::Open | Label::Done,
+            ..
+        }
+    )
 }

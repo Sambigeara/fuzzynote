@@ -688,7 +688,8 @@ impl Session {
 
     /// Opens a new note at this row of the list, with the cursor in it. It has its id from now,
     /// and its time, and it is written at its first letter. On a path its head opens with each
-    /// label on it, but for one the note carries already, as one written on the day it is does.
+    /// label it inherits, but for one the note carries already, as one written on the day it is
+    /// does.
     pub(super) fn draft_at(&mut self, at: usize) {
         let id = self.host.new_id();
         let opened = self.host.now();

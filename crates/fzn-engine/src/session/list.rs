@@ -12,7 +12,7 @@ use crate::record::{Record, Walk};
 use crate::score::Scorer;
 use crate::text;
 
-use super::path::Step;
+use super::path::{Step, boxed};
 use super::{DEEPEST, FOUND_LIMIT, PLACE_LIMIT, Row, Session, TOP_LIMIT};
 
 impl Session {
@@ -51,14 +51,16 @@ impl Session {
         (query, rows, finds_from)
     }
 
-    /// The line as it is read here: with the done tasks on the path a span on it measures when
-    /// notes were done, as it does with `[x]` on the line, since what is written there is done,
-    /// and while archived notes are shown the open box holds every task. Only the toggle does
-    /// that, since `[x]` asks for the done tasks and not for `[ ]` to change.
+    /// The line as it is read here: where the done tasks are the place's box a span on it
+    /// measures when notes were done, as it does with `[x]` on the line, since what is written
+    /// there is done; under a done task it measures when they were written, as in any note's
+    /// place, since what is written there is not. While archived notes are shown the open box
+    /// holds every task. Only the toggle does that, since `[x]` asks for the done tasks and not
+    /// for `[ ]` to change.
     pub(super) fn read_line(&self) -> Query {
         let mut query = Query::read(&self.line, self.today());
         query.every_task = self.show_archived;
-        if self.done_here() {
+        if self.path_labels().any(|(label, _)| *label == Label::Done) {
             query.measure_done();
         }
         query
@@ -70,10 +72,19 @@ impl Session {
         self.show_archived || query.asks_done() || self.done_here()
     }
 
-    /// Whether the path's box is the done tasks', anywhere on it: what is written here is done,
-    /// so what is done is listed, though only the labels after the last note narrow.
+    /// Whether the path goes through the done tasks, the box nearest its end being theirs,
+    /// before the last note on it or after: what is done is listed, though only the labels after
+    /// the last note narrow, and only a box after it is written on what is written here.
     fn done_here(&self) -> bool {
-        self.path_labels().any(|(label, _)| *label == Label::Done)
+        self.path.iter().rev().find(|s| boxed(s)).is_some_and(|s| {
+            matches!(
+                s,
+                Step::Label {
+                    label: Label::Done,
+                    ..
+                }
+            )
+        })
     }
 
     /// The notes to list, in the order the space keeps them in, the archived ones too if asked.

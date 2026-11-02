@@ -49,11 +49,13 @@
 //! path. The place is the last note on the path, if there is one, together with the labels gone
 //! into after it, so that `Boiler › today` is Boiler's notes from today and a note written there
 //! links to Boiler and is of today. Where you are is the whole path, though, so a note written
-//! there carries every label on it, those before the last note too: one written in
-//! `#house › Boiler overhaul › [ ]`, and one written in that in turn, is an open task of the house
-//! under Boiler overhaul, and each step back along the path still lists it. Labels before the last
-//! note narrow nothing, so a note lists the same however it was reached, but for the done tasks:
-//! what is written among them is done, so what is done is listed.
+//! there carries every label on it, those before the last note too, but for a box, which it
+//! carries only where the box is the place: one written in `#house › Boiler overhaul › [ ]` is an
+//! open task of the house under Boiler overhaul, and one written in that in turn is a note of the
+//! house under the task, since what is written under a task is mostly about it, and is drawn under
+//! it wherever it is drawn. Labels before the last note narrow nothing, so a note lists the same
+//! however it was reached, but for the done tasks: a path through them lists what is done, so that
+//! what was done under a done task is there to read beside what is written in it.
 //!
 //! A task is a note whose head starts with a box, `[ ]` while it is open and `[x]` once it is
 //! done. Each box is a label too, of the open tasks or the done ones, gone into as a tag is, and a

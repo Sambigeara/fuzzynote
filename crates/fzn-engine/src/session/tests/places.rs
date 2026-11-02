@@ -1335,7 +1335,7 @@ fn read(s: &Session) -> Vec<(&str, Vec<&str>, Vec<&str>)> {
 }
 
 #[test]
-fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
+fn what_is_written_under_a_task_is_not_a_task_and_is_drawn_under_it_wherever_it_is_drawn() {
     let mut s = session();
     put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
     put(&mut s, "oil", "Order oil #house", &[], 2_000);
@@ -1345,7 +1345,11 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     assert_eq!(path(&s), ["#house", "Boiler overhaul", "[ ]"]);
 
     s.act(Action::Write);
-    assert_eq!(field(&s), Some(("[ ]  #house".to_owned(), true, false)));
+    assert_eq!(
+        field(&s),
+        Some(("[ ]  #house".to_owned(), true, false)),
+        "the box is the place, after the last note"
+    );
     edited(&mut s, "[ ] Bleed the radiators #house");
     let bleed = s.field.as_ref().unwrap().id.clone();
     s.act(Action::Select(None));
@@ -1362,12 +1366,16 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
         ]
     );
     s.act(Action::Write);
-    assert_eq!(field(&s), Some(("[ ]  #house".to_owned(), true, false)));
-    edited(&mut s, "[ ] Buy a radiator key #house");
+    assert_eq!(
+        field(&s),
+        Some((" #house".to_owned(), true, false)),
+        "the box comes before the task, so it is not carried"
+    );
+    edited(&mut s, "Buy a radiator key #house");
     let key = s.field.as_ref().unwrap().id.clone();
     s.act(Action::Select(None));
     let held = s.notes.get(&key).unwrap();
-    assert_eq!(held.text, "[ ] Buy a radiator key #house");
+    assert_eq!(held.text, "Buy a radiator key #house");
     assert_eq!(held.links, [bleed.as_str()]);
 
     s.act(Action::Back);
@@ -1375,7 +1383,8 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     assert_eq!(s.line, "");
     assert_eq!(
         drawn(&s),
-        ["[ ] Bleed the radiators", "  [ ] Buy a radiator key"]
+        ["[ ] Bleed the radiators"],
+        "not a task, so not among the open tasks"
     );
 
     s.act(Action::Back);
@@ -1384,7 +1393,7 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
     clear(&mut s);
     assert_eq!(
         drawn(&s),
-        ["[ ] Bleed the radiators", "  [ ] Buy a radiator key"]
+        ["[ ] Bleed the radiators", "  Buy a radiator key"]
     );
 
     s.act(Action::Back);
@@ -1397,7 +1406,7 @@ fn what_is_written_under_a_task_stays_in_every_place_stepped_back_through() {
             "Order oil",
             "Boiler overhaul",
             "  [ ] Bleed the radiators",
-            "    [ ] Buy a radiator key"
+            "    Buy a radiator key"
         ],
         "all three by their tag"
     );
