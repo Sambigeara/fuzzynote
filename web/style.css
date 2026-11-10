@@ -725,14 +725,15 @@ body.resting .row .head a,
    dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
    Nothing here changes a line's height as the selection comes or goes; a heading's first three
    levels are sized on their line, mark shown or not, in a body and never in a row, and set closer
-   than the text, since a large line wrapped at the text's leading falls apart into separate
-   lines. Set so close, a heading in the body would sit as near the text before it as the text it
-   heads, so it stands clear of what is above it, half a line of the text for the first level and
-   four tenths for the next two, by padding inside its own line, as the head's room is. The head, its first line, is the page's title, set as a first-level heading is at every
-   width, and a head that is one is set no larger again. It stands a third of a line clear of the
-   body, by padding inside its line, which the editor measures as the line's own, so that the caret,
-   a press under its words and the arrows still take it as one line. A task's head wraps under its
-   words, not under its box, as its row does on a phone. */
+   than the text, since a large line wrapped at the text's leading falls apart into separate lines.
+   Set so close, a heading in the body would sit as near the text before it as the text it heads, so
+   it stands clear of what is above it, half a line of the text for the first level and four tenths
+   for the next two, by padding inside its own line, as the head's room is. The head, its first
+   line, is the page's title, set as a first-level heading is at every width, and a head that is one
+   is set no larger again. It stands a third of a line clear of the body, by padding inside its
+   line, which the editor measures as the line's own, so that the caret, a press under its words and
+   the arrows still take it as one line. A task's head wraps under its words, not under its box, as
+   its row does on a phone. */
 #sheet .cm-line.md-h1,
 #sheet .cm-content > .cm-line:first-child { font-size: 1.5em; }
 /* At one and a half times the text, a third of its own size is a third of the text's line. */

@@ -342,10 +342,10 @@ export function mount(hooks, foot) {
   // Shift, but before the place's labels that end the head (see breakPastLabels). Ctrl-O does
   // nothing here, so that it never reaches the browser's file dialog. Tab indents and Shift-Tab
   // takes the indent back, as in any editor, rather than moving the focus off the page's text:
-  // Escape, `:q` or the word in the foot is the way out. A press on a link read
-  // follows it, and the caret stays where it was; one on a drawn table goes into its cell. Mod-B,
-  // Mod-I and Mod-E make bold, italic and code; in vim's normal mode away from a Mac those chords
-  // are vim's scrolls and jump, and vim has them first.
+  // Escape, `:q` or the word in the foot is the way out. A press on a link read follows it, and
+  // the caret stays where it was; one on a drawn table goes into its cell. Mod-B, Mod-I and Mod-E
+  // make bold, italic and code; in vim's normal mode away from a Mac those chords are vim's scrolls
+  // and jump, and vim has them first.
   const body = (hidden) => [
     EditorView.domEventHandlers({
       mousedown(event, view) {
