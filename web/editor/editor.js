@@ -31,7 +31,8 @@ import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { between, follows, highlighter, language, line, markdown } from './render.js';
 import {
-  asHead, cellAt, fromPage, labelsAt, placeLabels, readEnd, readWhereNotWritten, readingMoved, writtenIn,
+  arrivedAt, asHead, cellAt, fromPage, labelsAt, picturesChanged, placeLabels, readEnd, readWhereNotWritten,
+  readingMoved, writtenIn,
 } from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
@@ -285,6 +286,56 @@ registers.pushText = (name, operator, ...rest) => {
 
 let current = null;
 
+// The image files a paste or a drop carries. While a drag is still over the page the browser shows
+// only the kinds of what it carries, not the files, so those are read until it is dropped.
+const imageFiles = (data) => [...(data?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+const carriesImages = (data) =>
+  imageFiles(data).length > 0 || [...(data?.items ?? [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'));
+// A paste is of images when it carries them and no text, since a copy from a page of the web
+// carries its words with its pictures, and those are what is meant.
+const imagePaste = (event) =>
+  imageFiles(event.clipboardData).length > 0 && event.clipboardData.getData('text/plain') === '';
+
+// An image pasted or dropped in the open body is the page's to make smaller and keep, and to write
+// in where it was pasted or dropped (see insertImages). One pasted or dropped in a head belongs in a
+// body, and the page says so.
+const imagesInBody = (hooks) =>
+  EditorView.domEventHandlers({
+    paste(event) {
+      if (!imagePaste(event)) return false;
+      event.preventDefault();
+      hooks.onImages(imageFiles(event.clipboardData), null);
+      return true;
+    },
+    dragover(event) {
+      if (!carriesImages(event.dataTransfer)) return false;
+      event.preventDefault();
+      return true;
+    },
+    drop(event, view) {
+      const files = imageFiles(event.dataTransfer);
+      if (!files.length) return false;
+      event.preventDefault();
+      hooks.onImages(files, view.posAtCoords({ x: event.clientX, y: event.clientY }));
+      return true;
+    },
+  });
+const imagesInHead = (hooks) =>
+  EditorView.domEventHandlers({
+    paste(event) {
+      if (!imagePaste(event)) return false;
+      event.preventDefault();
+      hooks.onImagesElsewhere();
+      return true;
+    },
+    drop(event) {
+      if (!imageFiles(event.dataTransfer).length) return false;
+      event.preventDefault();
+      hooks.onImagesElsewhere();
+      return true;
+    },
+  });
+
 // `:q!` reaches `q` with the bang left over as its argument.
 const bang = (params) => params?.argString?.trim() === '!';
 Vim.defineEx('write', 'w', () => current?.onEx('write'));
@@ -393,6 +444,7 @@ export function mount(hooks, foot) {
       },
       mouseleave: (event, view) => view.contentDOM.classList.remove('on-link'),
     }),
+    imagesInBody(hooks),
     vimSlot.of(vimKeys()),
     keymap.of([
       { key: 'Enter', run: breakPastLabels, shift: breakPastLabels },
@@ -419,6 +471,7 @@ export function mount(hooks, foot) {
   // keys are the page's but for those that write in it or move its caret, which are an editor's,
   // and it has no undo of its own, since the engine's undo puts a head back.
   const head = (hidden, margin) => [
+    imagesInHead(hooks),
     keymap.of(standardKeymap),
     headLine,
     oneLine,
@@ -526,6 +579,32 @@ export function mount(hooks, foot) {
     },
     // Where a position is, for what is offered under a word.
     coordsAt: (pos) => view.coordsAtPos(pos, 1),
+    // Writes image references into the open body, each on a line of its own (see DESIGN "An image is
+    // drawn under its line"): on the line dropped on, or the caret's line, or in a body not yet
+    // written in its last line; an empty line takes them in its place and any other has them after
+    // it; the caret goes to the start of the line after the last, an empty one made at the end when
+    // there is none. One change to undo, the person's own.
+    insertImages(lines, at) {
+      if (!whole) return;
+      const { doc } = view.state;
+      const pos = at ?? (arrivedAt(view) ? doc.length : view.state.selection.main.head);
+      const target = doc.lineAt(pos);
+      const empty = target.text.trim() === '';
+      const from = empty ? target.from : target.to;
+      let insert = `${empty ? '' : '\n'}${lines.join('\n')}`;
+      const end = from + insert.length;
+      if (target.number === doc.lines) insert += '\n';
+      view.dispatch({
+        changes: { from, to: target.to, insert },
+        selection: EditorSelection.cursor(end + 1),
+        scrollIntoView: true,
+        userEvent: at == null ? 'input.paste' : 'input.drop',
+      });
+    },
+    // An image has come or been opened: its picture is drawn.
+    picturesChanged() {
+      view.dispatch({ effects: picturesChanged.of(null) });
+    },
     setVim(on) {
       vimWanted = on;
       if (whole) view.dispatch({ effects: vimSlot.reconfigure(vimKeys()) });

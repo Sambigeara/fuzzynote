@@ -672,6 +672,14 @@ body.resting .row .head a,
   .md-table-read th { padding-bottom: 0.375em; }
   .md-table-read tr:nth-child(2) td { padding-top: 0.375em; }
 }
+/* An image of the space's own is drawn under its line, in the open body and the body read beside
+   the list, held to the measure and the pane's width and to three fifths of the window's height,
+   and never enlarged. One this device does not have yet, and the word an image with no alt text
+   reads as in a head, are in the faint grey. */
+.md-picture { display: block; margin: 0.25lh 0 0.5lh; }
+.md-picture img { display: block; max-width: 100%; max-height: 60vh; width: auto; height: auto; }
+.md-picture.missing, .md-image-word { color: var(--faint); }
+.md-picture.missing { font-size: var(--meta-size); }
 .cm-editor.cm-focused { outline: none; }
 .cm-editor .cm-cursorLayer, .cm-editor .cm-vimCursorLayer, .cm-editor .cm-fat-cursor { display: none; }
 /* The editor's own theme sets its selection by a longer selector, and puts its style after this

@@ -1090,8 +1090,8 @@ is a CodeMirror editor, loaded when a body first opens", "A body's markdown is r
 read and styled where it is written" and "A row's marks show only in the span being written").
 Everything crosses to the engine as text: an action goes in as JSON and what to do and what to show
 come back as JSON, a hint's action being exactly what to send back to ask for it. A tab is one more
-device. It has a writer id and a log of its own for each space, keeps every log of the space in
-IndexedDB between visits, asks for the passphrase once and keeps the key, and syncs with the relay
+device. It has a writer id and a log of its own for each space, keeps every log of the space, and
+every image its notes refer to, in IndexedDB between visits, asks for the passphrase once and keeps the key, and syncs with the relay
 it was loaded from, so there is one address to open and nothing to set up. A line is sent only once
 IndexedDB has kept it, so that the relay never holds a line of a tab's log that the tab lost by
 closing, which the next tab to write that log would write over: a fork. A relay that says who may
@@ -1213,10 +1213,13 @@ highlighted by its language, and in a line emphasis, strong text, code, striketh
 built as nodes and never as markup. A link goes only to a whole address, `http://` or `https://` and
 a host, or `mailto:` and someone, in a tab of its own and with no referrer, since a browser takes
 `http:boiler` as a path on the relay; any other address, a link by reference, raw HTML, an entity
-such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, and an image is
-never loaded but is a link reading its alt text. A row's head reads as one line of the same
+such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, an image of the
+space's own, `![…](fzn:…)`, is drawn under its line from this device's store (see "An image is
+drawn under its line"), and any other image is never loaded but is a link reading its alt text. A
+row's head reads as one line of the same
 markdown, so that a line reads one way in the list and beside it: emphasis, strong text, code,
-strikethrough, links, bare and bracketed addresses, an image as a link reading its alt text, escapes
+strikethrough, links, bare and bracketed addresses, an image of the space's own as its alt text, or
+the faint word `image` where it has none, and any other as a link reading its alt text, escapes
 read and a leading heading mark dropped, and a list item's or a quote's mark read as a word of the
 line, since a head is not a block; the row under the cursor reads the same but for the span the
 selection touches, as the sheet does (see "A row's marks show only in the span being written").
@@ -1276,7 +1279,9 @@ written as the chords are; only Control with an arrow on a Mac, where it is the 
 and keys are written only where the pointer is fine and hovers: a touch screen's keyboard has no
 chords, no Tab and no Escape, so the phone's bar has none. No word has a tooltip. In an open body
 the chords are the editor's, so only the way out has its key there, `done Esc`, or `done :q` with
-vim's keys, Escape being vim's alone. The foot is one line at every width, 3.25rem tall, and holds
+vim's keys, Escape being vim's alone. An open body's foot has the word `image` too, at every width,
+which opens the device's own picker of files, on a phone the camera and the photos. The foot is one
+line at every width, 3.25rem tall, and holds
 still (see "The foot holds still"): the words never wrap; the way back, Escape's next rung, `up` on
 a row, `clear` while the line has text, `back` in a place with the line empty or `done` in an open
 body, is the last word wherever there is one, as the terminal's footer ends with it, and follows the
@@ -1370,6 +1375,36 @@ and the bar the sheet's colour while it is open; a wider touch screen has it as 
 the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
 the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
 closes it.
+columns aligned in the sheet's whole width and as high as its source, a press on a cell or an arrow
+into it showing it as typed and a press on its scrollbar scrolling it and leaving it drawn, an image
+of the space's own drawn under its line, no wider than the measure and never enlarged, its line
+reading as its alt text until the selection touches it, and `not here yet` there in the faint grey
+while this device has not got it; an image pasted or dropped there, or chosen with `image`, made
+smaller, kept and written on a line of its own, a link read followed by a press, an address in a tab of its own with the body left open and `[[Boiler]]`
+into Boiler as Tab goes, the body written as it closes, but for the span the selection touches,
+which shows its marks where they stand, a press on it the caret's, the marks in the faint grey and
+the text in ink, headings and strong text heavier, the first three levels of heading larger and
+set closer than the text, with room above them in the body, its head set as a first-level heading
+is, as the page's title, a third of a line clear of the body, with its task's box drawn as a body's
+is (see "An open body's head is its title") and the place's labels that end it read hidden as on its
+row, the caret landing before them, and Enter with nothing after it but them breaking the line after
+them (see "An open body's head reads the place's labels as its row does"), emphasis slanted, code in
+the monospace; a body opens reading whole, as a head is landed on; soft wrap, step undo, a grey
+selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer
+over a link that a press follows, and vim mode for the body, for the browser that asked for it with
+the word `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is
+not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
+note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
+`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
+first, and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard
+too. The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as
+high as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot
+of the sheet, under the text and a hairline. The editor is fetched as the page starts, beside the
+engine, and nothing is painted until it is here. The `editor` the engine offers is not shown here.
+At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
+it is open; a wider touch screen has it as the page, sized from the frame. On a touch screen it
+opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
+open, and `done`, the back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -2143,7 +2178,9 @@ the app now does is described above; an entry repeats it only where the reason n
   sheet's styled source: only the line being written shows its marks, and every other line reads.
   Revised 2026-10-20 by "A body's marks show only in the span being written": only the span the
   selection touches shows its marks. Revised 2026-10-20 by "A body's headings are sized by their
-  level": a body sizes its first three levels.
+  level": a body sizes its first three levels. Revised 2026-11-10 by "An image is drawn under its
+  line": an image of the space's own is drawn, from this device's store, and any other is still
+  never loaded.
 
 - **Words find; everything else holds.** Decided 2026-10-15, agreed with Sam. It replaces "A date
   typed as a search finds the notes that mention the day and the notes written on it" under Model,
@@ -4548,6 +4585,33 @@ the app now does is described above; an entry repeats it only where the reason n
   and the page now watches each drawn table's scroll and width. Weighed: keeping the platform's bar,
   whose showing the page cannot rely on; and always showing the bar, which is chrome while reading,
   where the fade already says there is more.
+- **An image is drawn under its line.** Decided 2026-11-10, at Sam's ask, with "A note holds an
+  image by its address, and the image is sealed beside the logs". In the open body and the body
+  read beside the list, an image of the space's own is drawn under the line it is written on,
+  whole, wherever the caret is, held to the measure and to three fifths of the window's height and
+  never enlarged; the line reads as its alt text, as a link reads as its words, until the
+  selection touches it, when its marks and address show, and an image with no alt text leaves its
+  line empty. So nothing moves as the caret goes in or out, as "A table in the open body is drawn"
+  keeps a table, but for the address wrapping where a line is too narrow for it, as a long link's
+  does. Drawn in place of its line, as a table is, a picture 400 pixels high would go to one line
+  of source each time the caret came to it and everything under it would jump. The picture comes
+  from this device's store, opened in the page and given to the browser as a `blob:` address of
+  the page's own, which the page's policy now lets it draw, so the page still never calls out; an
+  image on the web is still never loaded. One this device does not have yet reads `not here yet`
+  under its line, in the faint grey, until it comes. Nothing is added to copy one out: the picture
+  is an image as the browser knows one, and its own menu copies, saves and shares it. A row reads
+  an image as its alt text, or the faint word `image` where it has none, never as a link and never
+  drawn, a row being one line, and so does the note you are in read above the line. An image goes
+  in by a paste or a drop in the open body, or by the word `image` in its foot, at every width,
+  which opens the device's own picker, on a phone the camera and the photos: it is made smaller
+  as every face makes one, kept, and written on a line of its own with no alt text, after the
+  caret's line, or at the end of a body not yet written in, and the caret goes to the line after
+  it. An image pasted or dropped on a row or on the line is said to belong in a body. What it
+  costs: a body beside the list with many photos lays them out as they come into sight, and a
+  drawn photo takes up to 16 MiB of a tab's memory while it is on the screen. Weighed: a picture
+  in place of its line, for the reason above; and a picture inline in its line, which would make
+  the line as tall as the picture and move everything under it as the caret came.
+
 - **A note holds an image by its address, and the image is sealed beside the logs.** Decided
   2026-11-10, at Sam's ask, who wanted images kept alongside a document so that a body read shows
   them, with nothing kept in the clear. The phone is a face notes are written on, and its camera is

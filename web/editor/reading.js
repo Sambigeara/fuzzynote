@@ -38,10 +38,10 @@
 // opens or closes beside what an input method is writing; they are read again once it has ended.
 // So they do while a press is held, and the span it lands in opens once it is let go.
 
-import { Annotation, EditorSelection, EditorState, Facet, RangeSet, StateField } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState, Facet, RangeSet, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { between, body, follows } from './render.js';
+import { between, body, follows, imageId, picture } from './render.js';
 
 // The text is a row's head, one line, and not a whole note.
 export const asHead = Facet.define({ combine: (given) => given.length > 0 });
@@ -87,7 +87,24 @@ class Box extends WidgetType {
   }
 }
 
+// An image of the space's own with no alt text, in a head, reads as the faint word `image`.
+class ImageWord extends WidgetType {
+  eq() {
+    return true;
+  }
+  toDOM() {
+    const word = document.createElement('span');
+    word.className = 'md-image-word';
+    word.textContent = 'image';
+    return word;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
 const hidden = Decoration.replace({});
+const imageWord = Decoration.replace({ widget: new ImageWord() });
 const bullet = Decoration.replace({ widget: new Bullet() });
 const open = Decoration.replace({ widget: new Box(false, false) });
 const ticked = Decoration.replace({ widget: new Box(true, false) });
@@ -246,6 +263,17 @@ function reading(view, arrived) {
             if (touched(ref.from, ref.to)) return;
             const [a, b] = between(node);
             const url = node.getChildren('URL').find((u) => u.from > b);
+            // An image of the space's own reads as its alt text, as a link reads as its words, its
+            // picture drawn under its line (see `pictures`); with none, a head reads the faint word
+            // `image` and a body's line reads empty.
+            if (name === 'Image' && url && imageId(doc.sliceString(url.from, url.to))) {
+              if (b > a) {
+                hide(ref.from, a);
+                hide(b, ref.to);
+              } else if (head) hide(ref.from, ref.to, imageWord);
+              else hide(ref.from, ref.to);
+              return;
+            }
             if (!url || !follows(doc.sliceString(url.from, url.to)) || b <= a) return;
             hide(ref.from, a);
             hide(b, ref.to);
@@ -508,6 +536,94 @@ const tables = StateField.define({
   provide: (field) => EditorView.decorations.from(field, (value) => value.tables),
 });
 
+// Said to the editor when an image has come, or been opened, so that its picture is drawn.
+export const picturesChanged = StateEffect.define();
+
+// How wide the open body's text is, as last drawn, for a picture's height to be guessed before it
+// is drawn.
+let measure = 0;
+
+// An image of the space's own is drawn under the line it is written on, in the open body, whole
+// wherever the caret is, so that nothing moves as the caret goes in or out of its line, which
+// shows its source as any span does (see "An image is drawn under its line"). The picture is a
+// block after its line, which only a state field may give, as `tables` does. One in a table reads
+// as its alt text, as a cell is one line, and a head draws none, being one line.
+class Picture extends WidgetType {
+  constructor(id, alt, got) {
+    super();
+    this.id = id;
+    this.alt = alt;
+    this.got = got;
+  }
+  eq(other) {
+    return (
+      other.id === this.id &&
+      other.alt === this.alt &&
+      (other.got?.url ?? null) === (this.got?.url ?? null) &&
+      (other.got === 'missing') === (this.got === 'missing')
+    );
+  }
+  get estimatedHeight() {
+    const { got } = this;
+    if (!got?.w || !got?.h || !measure) return -1;
+    return Math.min(got.h, (got.h * measure) / got.w, 0.6 * window.innerHeight);
+  }
+  toDOM(view) {
+    measure = view.contentDOM.clientWidth || measure;
+    const box = document.createElement('div');
+    box.className = 'md-picture';
+    const { got } = this;
+    if (got === 'missing') {
+      box.classList.add('missing');
+      box.textContent = 'not here yet';
+    } else if (got) {
+      const img = box.appendChild(document.createElement('img'));
+      img.src = got.url;
+      if (got.w && got.h) {
+        img.width = got.w;
+        img.height = got.h;
+      }
+      img.alt = this.alt;
+      img.onload = () => view.requestMeasure();
+    }
+    return box;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+function pictured(state) {
+  if (state.facet(asHead)) return Decoration.none;
+  const { doc } = state;
+  const out = [];
+  syntaxTree(state).iterate({
+    enter(ref) {
+      if (ref.name === 'Table') return false;
+      if (ref.name !== 'Image') return;
+      const node = ref.node;
+      const [a, b] = between(node);
+      const url = node.getChildren('URL').find((u) => u.from > b);
+      const id = url && imageId(doc.sliceString(url.from, url.to));
+      if (!id) return false;
+      const widget = new Picture(id, doc.sliceString(a, b), picture(id));
+      out.push(Decoration.widget({ widget, block: true, side: 1 }).range(doc.lineAt(node.to).to));
+      return false;
+    },
+  });
+  return Decoration.set(out, true);
+}
+
+const pictures = StateField.define({
+  create: pictured,
+  update(value, tr) {
+    const changed = tr.docChanged || tr.effects.some((effect) => effect.is(picturesChanged));
+    if (!changed && syntaxTree(tr.startState) === syntaxTree(tr.state)) return value;
+    return pictured(tr.state);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 // An arrow, or vim's `j` or `k`, steps over what stands in for whole lines, and a drawn table would
 // be walked past unread; so a step from the line just above a table to the line just below it, or
 // back, lands in its first row, or its last, at the same column, which shows it as typed.
@@ -550,4 +666,7 @@ export function cellAt(view, target) {
 }
 
 // Everything a note needs to read where it is not written.
-export const readWhereNotWritten = [read, tables, walkIn];
+export const readWhereNotWritten = [read, tables, pictures, walkIn];
+
+// Whether the open body has not been written in, nor its caret moved, since it opened.
+export const arrivedAt = (view) => !!view.plugin(read)?.arrived;

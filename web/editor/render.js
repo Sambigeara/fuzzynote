@@ -7,7 +7,8 @@
 // is written and what is read look alike. A body is built as nodes, never as markup,
 // so nothing a note says becomes part of the page, and nothing in it reaches outside the page by
 // being read: a link goes only to the web or to mail and opens apart from the page, and an image
-// is a link reading its alt text, never loaded. What has no address the page will follow, raw
+// on the web is a link reading its alt text, never loaded. An image of the space's own is drawn
+// from what the page holds, where a body is drawn, and reads as its alt text elsewhere. What has no address the page will follow, raw
 // HTML and `[[Boiler]]` among it, is shown as it was typed.
 //
 // Code is highlighted in its language, and each language is a file of its own under code/,
@@ -151,17 +152,34 @@ export function head(text) {
 // A body as a document, each block the element it is, with its marks taken out and everything
 // else where it was. A long one can be read only as far as the line past a point, for its top.
 // One nested deeper than the stack reaches, thousands of quotes or lists deep, is read as typed.
-export function body(text, upTo = text.length) {
+export function body(text, upTo = text.length, drawn = false) {
   const parse = markdown.startParse(text);
   if (upTo < text.length) parse.stopAt(upTo);
   let tree;
   while (!(tree = parse.advance()));
+  drawing = drawn;
   try {
     return blocks(tree.topNode, text, document.createDocumentFragment());
   } catch {
     return text;
+  } finally {
+    drawing = false;
   }
 }
+
+// The address an image of the space's own has, `fzn:` and its id, gives the id.
+export const imageId = (address) => /^fzn:([0-9a-f]{32})$/.exec(address)?.[1] ?? null;
+
+// The space's own images as the page has them: given an id, the picture's object URL and size,
+// {url, w, h}, once it is here and opened; 'missing' when this device does not hold it; and null
+// while it is being opened, which the page then tells the readings of by reading them again.
+let pictureOf = () => null;
+export const givePictures = (of) => { pictureOf = of; };
+export const picture = (id) => pictureOf(id);
+
+// Whether the body being read draws its images, as the body beside the list does, or reads them
+// as their alt text, as one clamped above the line does.
+let drawing = false;
 
 const el = (tag, cls) => {
   const node = document.createElement(tag);
@@ -202,6 +220,8 @@ function inline(node, from, to, text, into) {
     const made = read(child, text);
     if (made) into.append(made);
     at = child.to;
+    // A picture stands under its line in place of the line's end, so the next line follows it.
+    if (made?.lastChild?.classList?.contains('md-picture') && text[at] === '\n' && at < to) at++;
   }
   if (to > at) into.append(text.slice(at, to));
   return into;
@@ -269,6 +289,10 @@ function read(node, text) {
     // A link holds no link: an address or an image in its text reads as its text.
     case 'Link':
     case 'Image': {
+      if (name === 'Image') {
+        const own = ownImage(node, text);
+        if (own) return own;
+      }
       const a = anchor(node, text);
       if (!a) return text.slice(node.from, node.to);
       const [from, to] = between(node);
@@ -279,6 +303,38 @@ function read(node, text) {
     default:
       return text.slice(node.from, node.to);
   }
+}
+
+// An image of the space's own reads as its alt text, or the faint word `image` where it has none,
+// and in a body that draws them has its picture after that, standing under its line: the picture
+// once it is here, `not here yet` while this device lacks it, and nothing while it is being opened.
+// One in a table's cell reads as its alt text, since a cell is one line.
+function ownImage(node, text) {
+  const [from, to] = between(node);
+  const url = node.getChildren('URL').find((after) => after.from > to);
+  const id = url && imageId(text.slice(url.from, url.to));
+  if (!id) return null;
+  const span = el('span', 'md-image');
+  if (to > from) span.append(inline(node, from, to, text, document.createDocumentFragment()));
+  else if (!drawing) span.appendChild(el('span', 'md-image-word')).textContent = 'image';
+  let cell = false;
+  for (let up = node.parent; up && !cell; up = up.parent) cell = up.name === 'Table';
+  if (!drawing || cell) return span;
+  const got = picture(id);
+  const shown = span.appendChild(el('span', got === 'missing' ? 'md-picture missing' : 'md-picture'));
+  if (got === 'missing') shown.textContent = 'not here yet';
+  else if (got) {
+    const img = shown.appendChild(el('img'));
+    img.src = got.url;
+    if (got.w && got.h) {
+      img.width = got.w;
+      img.height = got.h;
+    }
+    img.alt = text.slice(from, to);
+    img.loading = 'lazy';
+    img.decoding = 'async';
+  }
+  return span;
 }
 
 // A link to the address a node gives, reading as the address, if it is one the page will follow:

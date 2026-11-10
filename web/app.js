@@ -278,12 +278,17 @@ function key(why = '') {
 }
 
 // Where lines are kept between visits: one record a line, under the log it is in and how far
-// into it. With no such place to keep them, everything is asked of the relay each time.
+// into it. With no such place to keep them, everything is asked of the relay each time. Images
+// are kept beside them, one record an image, sealed as the relay holds it, with its size once
+// known, so that a picture is laid out before it is opened.
 async function openStore() {
   if (!('indexedDB' in window)) return null;
   const db = await new Promise((resolve) => {
-    const request = indexedDB.open(`fzn:${space}`, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('lines', { keyPath: ['log', 'n'] });
+    const request = indexedDB.open(`fzn:${space}`, 2);
+    request.onupgradeneeded = ({ oldVersion }) => {
+      if (oldVersion < 1) request.result.createObjectStore('lines', { keyPath: ['log', 'n'] });
+      if (oldVersion < 2) request.result.createObjectStore('images', { keyPath: 'id' });
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => resolve(null);
     request.onblocked = () => resolve(null);
@@ -291,10 +296,10 @@ async function openStore() {
   if (!db) return null;
   // A change is a transaction, and it is done once the browser says it has completed, which is
   // when what it wrote would outlast the page.
-  const write = (change) =>
+  const write = (change, name = 'lines') =>
     new Promise((done, failed) => {
-      const tx = db.transaction('lines', 'readwrite');
-      change(tx.objectStore('lines'));
+      const tx = db.transaction(name, 'readwrite');
+      change(tx.objectStore(name));
       tx.oncomplete = () => done();
       tx.onabort = tx.onerror = () => failed(tx.error);
     });
@@ -317,6 +322,15 @@ async function openStore() {
     // Every line of a log. Transactions on one store run in the order they were made, so this
     // comes after whatever was kept before it was asked for.
     forget: (log) => write((kept) => kept.delete(IDBKeyRange.bound([log, 0], [log, Infinity]))),
+    imageIds: () => answer(db.transaction('images').objectStore('images').getAllKeys()),
+    image: (id) => answer(db.transaction('images').objectStore('images').get(id)),
+    keepImage: (record) => write((kept) => kept.put(record), 'images'),
+    // An image's size, read once it is opened, kept with it for the next visit.
+    sizeImage: (id, w, h) =>
+      write((kept) => {
+        const request = kept.get(id);
+        request.onsuccess = () => request.result && kept.put({ ...request.result, w, h });
+      }, 'images'),
   };
   // A later version of the page asking for the database is let have it; this page then keeps
   // nothing more, and asks the relay for it next time. What it goes on writing is then in no store,
@@ -330,6 +344,13 @@ async function openStore() {
   };
   return made;
 }
+
+// What a request to the store answers, once it has.
+const answer = (request) =>
+  new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 
 let fzn;
 let store = null;
@@ -426,6 +447,11 @@ function carryOut(json) {
       .then(() => all)
       .then((done) => done.every(Boolean) && todo.send.forEach(send))
       .catch((cause) => console.error(cause));
+  }
+  // Images come sealed, to be kept as they came; one the relay asks for is sent as it is kept.
+  for (const { id, sealed } of todo.keep_images ?? []) keepImage(id, fromBase64(sealed), null, null);
+  for (const id of todo.upload ?? []) {
+    imageRecord(id).then((record) => record && carryOut(fzn.upload(id, record.sealed)), console.error);
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
@@ -657,7 +683,7 @@ const readHead = (text, task) => {
   head.append(render.head(text));
   return head;
 };
-const readBody = (text, upTo) => render.body(text, upTo);
+const readBody = (text, upTo, drawn) => render.body(text, upTo, drawn);
 
 const named = (action) => (typeof action === 'string' ? action : Object.keys(action)[0]);
 // Whether the engine offers this action where the cursor is, which is when the page may ask for it.
@@ -822,6 +848,8 @@ const bodyHiddenOf = (field, row) =>
 // holds. The caret is read once the editor has finished with a change, and in a head a move while
 // something is offered is said, so that it closes once the caret leaves the word.
 const editorHooks = {
+  onImages: (files, at) => addImages(files, at),
+  onImagesElsewhere: () => inABody(),
   onChange: (text) => {
     const field = view?.field;
     if (!field) return;
@@ -1487,6 +1515,8 @@ function paintHints() {
   // Vim's keys are this browser's to ask for, and only where they apply: in an open body, once
   // the editor is there to have them.
   const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
+  // An image is added to an open body by the device's own picker, at every width, touch included.
+  const imageWord = view.field?.whole && editor ? 'image' : null;
   // The way back, Escape's next rung, which the engine offers last, follows the words and stays in
   // sight when they do not fit, the rest scrolling; on a phone it is pinned at the right of the
   // bar, where a thumb finds it without reading, so that a way out of a place several steps deep
@@ -1497,8 +1527,14 @@ function paintHints() {
   const said = (hint) => [hint, keyFor(hint.action)];
   set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
   const words = $('hints');
-  const changed = set(words, JSON.stringify([hints.map(said), vimWord]), () => {
+  const changed = set(words, JSON.stringify([hints.map(said), vimWord, imageWord]), () => {
     const words = hints.map((hint) => word(hint));
+    if (imageWord) {
+      const button = el('button', 'word image', imageWord);
+      button.type = 'button';
+      button.onclick = () => picker().click();
+      words.push(button);
+    }
     if (vimWord) {
       const button = el('button', 'word vim', vimWord);
       button.type = 'button';
@@ -1690,12 +1726,12 @@ window.addEventListener('resize', () => view && fitPath());
 // page is idle, so that the arrows walk onto a long document without waiting for all of it to be
 // laid out.
 const GLANCE = 5000;
-function paintBody(node, says) {
+function paintBody(node, says, drawn) {
   const key = `${readings} ${says}`;
-  if (!set(node, key, () => [readBody(says, GLANCE)])) return false;
+  if (!set(node, key, () => [readBody(says, GLANCE, drawn)])) return false;
   if (says.length > GLANCE) {
     soon(() => {
-      if (node.dataset.shows === key) node.replaceChildren(readBody(says));
+      if (node.dataset.shows === key) node.replaceChildren(readBody(says, says.length, drawn));
     });
   }
   return true;
@@ -1723,7 +1759,7 @@ function paneSays() {
 const paneReadsHere = (says = paneSays()) => view.reads_here && says !== '';
 function paintPane() {
   const says = paneSays();
-  paintBody(paneBody, says);
+  paintBody(paneBody, says, true);
   pane.classList.toggle('here', paneReadsHere(says));
   paintPaneHead();
   const under = (view.reads_here ? view.here.id : view.rows[view.cursor]?.id) ?? '';
@@ -1785,7 +1821,7 @@ function paint() {
   const into = view.here?.id ?? '';
   const arrived = here.dataset.into !== into;
   if (arrived) here.dataset.into = into;
-  if (paintBody(here, told) || arrived) clampHere();
+  if (paintBody(here, told, false) || arrived) clampHere();
 
   $('empty').hidden = !(view.notes === 0 && !zoomed && view.line === '' && view.cursor == null);
 
@@ -2721,6 +2757,230 @@ const retype = () => {
 $('passphrase').onclick = retype;
 $('again').onclick = retype;
 
+// An image of the space's own is kept as the relay holds it, sealed, and opened only to be drawn:
+// once an `<img>` asks for it, into an address of the page's own that the browser draws from
+// memory, so the page still never calls out for one. The pictures opened are held for the visit,
+// 48 at most, those not drawn since the last change going first, and never one on the screen.
+// Without a store the images kept are held for the visit as well, as the lines are not.
+const IN_A_BODY = 'an image goes in a body: open the body to add it';
+const HELD = 48;
+// An image's base64 is up to 2.8 MB, decoded by the browser's own where it has one and otherwise
+// by a plain loop, which a phone runs far faster than a callback a letter.
+const fromBase64 = (text) => {
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text);
+  const letters = atob(text);
+  const bytes = new Uint8Array(letters.length);
+  for (let i = 0; i < letters.length; i++) bytes[i] = letters.charCodeAt(i);
+  return bytes;
+};
+const unstored = new Map();
+const pictures = new Map();
+// How many times the pictures have changed, which tells a picture drawn since from one that is not.
+let drawings = 0;
+
+async function imageRecord(id) {
+  const kept = store ? await store.image(id).catch(() => null) : null;
+  return kept ?? unstored.get(id) ?? null;
+}
+
+// Keeps an image, and draws it where it was missing.
+async function keepImage(id, sealed, w, h) {
+  const record = { id, sealed, kept: Date.now(), w, h };
+  try {
+    if (!store) throw null;
+    await store.keepImage(record);
+  } catch (cause) {
+    if (cause) console.error(cause);
+    unstored.set(id, record);
+  }
+  const known = pictures.get(id);
+  if (known && known.state !== 'here') {
+    pictures.delete(id);
+    picturesChanged();
+  }
+}
+
+// What the readings draw for an image: the picture, 'missing', or null while it is being opened.
+function picture(id) {
+  let known = pictures.get(id);
+  if (!known) {
+    known = { state: 'loading', got: null, used: drawings };
+    pictures.set(id, known);
+    openPicture(id, known);
+  }
+  known.used = drawings;
+  return known.state === 'here' ? known.got : known.state === 'missing' ? 'missing' : null;
+}
+
+async function openPicture(id, known) {
+  let got = null;
+  try {
+    const record = await imageRecord(id);
+    const plain = record && fzn.open_image(id, record.sealed);
+    if (plain) {
+      const type = plain[0] === 0xff ? 'image/jpeg' : 'image/png';
+      const url = URL.createObjectURL(new Blob([plain], { type }));
+      let { w, h } = record;
+      if (!w || !h) {
+        const img = new Image();
+        img.src = url;
+        await img.decode().then(() => {
+          [w, h] = [img.naturalWidth, img.naturalHeight];
+          if (unstored.has(id)) Object.assign(unstored.get(id), { w, h });
+          else store?.sizeImage(id, w, h).catch(() => {});
+        }, () => {});
+      }
+      got = { url, w, h };
+    }
+  } catch (cause) {
+    console.error(cause);
+  }
+  // Kept meanwhile, it is opened again from what was kept.
+  if (pictures.get(id) !== known) {
+    if (got) URL.revokeObjectURL(got.url);
+    return;
+  }
+  Object.assign(known, got ? { state: 'here', got } : { state: 'missing' });
+  let over = [...pictures.values()].filter((p) => p.state === 'here').length - HELD;
+  for (const [held, p] of [...pictures].sort(([, a], [, b]) => a.used - b.used)) {
+    if (over <= 0) break;
+    if (p.state !== 'here' || p.used >= drawings || document.querySelector(`img[src="${p.got.url}"]`)) continue;
+    URL.revokeObjectURL(p.got.url);
+    pictures.delete(held);
+    over--;
+  }
+  picturesChanged();
+}
+
+// The open body and the body read beside the list draw again, once a frame however many came.
+let picturesDue = false;
+function picturesChanged() {
+  if (picturesDue) return;
+  picturesDue = true;
+  requestAnimationFrame(() => {
+    picturesDue = false;
+    drawings++;
+    editor?.picturesChanged();
+    reread();
+  });
+}
+
+// Images added to the open body, each made smaller as every face makes one, kept, and written on a
+// line of its own; what could not be is said, and the rest go in.
+async function addImages(files, at) {
+  const lines = [];
+  for (const file of files) {
+    try {
+      const made = await smaller(file);
+      const kept = JSON.parse(fzn.keep_image(made.bytes));
+      await keepImage(kept.id, fromBase64(kept.sealed), made.w, made.h);
+      // Its picture is here already, so that it is drawn at its size as its line goes in and the
+      // caret after it is scrolled to where it ends up.
+      if (pictures.get(kept.id)?.state !== 'here') {
+        const type = made.bytes[0] === 0xff ? 'image/jpeg' : 'image/png';
+        const got = { url: URL.createObjectURL(new Blob([made.bytes], { type })), w: made.w, h: made.h };
+        pictures.set(kept.id, { state: 'here', got, used: drawings });
+      }
+      lines.push(`![](fzn:${kept.id})`);
+    } catch (why) {
+      fzn.say(String(why?.message ?? why));
+    }
+  }
+  if (!lines.length) return look();
+  if (!editor.whole) {
+    fzn.say('the body was closed before the image was added');
+    return look();
+  }
+  editor.insertImages(lines, at);
+  look();
+}
+
+// An image made smaller: turned upright as its camera said, as the browser turns one, no more than
+// 2048 pixels on its long edge, and nothing of the file kept but its picture. A PNG stays one while
+// it is small enough, transparency and all; anything else, or a PNG too large, is a JPEG on white.
+// One still too large is left for the engine to refuse in its own words.
+async function smaller(file) {
+  const address = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = address;
+    const unread = () => new Error('that file is not an image this browser can read');
+    await img.decode().catch(() => {
+      throw unread();
+    });
+    const [nw, nh] = [img.naturalWidth, img.naturalHeight];
+    if (!nw || !nh) throw unread();
+    const scale = Math.min(1, 2048 / Math.max(nw, nh));
+    const [w, h] = [Math.max(1, Math.round(nw * scale)), Math.max(1, Math.round(nh * scale))];
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const drawing = canvas.getContext('2d');
+    drawing.imageSmoothingQuality = 'high';
+    const encoded = (type, quality) =>
+      new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(unread())), type, quality));
+    let blob = null;
+    if (file.type === 'image/png') {
+      drawing.drawImage(img, 0, 0, w, h);
+      const png = await encoded('image/png');
+      if (png.size <= 1572864) blob = png;
+    }
+    if (!blob) {
+      drawing.fillStyle = '#fff';
+      drawing.fillRect(0, 0, w, h);
+      drawing.drawImage(img, 0, 0, w, h);
+      blob = await encoded('image/jpeg', 0.82);
+      if (blob.size > 2097152) blob = await encoded('image/jpeg', 0.7);
+    }
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
+  } finally {
+    URL.revokeObjectURL(address);
+  }
+}
+
+// The device's own picker of files, made once, which on a phone offers the camera and the photos.
+let chooser = null;
+function picker() {
+  if (!chooser) {
+    chooser = el('input');
+    chooser.type = 'file';
+    chooser.accept = 'image/*';
+    chooser.multiple = true;
+    chooser.hidden = true;
+    chooser.addEventListener('change', () => {
+      addImages([...chooser.files], null);
+      chooser.value = '';
+    });
+    document.body.append(chooser);
+  }
+  return chooser;
+}
+
+// An image pasted on the line belongs in a body, and so does one dropped anywhere but the open
+// body, which never sends the browser away from the page to show the file.
+const imagePasted = (event) =>
+  [...(event.clipboardData?.files ?? [])].some((f) => f.type.startsWith('image/')) &&
+  event.clipboardData.getData('text/plain') === '';
+const inABody = () => {
+  if (!fzn) return;
+  fzn.say(IN_A_BODY);
+  look();
+};
+line.addEventListener('paste', (event) => {
+  if (!imagePasted(event)) return;
+  event.preventDefault();
+  inABody();
+});
+const carriesFiles = (event) => !!event.dataTransfer?.types.includes('Files');
+document.addEventListener('dragover', (event) => {
+  if (carriesFiles(event)) event.preventDefault();
+});
+document.addEventListener('drop', (event) => {
+  if (!carriesFiles(event) || event.defaultPrevented) return;
+  event.preventDefault();
+  inABody();
+});
+
 async function start() {
   frame();
   await init();
@@ -2747,6 +3007,7 @@ async function start() {
   // row, fetched meanwhile beside the engine (see modules).
   const [renderModule, editorModule] = await modules;
   render = renderModule;
+  render.givePictures(picture);
   render.onLanguage(reread);
   editor = editorModule.mount(editorHooks, $('sheet-foot'));
   editor.setVim(vimOn);
@@ -2754,6 +3015,7 @@ async function start() {
   editor.scrollDOM.addEventListener('scroll', headScrolled, { passive: true });
   if (store) for (const [log, lines] of await store.load()) carryOut(fzn.load(log, lines));
   carryOut(fzn.opened());
+  carryOut(fzn.images_held(store ? await store.imageIds().catch(() => []) : []));
   joined = true;
   tabs?.postMessage({ from: tab, hello: true });
   look();
