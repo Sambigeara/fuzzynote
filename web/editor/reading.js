@@ -265,13 +265,19 @@ function reading(view, arrived) {
             const url = node.getChildren('URL').find((u) => u.from > b);
             // An image of the space's own reads as its alt text, as a link reads as its words, its
             // picture drawn under its line (see `pictures`); with none, a head reads the faint word
-            // `image` and a body's line reads empty.
+            // `image` and in a body it reads as nothing.
             if (name === 'Image' && url && imageId(doc.sliceString(url.from, url.to))) {
               if (b > a) {
                 hide(ref.from, a);
                 hide(b, ref.to);
               } else if (head) hide(ref.from, ref.to, imageWord);
-              else hide(ref.from, ref.to);
+              else {
+                // Read as nothing at the start of what its line reads, it takes the space after it
+                // too, so that the line's words start where they would without it.
+                const line = doc.lineAt(ref.from);
+                const first = !doc.sliceString(line.from, ref.from).trim() || leadOf(line) >= ref.from;
+                hide(ref.from, first ? past(ref.to, true) : ref.to);
+              }
               return;
             }
             if (!url || !follows(doc.sliceString(url.from, url.to)) || b <= a) return;

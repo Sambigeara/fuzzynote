@@ -231,6 +231,11 @@ function inline(node, from, to, text, into) {
     else if (made) into.append(made);
     if (drawn) pictures.push(drawn);
     at = child.to;
+    // An image that reads as nothing at the start of its line leaves no space there either.
+    const nothing = made?.classList?.contains('md-image') && [...made.childNodes].every((n) => n === drawn);
+    if (nothing && !text.slice(Math.max(from, text.lastIndexOf('\n', child.from - 1) + 1), child.from).trim()) {
+      while (at < to && /[ \t]/.test(text[at])) at++;
+    }
   }
   if (to > at) put(text.slice(at, to));
   into.append(...pictures);
