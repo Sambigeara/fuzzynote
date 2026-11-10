@@ -1455,11 +1455,12 @@ struct Images<'a> {
     dir: Option<PathBuf>,
     /// At most [`OFFERED_MOST`].
     offered: BTreeSet<String>,
-    /// At most [`AT_ONCE`], each with when it was asked for.
+    /// At most [`AT_ONCE`], each with when it was asked for, or when the last image came if that
+    /// is later.
     wanted: BTreeMap<String, Instant>,
-    /// Asked for and never sent within [`WANT_LAPSE`], and not asked for again on this
-    /// connection: a device that offered an image it then could not send, one spoilt on its disk
-    /// say, keeps no place for it.
+    /// Asked for and not sent within [`WANT_LAPSE`], and not asked for again on this connection:
+    /// a device that offered an image it then could not send, one spoilt on its disk say, keeps
+    /// no place for it. One that comes after all is taken.
     lapsed: BTreeSet<String>,
     /// Images the device asked for, in the order asked, each once and at most
     /// [`ANSWERED_MOST`]. One is read and sent only when everything said before it has gone, so
@@ -1501,7 +1502,13 @@ impl Images<'_> {
                 Ok(())
             }
             image::Message::Image { id, c } => {
-                if self.wanted.remove(&id).is_some() {
+                // One that lapsed is still taken, once, since over a slow link it may only have
+                // been on its way.
+                if self.wanted.remove(&id).is_some() || self.lapsed.remove(&id) {
+                    // What else was asked for comes down the same link after it, one after
+                    // another, so each one's time starts again as one arrives.
+                    let now = Instant::now();
+                    self.wanted.values_mut().for_each(|asked| *asked = now);
                     self.take(&id, &c, wire)?;
                     self.ask(wire)?;
                 }
@@ -2196,7 +2203,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_image_asked_for_and_never_sent_gives_its_place_to_the_next_and_is_not_asked_again() {
+    fn an_image_not_sent_in_time_gives_its_place_to_the_next_and_is_taken_if_it_comes_after_all() {
         let root = temp_dir();
         let address = relay(&root);
         let (mut raw, _) = Raw::entered(&address);
@@ -2207,9 +2214,16 @@ pub(crate) mod tests {
         let began = Instant::now();
         assert_eq!(raw.next_image(), want(&five[4..]));
         assert!(began.elapsed() >= WANT_LAPSE - Duration::from_millis(200));
+        // Sent after all, as over a slow link, the lapsed are taken, each once.
+        let sent = gardens(5);
+        for (id, sealed) in &sent[..2] {
+            raw.say_image(&image::Message::image(id, sealed));
+        }
+        let space = root.join("main");
+        assert!(eventually(|| on_disk(&space) == ids(&sent[..2])));
         // Offered again on this connection, a lapsed one is not asked for again.
-        raw.say_image(&image::Message::Images(five[..1].to_vec()));
-        raw.say_image(&want(&five[..1]));
+        raw.say_image(&image::Message::Images(five[2..3].to_vec()));
+        raw.say_image(&want(&five[2..3]));
         raw.say_image(&image::Message::Images(vec![format!("{:032x}", 7)]));
         assert_eq!(raw.next_image(), want(&[format!("{:032x}", 7)]));
         fs::remove_dir_all(&root).unwrap();
