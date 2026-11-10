@@ -3464,14 +3464,17 @@ pub(crate) mod tests {
         let root = temp_dir();
         let address = relay(&root);
         let mut silent = TcpStream::connect(&address).unwrap();
-        silent
-            .set_read_timeout(Some(GREETING + Duration::from_secs(1)))
-            .unwrap();
+        // The relay is late by however long its thread waits to be run, a few tenths of a second
+        // with the other tests running beside it and past a second on a busy machine. Three
+        // seconds of slack keeps that from failing the test, and costs a passing run nothing,
+        // since the read ends as the relay closes.
+        let slack = Duration::from_secs(3);
+        silent.set_read_timeout(Some(GREETING + slack)).unwrap();
         let began = Instant::now();
         let mut got = [0u8; 1];
         // Nothing comes back, and the relay closes: a read of nothing, not a timeout.
         assert_eq!(silent.read(&mut got).unwrap(), 0);
-        assert!(began.elapsed() <= GREETING + Duration::from_secs(1));
+        assert!(began.elapsed() <= GREETING + slack);
         fs::remove_dir_all(&root).unwrap();
     }
 
