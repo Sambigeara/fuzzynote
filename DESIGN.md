@@ -1280,24 +1280,25 @@ read followed by a press, an address in a tab of its own with the body left open
 into Boiler as Tab goes, the body written as it closes, but for the span the selection touches,
 which shows its marks where they stand, a press on it the caret's, the marks in the faint grey and
 the text in ink, headings and strong text heavier, the first three levels of heading larger and
-set closer than the text, its head set as a first-level heading is, as the page's title, with its
-task's box drawn as a body's is (see "An open body's head is its title"), emphasis slanted, code in
-the monospace; a body opens reading whole, as a head is landed on; soft wrap, step undo, a grey
-selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer
-over a link that a press follows, and vim mode for the body, for the browser that asked for it with
-the word `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is
-not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
-note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
-`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
-first, and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard
-too. The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as
-high as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot
-of the sheet, under the text and a hairline. The editor is fetched as the page starts, beside the
-engine, and nothing is painted until it is here. The `editor` the engine offers is not shown here.
-At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
-it is open; a wider touch screen has it as the page, sized from the frame. On a touch screen it
-opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
-open, and `done`, the back gesture, or a tap on the page beside it closes it.
+set closer than the text, its head set as a first-level heading is, as the page's title, a third
+of a line clear of the body, with its task's box drawn as a body's is (see "An open body's head is
+its title"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is
+landed on; soft wrap, step undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E
+for bold, italic and code, a pointer over a link that a press follows, and vim mode for the body,
+for the browser that asked for it with the word `vim` in the foot of an open body, which a touch
+screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the lines as
+shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection, which goes
+by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body,
+`:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where it was; a yank is
+copied to the system's clipboard too. The page's caret is drawn from the editor's coordinates, in a
+head and in a body, a block as high as the line it is on, and in vim's insert mode a bar. Vim's
+prompt for a command is at the foot of the sheet, under the text and a hairline. The editor is
+fetched as the page starts, beside the engine, and nothing is painted until it is here. The `editor`
+the engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar,
+and the bar the sheet's colour while it is open; a wider touch screen has it as the page, sized from
+the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
+the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
+closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -4389,15 +4390,18 @@ the app now does is described above; an entry repeats it only where the reason n
   head's size, so `# Boiler` and `## Boiler parts` look as a plain head does. The head and the
   sheet's first three levels of heading are set closer than the text, their lines a quarter higher
   than their letters where the text's are half again, since a large line at the text's leading
-  wraps into lines that read apart, a stack of lines and not one title. A task's head has its
+  wraps into lines that read apart, a stack of lines and not one title. The head stands a third of
+  a line clear of the body, where a heading in the body has none, since a title hard on the line
+  under it reads as that line's first; the room is padding at the foot of the head's own line, so
+  a press there, the caret and the arrows take it as the head's. A task's head has its
   box drawn, as a body's task has, read until the selection touches it and never ticked by a press,
   and its wrapped lines go on under its words; a done one is ticked and stays in ink, since a title
   opened to read stays a title and the box says it is done. The page's caret on it, as on any
   heading, is as high as its line and as wide as its letters, where it had been the text's height
   on every line. Rows, the step on the path, the note read above the line and the body read beside
   the list keep the text's size, as "A body's headings are sized by their level" keeps a row's; the
-  terminal hands the note to your editor and is unchanged. What it costs: the body starts a quarter
-  of a line lower, and a long head wraps sooner, onto about half as many lines again, each a
+  terminal hands the note to your editor and is unchanged. What it costs: the body starts a little
+  over half a line lower, and a long head wraps sooner, onto about half as many lines again, each a
   quarter higher than a line of the text; and a heading in the sheet sits closer to the text around
   it than a line of the text does. Weighed: a size of the head's own between the heading's and the
   text's, a fourth size to tell apart; a rule under the head, which is chrome; and leading of 1.2,

@@ -720,11 +720,14 @@ body.resting .row .head a,
    levels are sized on their line, mark shown or not, in a body and never in a row, and set closer
    than the text, since a large line wrapped at the text's leading falls apart into separate
    lines. The head, its first line, is the page's title, set as a first-level heading is at every
-   width, and a head that is one is set no larger again. A task's head wraps under its words, not
-   under its box, as its row does on a phone. */
+   width, and a head that is one is set no larger again. It stands a third of a line clear of the
+   body, by padding inside its line, which the editor measures as the line's own, so that the caret,
+   a press under its words and the arrows still take it as one line. A task's head wraps under its
+   words, not under its box, as its row does on a phone. */
 #sheet .cm-line.md-h1,
 #sheet .cm-content > .cm-line:first-child { font-size: 1.5em; }
-#sheet .cm-content > .cm-line:first-child { font-weight: 600; }
+/* At one and a half times the text, a third of its own size is a third of the text's line. */
+#sheet .cm-content > .cm-line:first-child { font-weight: 600; padding-bottom: calc(1em / 3); }
 #sheet .cm-content > .cm-line:first-child:has(> .md-check) { padding-left: 1.3em; text-indent: -1.3em; }
 #sheet .cm-line.md-h2 { font-size: 1.3em; }
 #sheet .cm-line.md-h3 { font-size: 1.15em; }
