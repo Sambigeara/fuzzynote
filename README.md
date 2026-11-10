@@ -198,8 +198,8 @@ fzn write 'Bleed the radiators /task' --in '#house' --in 'Boiler overhaul'   # a
 fzn query '#old' | jq -c '.text |= sub("#old"; "#house")' | fzn apply   # a change, by jq
 fzn import-jsonl notes.jsonl     # the way back in: a restore, ids and times as they were
 fzn import-markdown ~/pages      # a directory of markdown pages
-fzn image ~/photos/boiler.jpg     # keep an image, and write the reference to put in a note
-fzn image fzn:ID > boiler.jpg      # write an image the space holds back out
+fzn image ~/photos/boiler.jpg    # keep an image, and write the reference to put in a note
+fzn image fzn:ID > boiler.jpg    # write an image the space holds back out
 ```
 
 `image` makes an image smaller, at most 2048 pixels on its long edge, keeps nothing of where it

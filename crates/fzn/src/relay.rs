@@ -76,7 +76,8 @@ const OFFERED_MOST: usize = 4096;
 /// How many ids one `images` message from the relay holds at most, so that a space with more
 /// images than fit in a message says them in several, each well within [`MESSAGE_MAX`].
 const SAID_MOST: usize = 65_536;
-/// How long an image asked of a device may take to come before its place goes to the next.
+/// How long an image asked of a device may take to come before its place goes to the next. A
+/// test waits five seconds for it rather than a minute.
 const WANT_LAPSE: Duration = Duration::from_secs(if cfg!(test) { 5 } else { 60 });
 /// The least an image is counted as taking of the room, whatever its size. A file costs a
 /// filesystem an inode as well as its blocks, and ext4 makes one inode for every 16 KiB of a
