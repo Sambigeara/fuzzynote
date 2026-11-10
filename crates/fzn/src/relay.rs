@@ -1133,7 +1133,7 @@ fn serve(hub: &Hub, stream: TcpStream, greeting: Greeting) {
     // The greeting only takes note of what is asked for. Nothing is opened or made for it until
     // the device has shown it holds the space's key.
     let socket = tungstenite::accept_hdr_with_config(
-        Stream::Plain(stream),
+        Stream::plain(stream),
         |request: &Request, mut response: Response| match asked_for(request.uri().path()) {
             Ok((name, space)) => {
                 let offered = offered(request);

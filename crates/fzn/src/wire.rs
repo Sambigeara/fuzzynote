@@ -31,42 +31,67 @@ pub const SILENCE: Duration = Duration::from_secs(45);
 
 /// What a websocket runs over: a TCP connection as it is, or under TLS, which a device speaks to
 /// a relay behind a proxy that has it. The relay has no TLS of its own, so its end is always the
-/// first. Either way the TCP connection is what waits, and what is told how long it may.
-pub enum Stream {
+/// first. Either way the TCP connection is what waits, and what is told how long it may. It
+/// notes when bytes last came, so that a peer in the middle of sending a large message, an
+/// image over a slow link, is a peer being heard and not a silent one.
+pub struct Stream {
+    over: Over,
+    heard: Instant,
+}
+
+enum Over {
     Plain(TcpStream),
     Tls(Box<StreamOwned<ClientConnection, TcpStream>>),
 }
 
 impl Stream {
+    pub fn plain(tcp: TcpStream) -> Self {
+        Self {
+            over: Over::Plain(tcp),
+            heard: Instant::now(),
+        }
+    }
+
+    pub fn tls(tls: StreamOwned<ClientConnection, TcpStream>) -> Self {
+        Self {
+            over: Over::Tls(Box::new(tls)),
+            heard: Instant::now(),
+        }
+    }
+
     fn tcp(&self) -> &TcpStream {
-        match self {
-            Self::Plain(tcp) => tcp,
-            Self::Tls(tls) => tls.get_ref(),
+        match &self.over {
+            Over::Plain(tcp) => tcp,
+            Over::Tls(tls) => tls.get_ref(),
         }
     }
 }
 
 impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            Self::Plain(tcp) => tcp.read(buf),
-            Self::Tls(tls) => tls.read(buf),
+        let read = match &mut self.over {
+            Over::Plain(tcp) => tcp.read(buf),
+            Over::Tls(tls) => tls.read(buf),
+        };
+        if matches!(read, Ok(n) if n > 0) {
+            self.heard = Instant::now();
         }
+        read
     }
 }
 
 impl Write for Stream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Plain(tcp) => tcp.write(buf),
-            Self::Tls(tls) => tls.write(buf),
+        match &mut self.over {
+            Over::Plain(tcp) => tcp.write(buf),
+            Over::Tls(tls) => tls.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match self {
-            Self::Plain(tcp) => tcp.flush(),
-            Self::Tls(tls) => tls.flush(),
+        match &mut self.over {
+            Over::Plain(tcp) => tcp.flush(),
+            Over::Tls(tls) => tls.flush(),
         }
     }
 }
@@ -74,7 +99,6 @@ impl Write for Stream {
 /// A websocket whose socket never waits long, so that one thread can listen and speak by turns.
 pub struct Wire {
     socket: WebSocket<Stream>,
-    heard: Instant,
     pinged: Instant,
 }
 
@@ -90,7 +114,6 @@ impl Wire {
         socket.get_ref().tcp().set_write_timeout(Some(TICK))?;
         Ok(Self {
             socket,
-            heard: Instant::now(),
             pinged: Instant::now(),
         })
     }
@@ -98,15 +121,9 @@ impl Wire {
     /// The next message, if one comes within a tick. An error means the connection is over.
     pub fn hear(&mut self) -> Result<Option<String>> {
         match self.socket.read() {
-            Ok(Frame::Text(text)) => {
-                self.heard = Instant::now();
-                Ok(Some(text.as_str().to_owned()))
-            }
+            Ok(Frame::Text(text)) => Ok(Some(text.as_str().to_owned())),
             Ok(Frame::Close(_)) => bail!("closed"),
-            Ok(_) => {
-                self.heard = Instant::now();
-                Ok(None)
-            }
+            Ok(_) => Ok(None),
             Err(e) if would_wait(&e) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -151,9 +168,10 @@ impl Wire {
         }
     }
 
-    /// Sends on what is waiting to go, pings a quiet peer, and gives up on a silent one.
+    /// Sends on what is waiting to go, pings a quiet peer, and gives up on a silent one: one from
+    /// which no byte has come, whole message or not, for [`SILENCE`].
     pub fn keep_up(&mut self) -> Result<()> {
-        if self.heard.elapsed() > SILENCE {
+        if self.socket.get_ref().heard.elapsed() > SILENCE {
             bail!("nothing heard for {} seconds", SILENCE.as_secs());
         }
         if self.pinged.elapsed() > PING {
@@ -180,7 +198,7 @@ impl Drop for Wire {
     fn drop(&mut self) {
         let _ = self.socket.close(None);
         let _ = self.socket.flush();
-        if let Stream::Tls(tls) = self.socket.get_mut() {
+        if let Over::Tls(tls) = &mut self.socket.get_mut().over {
             tls.conn.send_close_notify();
             let _ = tls.flush();
         }
@@ -192,6 +210,37 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn a_peer_sending_a_message_slowly_is_heard_before_the_message_is_whole() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (go, went) = std::sync::mpsc::channel::<()>();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            went.recv().unwrap();
+            // The start of a text frame of a thousand bytes, and a tenth of them.
+            let mut part = vec![0x81, 126, 0x03, 0xE8];
+            part.extend_from_slice(&[b'x'; 100]);
+            socket.get_mut().write_all(&part).unwrap();
+            thread::sleep(GREETING);
+        });
+        let stream = TcpStream::connect(address).unwrap();
+        let asked = format!("ws://{address}/");
+        let (socket, _) = tungstenite::client(asked.as_str(), Stream::plain(stream)).unwrap();
+        let mut wire = Wire::new(socket).unwrap();
+        // As if nothing had come for longer than a silent peer is given.
+        wire.socket.get_mut().heard = Instant::now() - SILENCE - Duration::from_secs(1);
+        assert!(wire.keep_up().is_err());
+        wire.socket.get_mut().heard = Instant::now() - SILENCE - Duration::from_secs(1);
+        go.send(()).unwrap();
+        let began = Instant::now();
+        while began.elapsed() < Duration::from_secs(2) {
+            assert_eq!(wire.hear().unwrap(), None, "the message is not whole");
+        }
+        assert!(wire.keep_up().is_ok(), "bytes came, so the peer is heard");
+    }
 
     #[test]
     fn a_close_answered_is_the_end_even_while_a_proxy_holds_the_socket_open() {
@@ -207,7 +256,7 @@ mod tests {
         });
         let stream = TcpStream::connect(address).unwrap();
         let asked = format!("ws://{address}/");
-        let (socket, _) = tungstenite::client(asked.as_str(), Stream::Plain(stream)).unwrap();
+        let (socket, _) = tungstenite::client(asked.as_str(), Stream::plain(stream)).unwrap();
         let wire = Wire::new(socket).unwrap();
         let began = Instant::now();
         assert!(wire.close(), "the close was not answered");

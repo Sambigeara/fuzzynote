@@ -247,10 +247,10 @@ fn dial_trusting(
         let checked = ServerName::try_from(host.to_owned())
             .with_context(|| format!("{host} is not a name a certificate can be for"))?;
         let tls = ClientConnection::new(trust()?, checked)?;
-        let stream = Stream::Tls(Box::new(StreamOwned::new(tls, stream)));
+        let stream = Stream::tls(StreamOwned::new(tls, stream));
         (stream, format!("wss://{}{path}", to.shown))
     } else {
-        (Stream::Plain(stream), format!("ws://{authority}{path}"))
+        (Stream::plain(stream), format!("ws://{authority}{path}"))
     };
     let uri: Uri = uri.parse()?;
     let mut request = ClientRequestBuilder::new(uri);
