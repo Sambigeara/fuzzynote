@@ -303,10 +303,11 @@ async function openStore() {
   });
   // Without the store this page goes on with the log its writer id names, which a store it cannot
   // read may hold more of, so the id is let go, as when a line could not be kept (see couldNotKeep).
+  // It is said once the page has opened, since opening clears what was said before it.
   if (!db) {
     unkept = true;
+    storeless = true;
     forgetWriter();
-    fzn?.say('could not open the store in this browser; the notes will be asked of the relay');
     return null;
   }
   // A change is a transaction, and it is done once the browser says it has completed, which is
@@ -369,6 +370,8 @@ const answer = (request) =>
 
 let fzn;
 let store = null;
+// The store could not be opened, which the page says once it has opened (see openStore).
+let storeless = false;
 let view = null;
 let socket = null;
 let wait = 1000;
@@ -3076,6 +3079,10 @@ async function start() {
   document.body.classList.remove('locked');
   follow();
   placeCaret();
+  if (storeless) {
+    fzn.say('could not open the store in this browser; the notes will be asked of the relay');
+    look();
+  }
   connect();
   // A lost relay is tried again as soon as there is reason to think it is back.
   const retry = () => {
