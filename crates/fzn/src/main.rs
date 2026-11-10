@@ -353,6 +353,11 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
                 "image takes files to keep, or one image's address to write out, not both",
             ));
         }
+        if given.iter().filter(|arg| *arg == "-").count() > 1 {
+            return Err(usage(
+                "image reads one image from standard input, so - is given once",
+            ));
+        }
     }
     Ok(parsed)
 }
@@ -950,6 +955,10 @@ mod tests {
         let both = "image takes files to keep, or one image's address to write out, not both";
         assert_eq!(refused(&["image", "boiler.jpg", &address]), both);
         assert_eq!(refused(&["image", &address, &reference]), both);
+        assert_eq!(
+            refused(&["image", "-", "boiler.jpg", "-"]),
+            "image reads one image from standard input, so - is given once"
+        );
         assert_eq!(
             refused(&["image"]),
             "image needs a file to keep, or an image's address to write out"
