@@ -726,7 +726,9 @@ body.resting .row .head a,
    Nothing here changes a line's height as the selection comes or goes; a heading's first three
    levels are sized on their line, mark shown or not, in a body and never in a row, and set closer
    than the text, since a large line wrapped at the text's leading falls apart into separate
-   lines. The head, its first line, is the page's title, set as a first-level heading is at every
+   lines. Set so close, a heading in the body would sit as near the text before it as the text it
+   heads, so it stands clear of what is above it, half a line of the text for the first level and
+   four tenths for the next two, by padding inside its own line, as the head's room is. The head, its first line, is the page's title, set as a first-level heading is at every
    width, and a head that is one is set no larger again. It stands a third of a line clear of the
    body, by padding inside its line, which the editor measures as the line's own, so that the caret,
    a press under its words and the arrows still take it as one line. A task's head wraps under its
@@ -740,6 +742,10 @@ body.resting .row .head a,
 #sheet .cm-line.md-h3 { font-size: 1.15em; }
 #sheet .cm-line:is(.md-h1, .md-h2, .md-h3),
 #sheet .cm-content > .cm-line:first-child { line-height: 1.25; }
+/* Measured in each level's own size: the text's line is one and a half of the text's size. */
+#sheet .cm-content > .cm-line.md-h1:not(:first-child) { padding-top: calc(0.75em / 1.5); }
+#sheet .cm-content > .cm-line.md-h2:not(:first-child) { padding-top: calc(0.6em / 1.3); }
+#sheet .cm-content > .cm-line.md-h3:not(:first-child) { padding-top: calc(0.6em / 1.15); }
 /* The editor's empty stand-ins beside what is hidden or drawn are a letter high on the baseline,
    which reaches above a line set this close; hung from the top of the letters, they leave its
    height alone as a mark shows or hides. */
