@@ -1,12 +1,16 @@
 //! fuzzynote in a browser tab.
 //!
 //! The engine is compiled to WebAssembly and the page drives it through [`Fzn`], which is the
-//! engine's [`Device`] with a text boundary round it. Everything crosses as text but an image: an
-//! action goes in as JSON and what the page has to do comes back as JSON, and so does the view.
-//! An image crosses as bytes, since it is not text, and base64 of a few MiB made and read on each
-//! crossing would be work for nothing. The page owns what only a page can: the keys, the
-//! painting, the socket to the relay, somewhere to keep lines and images between visits, making
-//! an image smaller, and the asking for a passphrase.
+//! engine's [`Device`] with a text boundary round it. Everything crosses as text but an image going
+//! in: an action goes in as JSON and what the page has to do comes back as JSON, and so does the
+//! view. An image the page hands over, to keep, to open or to send, goes in as bytes, since it is
+//! not text, and an opened one comes back as bytes, to draw. A sealed image the page is to keep
+//! comes back as base64 inside the JSON it is told to act on, from `keep_image` and in a todo's
+//! `keep_images`, so that what to do stays one shape of text; that costs a third more and an
+//! encoding of a few MiB, and is paid only when an image is kept or fetched, never on a keystroke
+//! or a view. The page owns what only a page can: the keys, the painting, the socket to the
+//! relay, somewhere to keep lines and images between visits, making an image smaller, and the
+//! asking for a passphrase.
 
 use fzn_engine::{Action, Device, Host, Key, Moment, Todo, Weights};
 use wasm_bindgen::prelude::*;

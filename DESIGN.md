@@ -75,11 +75,10 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   archived, which for a task is when it was done; where it sits in the list, as the note it sits
   after, with a clock of its own (see "Where a note sits" under Storage and sync). Derived, never
   stored: head (first line), body, tags, mentions, dates, URLs, and whether it is a task.
-- **Link**: from one note to another, held on the note as the target's id. There is one kind. An
-  image's address is not a link: an image is part of what the note says, in its text, as a URL is.
-  It survives a rename and adds no words to the text. Links are made by position: a note written
-  while looking around another is about it, and links to it. Nobody has to say "link". Brackets are
-  the way of typing one from inside the editor: when a note is saved, each `[[name]]` that names an
+- **Link**: from one note to another, held on the note as the target's id. There is one kind. It
+  survives a rename and adds no words to the text. Links are made by position: a note written while
+  looking around another is about it, and links to it. Nobody has to say "link". Brackets are the
+  way of typing one from inside the editor: when a note is saved, each `[[name]]` that names an
   existing note becomes a link, and a link whose brackets were taken out is dropped. Brackets name a
   note as the line names one: by its whole head first, and where no note's head is the name, by its
   head without its box and the labels that end it, the words its row reads in its place, so `[[Bleed
@@ -90,7 +89,8 @@ browser, syncs seamlessly between your devices, and can be shared with other peo
   was wrong or the note was written in the wrong place. The engine does not read brackets when it
   searches. A link adds no words, and still a note is found by the name of what it is about: when
   you type, the head of a note that a note links to counts as its own head does, one hop and no
-  further. Only explicit links are stored; everything else is recomputed on demand.
+  further. Only explicit links are stored; everything else is recomputed on demand. An image's
+  address is not a link: an image is part of what the note says, in its text, as a URL is.
 - **Syntax that the engine understands**: `#tag`, `@person`, dates, URLs, `[[note name]]` as a way
   of typing a link, and a box, `[ ]` or `[x]`, at the start of a note, which makes it a task (see "A
   task is a note headed by its box"). Nothing else is special in a note. Code is literal: inside a
@@ -316,13 +316,16 @@ added to the engine until daily use asks for it.
   the terminal `images/<id>` in the space's directory, in a tab a record in IndexedDB's `images`
   store, and on the relay `images/<id>` beside the space's logs. The id is the first 16 bytes of
   HMAC-SHA256 over the image's bytes under a key that is SHA-256 of `fzn/image/` and the space's
-  key, so that one image is kept once, a relay cannot tell whether a space holds an image it has
-  seen elsewhere, and one image in two spaces has two ids. What is kept is a byte, 1, then a random
-  24-byte nonce and the image sealed with XChaCha20-Poly1305 under the space's key, as a line is
-  sealed but as bytes and not base64; opening it checks that the bytes give the id they are kept
-  under. An image is a JPEG or a PNG of at most 2 MiB, which every face makes it on the way in. No
-  line holds one: every replica keeps every line in memory, the relay too, and a version is the
-  whole note, written again at every letter typed in its head.
+  key, so that one image is kept once and one image in two spaces has two ids. The id tells a relay
+  nothing of whether a space holds an image it has seen elsewhere; the length of what is sealed it
+  does see, as it sees a line's, and a photo it holds made smaller by the same encoder comes to the
+  same length. What is kept is a byte, 1, then a random 24-byte nonce and the image sealed with
+  XChaCha20-Poly1305 under the space's key, as a line is sealed but as bytes and not base64, and
+  with `fzn/image/1` bound as associated data, which a line's sealing does not bind, so that a
+  line's ciphertext never opens as an image nor an image's as a line; opening it checks that the
+  bytes give the id they are kept under. An image is a JPEG or a PNG of at most 2 MiB, which every
+  face makes it on the way in. No line holds one: every replica keeps every line in memory, the
+  relay too, and a version is the whole note, written again at every letter typed in its head.
 - **Who writes a space's directory.** Every client open on it, each a writer of its own: each
   window, each command that writes beside them (`fzn apply`, `fzn tick`, `fzn untick`, `fzn write`)
   and an importer. A client takes the lowest free slot of a small pool for its life, `.writer` then
@@ -4519,16 +4522,16 @@ the app now does is described above; an entry repeats it only where the reason n
   to 1.5 MiB or less and anything else made a JPEG at quality 0.82 on white, an animation's first
   frame, and at most 2 MiB; nothing of the original is kept, where it was taken included, and 2048
   pixels keeps the print on a data plate readable. It is sealed under the space's key as a line is,
-  in bytes, and kept as a file of its own beside the logs and never in one: every replica keeps
-  every line in memory, the relay included, and a version is the whole note, written again at every
-  letter typed in its head, so a 400 KB photo in a line would be some 700 KB a keystroke. In the
-  page it crosses to the engine as bytes, since an image is not text. What it costs: a space holds
-  something that is not text for the first time, with a store of its own in every face, and the
-  terminal shows the address and not the picture. Rejected: an image in the text as a `data:`
-  address, which needs nothing new and is the 700 KB a keystroke; images as lines of a log; an id
-  that is SHA-256 alone, against which a relay could test a photo it knows; keeping the original,
-  larger and carrying where it was taken; and Obsidian's `![[boiler.png]]`, which fzn reads as a
-  link to a note.
+  in bytes and bound to being an image, and kept as a file of its own beside the logs and never in
+  one: every replica keeps every line in memory, the relay included, and a version is the whole
+  note, written again at every letter typed in its head, so a 400 KB photo in a line would be some
+  700 KB a keystroke. In the page it crosses to the engine as bytes, since an image is not text.
+  What it costs: a space holds something that is not text for the first time, with a store of its
+  own in every face, and the terminal shows the address and not the picture. Rejected: an image in
+  the text as a `data:` address, which needs nothing new and is the 700 KB a keystroke; images as
+  lines of a log; an id that is SHA-256 alone, against which a relay could test a photo it knows;
+  keeping the original, larger and carrying where it was taken; and Obsidian's `![[boiler.png]]`,
+  which fzn reads as a link to a note.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

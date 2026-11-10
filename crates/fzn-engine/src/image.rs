@@ -25,9 +25,11 @@ pub const ID_DIGITS: usize = 32;
 /// The most an image may be, in plaintext bytes, once a face has made it smaller.
 pub const IMAGE_MOST: usize = 2 * 1024 * 1024;
 /// What sealing adds to an image: the format's byte, the nonce and the tag.
-pub const SEALED_LEAST: usize = 1 + 24 + 16;
+const SEALING: usize = 1 + 24 + 16;
+/// The least a sealed image may be, sealed from a single byte: 42.
+pub const SEALED_LEAST: usize = SEALING + 1;
 /// The most a sealed image may be.
-pub const SEALED_MOST: usize = IMAGE_MOST + SEALED_LEAST;
+pub const SEALED_MOST: usize = IMAGE_MOST + SEALING;
 /// Wants outstanding on a connection, either way.
 pub const AT_ONCE: usize = 4;
 /// The ids of one want that are answered.
@@ -42,14 +44,21 @@ pub fn is_id(text: &str) -> bool {
     text.len() == ID_DIGITS && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Whether a character ends an image's address after its digits: `)`, a space, a tab or a line's
+/// end. A note's text reads an address only so ended, and [`id_in`] the same or at the text's end.
+pub(crate) fn ends_address(c: char) -> bool {
+    matches!(c, ')' | ' ' | '\t' | '\n' | '\r')
+}
+
 /// The id in an image's address or reference, `fzn:<id>` anywhere in the text, if there is one.
-/// The digits have to end where the id does, so that a longer run is not taken for an id.
+/// The digits have to be followed by the text's end or by what ends an address in a note, so
+/// that a longer run, or a file's name with an address inside it, is not taken for one.
 pub fn id_in(text: &str) -> Option<&str> {
     text.match_indices("fzn:").find_map(|(at, _)| {
         let start = at + 4;
         let id = text.get(start..start + ID_DIGITS)?;
         let after = text[start + ID_DIGITS..].chars().next();
-        (is_id(id) && !after.is_some_and(|c| c.is_ascii_alphanumeric())).then_some(id)
+        (is_id(id) && after.is_none_or(ends_address)).then_some(id)
     })
 }
 
@@ -77,6 +86,7 @@ impl Kind {
         }
     }
 
+    /// Its media type, for a browser to draw it by.
     pub fn mime(self) -> &'static str {
         match self {
             Kind::Jpeg => "image/jpeg",
@@ -84,6 +94,7 @@ impl Kind {
         }
     }
 
+    /// The end of a file's name for it, for a face that writes one out.
     pub fn extension(self) -> &'static str {
         match self {
             Kind::Jpeg => "jpg",
@@ -99,7 +110,8 @@ pub fn seal(seal: &Seal, plain: &[u8], host: &dyn Host) -> Result<(String, Vec<u
         return Err("an image is kept as a JPEG or a PNG, and this is neither".to_owned());
     }
     if plain.len() > IMAGE_MOST {
-        let mib = plain.len() as f64 / MIB;
+        // Rounded up, so that an image just over the most never reads as the most.
+        let mib = (plain.len() as f64 / MIB * 10.0).ceil() / 10.0;
         return Err(format!(
             "an image is at most 2 MiB once made smaller, and this one is {mib:.1} MiB"
         ));
@@ -107,15 +119,16 @@ pub fn seal(seal: &Seal, plain: &[u8], host: &dyn Host) -> Result<(String, Vec<u
     Ok((seal.image_id(plain), seal.seal_bytes(plain, host)))
 }
 
-/// Opens sealed bytes kept under `id`, if they open and give that id.
+/// Opens sealed bytes kept under `id`, if they open, give that id, and are an image that is kept.
 pub fn open(seal: &Seal, id: &str, sealed: &[u8]) -> Option<Vec<u8>> {
-    seal.open_bytes(sealed)
-        .filter(|plain| seal.image_id(plain) == id)
+    seal.open_bytes(sealed).filter(|plain| {
+        Kind::of(plain).is_some() && plain.len() <= IMAGE_MOST && seal.image_id(plain) == id
+    })
 }
 
 /// Whether bytes are of a length a sealed image may be.
 pub(crate) fn sealed_length(sealed: &[u8]) -> bool {
-    (SEALED_LEAST + 1..=SEALED_MOST).contains(&sealed.len())
+    (SEALED_LEAST..=SEALED_MOST).contains(&sealed.len())
 }
 
 /// The sealed bytes a message's `c` carries, if it is base64 of a length a sealed image may be.
@@ -178,6 +191,9 @@ pub(crate) struct Images {
     asked: BTreeSet<String>,
     /// Came on this connection and did not open, so not asked for again on it.
     shut: BTreeSet<String>,
+    /// Asked for by the relay on this connection, held here, and not yet sent, so that nothing
+    /// goes to a relay that did not ask for it on the connection it goes over.
+    owed: BTreeSet<String>,
 }
 
 /// What came of an image message from the relay.
@@ -254,11 +270,11 @@ impl Images {
                 relay.extend(ids.into_iter().filter(|id| is_id(id)));
             }
             Message::Want(ids) => {
-                heard.upload = ids
-                    .into_iter()
-                    .take(ANSWERED_MOST)
-                    .filter(|id| self.here.contains(id))
-                    .collect();
+                for id in ids.into_iter().take(ANSWERED_MOST) {
+                    if self.here.contains(&id) && self.owed.insert(id.clone()) {
+                        heard.upload.push(id);
+                    }
+                }
             }
             Message::Image { id, c } => {
                 if self.asked.remove(&id) {
@@ -274,15 +290,18 @@ impl Images {
                     }
                 }
             }
-            Message::Full(why) => heard.say = Some(why),
+            // The words shown are this build's own, so that a relay cannot put words of its
+            // choosing on the status line.
+            Message::Full(_) => heard.say = Some(FULL.to_owned()),
             Message::Drop(_) => {}
         }
         heard
     }
 
-    /// Whether the relay has said what it holds on this connection, and so takes images.
-    pub fn relay_knows(&self) -> bool {
-        self.relay.is_some()
+    /// Whether the relay asked for this image on this connection and it has not gone yet, which
+    /// it now has: it is owed once.
+    pub fn pay(&mut self, id: &str) -> bool {
+        self.owed.remove(id)
     }
 }
 
@@ -292,8 +311,8 @@ mod tests {
     use crate::seal::{Counting, Key};
     use std::cell::Cell;
 
-    fn seal() -> Seal {
-        Seal::new(Key::from_bytes([7; 32]))
+    fn space(byte: u8) -> Seal {
+        Seal::new(Key::from_bytes([byte; 32]))
     }
 
     fn host() -> Counting {
@@ -306,45 +325,52 @@ mod tests {
 
     #[test]
     fn only_a_jpeg_or_a_png_of_at_most_2_mib_is_sealed_and_why_not_is_said() {
-        let (seal, host) = (seal(), host());
+        let (space, host) = (space(7), host());
         let neither = "an image is kept as a JPEG or a PNG, and this is neither";
-        assert_eq!(seal_fn(&seal, b"GIF89a", &host), Err(neither.to_owned()));
-        assert_eq!(seal_fn(&seal, b"", &host), Err(neither.to_owned()));
+        assert_eq!(seal(&space, b"GIF89a", &host), Err(neither.to_owned()));
+        assert_eq!(seal(&space, b"", &host), Err(neither.to_owned()));
 
+        let too_large = |mib: &str| {
+            format!("an image is at most 2 MiB once made smaller, and this one is {mib} MiB")
+        };
         let big = jpeg(&vec![0; 2_516_582 - 3]);
-        assert_eq!(
-            seal_fn(&seal, &big, &host),
-            Err("an image is at most 2 MiB once made smaller, and this one is 2.4 MiB".to_owned())
-        );
+        assert_eq!(seal(&space, &big, &host), Err(too_large("2.4")));
+        let just_over = jpeg(&vec![0; IMAGE_MOST - 2]);
+        assert_eq!(seal(&space, &just_over, &host), Err(too_large("2.1")));
 
         let most = jpeg(&vec![0; IMAGE_MOST - 3]);
-        let (id, sealed) = seal_fn(&seal, &most, &host).unwrap();
+        let (id, sealed) = seal(&space, &most, &host).unwrap();
         assert_eq!(sealed.len(), SEALED_MOST);
-        assert_eq!(id, seal.image_id(&most));
+        assert_eq!(id, space.image_id(&most));
 
         let png = [&b"\x89PNG\r\n\x1a\n"[..], b"garden"].concat();
-        let (id, _) = seal_fn(&seal, &png, &host).unwrap();
+        let (id, _) = seal(&space, &png, &host).unwrap();
         assert_eq!(id, "4f998e75f22477b2519998d0731eeec8");
         assert_eq!(Kind::of(&png), Some(Kind::Png));
         assert_eq!(Kind::Png.mime(), "image/png");
         assert_eq!(Kind::Jpeg.extension(), "jpg");
     }
 
-    /// The module's `seal`, under a name the tests' own `seal` does not hide.
-    fn seal_fn(seal: &Seal, plain: &[u8], host: &dyn Host) -> Result<(String, Vec<u8>), String> {
-        super::seal(seal, plain, host)
+    #[test]
+    fn an_image_opens_only_under_the_id_it_was_sealed_by() {
+        let (space, host) = (space(7), host());
+        let plate = jpeg(b"a boiler's data plate");
+        let (id, sealed) = seal(&space, &plate, &host).unwrap();
+        assert_eq!(open(&space, &id, &sealed), Some(plate));
+        let (other, _) = seal(&space, &jpeg(b"a radiator valve"), &host).unwrap();
+        assert_eq!(open(&space, &other, &sealed), None);
+        assert_eq!(open(&self::space(8), &id, &sealed), None);
     }
 
     #[test]
-    fn an_image_opens_only_under_the_id_it_was_sealed_by() {
-        let (seal, host) = (seal(), host());
-        let plate = jpeg(b"a boiler's data plate");
-        let (id, sealed) = seal_fn(&seal, &plate, &host).unwrap();
-        assert_eq!(open(&seal, &id, &sealed), Some(plate));
-        let (other, _) = seal_fn(&seal, &jpeg(b"a radiator valve"), &host).unwrap();
-        assert_eq!(open(&seal, &other, &sealed), None);
-        let elsewhere = Seal::new(Key::from_bytes([8; 32]));
-        assert_eq!(open(&elsewhere, &id, &sealed), None);
+    fn what_opens_to_its_id_but_is_no_image_that_is_kept_does_not_open() {
+        let (space, host) = (space(7), host());
+        let gif = b"GIF89a a garden".to_vec();
+        let sealed = space.seal_bytes(&gif, &host);
+        assert_eq!(open(&space, &space.image_id(&gif), &sealed), None);
+        let big = jpeg(&vec![0; IMAGE_MOST]);
+        let sealed = space.seal_bytes(&big, &host);
+        assert_eq!(open(&space, &space.image_id(&big), &sealed), None);
     }
 
     #[test]
@@ -406,9 +432,10 @@ mod tests {
 
     #[test]
     fn sealed_bytes_of_the_wrong_length_or_not_base64_are_refused() {
+        assert_eq!(SEALED_LEAST, 42);
         let at = |n: usize| STANDARD.encode(vec![1u8; n]);
-        assert_eq!(sealed_of(&at(SEALED_LEAST)), None);
-        assert_eq!(sealed_of(&at(SEALED_LEAST + 1)).map(|b| b.len()), Some(42));
+        assert_eq!(sealed_of(&at(SEALED_LEAST - 1)), None);
+        assert_eq!(sealed_of(&at(SEALED_LEAST)).map(|b| b.len()), Some(42));
         assert_eq!(
             sealed_of(&at(SEALED_MOST)).map(|b| b.len()),
             Some(SEALED_MOST)
@@ -424,11 +451,26 @@ mod tests {
         assert!(is_id(id));
         assert!(!is_id(&id.to_uppercase()));
         assert!(!is_id(&id[..31]));
-        assert_eq!(id_in(&format!("fzn:{id}")), Some(id));
-        assert_eq!(id_in(&reference(id)), Some(id));
         assert_eq!(reference(id), format!("![](fzn:{id})"));
-        assert_eq!(id_in(&format!("fzn:{id}0")), None);
-        assert_eq!(id_in(&format!("fzn:{}", &id[..31])), None);
-        assert_eq!(id_in(id), None);
+        for text in [
+            format!("fzn:{id}"),
+            reference(id),
+            format!("![valve](fzn:{id} \"the valve\")"),
+            format!("fzn:{id}\n"),
+            format!("fzn:{id}\r\n"),
+            format!("fzn:{id}\tand on"),
+        ] {
+            assert_eq!(id_in(&text), Some(id), "{text:?}");
+        }
+        for text in [
+            format!("fzn:{id}0"),
+            format!("fzn:{}", &id[..31]),
+            format!("fzn:{id}-x"),
+            format!("./fzn:{id}.jpg"),
+            format!("fzn:{id}]"),
+            id.to_owned(),
+        ] {
+            assert_eq!(id_in(&text), None, "{text:?}");
+        }
     }
 }

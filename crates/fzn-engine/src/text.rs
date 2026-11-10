@@ -503,7 +503,8 @@ pub(crate) fn take_mention(chars: &[char], start: usize) -> Option<(String, usiz
 
 /// An image's id from its address, `fzn:` and 32 lowercase hex digits, read from `at`, the
 /// character after a `(`, and the index after the digits. The address has to end there, at a `)`,
-/// a space or a tab, so that a longer run of digits is no image at all and not a different one.
+/// a space, a tab or a line's end, so that a longer run of digits is no image at all and not a
+/// different one.
 fn take_image(chars: &[char], at: usize) -> Option<(String, usize)> {
     let digits = at + 4;
     let end = digits + crate::image::ID_DIGITS;
@@ -514,7 +515,10 @@ fn take_image(chars: &[char], at: usize) -> Option<(String, usize)> {
     if !id.iter().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
         return None;
     }
-    matches!(chars.get(end), Some(')' | ' ' | '\t')).then(|| (id.iter().collect(), end))
+    let ended = chars
+        .get(end)
+        .is_some_and(|&c| crate::image::ends_address(c));
+    ended.then(|| (id.iter().collect(), end))
 }
 
 fn take_wikilink(chars: &[char], start: usize) -> Option<(String, usize)> {
@@ -1236,6 +1240,11 @@ mod tests {
             [GARDEN]
         );
         assert_eq!(facts(&format!("(fzn:{GARDEN}\tand on")).images, [GARDEN]);
+        for end in ["\n", "\r\n"] {
+            let text = format!("![radiator valve](fzn:{GARDEN}{end}\"the valve\")");
+            assert_eq!(facts(&text).images, [GARDEN]);
+            assert_eq!(tokens(&text), ["radiator", "valve", "the", "valve"]);
+        }
     }
 
     #[test]

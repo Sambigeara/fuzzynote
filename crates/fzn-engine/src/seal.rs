@@ -14,14 +14,16 @@
 //!
 //! An image is sealed the same way but kept as bytes, since it is a file of its own and never a
 //! line, and it is named by an id made under a key of its own, so that the name of an image says
-//! nothing to anyone without the space's key.
+//! nothing to anyone without the space's key. Its sealing binds `fzn/image/1` as associated data
+//! and a line's binds none, so that a line's ciphertext never opens as an image, nor an image's
+//! as a line, under the one key both are sealed with.
 
 use std::fmt;
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -39,6 +41,9 @@ const NONCE: usize = 24;
 
 /// The length of XChaCha20-Poly1305's tag, which every ciphertext carries at its end.
 const TAG: usize = 16;
+
+/// What an image's sealing binds beside its bytes, and a line's does not.
+const IMAGE_AAD: &[u8] = b"fzn/image/1";
 
 /// The cost of deriving a key: 19 MiB, two passes, one lane. Slow enough to make guessing a
 /// passphrase expensive, quick enough to do once a device, on a phone, in a tab.
@@ -212,15 +217,22 @@ impl Seal {
     }
 
     /// An image sealed as bytes: the byte 1, a fresh 24-byte nonce from the host, and then the
-    /// ciphertext with its tag. Bytes and not base64, since an image is kept as a file of its own
-    /// and not as a line. It comes to 41 bytes more than what was sealed.
-    pub fn seal_bytes(&self, plain: &[u8], host: &dyn Host) -> Vec<u8> {
+    /// ciphertext with its tag, under `fzn/image/1` as associated data. Bytes and not base64, since
+    /// an image is kept as a file of its own and not as a line. It comes to 41 bytes more than what
+    /// was sealed. A face seals an image through `image::seal`, which checks it first.
+    pub(crate) fn seal_bytes(&self, plain: &[u8], host: &dyn Host) -> Vec<u8> {
         let mut nonce = [0u8; NONCE];
         host.random(&mut nonce);
         // Encryption fails only on hundreds of gigabytes, and an image is at most a few MiB.
         let sealed = self
             .cipher()
-            .encrypt(XNonce::from_slice(&nonce), plain)
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plain,
+                    aad: IMAGE_AAD,
+                },
+            )
             .expect("an image is far shorter than XChaCha20-Poly1305's limit");
         let mut out = Vec::with_capacity(1 + NONCE + sealed.len());
         out.push(IMAGE_FORMAT);
@@ -230,13 +242,19 @@ impl Seal {
     }
 
     /// What [`Seal::seal_bytes`] sealed, if these bytes are of its form and open under this key.
-    pub fn open_bytes(&self, sealed: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn open_bytes(&self, sealed: &[u8]) -> Option<Vec<u8>> {
         if sealed.len() < 1 + NONCE + TAG || sealed[0] != IMAGE_FORMAT {
             return None;
         }
         let (nonce, sealed) = sealed[1..].split_at(NONCE);
         self.cipher()
-            .decrypt(XNonce::from_slice(nonce), sealed)
+            .decrypt(
+                XNonce::from_slice(nonce),
+                Payload {
+                    msg: sealed,
+                    aad: IMAGE_AAD,
+                },
+            )
             .ok()
     }
 
@@ -428,6 +446,19 @@ mod tests {
         assert_eq!(seal.open_bytes(&other), None);
         assert_eq!(seal.open_bytes(&sealed[..40]), None);
         assert_eq!(seal.open_bytes(&[]), None);
+    }
+
+    #[test]
+    fn a_lines_sealing_never_opens_as_an_image_nor_an_images_as_a_line() {
+        let seal = seal(7);
+        let line = seal.seal("plant the garlic", &host());
+        let Envelope { c, .. } = envelope(&line).unwrap();
+        let as_image = [&[1u8][..], &STANDARD.decode(c).unwrap()].concat();
+        assert_eq!(seal.open_bytes(&as_image), None);
+
+        let image = seal.seal_bytes(b"\xFF\xD8\xFFhouse", &host());
+        let as_line = format!(r#"{{"s":1,"c":"{}"}}"#, STANDARD.encode(&image[1..]));
+        assert_eq!(seal.open(&as_line), Opened::Shut);
     }
 
     #[test]

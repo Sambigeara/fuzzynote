@@ -577,12 +577,14 @@ impl Device {
         todo
     }
 
-    /// An image the relay asked for, as the store holds it, sent to the relay. Nothing when no
-    /// relay that knows images is connected, the id is not one, or the bytes are not of a sealed
-    /// image's length.
+    /// An image the relay asked for, as the store holds it, sent to the relay. Nothing when the
+    /// relay connected now has not asked for it, or has had it already, or when the bytes do not
+    /// open to that id: a file spoilt in the store would otherwise be kept on the relay for good
+    /// and fetched by every device on every connection. Nothing is said to the relay of an image
+    /// not sent, and its want waits for the next connection.
     pub fn upload(&mut self, id: &str, sealed: &[u8]) -> Todo {
         let mut todo = Todo::default();
-        if self.images.relay_knows() && image::is_id(id) && image::sealed_length(sealed) {
+        if self.images.pay(id) && image::open(&self.seal, id, sealed).is_some() {
             todo.send.push(Said {
                 to: RELAY,
                 text: image::Message::image(id, sealed).encode(),
@@ -2603,17 +2605,73 @@ mod tests {
             "of the first eight, those held"
         );
 
-        let (id, sealed) = picture(3);
-        let todo = device.upload(&id, &sealed);
+        let sealed = sealed_as(&ids[3], 10);
+        let todo = device.upload(&ids[3], &sealed);
         assert_eq!(
             todo.send,
             [Said {
                 to: RELAY,
-                text: carried(&id, &sealed)
+                text: carried(&ids[3], &sealed)
             }]
         );
+        assert!(device.upload(&ids[3], &sealed).send.is_empty(), "sent once");
+        let ninth = sealed_as(&ids[9], 10);
+        assert!(device.upload(&ids[9], &ninth).send.is_empty(), "not asked");
         assert!(device.upload("3f9a01c2", &sealed).send.is_empty());
-        assert!(device.upload(&id, &sealed[..41]).send.is_empty());
+    }
+
+    /// The sealed bytes of the picture with this id, among the first `n`.
+    fn sealed_as(id: &str, n: u8) -> Vec<u8> {
+        (0..n).map(picture).find(|(of, _)| of == id).unwrap().1
+    }
+
+    #[test]
+    fn a_want_that_names_an_image_twice_asks_for_it_once() {
+        let ids = pictures(2);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        device.received(RELAY, &relay_holds(&ids));
+        let twice = vec![ids[0].clone(), ids[0].clone(), ids[1].clone()];
+        let todo = device.received(RELAY, &image::Message::Want(twice).encode());
+        assert_eq!(todo.upload, ids);
+        let again = image::Message::Want(vec![ids[0].clone()]).encode();
+        assert!(
+            device.received(RELAY, &again).upload.is_empty(),
+            "owed already"
+        );
+        let sealed = sealed_as(&ids[0], 2);
+        assert_eq!(device.upload(&ids[0], &sealed).send.len(), 1);
+        assert!(device.upload(&ids[0], &sealed).send.is_empty());
+    }
+
+    #[test]
+    fn an_image_held_here_that_does_not_open_to_its_id_is_not_sent() {
+        let ids = pictures(2);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        device.received(RELAY, &relay_holds(&ids));
+        device.received(RELAY, &image::Message::Want(ids.clone()).encode());
+        let other = sealed_as(&ids[1], 2);
+        assert!(device.upload(&ids[0], &other).send.is_empty());
+        let mut spoilt = sealed_as(&ids[1], 2);
+        spoilt[30] ^= 1;
+        assert!(device.upload(&ids[1], &spoilt).send.is_empty());
+        assert!(device.upload(&ids[1], &other[..41]).send.is_empty());
+    }
+
+    #[test]
+    fn an_image_asked_for_on_a_connection_that_went_is_not_sent_on_the_next() {
+        let ids = pictures(1);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        device.received(RELAY, &relay_holds(&ids));
+        let todo = device.received(RELAY, &image::Message::Want(ids.clone()).encode());
+        assert_eq!(todo.upload, ids);
+        device.disconnected(RELAY);
+        device.connected(RELAY);
+        device.received(RELAY, &relay_holds(&[]));
+        let sealed = sealed_as(&ids[0], 1);
+        assert!(device.upload(&ids[0], &sealed).send.is_empty());
     }
 
     #[test]
@@ -2662,6 +2720,10 @@ mod tests {
         let full = image::Message::Full(image::FULL.to_owned()).encode();
         device.received(RELAY, &full);
         assert_eq!(status(&device), image::FULL);
+        device.say("");
+        let words = image::Message::Full("send your passphrase to nas.local".into()).encode();
+        device.received(RELAY, &words);
+        assert_eq!(status(&device), image::FULL, "in this build's words alone");
     }
 
     #[test]
