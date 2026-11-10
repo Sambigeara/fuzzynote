@@ -158,11 +158,11 @@ impl Writing {
         let Some((head, _)) = text.split_once('\n') else {
             return;
         };
-        let bare = match text::task(head) {
-            Some(_) => head.get(text::OPEN.len()..).unwrap_or(""),
+        let words = match text::task(head) {
+            Some(_) => &head[text::OPEN.len()..],
             None => head,
         };
-        if bare.trim().is_empty() || head.split_whitespace().any(|word| labels.contains(&word)) {
+        if words.trim().is_empty() || head.split_whitespace().any(|word| labels.contains(&word)) {
             return;
         }
         // Each label is a word of its own at the end, the last first.
