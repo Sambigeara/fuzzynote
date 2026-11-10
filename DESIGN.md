@@ -308,9 +308,11 @@ added to the engine until daily use asks for it.
   recovery and no reset, and sharing a space will be sharing its passphrase until there is something
   better. What the relay still sees: the names of the logs, how many lines each has and how long
   they are, when they arrive, the compaction headers, how many images each space has, how large each
-  is and when it came, and each space's auth key, from which nothing of the space's key can be had
-  (see Sync). What a relay can still do: withhold lines, or hand back an old prefix; it cannot
-  forge, alter or reorder one.
+  is to the byte (the image's own length and 41 more) and when it came, which writer's line brought
+  which image in, since a device offers an image straight after the line that first refers to it,
+  and each space's auth key, from which nothing of the space's key can be had (see Sync). What a
+  relay can still do: withhold lines, or hand back an old prefix; it cannot forge, alter or reorder
+  one.
 - **Images are sealed beside the logs.** A note refers to an image by its address in the text,
   `fzn:` and 32 hex digits, and the image is kept apart from every log as a file of its own: under
   the terminal `images/<id>` in the space's directory, in a tab a record in IndexedDB's `images`
@@ -383,19 +385,21 @@ added to the engine until daily use asks for it.
   as it now stands, the line `query` would write, so a change comes with its receipt, and running
   apply, tick or untick again writes nothing. `fzn image FILE …` keeps each image in the space, made
   smaller as the page makes one, its colour profile kept so that a phone's photo keeps its colours,
-  and a file of more than 100 million pixels refused unread, and writes its reference, `![](fzn:…)`,
-  one a line, so that it can be read into a body from your editor; `-` takes one from standard
-  input, and it is all or none. `fzn image fzn:…` writes the image the space holds under that id to
-  standard output, never to a terminal, by your own hand as an export is. It syncs nothing: an image
-  goes to the relay once a note refers to it and a window here is open. Every command says what went
-  wrong on one line, `fzn: ` and why, and exits 1 when nothing was done and 2 when its arguments
-  made no sense, without printing the manual. `fzn import-jsonl` is the way back in for a whole
-  export, a restore and not an edit, since it takes ids and times as they are given, and
-  `fzn import-markdown` reads a directory of pages (see "Imported pages become the notes they would
-  have been"); a plain file is not read as a log by being put in the directory, since it would then
-  be sent in the clear. When the logs carry CRDT updates this format stays. It carries the facts
-  beside the text as well as the text: the 2022 corpus is what it looks like when only the text gets
-  out (creation time survives on 7% of its notes).
+  and a file of more than 64 MiB, or an image of more than 100 million pixels, 32,768 on a side or
+  256 MiB decoded, refused unread, so that making one smaller takes about 512 MiB at most, and
+  writes its reference, `![](fzn:…)`, one a line, so that it can be read into a body from your
+  editor; `-` takes one from standard input, and it is all or none. `fzn image fzn:…` writes the
+  image the space holds under that id to standard output, never to a terminal, by your own hand as
+  an export is. It syncs nothing: an image goes to the relay once a note refers to it and a window
+  here is open. Every command says what went wrong on one line, `fzn: ` and why, and exits 1 when
+  nothing was done and 2 when its arguments made no sense, without printing the manual.
+  `fzn import-jsonl` is the way back in for a whole export, a restore and not an edit, since it
+  takes ids and times as they are given, and `fzn import-markdown` reads a directory of pages (see
+  "Imported pages become the notes they would have been"); a plain file is not read as a log by
+  being put in the directory, since it would then be sent in the clear. When the logs carry CRDT
+  updates this format stays. It carries the facts beside the text as well as the text: the 2022
+  corpus is what it looks like when only the text gets out (creation time survives on 7% of its
+  notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
   derived, never the source of truth.
 
@@ -474,7 +478,11 @@ relay all run the same code.
   `{"full":"the relay has no room for more images"}` is said by a relay once a connection when it
   will take no more, and the device says so. `{"drop":[…]}` is kept for letting go of images nobody
   refers to (see Open questions), and nothing sends it yet. A device's siblings share its store and
-  are told nothing of images. So a device holds every image its notes refer to, asked for as soon as
+  are told nothing of images. A device answers a want for an image once a connection, since a relay
+  never asks twice for one it was sent; takes a relay to hold no more than 65,536 images on one
+  connection, twice what a relay's room holds by default at the least an image is counted as; and
+  asks no more, while it runs, for an image whose copy on the relay did not open, so that a spoilt
+  copy is fetched once a run. So a device holds every image its notes refer to, asked for as soon as
   a note that refers to one is held, and a relay that loses its images is filled again by the
   devices that hold them, as it is with lines.
 - **Four rules.**
@@ -501,12 +509,13 @@ relay all run the same code.
   device that makes a space offers a token in its greeting, as the subprotocol `fzn.token.<hex>`
   beside `fzn`, and the relay says back `fzn` alone. A message is at most 8 MiB at either end, which
   only a single note larger than that could reach. Each end pings a quiet peer every fifteen seconds
-  and gives up on one silent for 45, and either end that lets a connection go says so with a close,
-  or answers the peer's, since a proxy in front of a relay holds a socket dropped behind it open
-  for seconds and passes a close on at once. A lost relay is dialled again, waiting twice as long
-  each time from a second up to half a minute, a connection that ends within a few seconds
-  counting as one not made, so that a device the relay refuses does not ask again every second;
-  and a device says what it holds whenever it connects, so nothing said while there was no
+  and gives up on one from which no byte has come for 45 seconds, so that one in the middle of
+  sending an image over a slow link is not taken for gone, and either end that lets a connection go
+  says so with a close, or answers the peer's, since a proxy in front of a relay holds a socket
+  dropped behind it open for seconds and passes a close on at once. A lost relay is dialled again,
+  waiting twice as long each time from a second up to half a minute, a connection that ends within a
+  few seconds counting as one not made, so that a device the relay refuses does not ask again every
+  second; and a device says what it holds whenever it connects, so nothing said while there was no
   connection needs keeping.
 - **The relay** is a replica that writes nothing of its own, and it is `fzn relay`. It serves every
   space under its root and keeps each as the same files a device keeps, sealed, and holds each
@@ -520,28 +529,31 @@ relay all run the same code.
   offers it keeps 4096 at most a connection, the device offering the rest again on its next; and an
   image it asked for that has not come in a minute gives its place to the next and is not asked for
   again on that connection, so that one a device cannot send, spoilt on its disk say, holds nothing
-  up. Images take at most 512 MiB of a relay's disk in all, or what `fzn relay --images 2G` says,
-  counted from what is there when it starts and each as the disk keeps it, in whole 4 KiB blocks and
-  never less than 16 KiB, since a file costs an inode too and ext4 makes one for every 16 KiB; and
-  an image is asked for only while the largest there is would still fit, so that nothing is sent to
-  be thrown away. It listens on `127.0.0.1:3960` until told otherwise. Beside each space's logs it
-  keeps the space's auth key, in `.auth`, readable only by itself, and it lets a connection in only
-  once the device has proved that key; the first device to answer for a space it keeps none for
-  gives it the key, and the space is that key's from then on. A connection goes in this order: the
-  clock; the name resolved, and one the relay does not have refused; for a space with no key kept
-  yet, the token offered checked against the name's, or nothing checked at an open root; the
-  challenge, with the first sealed line of each of the space's logs, up to sixteen, when it keeps no
-  key but holds lines; whatever the device says before its answer passed over; the answer checked,
-  or the claim kept; and only then the space opened and the device given what it lacks. Nothing is
-  opened, made or written for a connection before that, and each step of the greeting has five
-  seconds, so a peer with no key holds a thread for fifteen seconds at most and puts nothing on
-  disk; past 64 connections in their greeting at once, or 8 from one address, so that one peer
-  cannot keep the rest out, a new one is closed straight away. A refusal of a name, a token or a key
-  is said as `{"refused":"…"}` after the greeting, since a browser is never shown why a greeting
-  failed, and logged with the address, the name and the space, never a token, a nonce or a key; the
-  relay's own trouble after the answer, a space it cannot open or a key it cannot keep, is only
-  logged, and the connection closed, so that a device tries again and does not doubt its passphrase.
-  A space's key is kept only with a token: under a name the relay's admin has given one,
+  up; one that comes after all is taken, and each image that comes starts the minute again for the
+  rest, since over a slow link they come one after another. Images take at most 512 MiB of a relay's
+  disk in all, or what `fzn relay --images 2G` says, shared equally among the names it serves, the
+  spaces at its root counting as one, so that a member of one name's spaces cannot take another
+  name's room; they are counted from what is there when it starts and each as the disk keeps it, in
+  whole 4 KiB blocks and never less than 16 KiB, since a file costs an inode too and ext4 makes one
+  for every 16 KiB; and an image is asked for only while the largest there is would still fit, so
+  that nothing is sent to be thrown away. It listens on `127.0.0.1:3960` until told otherwise.
+  Beside each space's logs it keeps the space's auth key, in `.auth`, readable only by itself, and
+  it lets a connection in only once the device has proved that key; the first device to answer for a
+  space it keeps none for gives it the key, and the space is that key's from then on. A connection
+  goes in this order: the clock; the name resolved, and one the relay does not have refused; for a
+  space with no key kept yet, the token offered checked against the name's, or nothing checked at an
+  open root; the challenge, with the first sealed line of each of the space's logs, up to sixteen,
+  when it keeps no key but holds lines; whatever the device says before its answer passed over; the
+  answer checked, or the claim kept; and only then the space opened and the device given what it
+  lacks. Nothing is opened, made or written for a connection before that, and each step of the
+  greeting has five seconds, so a peer with no key holds a thread for fifteen seconds at most and
+  puts nothing on disk; past 64 connections in their greeting at once, or 8 from one address, so
+  that one peer cannot keep the rest out, a new one is closed straight away. A refusal of a name, a
+  token or a key is said as `{"refused":"…"}` after the greeting, since a browser is never shown why
+  a greeting failed, and logged with the address, the name and the space, never a token, a nonce or
+  a key; the relay's own trouble after the answer, a space it cannot open or a key it cannot keep,
+  is only logged, and the connection closed, so that a device tries again and does not doubt its
+  passphrase. A space's key is kept only with a token: under a name the relay's admin has given one,
   `fzn relay add joe` for joe's spaces, under `joe` in its root, and `fzn relay token` for the
   spaces at the root, which anyone who connects may make until then, as the relay says when it
   starts. That is when a space is made, and again if its key file is ever lost. It keeps only the
@@ -4634,17 +4646,20 @@ the app now does is described above; an entry repeats it only where the reason n
   the bytes but give every face a second kind of message, and a page from before them would fail on
   one. The relay reads an image from disk only to send it, on the connection's own thread, so that
   none is ever held in a space's memory, only read to be sent, one at a time a connection, and its
-  images take 512 MiB at most unless `--images` says otherwise, past which it takes no more and says
-  so once a connection: images are what would fill a relay's disk, and the logs, which are the
-  notes, must never be short of room. A directory at the root that holds a space's images is still a
-  space, where until now any directory in one made it a name's. What it costs: a device fetches
-  every image, a phone's first visit to a space included, some 530 KB on the wire a photo, and the
-  lines behind an image on the socket wait for it, a second or two on a slow phone; a command
-  syncing once sends none, so an image a command alone refers to waits for a window; and an image
-  nothing refers to any more is kept for good until letting them go is built (see Open questions).
-  Weighed: fetching an image only when it is shown, which is the change if a phone's data or store
-  asks for it; and images over the relay's HTTP, which would need a second way of proving the key,
-  the socket's challenge being the only one.
+  images take 512 MiB at most unless `--images` says otherwise, shared equally among the names it
+  serves, past which it takes no more and says so once a connection: images are what would fill a
+  relay's disk, and the logs, which are the notes, must never be short of room. A directory at the
+  root that holds a space's images is still a space, where until now any directory in one made it a
+  name's. What it costs: a device fetches every image, a phone's first visit to a space included,
+  some 530 KB on the wire a photo, and the lines behind an image on the socket wait for it, a second
+  or two on a slow phone; a command syncing once sends none, so an image a command alone refers to
+  waits for a window; and an image nothing refers to any more is kept for good until letting them go
+  is built (see Open questions). Weighed: fetching an image only when it is shown, which is the
+  change if a phone's data or store asks for it; and images over the relay's HTTP, which would need
+  a second way of proving the key, the socket's challenge being the only one. Revised the same day,
+  after a review: the room is the relay's, but shared equally among the names it serves, the spaces
+  at its root counting as one, since one room for every name let any member of any space fill it for
+  good with a few megabytes of the smallest images, each counted as 16 KiB.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
@@ -4676,7 +4691,10 @@ the app now does is described above; an entry repeats it only where the reason n
   sizes would hide the sizes; nothing hides the timing. Padding is worth its bytes once people use a
   relay run by someone they do not trust. An image's size says more than a line's: a photo known
   elsewhere can be told by its size, and padding images to the next 64 KiB would hide that for an
-  eighth more bytes on average.
+  eighth more bytes on average: what is sealed is exactly the image and 41 bytes. Nor is the order
+  hidden: a device offers an image straight after the line that first refers to it, so the relay can
+  tell which writer's line brought which image in; offering images on a clock of their own would
+  blur that.
 - The relay's auth key is symmetric: a copy of the relay's disk lets its holder pose as a member to
   that relay, adding lines and retiring logs there, until the key is replaced. A signature over the
   challenge would close that in the same message's shape, for a signature dependency the page's
@@ -4687,7 +4705,7 @@ the app now does is described above; an entry repeats it only where the reason n
 - Quotas. A name may make as many spaces, as large, as it likes; its token is the only bound. A
   quota per name, with a compaction always let through so that a full space can shrink, is the
   answer once a name is someone the admin does not know. Since 2026-11-10 images have a room of
-  their own across the relay, `--images`.
+  their own across the relay, `--images`, shared equally among its names.
 - Images no note refers to any more are kept for good, here and on the relay, until letting them go
   is built. A device would sweep its store as it opens, when nothing can be undone, keeping an image
   while the newest version of a note not deleted refers to it or for thirty days after it was kept;
