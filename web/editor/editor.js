@@ -605,9 +605,9 @@ export function mount(hooks, foot) {
     // Writes image references into the open body, each on a line of its own (see DESIGN "An image is
     // drawn under its line"): on the line dropped on, where the text has moved it since, or the
     // caret's line, or in a body not yet written in its last line, and past the table or the block
-    // of code that line is in; an empty line takes them in its place and any other has them after
-    // it; the caret goes to the start of the line after the last, an empty one made at the end when
-    // there is none. One change to undo, the person's own.
+    // of code that line is in; an empty line takes them in its place, but for the one that ends a
+    // table, and any other has them after it; the caret goes to the start of the line after the
+    // last, an empty one made at the end when there is none. One change to undo, the person's own.
     insertImages(lines, at) {
       spots.delete(at);
       if (!whole) return;
@@ -629,7 +629,23 @@ export function mount(hooks, foot) {
           return false;
         },
       });
-      const empty = !inside && target.text.trim() === '';
+      const holds = (number, name) => {
+        if (number < 1 || number > doc.lines) return false;
+        const { from, to } = doc.line(number);
+        let found = false;
+        syntaxTree(view.state).iterate({
+          from,
+          to,
+          enter(node) {
+            if (found) return false;
+            found = node.name === name;
+          },
+        });
+        return found;
+      };
+      // An empty line straight after a table is what ends it, and a reference in its place would be
+      // a row of it, as would every line after up to the next empty one: that line stays.
+      const empty = !inside && target.text.trim() === '' && !holds(target.number - 1, 'Table');
       const from = empty ? target.from : target.to;
       let insert = `${empty ? '' : table ? '\n\n' : '\n'}${lines.join('\n')}`;
       const end = from + insert.length;
