@@ -4633,18 +4633,21 @@ the app now does is described above; an entry repeats it only where the reason n
   it adds. Every face makes an image smaller before it is kept, by one rule: turned as its camera
   said, at most 2048 pixels on its long edge and never enlarged, a PNG kept as a PNG while it comes
   to 1.5 MiB or less and anything else made a JPEG at quality 0.82 on white, an animation's first
-  frame, and at most 2 MiB; nothing of the original is kept, where it was taken included, and 2048
-  pixels keeps the print on a data plate readable. It is sealed under the space's key as a line is,
-  in bytes and bound to being an image, and kept as a file of its own beside the logs and never in
-  one: every replica keeps every line in memory, the relay included, and a version is the whole
-  note, written again at every letter typed in its head, so a 400 KB photo in a line would be some
-  700 KB a keystroke. In the page it crosses to the engine as bytes, since an image is not text.
-  What it costs: a space holds something that is not text for the first time, with a store of its
-  own in every face, and the terminal shows the address and not the picture. Rejected: an image in
-  the text as a `data:` address, which needs nothing new and is the 700 KB a keystroke; images as
-  lines of a log; an id that is SHA-256 alone, against which a relay could test a photo it knows;
-  keeping the original, larger and carrying where it was taken; and Obsidian's `![[boiler.png]]`,
-  which fzn reads as a link to a note.
+  frame, and at most 2 MiB; nothing of the original is kept but its pixels and, in the terminal,
+  its colour profile, so that a phone's photo keeps its colours there, where the page draws it in
+  sRGB as its canvas does; where it was taken is never kept, and 2048 pixels keeps the print on a
+  data plate readable. Each face makes its own smaller copy with its own encoder, so one photo added
+  by the terminal and by the page is two images with two ids, each kept once. It is sealed under the
+  space's key as a line is, in bytes and bound to being an image, and kept as a file of its own
+  beside the logs and never in one: every replica keeps every line in memory, the relay included,
+  and a version is the whole note, written again at every letter typed in its head, so a 400 KB
+  photo in a line would be some 700 KB a keystroke. In the page it crosses to the engine as bytes,
+  since an image is not text. What it costs: a space holds something that is not text for the first
+  time, with a store of its own in every face, and the terminal shows the address and not the
+  picture. Rejected: an image in the text as a `data:` address, which needs nothing new and is the
+  700 KB a keystroke; images as lines of a log; an id that is SHA-256 alone, against which a relay
+  could test a photo it knows; keeping the original, larger and carrying where it was taken; and
+  Obsidian's `![[boiler.png]]`, which fzn reads as a link to a note.
 
 - **Every device holds every image its notes refer to.** Decided 2026-11-10, at Sam's ask, with "A
   note holds an image by its address, and the image is sealed beside the logs". Offline is the
