@@ -4607,8 +4607,10 @@ the app now does is described above; an entry repeats it only where the reason n
   as every face makes one, kept, and written on a line of its own with no alt text: in place of the
   caret's line where that is empty and otherwise after it, or after the line it is dropped on,
   anywhere on the sheet a drop counting as on the line nearest, past a table or a block of code
-  that line is in, or at the end of a body not yet written in, and the caret goes to the line
-  after it. A file that is not an image is said not to be one and written in as nothing. An image
+  that line is in, or at the end of a body not yet written in. The empty line that ends a table
+  stays, since a line straight after a table is a row of it. The caret goes to the line after it,
+  an empty one made there where that line is another image's, whose source the caret would show.
+  A file that is not an image is said not to be one and written in as nothing. An image
   pasted or dropped on a row or on the line is said to belong in a body. What it costs: a body
   beside the list with many photos lays them out as they come into sight, a drawn photo takes up
   to 16 MiB of a tab's memory while it is on the screen, and the pictures a tab has opened, up to
