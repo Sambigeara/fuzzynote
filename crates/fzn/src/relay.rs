@@ -1405,6 +1405,7 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         lapsed: BTreeSet::new(),
         owed: VecDeque::new(),
         full_said: false,
+        unread_said: false,
     };
 
     let ended = (|| -> Result<()> {
@@ -1465,6 +1466,8 @@ struct Images<'a> {
     /// in the relay's memory for it.
     owed: VecDeque<String>,
     full_said: bool,
+    /// Whether an image that could not be read has been logged, which is once a connection.
+    unread_said: bool,
 }
 
 impl Images<'_> {
@@ -1588,7 +1591,11 @@ impl Images<'_> {
                     return Ok(());
                 }
                 Ok(None) => {}
-                Err(why) => eprintln!("fzn relay: {}: {why:#}", self.label),
+                Err(why) => {
+                    if !std::mem::replace(&mut self.unread_said, true) {
+                        eprintln!("fzn relay: {}: {why:#}", self.label);
+                    }
+                }
             }
         }
         Ok(())
