@@ -380,9 +380,9 @@ fn size_of(text: &str) -> Option<u64> {
 /// How the room for images is shared among the names a relay serves.
 fn said_share(names: u64, share: u64, most: u64) -> String {
     match names {
-        1 => "one name holds spaces here, and may take all of it".to_owned(),
+        1 => "one name is served here, and may take it all".to_owned(),
         n => format!(
-            "{n} names hold spaces here, and each may take {}",
+            "{n} names are served here, and each may take {}",
             said_size(share, most)
         ),
     }
@@ -1007,7 +1007,7 @@ mod tests {
         assert_eq!(said_size(300 << 10, 512 << 10), "300 KiB");
         assert_eq!(
             said_share(2, 256 << 20, 512 << 20),
-            "2 names hold spaces here, and each may take 256 MiB"
+            "2 names are served here, and each may take 256 MiB"
         );
         assert_eq!(IMAGES_DEFAULT, 536_870_912);
     }
