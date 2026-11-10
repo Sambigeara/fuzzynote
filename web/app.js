@@ -2131,7 +2131,8 @@ function showCaret(left, top, wide, tall) {
 }
 
 // In the editor there is no copy to measure: the editor says where the caret is and where the
-// letter after it ends. The block is sized and centred as it is on the line. In vim's insert mode
+// letter after it ends. The block is sized and centred as it is on the line, by the line it is on,
+// so that on a heading, or the open body's head, it is the larger text's. In vim's insert mode
 // it is a bar at the caret, as a terminal draws vim's. The block is placed in the editor's frame,
 // what the sheet scrolls or the head's frame in its row, so that it moves with the text. A head
 // longer than its row reads from its start as the cursor lands, its caret at the end, past the
@@ -2142,7 +2143,7 @@ function placeEditorCaret() {
   const c = editor.caret();
   const parent = editor.dom.parentElement;
   const head = !!view?.field && !editor.whole;
-  const style = getComputedStyle(editor.contentDOM);
+  const style = getComputedStyle(c.line ?? editor.contentDOM);
   const tall = parseFloat(style.lineHeight) || 1.5 * parseFloat(style.fontSize);
   if (head && parent && view.offer) {
     const mark = editor.coordsAt(Math.min(unitsIn(editor.text(), view.offer.from), editor.selection().head));
@@ -2160,7 +2161,10 @@ function placeEditorCaret() {
   const size = parseFloat(style.fontSize);
   const bar = c.mode === 'insert';
   const letter = c.right ? c.right.left - c.rect.left : 0;
-  const wide = bar ? 2 : c.right ? Math.max(letter, 0.35 * size) : 0.55 * size;
+  // Past a line's last letter the block is a letter of its face wide, which in a block of code is
+  // the monospace's, six tenths of its size.
+  const end = c.line?.classList.contains('hl-code') ? 0.6 : 0.55;
+  const wide = bar ? 2 : c.right ? Math.max(letter, 0.35 * size) : end * size;
   const frame = parent.getBoundingClientRect();
   const inset = bar ? 1 : c.right ? (wide - letter) / 2 : 0;
   let x = c.rect.left - inset;

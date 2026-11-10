@@ -15,12 +15,14 @@
 // either side of one touches the span and shows it, so no caret ever stops beside a mark it cannot
 // see.
 //
-// A row's head is one line, read as a head is read in the list (see render.js), and has two things
-// a body does not. Its box, `[ ]` or `[x]` at its start, is the task's, drawn as the list draws it
-// and ticked by the page when it is pressed; with the space after it, and a heading's mark after
-// that, it is the head's lead. And in a place, the place's labels that end it read hidden, as the
-// row reads off the cursor, until the caret goes into them: a caret before them, where the caret
-// lands, leaves them hidden and writes before them.
+// The first line is the head, in a row and in the open body alike, and its box, `[ ]` or `[x]` at
+// its start, is the task's: with the space after it, and a heading's mark after that, it is the
+// head's lead, drawn as a box while the selection does not touch it. In a row the box is drawn as
+// the list draws it and ticked by the page when it is pressed; in the open body it is drawn as a
+// body's box is, which a press does not tick. A row's head is one line, read as a head is read in
+// the list (see render.js), and has one thing a body does not: in a place, the place's labels
+// that end it read hidden, as the row reads off the cursor, until the caret goes into them; a
+// caret before them, where the caret lands, leaves them hidden and writes before them.
 //
 // Nothing here changes the text. Decorations hide marks and draw in their place, so the note, its
 // undo, a copy and a paste are the source. Only marks are hidden, and a place's labels, and each
@@ -140,7 +142,7 @@ function reading(view, arrived) {
   const leadOf = (line) => {
     if (leads.has(line.number)) return leads.get(line.number);
     let end = -1;
-    if (head && line.number === 1) {
+    if (line.number === 1) {
       const box = BOX.exec(line.text);
       if (box) end = line.from + box[0].length;
     }
@@ -175,13 +177,13 @@ function reading(view, arrived) {
     const end = leadOf(line);
     return end >= 0 && touched(line.from, end);
   };
-  // A head's box is drawn in its place, the space after it and a heading's mark after that gone.
-  if (head) {
-    const first = doc.line(1);
-    const box = BOX.exec(first.text);
-    if (box && !leadTouched(first.from)) {
-      hide(first.from, first.from + box[0].length, box[0][1] === 'x' ? untick : tick);
-    }
+  // A head's box is drawn in its place, the space after it and a heading's mark after that gone:
+  // a row's to be ticked, the open body's to be read.
+  const first = doc.line(1);
+  const box = BOX.exec(first.text);
+  if (box && !leadTouched(first.from)) {
+    const done = box[0][1] === 'x';
+    hide(first.from, first.from + box[0].length, head ? (done ? untick : tick) : done ? ticked : open);
   }
   for (const { from, to } of view.visibleRanges) {
     tree.iterate({

@@ -654,8 +654,7 @@ body.resting .row .head a,
 #sheet-foot .cm-vim-panel input { font: inherit; color: var(--ink); padding: 0; }
 /* Wider than a phone the open body is the page above the foot: the room a card left round the text
    only showed how far its edge stood from it. The text fades at the foot, as the list does, and
-   the last line can be scrolled clear of the words there. Its head is set a little heavier, as it
-   was on its row. */
+   the last line can be scrolled clear of the words there. */
 @media (min-width: 641px) {
   #buffer {
     top: 0;
@@ -673,7 +672,6 @@ body.resting .row .head a,
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
   }
   #sheet > .cm-editor { width: min(100%, var(--measure) + 3rem + var(--pane)); }
-  #sheet .cm-content > .cm-line:first-child { font-weight: 500; }
   #sheet-foot .cm-panels { padding-left: var(--left); }
 }
 
@@ -719,8 +717,14 @@ body.resting .row .head a,
    reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
    dot, a task's box drawn as it is read and a done task faint, and a rule drawn through its line.
    Nothing here makes a line taller or shorter than it is written; a heading's first three levels
-   are sized on their line, mark shown or not, in a body and never in a row. */
-#sheet .cm-line.md-h1 { font-size: 1.5em; }
+   are sized on their line, mark shown or not, in a body and never in a row. The head, its first
+   line, is the page's title, set as a first-level heading is at every width, and a head that is
+   one is set no larger again. A task's head wraps under its words, not under its box, as its row
+   does on a phone. */
+#sheet .cm-line.md-h1,
+#sheet .cm-content > .cm-line:first-child { font-size: 1.5em; }
+#sheet .cm-content > .cm-line:first-child { font-weight: 600; }
+#sheet .cm-content > .cm-line:first-child:has(> .md-check) { padding-left: 1.3em; text-indent: -1.3em; }
 #sheet .cm-line.md-h2 { font-size: 1.3em; }
 #sheet .cm-line.md-h3 { font-size: 1.15em; }
 .cm-editor .cm-line.md-quote { padding-left: 0.75em; border-left: 1px solid var(--rule); }

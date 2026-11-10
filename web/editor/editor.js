@@ -452,8 +452,8 @@ export function mount(hooks, foot) {
       return mode();
     },
     // Where the caret is, for the page to draw: the position's own rectangle, on the side of the
-    // soft wrap the selection keeps to, and the right edge of the letter after it when that
-    // letter is on the same line.
+    // soft wrap the selection keeps to, the right edge of the letter after it when that letter is
+    // on the same line, and the line it is on, whose size a heading's or the head's own may be.
     caret() {
       const { empty, head, assoc } = view.state.selection.main;
       const rect = view.coordsAtPos(head, assoc || 1);
@@ -462,7 +462,9 @@ export function mount(hooks, foot) {
         const after = view.coordsAtPos(head + 1, -1);
         if (after && after.top === rect.top) right = after;
       }
-      return { empty, rect, right, mode: mode() };
+      const { node } = view.domAtPos(head);
+      const line = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest('.cm-line');
+      return { empty, rect, right, line, mode: mode() };
     },
     // Where a position is, for what is offered under a word.
     coordsAt: (pos) => view.coordsAtPos(pos, 1),

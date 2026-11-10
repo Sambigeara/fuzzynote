@@ -1279,17 +1279,18 @@ into it showing it as typed, a link read followed by a
 press, an address in a tab of its own with the body left open and `[[Boiler]]` into Boiler as Tab
 goes, the body written as it closes, but for the span the selection touches, which shows its marks
 where they stand, a press on it the caret's, the marks in the faint grey and the text
-in ink, headings and strong text heavier, the first three levels of heading larger, emphasis
-slanted, code in the monospace; a body opens reading whole, as a head is landed on; soft wrap, step
+in ink, headings and strong text heavier, the first three levels of heading larger, its head set
+as a first-level heading is, as the page's title, with its task's box drawn as a body's is (see
+"An open body's head is its title"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is landed on; soft wrap, step
 undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and
 code, a pointer over a link that a press follows, and vim mode for the body, for the browser that asked for it with the word
 `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is not
 offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's
 long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`,
 `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back first,
-and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard too. The page's caret is drawn from the editor's
-coordinates, in a head and in a body, a block, and in vim's insert mode a bar. Vim's prompt for a
-command is at the foot of the sheet, under the text and a hairline. The editor is fetched as the
+and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard too.
+The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as high
+as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot of the sheet, under the text and a hairline. The editor is fetched as the
 page starts, beside the engine, and nothing is painted until it is here. The `editor` the engine
 offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and the bar
 the sheet's colour while it is open; a wider touch screen has it as the page, sized from the frame.
@@ -2465,6 +2466,8 @@ the app now does is described above; an entry repeats it only where the reason n
   a muted blue, its underline a tint of that blue. Revised 2026-10-20 by "A row's marks show only in
   the span being written": a head is parsed as a line alone, so a list item's or a quote's mark in
   it is a word of it and the rest is read, and the row under the cursor shows its marks by span.
+  Revised 2026-11-10 by "An open body's head is its title": in the open body, where no row is on
+  the screen, the head is set as a title.
 
 - **The path is the browser's history.** Decided 2026-10-16, with the phone (Sam asked for the best
   that can be made there), on every width. A phone's back gesture, and a mouse's back button, are
@@ -3721,7 +3724,8 @@ the app now does is described above; an entry repeats it only where the reason n
   the small end is a size too few eyes tell apart; and sizing rows as well, which would make a row
   whose head is a heading taller than the rest. Revised 2026-10-20 by "A row's marks show only in
   the span being written": the caret shows a heading's `#` only while it touches the line's lead,
-  and the heading's size changes nothing either way.
+  and the heading's size changes nothing either way. Revised 2026-11-10 by "An open body's head is
+  its title": in the open body a head is set at a first-level heading's size, whatever its level.
 
 - **A row's marks show only in the span being written.** Decided 2026-10-20, at Sam's direction, to
   make the row and the body one rule and the page cleaner, revising "The row under the cursor reads
@@ -4203,7 +4207,8 @@ the app now does is described above; an entry repeats it only where the reason n
   on a phone, and Escape or `done` is the way back; and a line of code longer than the measure
   wraps. Weighed: prose across the whole width, 135 letters a line at 1440 pixels, past reading;
   the card kept and centred, which leaves the empty room and moves the text from the row it opened
-  from; and code across the whole width, a grey slab to the margin.
+  from; and code across the whole width, a grey slab to the margin. Revised 2026-11-10 by "An
+  open body's head is its title": its head is set as a first-level heading is.
 
 - **The open body keeps an editor's habits.** Decided 2026-10-29, at Sam's ask, revising "A wide
   line has the sheet's width" where it kept a selection shaded to the edge of the text. Four things the hands expect of any
@@ -4367,6 +4372,29 @@ the app now does is described above; an entry repeats it only where the reason n
   way in only, which makes the key turn on how the row came; reading nothing on the untouched row,
   which brings back the flash; and opening the body with the caret after the labels, which puts the
   writer's text after the place's labels in the head.
+
+- **An open body's head is its title.** Decided 2026-11-10, at Sam's ask, revising the part of "An
+  open body is the page" (2026-10-29) that set its head a little heavier, as it was on its row; the
+  part of "A head reads every inline mark a body does" (2026-10-16) that said a head is not a
+  title, which was about one line reading one way beside its body; and "A body's headings are sized
+  by their level" (2026-10-20), where a head written as a heading took its level's size in the
+  sheet. Since the open body became the page, the list is out of sight while it is open, and the
+  head stands at the top of a page of text, which reads as a document's title; set a little heavier
+  at the text's size it read as the first line of a paragraph. A head was not a title for the sake
+  of one line reading one way on one screen, a row beside its body; in the open body no row is on
+  the screen. So the head is set as the body's own `#` is, at one and a half times the text and at a
+  heading's weight, at every width, and a head written as a heading of any level is set at the
+  head's size, so `# Boiler` and `## Boiler parts` look as a plain head does. A task's head has its
+  box drawn, as a body's task has, read until the selection touches it and never ticked by a press,
+  and its wrapped lines go on under its words; a done one is ticked and stays in ink, since a title
+  opened to read stays a title and the box says it is done. The page's caret on it, as on any
+  heading, is as high as its line and as wide as its letters, where it had been the text's height
+  on every line. Rows, the step on the path, the note read above the line and the body read beside
+  the list keep the text's size, as "A body's headings are sized by their level" keeps a row's; the
+  terminal hands the note to your editor and is unchanged. What it costs: the body starts half a
+  line lower, and a long head wraps sooner, onto about half as many lines again. Weighed: a size of
+  the head's own between the heading's and the text's, a fourth size to tell apart; and a rule
+  under the head, which is chrome.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
