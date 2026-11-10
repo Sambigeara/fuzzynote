@@ -1161,19 +1161,20 @@ definitions heavier, strings, numbers and constants soft, comments faint and sla
 and a diff's removed lines faint; code read is set in ink, a block of it on a faint wash of ink.
 Code in a line lies on a wash of the text's own colour, in a row and a body read, where it is in
 ink, except in a done task or a link, whose colour it keeps; in the editor, a head's or the sheet's,
-code in a line has the same wash, and a block's lines a band of it. A link is in the link's blue, a
-step back toward the grey around it on the resting page, an archived row and a done task, and
-underlined in a tint of its colour, clear of the descenders, in full under the pointer, never
-heavier. In the editor what the read makes a link is marked so and nothing else: a link's or an
-image's words whose address the page follows, and such an address standing alone, bare, in angle
-brackets or in a link's definition, but not `[draft]`, a link by reference or `www.example.org`,
-which read as typed; a link's brackets, its title and the address after its words stay as they were,
-faint or soft, in a link the selection touches and go in any other; `[[Boiler]]` is unmarked there,
-brackets and all, as it is read. An address read as itself is shown without its scheme,
-`example.org/garden`, and whole under the pointer. A long body is rendered at first only as far as
-it shows, its first 5,000 letters, and whole once the page is idle. A head is parsed only if it
-holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`; nested past what the
-stack holds, a body is read as typed.
+code in a line has the same wash, and a block's lines a band of it, its fences' backticks drawn from
+where the code's capitals start, since a grave accent in a monospace stands above the letters and
+against the band's edge. A link is in the link's blue, a step back toward the grey around it on the
+resting page, an archived row and a done task, and underlined in a tint of its colour, clear of the
+descenders, in full under the pointer, never heavier. In the editor what the read makes a link is
+marked so and nothing else: a link's or an image's words whose address the page follows, and such an
+address standing alone, bare, in angle brackets or in a link's definition, but not `[draft]`, a link
+by reference or `www.example.org`, which read as typed; a link's brackets, its title and the address
+after its words stay as they were, faint or soft, in a link the selection touches and go in any
+other; `[[Boiler]]` is unmarked there, brackets and all, as it is read. An address read as itself is
+shown without its scheme, `example.org/garden`, and whole under the pointer. A long body is rendered
+at first only as far as it shows, its first 5,000 letters, and whole once the page is idle. A head
+is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`;
+nested past what the stack holds, a body is read as typed.
 
 *Keys.* The four that are the app are the same, type, Enter, Escape and the arrows, and Tab goes in,
 as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page

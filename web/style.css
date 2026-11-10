@@ -712,6 +712,13 @@ body.resting .row .head a,
   box-shadow: -0.6em 0 0 var(--band), 0.6em 0 0 var(--band);
 }
 .hl-code .hl-mono { font-size: inherit; }
+/* A grave accent stands above the letters in a monospace, so a fence's backticks, alone on their
+   line, sat against the top of the band, and the line read as cut off at its edge and emptier than
+   the code's. They are drawn lower, from where the code's capitals start, by a shadow in their
+   colour with the letters themselves left clear, so that their place in the line, and the caret's
+   and the selection's with it, stay where the text is. */
+.hl-fence, .hl-fence * { color: transparent; }
+.hl-fence { text-shadow: 0 0.3em var(--faint); }
 
 /* In the open body what the selection does not touch reads as the body beside the list reads (see
    reading.js): its marks hidden, a quote ruled down its left as a quote read is, a bullet a faint
