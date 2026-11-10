@@ -422,7 +422,13 @@ export const readingMoved = (update) => !!update.view.plugin(read)?.moved;
 // taking the room of the row of dashes, so that nothing moves as the caret goes in or out; a press
 // on it puts the caret in the cell pressed (see `cellAt`), one on its scrollbar only scrolls it,
 // and the arrows walk into it (see `walkIn`). One that does not start and end its lines, inside a
-// quote or a list, is shown as typed.
+// quote or a list, is shown as typed. One wider than the room fades at each edge that hides
+// columns, as a head being written does, which is read again as it scrolls and as it or the room
+// changes width, a font arriving included, and the room its bar takes under the fade is measured,
+// being none where the bar is laid over the table or there is none. Under a mouse its bar shows
+// while the pointer is over it, by a class rather than `:hover`, since Chromium does not always
+// paint a scrollbar again when only its box's `:hover` has changed, and left one shown, or hidden,
+// until something else was painted.
 class Drawn extends WidgetType {
   constructor(source) {
     super();
@@ -436,7 +442,23 @@ class Drawn extends WidgetType {
     box.className = 'md-table-read';
     box.style.setProperty('--lines', this.source.split('\n').length);
     box.append(body(this.source));
+    const edges = () => {
+      const over = box.scrollWidth - box.clientWidth;
+      box.classList.toggle('before', box.scrollLeft > 1);
+      box.classList.toggle('after', box.scrollLeft < over - 1);
+      box.style.setProperty('--under', `${box.offsetHeight - box.clientHeight}px`);
+    };
+    box.addEventListener('scroll', edges, { passive: true });
+    box.addEventListener('pointerenter', () => box.classList.add('pointed'));
+    box.addEventListener('pointerleave', () => box.classList.remove('pointed'));
+    const sized = new ResizeObserver(edges);
+    sized.observe(box);
+    if (box.firstElementChild) sized.observe(box.firstElementChild);
+    measured.set(box, sized);
     return box;
+  }
+  destroy(box) {
+    measured.get(box)?.disconnect();
   }
   // A press on its own scrollbar is the browser's to scroll it by, so the editor does not hear it:
   // the caret stays where it was and the table stays drawn. While the table is wider than the box,
@@ -451,6 +473,9 @@ class Drawn extends WidgetType {
     );
   }
 }
+
+// What watches each drawn table's width, let go when the table is.
+const measured = new WeakMap();
 
 function drawn(state, arrived) {
   if (state.facet(asHead)) return Decoration.none;

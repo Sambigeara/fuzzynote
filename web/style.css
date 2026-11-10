@@ -611,12 +611,50 @@ body.resting .row .head a,
 /* A table drawn in the open body is as high as its source, as many lines as it has: the line the
    row of dashes takes is shared out among its rows, a quarter of it each side of its head's rule.
    Wider than the room, it scrolls sideways on its own: its width is the editor's, never the
-   table's. */
-.md-table-read { overflow-x: auto; scrollbar-width: thin; cursor: text; }
+   table's. Under a mouse its scrollbar is its own, a thin one in the faint that shows while the
+   pointer is over the table or it is being dragged, since a platform's overlay bar comes and goes
+   as it likes; it lies inside the box's height, the table's rows giving it room, so nothing under
+   the table moves. Firefox draws no bar of a page's own, and has its thin one; Chromium draws its
+   own instead of the page's for a box with a scrollbar's colour, which the sheet's would give it.
+   A touch screen keeps its own bar, which shows as the table is swiped, where a bar shown only
+   under a pointer would never show. The edges that hide columns fade, as a head being written
+   does, and the room a bar takes under them does not, as tall as it is measured (see reading.js),
+   none where a bar takes no room. */
+.md-table-read {
+  height: calc(var(--lines) * 1lh);
+  overflow: auto hidden;
+  cursor: text;
+}
+.md-table-read:is(.before, .after) { cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .md-table-read { --bar: 6px; scrollbar-color: auto; }
+  .md-table-read::-webkit-scrollbar { height: var(--bar); }
+  .md-table-read::-webkit-scrollbar-track { background: transparent; border-radius: var(--bar); }
+  .md-table-read::-webkit-scrollbar-track:hover { background: var(--rule); }
+  .md-table-read::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--bar); }
+  .md-table-read.pointed::-webkit-scrollbar-thumb,
+  .md-table-read::-webkit-scrollbar-thumb:active { background: var(--faint); }
+  @supports not selector(::-webkit-scrollbar) {
+    .md-table-read { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+    .md-table-read.pointed { scrollbar-color: var(--faint) transparent; }
+  }
+}
+.md-table-read.before { --edge: linear-gradient(to right, transparent, #000 1.5em); }
+.md-table-read.after { --edge: linear-gradient(to left, transparent, #000 1.5em); }
+.md-table-read.before.after {
+  --edge: linear-gradient(to right, transparent, #000 1.5em, #000 calc(100% - 1.5em), transparent);
+}
+.md-table-read:is(.before, .after) {
+  mask: var(--edge) top / 100% calc(100% - var(--under, 0px)) no-repeat,
+    linear-gradient(#000, #000) bottom / 100% var(--under, 0px) no-repeat;
+  -webkit-mask: var(--edge) top / 100% calc(100% - var(--under, 0px)) no-repeat,
+    linear-gradient(#000, #000) bottom / 100% var(--under, 0px) no-repeat;
+}
 .md-table-read table {
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
-  height: calc(var(--lines) * 1lh);
+  height: 100%;
+  cursor: text;
 }
 /* A row is one line, as in its source, however narrow the room: a cell that wrapped would shrink
    to a letter a line in the editor, which lets a word break anywhere. */
@@ -630,7 +668,7 @@ body.resting .row .head a,
 .md-table-read th { padding-bottom: 0.25lh; vertical-align: bottom; border-bottom: 1px solid var(--rule); }
 .md-table-read tr:nth-child(2) td { padding-top: 0.25lh; }
 @supports not (height: 1lh) {
-  .md-table-read table { height: calc(var(--lines) * 1.5em); }
+  .md-table-read { height: calc(var(--lines) * 1.5em); }
   .md-table-read th { padding-bottom: 0.375em; }
   .md-table-read tr:nth-child(2) td { padding-top: 0.375em; }
 }

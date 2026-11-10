@@ -1280,33 +1280,35 @@ writes what it holds. The words in the foot stay, since they are about the note.
 second editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
 list reads, its marks hidden and a task's box drawn but never pressed, a table drawn with its
-columns aligned in the sheet's whole width and as high as its source, a press on a cell or an arrow
-into it showing it as typed and a press on its scrollbar scrolling it and leaving it drawn, a link
-read followed by a press, an address in a tab of its own with the body left open and `[[Boiler]]`
-into Boiler as Tab goes, the body written as it closes, but for the span the selection touches,
-which shows its marks where they stand, a press on it the caret's, the marks in the faint grey and
-the text in ink, headings and strong text heavier, the first three levels of heading larger and
-set closer than the text, with room above them in the body, its head set as a first-level heading
-is, as the page's title, a third of a line clear of the body, with its task's box drawn as a body's
-is (see "An open body's head is its title") and the place's labels that end it read hidden as on its
-row, the caret landing before them, and Enter with nothing after it but them breaking the line after
-them (see "An open body's head reads the place's labels as its row does"), emphasis slanted, code in
-the monospace; a body opens reading whole, as a head is landed on; soft wrap, step undo, a grey
-selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer
-over a link that a press follows, and vim mode for the body, for the browser that asked for it with
-the word `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is
-not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
-note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
-`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
-first, and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard
-too. The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as
-high as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot
-of the sheet, under the text and a hairline. The editor is fetched as the page starts, beside the
-engine, and nothing is painted until it is here. The `editor` the engine offers is not shown here.
-At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
-it is open; a wider touch screen has it as the page, sized from the frame. On a touch screen it
-opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
-open, and `done`, the back gesture, or a tap on the page beside it closes it.
+columns aligned in the sheet's whole width and as high as its source, one wider than the room
+carrying a thin bar of its own, shown while a mouse is over it, and fading at the edge where
+more columns lie, a press on a cell or an arrow into it showing it as typed and a press on its bar
+scrolling it and leaving it drawn, a link read followed by a press, an address in a tab of its own
+with the body left open and `[[Boiler]]` into Boiler as Tab goes, the body written as it closes,
+but for the span the selection touches, which shows its marks where they stand, a press on it the
+caret's, the marks in the faint grey and the text in ink, headings and strong text heavier, the
+first three levels of heading larger and set closer than the text, with room above them in the body,
+its head set as a first-level heading is, as the page's title, a third of a line clear of the body,
+with its task's box drawn as a body's is (see "An open body's head is its title") and the place's
+labels that end it read hidden as on its row, the caret landing before them, and Enter with nothing
+after it but them breaking the line after them (see "An open body's head reads the place's labels as
+its row does"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is
+landed on; soft wrap, step undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E
+for bold, italic and code, a pointer over a link that a press follows, and vim mode for the body,
+for the browser that asked for it with the word `vim` in the foot of an open body, which a touch
+screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the lines as
+shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection, which goes
+by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body,
+`:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where it was; a yank is
+copied to the system's clipboard too. The page's caret is drawn from the editor's coordinates, in a
+head and in a body, a block as high as the line it is on, and in vim's insert mode a bar. Vim's
+prompt for a command is at the foot of the sheet, under the text and a hairline. The editor is
+fetched as the page starts, beside the engine, and nothing is painted until it is here. The `editor`
+the engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar,
+and the bar the sheet's colour while it is open; a wider touch screen has it as the page, sized from
+the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
+the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
+closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -4223,7 +4225,9 @@ the app now does is described above; an entry repeats it only where the reason n
   wraps. Weighed: prose across the whole width, 135 letters a line at 1440 pixels, past reading;
   the card kept and centred, which leaves the empty room and moves the text from the row it opened
   from; and code across the whole width, a grey slab to the margin. Revised 2026-11-10 by "An
-  open body's head is its title": its head is set as a first-level heading is.
+  open body's head is its title": its head is set as a first-level heading is. Revised 2026-11-10
+  by "A wide table shows its own bar": a table wider than the room scrolls under a thin bar of
+  the page's own and fades where more columns lie.
 
 - **The open body keeps an editor's habits.** Decided 2026-10-29, at Sam's ask, revising "A wide
   line has the sheet's width" where it kept a selection shaded to the edge of the text. Four things the hands expect of any
@@ -4455,6 +4459,31 @@ the app now does is described above; an entry repeats it only where the reason n
   only in the path. Weighed: drawing them faint, which is chrome on a title; hiding them only in a
   new note's body, which reads a note two ways by its age; and putting them back on the head at each
   Enter by the engine, which moves text under the hands.
+
+- **A wide table shows its own bar.** Decided 2026-11-10, at Sam's report, revising the part of "An
+  open body is the page" (2026-10-29) that left a table wider than the room to scroll under the
+  platform's bar. With overlay scrollbars, as Chromium on Linux draws them, that bar appears and
+  disappears at the platform's whim: it showed on some hovers and not on others, the pointer staying
+  the text cursor until it was moved off the table and back, so the one way to see that a table had
+  more columns, and to scroll it with a mouse, was unreliable. Now, under a mouse, a drawn table
+  wider than the room carries a thin bar of its own under its rows, its thumb in the faint, shown
+  while the pointer is over the table or the bar is being dragged and gone otherwise, and its track
+  in the hairline's grey under the pointer; over the bar the pointer is the arrow, over the cells
+  the text cursor as before. The bar lies inside the table's height, its rows giving up the bar's
+  room, so a drawn table is still as high as its source and nothing under it moves as the caret goes
+  in or out. The edge where more columns lie fades, as a head being written fades at an edge that
+  hides text: the right while there is more to the right, the left once it is scrolled from its
+  start, neither on a table that fits, the room a bar takes under the table unfaded, as tall as it
+  is measured, so that where a bar lies over the table, as Firefox's overlay bar does, nothing is
+  left unfaded. A press or a drag on the bar scrolls it, the table staying drawn and the caret where
+  it was, as a press on the platform's bar did. Firefox, which draws no bar of a page's own, keeps
+  its thin one, shown under the pointer. A touch screen keeps the platform's own bar, which shows as
+  the table is swiped, since a finger's touch ends before the swipe scrolls and a bar shown under
+  the pointer would never show there. What it costs: the rows of a wide table sit a few pixels
+  closer; a bar the page draws is one more thing of its own to keep looking right on every platform;
+  and the page now watches each drawn table's scroll and width. Weighed: keeping the platform's bar,
+  whose showing the page cannot rely on; and always showing the bar, which is chrome while reading,
+  where the fade already says there is more.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
