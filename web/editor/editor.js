@@ -191,12 +191,13 @@ const breakPastLabels = (view) => {
 // A press past the end of the head's words, or a step up onto the head from the line under it,
 // lands before the place's labels read hidden, where the caret lands on a row, rather than among
 // them, which would show them and write after them. End, or an arrow along the head, as vim's `$`
-// and `l`, still goes into them.
+// and `l`, still goes into them, and once they show a press among them is a press like any other.
 const landBeforeLabels = EditorState.transactionFilter.of((tr) => {
   if (tr.docChanged || !tr.selection) return tr;
   const labels = labelsAt(tr.startState);
   const { main, ranges } = tr.selection;
   if (!labels || ranges.length > 1 || !main.empty || main.head <= labels.from || main.head > labels.to) return tr;
+  if (tr.startState.selection.ranges.some((r) => r.to > labels.from && r.from <= labels.to)) return tr;
   const was = tr.startState.doc.lineAt(tr.startState.selection.main.head).number;
   if (was === 1 && !tr.isUserEvent('select.pointer')) return tr;
   return [tr, { selection: EditorSelection.cursor(labels.from), sequential: true }];

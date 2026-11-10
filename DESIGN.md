@@ -4440,20 +4440,21 @@ the app now does is described above; an entry repeats it only where the reason n
   arrow along the head, vim's `$` and `l` included, as on the row under the cursor. The caret lands
   before them, as the session puts it at the end of the head as its row reads, where it had put an
   open body's at the end of the head whole, and so does a press past the head's words or a step up
-  onto it from the line under it, vim's `k` included: `Boiler overhaul #house` opened inside
-  `#house` reads `Boiler overhaul`, and a new note's body, nothing in it but its labels, opens as an
-  empty title with the caret in it. Enter on the head with nothing after the caret but those labels
-  and spaces breaks the line after them, not at the caret, the spaces either side of the caret let
-  go, and the caret starts the line under, so the labels stay on the head; it is one step to undo,
-  and vim's Enter in insert mode does the same. On a head with nothing in it yet but a box, as
-  anywhere else, Enter is a line break, as it was. The row is unchanged, a new one with nothing but
-  its labels still showing them so that it is not blank, and so is the terminal, whose editor is
-  handed the labels as text and has them put back on the head when it leaves them ending the body.
-  What it costs: a line break before the labels, which would start the body with them, takes moving
-  them by hand; and while the body is written the labels are out of sight, as on the row, so a note
-  begun in the wrong place says so only in the path. Weighed: drawing them faint, which is chrome on
-  a title; hiding them only in a new note's body, which reads a note two ways by its age; and
-  putting them back on the head at each Enter by the engine, which moves text under the hands.
+  onto it from the line under it, vim's `k` included, though once they show a press among them goes
+  where it is pressed: `Boiler overhaul #house` opened inside `#house` reads `Boiler overhaul`, and
+  a new note's body, nothing in it but its labels, opens as an empty title with the caret in it.
+  Enter on the head with nothing after the caret but those labels and spaces breaks the line after
+  them, not at the caret, the spaces either side of the caret let go, and the caret starts the line
+  under, so the labels stay on the head; it is one step to undo, and vim's Enter in insert mode does
+  the same. On a head with nothing in it yet but a box, as anywhere else, Enter is a line break, as
+  it was. The row is unchanged, a new one with nothing but its labels still showing them so that it
+  is not blank, and so is the terminal, whose editor is handed the labels as text and has them put
+  back on the head when it leaves them ending the body. What it costs: a line break before the
+  labels, which would start the body with them, takes moving them by hand; and while the body is
+  written the labels are out of sight, as on the row, so a note begun in the wrong place says so
+  only in the path. Weighed: drawing them faint, which is chrome on a title; hiding them only in a
+  new note's body, which reads a note two ways by its age; and putting them back on the head at each
+  Enter by the engine, which moves text under the hands.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
