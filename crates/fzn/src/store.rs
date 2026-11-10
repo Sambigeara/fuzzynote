@@ -64,6 +64,9 @@ const COMMANDS_FILE: &str = ".commands";
 const SLOTS_MOST: usize = 64;
 /// The directory a space's images are kept in, each a file named by its id, beside the logs.
 const IMAGES_DIR: &str = "images";
+/// How long a half-written image may sit untouched before it is taken to be left by a client that
+/// stopped, and deleted.
+const LEFT_AFTER: Duration = Duration::from_secs(600);
 
 /// The files of one space's logs.
 pub struct Logs {
@@ -317,6 +320,28 @@ impl Logs {
         }
     }
 
+    /// Deletes what a client stopped while keeping an image left in the images directory: a
+    /// hidden `.tmp` file not written to for [`LEFT_AFTER`]. Another client here may be writing
+    /// one this moment, under the shared lock, so a fresh one is its and is left.
+    pub fn tidy_images(&self) {
+        let Ok(entries) = fs::read_dir(self.images_dir()) else {
+            return;
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let left = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with('.') && name.ends_with(".tmp"))
+                && entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .is_ok_and(|when| when.elapsed().is_ok_and(|since| since > LEFT_AFTER));
+            if left {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
     /// Keeps an image whole: written as `images/.<id>.<pid>.tmp` and renamed to `images/<id>`,
     /// the directory made if it is not there; one already there is left as it is, since an id
     /// names one image and what is there was renamed into place whole.
@@ -356,6 +381,7 @@ pub fn open(dir: &Path, space: &str, slot: &mut Slot, device: &mut Device) -> Re
     }
     let todo = device.opened();
     logs.keep(&todo, slot)?;
+    logs.tidy_images();
     let todo = device.images_held(logs.images()?);
     logs.keep(&todo, slot)?;
     Ok(logs)
@@ -708,12 +734,13 @@ impl Slot {
 }
 
 /// A directory's modification time as one to compare the next against, once it is old enough to
-/// be the last: a clock that stamps files ticks a few milliseconds at a time, so an image kept just
-/// after a listing, in the same tick, would leave the time as it was and never be listed. While
-/// the change is recent the time is taken as none, and the directory is listed again at each look.
+/// be the last: a clock that stamps files ticks a few milliseconds at a time, and FAT, exFAT and
+/// some network shares two seconds, so an image kept just after a listing, in the same tick, would
+/// leave the time as it was and never be listed. While the change is recent the time is taken as
+/// none, and the directory is listed again at each look.
 fn settled(when: SystemTime) -> SystemTime {
     match SystemTime::now().duration_since(when) {
-        Ok(since) if since > Duration::from_secs(1) => when,
+        Ok(since) if since > Duration::from_secs(3) => when,
         _ => SystemTime::UNIX_EPOCH,
     }
 }
@@ -1065,6 +1092,30 @@ pub(crate) mod tests {
         let mut all = vec![first.0, second.0];
         all.sort();
         assert_eq!(Logs::open(&dir).unwrap().images().unwrap(), all);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_half_written_image_left_long_ago_is_deleted_and_a_fresh_one_left() {
+        let dir = temp_dir();
+        let logs = Logs::open(&dir).unwrap();
+        let (id, sealed) = plate(0);
+        logs.keep_image(&id, &sealed).unwrap();
+        let images = dir.join("images");
+        let (old, fresh) = (images.join(".a.1.tmp"), images.join(".b.2.tmp"));
+        fs::write(&old, b"half").unwrap();
+        fs::write(&fresh, b"half").unwrap();
+        let long_ago = SystemTime::now() - Duration::from_secs(3600);
+        File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        logs.tidy_images();
+        assert!(!old.exists());
+        assert!(fresh.exists());
+        assert_eq!(logs.image(&id).unwrap(), Some(sealed));
         fs::remove_dir_all(&dir).unwrap();
     }
 
