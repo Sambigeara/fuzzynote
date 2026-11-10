@@ -188,6 +188,20 @@ const breakPastLabels = (view) => {
   return true;
 };
 
+// A press past the end of the head's words, or a step up onto the head from the line under it,
+// lands before the place's labels read hidden, where the caret lands on a row, rather than among
+// them, which would show them and write after them. End, or an arrow along the head, as vim's `$`
+// and `l`, still goes into them.
+const landBeforeLabels = EditorState.transactionFilter.of((tr) => {
+  if (tr.docChanged || !tr.selection) return tr;
+  const labels = labelsAt(tr.startState);
+  const { main, ranges } = tr.selection;
+  if (!labels || ranges.length > 1 || !main.empty || main.head <= labels.from || main.head > labels.to) return tr;
+  const was = tr.startState.doc.lineAt(tr.startState.selection.main.head).number;
+  if (was === 1 && !tr.isUserEvent('select.pointer')) return tr;
+  return [tr, { selection: EditorSelection.cursor(labels.from), sequential: true }];
+});
+
 // Bold, italic and code, as the chords of every editor make them: wrapped round what is selected,
 // or taken off when it is one span of them already, its marks outside the selection or just inside
 // it, and round nothing with the caret between when nothing is selected, a second press taking the
@@ -395,6 +409,7 @@ export function mount(hooks, foot) {
     history(),
     note,
     placeLabels.of(hidden),
+    landBeforeLabels,
     panels({ bottomContainer: foot }),
     EditorView.lineWrapping,
     ...shared,
