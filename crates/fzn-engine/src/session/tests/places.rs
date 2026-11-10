@@ -2280,6 +2280,23 @@ fn the_body_chord_on_the_line_in_a_note_still_opens_the_note_you_are_in() {
 }
 
 #[test]
+fn the_note_you_are_in_opened_from_the_line_has_its_caret_before_the_paths_labels() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    s.act(Action::Select(None));
+    s.take_caret();
+    s.act(Action::Open);
+    let field = s.view().field.unwrap();
+    assert!(field.text.starts_with("Boiler overhaul #house\n"));
+    assert_eq!(
+        s.take_caret().head,
+        Some("Boiler overhaul".len()),
+        "what is typed goes before the place's labels, as on its row"
+    );
+}
+
+#[test]
 fn a_body_closed_with_nothing_written_on_an_empty_row_leaves_no_note() {
     let mut s = session();
     a_task_and_a_body(&mut s);

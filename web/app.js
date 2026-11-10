@@ -1421,12 +1421,13 @@ function paintRows() {
   else if (!(field && editorIn) && editor.dom.isConnected) editor.dom.remove();
 
   // The editor holds what the field says. Landing on a row, and a body opening or closing, make
-  // its state afresh, with the caret where the engine put it, which is the end of the head, so that
-  // Down in a body goes to the second line, and in a new row with only the labels it opened with is
-  // after a task's box and before the rest; a row landed on reads from its start, whatever the row
-  // before was scrolled to. Otherwise it is told the text only when the engine's differs from it,
-  // put back, a date word expanded, a version from elsewhere, and the caret only when the engine
-  // put it, so that the person's caret is left alone while they type.
+  // its state afresh, with the caret where the engine put it, which is the end of the head as its
+  // row reads, before the path's labels where they end it, so that Down in a body goes to the
+  // second line, and in a new row with only the labels it opened with is after a task's box and
+  // before the rest; a row landed on reads from its start, whatever the row before was scrolled
+  // to. Otherwise it is told the text only when the engine's differs from it, put back, a date word
+  // expanded, a version from elsewhere, and the caret only when the engine put it, so that the
+  // person's caret is left alone while they type.
   if (field && editorIn) {
     const text = field.whole ? field.text : headOf(field.text);
     const to = placed != null ? unitsIn(text, placed) : null;

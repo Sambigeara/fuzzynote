@@ -250,12 +250,9 @@ fn the_caret_lands_before_the_paths_labels_where_they_end_a_head() {
     select(&mut s, "[ ] Check the flue #house @joe");
     assert_eq!(s.take_caret(), head("[ ] Check the flue #house @joe".len()));
 
-    // An open body shows its head whole, and the caret goes to its end.
+    // An open body reads its head as the row does, so the caret goes before the labels there too.
     select(&mut s, "[ ] Drain the tank first #house");
     s.take_caret();
     s.act(Action::Open);
-    assert_eq!(
-        s.take_caret(),
-        head("[ ] Drain the tank first #house".len())
-    );
+    assert_eq!(s.take_caret(), head("[ ] Drain the tank first".len()));
 }

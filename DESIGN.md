@@ -586,12 +586,13 @@ a row is the whole visit, one key for both. A chord acts on the note as it reads
 
 The caret moves only when the person moves it or types, or when something else changes what it is
 in, and then the session says where it goes, the same in both faces: at the end of the head, before
-the path's labels where they end it, when the cursor lands on a row, when a body opens or closes, an
-open body's head whole, and when the head is changed under it, put back, undone, ticked, its words
-written out or a version arriving from elsewhere; where the writer's text goes in a new row with
-only its labels, Enter's or one opened on the way into a note with nothing under it; at the end of a
-line the session changed, on the way into a place and out of it or when the line is written; and
-after a word taken from what is offered. A body left open keeps its caret in its editor.
+the path's labels where they end it, when the cursor lands on a row and when a body opens or closes,
+an open body's head reading without them as its row does, and when the head is changed under it, put
+back, undone, ticked, its words written out or a version arriving from elsewhere; where the writer's
+text goes in a new row with only its labels, Enter's or one opened on the way into a note with
+nothing under it; at the end of a line the session changed, on the way into a place and out of it or
+when the line is written; and after a word taken from what is offered. A body left open keeps its
+caret in its editor.
 
 While a tag or a person is typed, on the line or in the head of a row, the tags or the people of the
 space that start with it are offered under it, at most five: the one typed whole first, if there is
@@ -1285,25 +1286,25 @@ which shows its marks where they stand, a press on it the caret's, the marks in 
 the text in ink, headings and strong text heavier, the first three levels of heading larger and
 set closer than the text, its head set as a first-level heading is, as the page's title, a third
 of a line clear of the body, with its task's box drawn as a body's is (see "An open body's head is
-its title") and the place's labels that end it read hidden as on its row, Enter before them and
-nothing else breaking the line after them (see "An open body's head reads the place's labels as its
-row does"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is
-landed on; soft wrap, step undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E
-for bold, italic and code, a pointer over a link that a press follows, and vim mode for the body,
-for the browser that asked for it with the word `vim` in the foot of an open body, which a touch
-screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the lines as
-shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection, which goes
-by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body,
-`:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where it was; a yank is
-copied to the system's clipboard too. The page's caret is drawn from the editor's coordinates, in a
-head and in a body, a block as high as the line it is on, and in vim's insert mode a bar. Vim's
-prompt for a command is at the foot of the sheet, under the text and a hairline. The editor is
-fetched as the page starts, beside the engine, and nothing is painted until it is here. The `editor`
-the engine offers is not shown here. At a phone's width the sheet is the whole frame above the bar,
-and the bar the sheet's colour while it is open; a wider touch screen has it as the page, sized from
-the frame. On a touch screen it opens without the keyboard, which a tap in the text raises; putting
-the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it
-closes it.
+its title") and the place's labels that end it read hidden as on its row, the caret landing before
+them, and Enter with nothing after it but them breaking the line after them (see "An open body's
+head reads the place's labels as its row does"), emphasis slanted, code in the monospace; a body
+opens reading whole, as a head is landed on; soft wrap, step undo, a grey selection held to the
+text's measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer over a link that a press
+follows, and vim mode for the body, for the browser that asked for it with the word `vim` in the
+foot of an open body, which a touch screen, whose keyboard has no Escape, is not offered. In vim
+mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap,
+but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ`
+or the word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and
+stays, scrolled where it was; a yank is copied to the system's clipboard too. The page's caret is
+drawn from the editor's coordinates, in a head and in a body, a block as high as the line it is on,
+and in vim's insert mode a bar. Vim's prompt for a command is at the foot of the sheet, under the
+text and a hairline. The editor is fetched as the page starts, beside the engine, and nothing is
+painted until it is here. The `editor` the engine offers is not shown here. At a phone's width the
+sheet is the whole frame above the bar, and the bar the sheet's colour while it is open; a wider
+touch screen has it as the page, sized from the frame. On a touch screen it opens without the
+keyboard, which a tap in the text raises; putting the keyboard away leaves it open, and `done`, the
+back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -4427,19 +4428,20 @@ the app now does is described above; an entry repeats it only where the reason n
   the title, and the place's labels are not the writer's, as on the row: the path says them. Now in
   the open body the place's labels that end the head read hidden, the space before them included,
   until the caret goes into them, by End or an arrow, as on the row under the cursor: the caret
-  lands before them, `Boiler overhaul #house` opened inside `#house` reads `Boiler overhaul`, and a
-  new note's body, nothing in it but its labels, opens as an empty title with the caret in it. Enter
-  on the head with nothing after the caret but those labels and spaces breaks the line after them,
-  not at the caret, the caret starting the line under, so the labels stay on the head; it is one
-  step to undo, vim's Enter in insert mode does the same, and anywhere else Enter is a line break.
-  The row is unchanged, a new one with nothing but its labels still showing them so that it is not
-  blank, and so is the terminal, whose editor is handed the labels as text and has them put back on
-  the head when it leaves them ending the body. What it costs: a line break before the labels, which
-  would start the body with them, takes moving them by hand; and while the body is written the
-  labels are out of sight, as on the row, so a note begun in the wrong place says so only in the
-  path. Weighed: drawing them faint, which is chrome on a title; hiding them only in a new note's
-  body, which reads a note two ways by its age; and putting them back on the head at each Enter by
-  the engine, which moves text under the hands.
+  lands before them, as the session puts it at the end of the head as its row reads, where it had
+  put an open body's at the end of the head whole, `Boiler overhaul #house` opened inside `#house`
+  reads `Boiler overhaul`, and a new note's body, nothing in it but its labels, opens as an empty
+  title with the caret in it. Enter on the head with nothing after the caret but those labels and
+  spaces breaks the line after them, not at the caret, the caret starting the line under, so the
+  labels stay on the head; it is one step to undo, vim's Enter in insert mode does the same, and
+  anywhere else Enter is a line break. The row is unchanged, a new one with nothing but its labels
+  still showing them so that it is not blank, and so is the terminal, whose editor is handed the
+  labels as text and has them put back on the head when it leaves them ending the body. What it
+  costs: a line break before the labels, which would start the body with them, takes moving them by
+  hand; and while the body is written the labels are out of sight, as on the row, so a note begun in
+  the wrong place says so only in the path. Weighed: drawing them faint, which is chrome on a title;
+  hiding them only in a new note's body, which reads a note two ways by its age; and putting them
+  back on the head at each Enter by the engine, which moves text under the hands.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

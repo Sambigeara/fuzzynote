@@ -647,15 +647,14 @@ impl Session {
     /// Where the session puts the caret in the head of the note being written: in a new note
     /// with nothing in it but its labels, where the writer's text goes, and otherwise at the end
     /// of the head as its row reads, before the path's labels where they end it, so that what is
-    /// typed there goes before them, in the terminal as on the page. In an open body the head
-    /// shows whole, and the caret goes to its end.
+    /// typed there goes before them, in the terminal as on the page, and in an open body, whose
+    /// head reads without them as its row does.
     pub(super) fn home(&self, field: &Writing) -> usize {
         if field.blank() {
             return field.start();
         }
         let head = field.head();
-        let shown = (!field.whole).then(|| self.shown(head)).flatten();
-        shown.as_deref().unwrap_or(head).chars().count()
+        self.shown(head).as_deref().unwrap_or(head).chars().count()
     }
 
     /// Keeps the field with the cursor: wherever the cursor has landed, the note under it is the
