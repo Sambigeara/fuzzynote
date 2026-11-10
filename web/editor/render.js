@@ -8,8 +8,8 @@
 // so nothing a note says becomes part of the page, and nothing in it reaches outside the page by
 // being read: a link goes only to the web or to mail and opens apart from the page, and an image
 // on the web is a link reading its alt text, never loaded. An image of the space's own is drawn
-// from what the page holds, where a body is drawn, and reads as its alt text elsewhere. What has no address the page will follow, raw
-// HTML and `[[Boiler]]` among it, is shown as it was typed.
+// from what the page holds, where a body is drawn, and reads as its alt text elsewhere. What has
+// no address the page will follow, raw HTML and `[[Boiler]]` among it, is shown as it was typed.
 //
 // Code is highlighted in its language, and each language is a file of its own under code/,
 // fetched the first time a block in it is read or written. Until it arrives the block is plain,
@@ -212,18 +212,28 @@ function blocks(node, text, into) {
 }
 
 // Text is read as typed between the nodes inside it, from one point to another.
+// A picture stands under its line, in place of the line's end, so that whatever follows the image
+// on its line comes before it and the next line follows it.
 function inline(node, from, to, text, into) {
   let at = from;
+  const pictures = [];
+  const put = (words) => {
+    const end = pictures.length ? words.indexOf('\n') : -1;
+    if (end < 0) return into.append(words);
+    into.append(words.slice(0, end), ...pictures.splice(0), words.slice(end + 1));
+  };
   for (let child = node.firstChild; child; child = child.nextSibling) {
     if (child.from < from || child.to > to) continue;
-    if (child.from > at) into.append(text.slice(at, child.from));
+    if (child.from > at) put(text.slice(at, child.from));
     const made = read(child, text);
-    if (made) into.append(made);
+    const drawn = made?.lastChild?.classList?.contains('md-picture') ? made.lastChild : null;
+    if (typeof made === 'string') put(made);
+    else if (made) into.append(made);
+    if (drawn) pictures.push(drawn);
     at = child.to;
-    // A picture stands under its line in place of the line's end, so the next line follows it.
-    if (made?.lastChild?.classList?.contains('md-picture') && text[at] === '\n' && at < to) at++;
   }
-  if (to > at) into.append(text.slice(at, to));
+  if (to > at) put(text.slice(at, to));
+  into.append(...pictures);
   return into;
 }
 

@@ -289,11 +289,26 @@ async function openStore() {
       if (oldVersion < 1) request.result.createObjectStore('lines', { keyPath: ['log', 'n'] });
       if (oldVersion < 2) request.result.createObjectStore('images', { keyPath: 'id' });
     };
-    request.onsuccess = () => resolve(request.result);
+    // Another tab on an older page holds the store open while it is made a version later, and is
+    // asked to let it go (see onversionchange below), so a blocked open is waited for, but not for
+    // ever: one still blocked is given up, and closed if it opens after all.
+    let waited = false;
+    request.onsuccess = () => (waited ? request.result.close() : resolve(request.result));
     request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
+    request.onblocked = () =>
+      setTimeout(() => {
+        waited = true;
+        resolve(null);
+      }, 5000);
   });
-  if (!db) return null;
+  // Without the store this page goes on with the log its writer id names, which a store it cannot
+  // read may hold more of, so the id is let go, as when a line could not be kept (see couldNotKeep).
+  if (!db) {
+    unkept = true;
+    forgetWriter();
+    fzn?.say('could not open the store in this browser; the notes will be asked of the relay');
+    return null;
+  }
   // A change is a transaction, and it is done once the browser says it has completed, which is
   // when what it wrote would outlast the page.
   const write = (change, name = 'lines') =>
@@ -451,7 +466,9 @@ function carryOut(json) {
   // Images come sealed, to be kept as they came; one the relay asks for is sent as it is kept.
   for (const { id, sealed } of todo.keep_images ?? []) keepImage(id, fromBase64(sealed), null, null);
   for (const id of todo.upload ?? []) {
-    imageRecord(id).then((record) => record && carryOut(fzn.upload(id, record.sealed)), console.error);
+    imageRecord(id)
+      .then((record) => record && carryOut(fzn.upload(id, record.sealed)))
+      .catch((cause) => console.error(cause));
   }
   if (todo.copy != null) copy(todo.copy);
   if (todo.open) window.open(todo.open, '_blank', 'noopener');
@@ -1727,7 +1744,7 @@ window.addEventListener('resize', () => view && fitPath());
 // laid out.
 const GLANCE = 5000;
 function paintBody(node, says, drawn) {
-  const key = `${readings} ${says}`;
+  const key = `${readings} ${drawn ? drawings : ''} ${says}`;
   if (!set(node, key, () => [readBody(says, GLANCE, drawn)])) return false;
   if (says.length > GLANCE) {
     soon(() => {
@@ -2786,13 +2803,16 @@ async function imageRecord(id) {
 // Keeps an image, and draws it where it was missing.
 async function keepImage(id, sealed, w, h) {
   const record = { id, sealed, kept: Date.now(), w, h };
-  try {
-    if (!store) throw null;
-    await store.keepImage(record);
-  } catch (cause) {
-    if (cause) console.error(cause);
-    unstored.set(id, record);
+  let kept = false;
+  if (store) {
+    try {
+      await store.keepImage(record);
+      kept = true;
+    } catch (cause) {
+      console.error(cause);
+    }
   }
+  if (!kept) unstored.set(id, record);
   const known = pictures.get(id);
   if (known && known.state !== 'here') {
     pictures.delete(id);
@@ -2841,6 +2861,13 @@ async function openPicture(id, known) {
     return;
   }
   Object.assign(known, got ? { state: 'here', got } : { state: 'missing' });
+  evict();
+  picturesChanged();
+}
+
+// Past 48 pictures held, those asked for least lately go, but none asked for since the last change
+// nor one on the screen.
+function evict() {
   let over = [...pictures.values()].filter((p) => p.state === 'here').length - HELD;
   for (const [held, p] of [...pictures].sort(([, a], [, b]) => a.used - b.used)) {
     if (over <= 0) break;
@@ -2849,10 +2876,10 @@ async function openPicture(id, known) {
     pictures.delete(held);
     over--;
   }
-  picturesChanged();
 }
 
-// The open body and the body read beside the list draw again, once a frame however many came.
+// The open body and the body read beside the list draw again, once a frame however many came; the
+// note read above the line draws no pictures, and is left as it is (see paintBody).
 let picturesDue = false;
 function picturesChanged() {
   if (picturesDue) return;
@@ -2861,14 +2888,26 @@ function picturesChanged() {
     picturesDue = false;
     drawings++;
     editor?.picturesChanged();
-    reread();
+    paintSoon();
   });
 }
 
+// The note whose body is open, if one is.
+const bodyOpen = () => (view?.field?.whole ? (view.rows[view.cursor]?.id ?? null) : null);
+
 // Images added to the open body, each made smaller as every face makes one, kept, and written on a
-// line of its own; what could not be is said, and the rest go in.
+// line of its own; what could not be is said, and the rest go in. Making them takes a moment, a
+// phone's photos several, which is said while it lasts. Kept, they are written only into the body
+// they were added to: one closed meanwhile, or another opened, has nothing written in it, and the
+// images wait, kept, for a note to refer to them.
 async function addImages(files, at) {
+  if (!files.length) return;
+  const into = bodyOpen();
   const lines = [];
+  let said = false;
+  const making = files.length > 1 ? `making ${files.length} images smaller…` : 'making the image smaller…';
+  fzn.say(making);
+  look();
   for (const file of files) {
     try {
       const made = await smaller(file);
@@ -2880,18 +2919,25 @@ async function addImages(files, at) {
         const type = made.bytes[0] === 0xff ? 'image/jpeg' : 'image/png';
         const got = { url: URL.createObjectURL(new Blob([made.bytes], { type })), w: made.w, h: made.h };
         pictures.set(kept.id, { state: 'here', got, used: drawings });
+        evict();
       }
       lines.push(`![](fzn:${kept.id})`);
     } catch (why) {
       fzn.say(String(why?.message ?? why));
+      said = true;
     }
   }
-  if (!lines.length) return look();
-  if (!editor.whole) {
-    fzn.say('the body was closed before the image was added');
-    return look();
+  if (!said && view?.status === making) fzn.say('');
+  if (lines.length && (!editor.whole || bodyOpen() !== into)) {
+    fzn.say(`the body was closed before the ${lines.length > 1 ? 'images were' : 'image was'} added`);
+  } else if (lines.length) {
+    try {
+      editor.insertImages(lines, at);
+    } catch (cause) {
+      console.error(cause);
+      fzn.say(`fzn could not write the ${lines.length > 1 ? 'images' : 'image'} in: ${cause}`);
+    }
   }
-  editor.insertImages(lines, at);
   look();
 }
 
@@ -2901,6 +2947,8 @@ async function addImages(files, at) {
 // One still too large is left for the engine to refuse in its own words.
 async function smaller(file) {
   const address = URL.createObjectURL(file);
+  // A phone holds only so much of every canvas at once, so this one gives its room back when done.
+  const canvas = document.createElement('canvas');
   try {
     const img = new Image();
     img.src = address;
@@ -2912,7 +2960,6 @@ async function smaller(file) {
     if (!nw || !nh) throw unread();
     const scale = Math.min(1, 2048 / Math.max(nw, nh));
     const [w, h] = [Math.max(1, Math.round(nw * scale)), Math.max(1, Math.round(nh * scale))];
-    const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const drawing = canvas.getContext('2d');
@@ -2935,6 +2982,7 @@ async function smaller(file) {
     return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
   } finally {
     URL.revokeObjectURL(address);
+    canvas.width = canvas.height = 0;
   }
 }
 
@@ -2957,10 +3005,10 @@ function picker() {
 }
 
 // An image pasted on the line belongs in a body, and so does one dropped anywhere but the open
-// body, which never sends the browser away from the page to show the file.
-const imagePasted = (event) =>
-  [...(event.clipboardData?.files ?? [])].some((f) => f.type.startsWith('image/')) &&
-  event.clipboardData.getData('text/plain') === '';
+// body, which never sends the browser away from the page to show the file. A drop on the open
+// sheet beside its text, in its margin or under its last line, is a drop in the body, at the
+// place in the text nearest it. Whether a paste is of images is the editor's rule, here once it is.
+let imagePasted = () => false;
 const inABody = () => {
   if (!fzn) return;
   fzn.say(IN_A_BODY);
@@ -2978,7 +3026,9 @@ document.addEventListener('dragover', (event) => {
 document.addEventListener('drop', (event) => {
   if (!carriesFiles(event) || event.defaultPrevented) return;
   event.preventDefault();
-  inABody();
+  if (editor?.whole && event.target.closest?.('#buffer')) {
+    addImages([...event.dataTransfer.files], editor.spotAt(event.clientX, event.clientY));
+  } else inABody();
 });
 
 async function start() {
@@ -3008,6 +3058,7 @@ async function start() {
   const [renderModule, editorModule] = await modules;
   render = renderModule;
   render.givePictures(picture);
+  imagePasted = editorModule.imagePaste;
   render.onLanguage(reread);
   editor = editorModule.mount(editorHooks, $('sheet-foot'));
   editor.setVim(vimOn);

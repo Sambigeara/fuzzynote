@@ -539,9 +539,11 @@ const tables = StateField.define({
 // Said to the editor when an image has come, or been opened, so that its picture is drawn.
 export const picturesChanged = StateEffect.define();
 
-// How wide the open body's text is, as last drawn, for a picture's height to be guessed before it
-// is drawn.
+// How wide the open body's text is, and how high its line, as last drawn, for a picture's height
+// to be guessed before it is drawn: the picture's own and the room above and below it, a quarter
+// of a line and a half, which is padding so that the editor counts it.
 let measure = 0;
+let lineHeight = 0;
 
 // An image of the space's own is drawn under the line it is written on, in the open body, whole
 // wherever the caret is, so that nothing moves as the caret goes in or out of its line, which
@@ -566,10 +568,11 @@ class Picture extends WidgetType {
   get estimatedHeight() {
     const { got } = this;
     if (!got?.w || !got?.h || !measure) return -1;
-    return Math.min(got.h, (got.h * measure) / got.w, 0.6 * window.innerHeight);
+    return Math.min(got.h, (got.h * measure) / got.w, 0.6 * window.innerHeight) + 0.75 * lineHeight;
   }
   toDOM(view) {
     measure = view.contentDOM.clientWidth || measure;
+    lineHeight = view.defaultLineHeight || lineHeight;
     const box = document.createElement('div');
     box.className = 'md-picture';
     const { got } = this;

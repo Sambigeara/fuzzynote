@@ -286,19 +286,39 @@ registers.pushText = (name, operator, ...rest) => {
 
 let current = null;
 
-// The image files a paste or a drop carries. While a drag is still over the page the browser shows
-// only the kinds of what it carries, not the files, so those are read until it is dropped.
+// The image files a paste or a drop carries.
 const imageFiles = (data) => [...(data?.files ?? [])].filter((f) => f.type.startsWith('image/'));
-const carriesImages = (data) =>
-  imageFiles(data).length > 0 || [...(data?.items ?? [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'));
+const carriesFiles = (data) => !!data?.types?.includes('Files');
 // A paste is of images when it carries them and no text, since a copy from a page of the web
-// carries its words with its pictures, and those are what is meant.
-const imagePaste = (event) =>
-  imageFiles(event.clipboardData).length > 0 && event.clipboardData.getData('text/plain') === '';
+// carries its words with its pictures, and those are what is meant; but a copy of files may carry
+// their names or paths as text too, which mean the files.
+export const imagePaste = (event) => {
+  const files = imageFiles(event.clipboardData);
+  if (!files.length) return false;
+  const lines = event.clipboardData.getData('text/plain').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.every((l) => files.some((f) => l === f.name || l.endsWith(`/${f.name}`)));
+};
 
-// An image pasted or dropped in the open body is the page's to make smaller and keep, and to write
-// in where it was pasted or dropped (see insertImages). One pasted or dropped in a head belongs in a
-// body, and the page says so.
+// Where images dropped are to go, moved with the text while they are made smaller, which may take
+// seconds; a body opened or closed meanwhile leaves them nowhere.
+const spots = new Set();
+const spotAt = (pos) => {
+  const spot = { pos };
+  spots.add(spot);
+  return spot;
+};
+const spotsMoved = EditorView.updateListener.of((u) => {
+  if (u.docChanged) for (const spot of spots) spot.pos = u.changes.mapPos(spot.pos);
+});
+const spotsGone = () => {
+  for (const spot of spots) spot.pos = null;
+  spots.clear();
+};
+
+// Files pasted or dropped in the open body are the page's, to make smaller and keep if they are
+// images, and to write in where they were pasted or dropped (see insertImages); a file that is not
+// one is said so, never written in as its text. One pasted or dropped in a head belongs in a body,
+// and the page says so. Text dragged in is the editor's, as ever.
 const imagesInBody = (hooks) =>
   EditorView.domEventHandlers({
     paste(event) {
@@ -308,15 +328,15 @@ const imagesInBody = (hooks) =>
       return true;
     },
     dragover(event) {
-      if (!carriesImages(event.dataTransfer)) return false;
+      if (!carriesFiles(event.dataTransfer)) return false;
       event.preventDefault();
       return true;
     },
     drop(event, view) {
-      const files = imageFiles(event.dataTransfer);
-      if (!files.length) return false;
+      if (!carriesFiles(event.dataTransfer)) return false;
       event.preventDefault();
-      hooks.onImages(files, view.posAtCoords({ x: event.clientX, y: event.clientY }));
+      const at = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+      hooks.onImages([...event.dataTransfer.files], spotAt(at));
       return true;
     },
   });
@@ -329,7 +349,7 @@ const imagesInHead = (hooks) =>
       return true;
     },
     drop(event) {
-      if (!imageFiles(event.dataTransfer).length) return false;
+      if (!carriesFiles(event.dataTransfer)) return false;
       event.preventDefault();
       hooks.onImagesElsewhere();
       return true;
@@ -445,6 +465,7 @@ export function mount(hooks, foot) {
       mouseleave: (event, view) => view.contentDOM.classList.remove('on-link'),
     }),
     imagesInBody(hooks),
+    spotsMoved,
     vimSlot.of(vimKeys()),
     keymap.of([
       { key: 'Enter', run: breakPastLabels, shift: breakPastLabels },
@@ -507,6 +528,7 @@ export function mount(hooks, foot) {
     // how wide five of them are.
     openHead(text, at, hidden = '') {
       whole = false;
+      spotsGone();
       const margin = 2.5 * (parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16);
       const state = EditorState.create({ doc: text, extensions: head(hidden, margin) });
       view.setState(state.update({ selection: EditorSelection.cursor(Math.min(at, readEnd(state))) }).state);
@@ -515,6 +537,7 @@ export function mount(hooks, foot) {
     // before the labels if that is among them.
     openBody(text, at, hidden = '') {
       whole = true;
+      spotsGone();
       const state = EditorState.create({ doc: text, extensions: body(hidden) });
       const labels = labelsAt(state);
       const caret = labels && at > labels.from && at <= labels.to ? labels.from : at;
@@ -580,18 +603,35 @@ export function mount(hooks, foot) {
     // Where a position is, for what is offered under a word.
     coordsAt: (pos) => view.coordsAtPos(pos, 1),
     // Writes image references into the open body, each on a line of its own (see DESIGN "An image is
-    // drawn under its line"): on the line dropped on, or the caret's line, or in a body not yet
-    // written in its last line; an empty line takes them in its place and any other has them after
+    // drawn under its line"): on the line dropped on, where the text has moved it since, or the
+    // caret's line, or in a body not yet written in its last line, and past the table or the block
+    // of code that line is in; an empty line takes them in its place and any other has them after
     // it; the caret goes to the start of the line after the last, an empty one made at the end when
     // there is none. One change to undo, the person's own.
     insertImages(lines, at) {
+      spots.delete(at);
       if (!whole) return;
       const { doc } = view.state;
-      const pos = at ?? (arrivedAt(view) ? doc.length : view.state.selection.main.head);
-      const target = doc.lineAt(pos);
-      const empty = target.text.trim() === '';
+      const caret = arrivedAt(view) ? doc.length : view.state.selection.main.head;
+      let target = doc.lineAt(Math.min(at?.pos ?? caret, doc.length));
+      // A reference in a table would be a row of it, and in a block of code code: it goes after, and
+      // after a table past an empty line, since a line straight after one is a row of it too.
+      let inside = false;
+      let table = false;
+      syntaxTree(view.state).iterate({
+        from: target.from,
+        to: target.to,
+        enter(node) {
+          if (!['Table', 'FencedCode', 'CodeBlock'].includes(node.name)) return;
+          target = doc.lineAt(node.to);
+          inside = true;
+          table = node.name === 'Table';
+          return false;
+        },
+      });
+      const empty = !inside && target.text.trim() === '';
       const from = empty ? target.from : target.to;
-      let insert = `${empty ? '' : '\n'}${lines.join('\n')}`;
+      let insert = `${empty ? '' : table ? '\n\n' : '\n'}${lines.join('\n')}`;
       const end = from + insert.length;
       if (target.number === doc.lines) insert += '\n';
       view.dispatch({
@@ -601,6 +641,9 @@ export function mount(hooks, foot) {
         userEvent: at == null ? 'input.paste' : 'input.drop',
       });
     },
+    // Where a drop beside the open body's text, in its margin or below it, puts what it carries:
+    // the nearest place in the text.
+    spotAt: (x, y) => spotAt(view.posAtCoords({ x, y }, false)),
     // An image has come or been opened: its picture is drawn.
     picturesChanged() {
       view.dispatch({ effects: picturesChanged.of(null) });
