@@ -1091,22 +1091,22 @@ read and styled where it is written" and "A row's marks show only in the span be
 Everything crosses to the engine as text: an action goes in as JSON and what to do and what to show
 come back as JSON, a hint's action being exactly what to send back to ask for it. A tab is one more
 device. It has a writer id and a log of its own for each space, keeps every log of the space, and
-every image its notes refer to, in IndexedDB between visits, asks for the passphrase once and keeps the key, and syncs with the relay
-it was loaded from, so there is one address to open and nothing to set up. A line is sent only once
-IndexedDB has kept it, so that the relay never holds a line of a tab's log that the tab lost by
-closing, which the next tab to write that log would write over: a fork. A relay that says who may
-make spaces on it gives a link with a token, `#joe:3f9a…`, or `#3f9a…` for its root, opened once:
-the page keeps the token for the browser and takes it off the address, asks for its spaces under the
-name, `/1/joe/main`, and offers the token as a subprotocol beside `fzn`, the one place a page can
-put a credential on a socket. The name, being no secret, is said in the address as well,
-`?name=joe`, so that a page added to a home screen keeps it; a browser holding no name takes the one
-its address says, and one holding a name says that one, since what a browser keeps of a space is
-under the space's name alone (see "The page says its name in its address"). A space that is there
-already is entered with its key alone. A refusal from the relay stays in the foot until a relay
-takes the tab in, and a connection the relay ends at once does not shorten the wait before the next.
-The word `passphrase` in the foot types the passphrase again, and is there only in a space with no
-notes yet. A passphrase in doubt, a key that opens nothing here or one the relay refused that
-nothing here has proved, says so, with its own way to type it again.
+every image its notes refer to, in IndexedDB between visits, asks for the passphrase once and keeps
+the key, and syncs with the relay it was loaded from, so there is one address to open and nothing to
+set up. A line is sent only once IndexedDB has kept it, so that the relay never holds a line of a
+tab's log that the tab lost by closing, which the next tab to write that log would write over: a
+fork. A relay that says who may make spaces on it gives a link with a token, `#joe:3f9a…`, or
+`#3f9a…` for its root, opened once: the page keeps the token for the browser and takes it off the
+address, asks for its spaces under the name, `/1/joe/main`, and offers the token as a subprotocol
+beside `fzn`, the one place a page can put a credential on a socket. The name, being no secret, is
+said in the address as well, `?name=joe`, so that a page added to a home screen keeps it; a browser
+holding no name takes the one its address says, and one holding a name says that one, since what a
+browser keeps of a space is under the space's name alone (see "The page says its name in its
+address"). A space that is there already is entered with its key alone. A refusal from the relay
+stays in the foot until a relay takes the tab in, and a connection the relay ends at once does not
+shorten the wait before the next. The word `passphrase` in the foot types the passphrase again, and
+is there only in a space with no notes yet. A passphrase in doubt, a key that opens nothing here or
+one the relay refused that nothing here has proved, says so, with its own way to type it again.
 
 *Where the page comes from.* The relay carries the page, built into fzn from the files of the `web`
 directory that make it; `fzn relay --web web` serves the directory instead while the page is worked
@@ -1214,34 +1214,34 @@ built as nodes and never as markup. A link goes only to a whole address, `http:/
 a host, or `mailto:` and someone, in a tab of its own and with no referrer, since a browser takes
 `http:boiler` as a path on the relay; any other address, a link by reference, raw HTML, an entity
 such as `&amp;`, and `[[Boiler]]`, read whole as fzn's link, are shown as typed, an image of the
-space's own, `![…](fzn:…)`, is drawn under its line from this device's store (see "An image is
-drawn under its line"), and any other image is never loaded but is a link reading its alt text. A
-row's head reads as one line of the same
-markdown, so that a line reads one way in the list and beside it: emphasis, strong text, code,
-strikethrough, links, bare and bracketed addresses, an image of the space's own as its alt text, or
-the faint word `image` where it has none, and any other as a link reading its alt text, escapes
-read and a leading heading mark dropped, and a list item's or a quote's mark read as a word of the
-line, since a head is not a block; the row under the cursor reads the same but for the span the
-selection touches, as the sheet does (see "A row's marks show only in the span being written").
-Tags, people and dates are not marked. Highlighting is in paper, ink and the two greys: keywords and
-definitions heavier, strings, numbers and constants soft, comments faint and slanted, punctuation
-and a diff's removed lines faint; code read is set in ink, a block of it on a faint wash of ink.
-Code in a line lies on a wash of the text's own colour, in a row and a body read, where it is in
-ink, except in a done task or a link, whose colour it keeps; in the editor, a head's or the sheet's,
-code in a line has the same wash, and a block's lines a band of it, its fences' backticks drawn from
-where the code's capitals start, since a grave accent in a monospace stands above the letters and
-against the band's edge. A link is in the link's blue, a step back toward the grey around it on the
-resting page, an archived row and a done task, and underlined in a tint of its colour, clear of the
-descenders, in full under the pointer, never heavier. In the editor what the read makes a link is
-marked so and nothing else: a link's or an image's words whose address the page follows, and such an
-address standing alone, bare, in angle brackets or in a link's definition, but not `[draft]`, a link
-by reference or `www.example.org`, which read as typed; a link's brackets, its title and the address
-after its words stay as they were, faint or soft, in a link the selection touches and go in any
-other; `[[Boiler]]` is unmarked there, brackets and all, as it is read. An address read as itself is
-shown without its scheme, `example.org/garden`, and whole under the pointer. A long body is rendered
-at first only as far as it shows, its first 5,000 letters, and whole once the page is idle. A head
-is parsed only if it holds a character that can begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`;
-nested past what the stack holds, a body is read as typed.
+space's own, `![…](fzn:…)`, is drawn under its line from this device's store (see "An image is drawn
+under its line"), and any other image is never loaded but is a link reading its alt text. A row's
+head reads as one line of the same markdown, so that a line reads one way in the list and beside it:
+emphasis, strong text, code, strikethrough, links, bare and bracketed addresses, an image of the
+space's own as its alt text, or the faint word `image` where it has none, and any other as a link
+reading its alt text, escapes read and a leading heading mark dropped, and a list item's or a
+quote's mark read as a word of the line, since a head is not a block; the row under the cursor reads
+the same but for the span the selection touches, as the sheet does (see "A row's marks show only in
+the span being written"). Tags, people and dates are not marked. Highlighting is in paper, ink and
+the two greys: keywords and definitions heavier, strings, numbers and constants soft, comments faint
+and slanted, punctuation and a diff's removed lines faint; code read is set in ink, a block of it on
+a faint wash of ink. Code in a line lies on a wash of the text's own colour, in a row and a body
+read, where it is in ink, except in a done task or a link, whose colour it keeps; in the editor, a
+head's or the sheet's, code in a line has the same wash, and a block's lines a band of it, its
+fences' backticks drawn from where the code's capitals start, since a grave accent in a monospace
+stands above the letters and against the band's edge. A link is in the link's blue, a step back
+toward the grey around it on the resting page, an archived row and a done task, and underlined in a
+tint of its colour, clear of the descenders, in full under the pointer, never heavier. In the editor
+what the read makes a link is marked so and nothing else: a link's or an image's words whose address
+the page follows, and such an address standing alone, bare, in angle brackets or in a link's
+definition, but not `[draft]`, a link by reference or `www.example.org`, which read as typed; a
+link's brackets, its title and the address after its words stay as they were, faint or soft, in a
+link the selection touches and go in any other; `[[Boiler]]` is unmarked there, brackets and all, as
+it is read. An address read as itself is shown without its scheme, `example.org/garden`, and whole
+under the pointer. A long body is rendered at first only as far as it shows, its first 5,000
+letters, and whole once the page is idle. A head is parsed only if it holds a character that can
+begin a mark, ``* _ ` ~ \ [ <``, `://` or `mailto:`; nested past what the stack holds, a body is
+read as typed.
 
 *Keys.* The four that are the app are the same, type, Enter, Escape and the arrows, and Tab goes in,
 as in the terminal. The terminal's chords are here wherever a browser lets them go (see "The page
@@ -1281,18 +1281,17 @@ chords, no Tab and no Escape, so the phone's bar has none. No word has a tooltip
 the chords are the editor's, so only the way out has its key there, `done Esc`, or `done :q` with
 vim's keys, Escape being vim's alone. An open body's foot has the word `image` too, at every width,
 which opens the device's own picker of files, on a phone the camera and the photos. The foot is one
-line at every width, 3.25rem tall, and holds
-still (see "The foot holds still"): the words never wrap; the way back, Escape's next rung, `up` on
-a row, `clear` while the line has text, `back` in a place with the line empty or `done` in an open
-body, is the last word wherever there is one, as the terminal's footer ends with it, and follows the
-words and stays in sight when they do not fit; the rest scroll sideways, under a fade at each edge
-that hides words, by a wheel, a swipe or a trackpad, and go back to their start whenever they change
-or the cursor moves to another row. Wider than a phone the foot reaches from the column's left to
-the window's right margin, so that on a wide page the busiest rows' words run on under the pane
-rather than scroll. At a phone's width the words are a bar at the foot, each as tall as a thumb,
-with the way back pinned at its right; `move up` and `move down` there move the note. What was said
-floats above the words, at the column's right, taking no room, and nothing is drawn there when
-nothing is said.
+line at every width, 3.25rem tall, and holds still (see "The foot holds still"): the words never
+wrap; the way back, Escape's next rung, `up` on a row, `clear` while the line has text, `back` in a
+place with the line empty or `done` in an open body, is the last word wherever there is one, as the
+terminal's footer ends with it, and follows the words and stays in sight when they do not fit; the
+rest scroll sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad,
+and go back to their start whenever they change or the cursor moves to another row. Wider than a
+phone the foot reaches from the column's left to the window's right margin, so that on a wide page
+the busiest rows' words run on under the pane rather than scroll. At a phone's width the words are a
+bar at the foot, each as tall as a thumb, with the way back pinned at its right; `move up` and `move
+down` there move the note. What was said floats above the words, at the column's right, taking no
+room, and nothing is drawn there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A line longer than its field scrolls sideways under the caret as a head being written does (see
@@ -1380,31 +1379,32 @@ into it showing it as typed and a press on its scrollbar scrolling it and leavin
 of the space's own drawn under its line, no wider than the measure and never enlarged, its line
 reading as its alt text until the selection touches it, and `not here yet` there in the faint grey
 while this device has not got it; an image pasted or dropped there, or chosen with `image`, made
-smaller, kept and written on a line of its own, a link read followed by a press, an address in a tab of its own with the body left open and `[[Boiler]]`
-into Boiler as Tab goes, the body written as it closes, but for the span the selection touches,
-which shows its marks where they stand, a press on it the caret's, the marks in the faint grey and
-the text in ink, headings and strong text heavier, the first three levels of heading larger and
-set closer than the text, with room above them in the body, its head set as a first-level heading
-is, as the page's title, a third of a line clear of the body, with its task's box drawn as a body's
-is (see "An open body's head is its title") and the place's labels that end it read hidden as on its
-row, the caret landing before them, and Enter with nothing after it but them breaking the line after
-them (see "An open body's head reads the place's labels as its row does"), emphasis slanted, code in
-the monospace; a body opens reading whole, as a head is landed on; soft wrap, step undo, a grey
-selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer
-over a link that a press follows, and vim mode for the body, for the browser that asked for it with
-the word `vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is
-not offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a
-note's long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone;
-`:q`, `:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back
-first, and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard
-too. The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as
-high as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot
-of the sheet, under the text and a hairline. The editor is fetched as the page starts, beside the
-engine, and nothing is painted until it is here. The `editor` the engine offers is not shown here.
-At a phone's width the sheet is the whole frame above the bar, and the bar the sheet's colour while
-it is open; a wider touch screen has it as the page, sized from the frame. On a touch screen it
-opens without the keyboard, which a tap in the text raises; putting the keyboard away leaves it
-open, and `done`, the back gesture, or a tap on the page beside it closes it.
+smaller, kept and written on a line of its own, a link read followed by a press, an address in a tab
+of its own with the body left open and `[[Boiler]]` into Boiler as Tab goes, the body written as it
+closes, but for the span the selection touches, which shows its marks where they stand, a press on
+it the caret's, the marks in the faint grey and the text in ink, headings and strong text heavier,
+the first three levels of heading larger and set closer than the text, with room above them in the
+body, its head set as a first-level heading is, as the page's title, a third of a line clear of the
+body, with its task's box drawn as a body's is (see "An open body's head is its title") and the
+place's labels that end it read hidden as on its row, the caret landing before them, and Enter with
+nothing after it but them breaking the line after them (see "An open body's head reads the place's
+labels as its row does"), emphasis slanted, code in the monospace; a body opens reading whole, as a
+head is landed on; soft wrap, step undo, a grey selection held to the text's measure, Mod-B, Mod-I
+and Mod-E for bold, italic and code, a pointer over a link that a press follows, and vim mode for
+the body, for the browser that asked for it with the word `vim` in the foot of an open body, which a
+touch screen, whose keyboard has no Escape, is not offered. In vim mode `j` and `k` move over the
+lines as shown, as `gj` and `gk` do, since a note's long lines wrap, but in a line-wise selection,
+which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ` or the word in the foot
+closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and stays, scrolled where
+it was; a yank is copied to the system's clipboard too. The page's caret is drawn from the editor's
+coordinates, in a head and in a body, a block as high as the line it is on, and in vim's insert mode
+a bar. Vim's prompt for a command is at the foot of the sheet, under the text and a hairline. The
+editor is fetched as the page starts, beside the engine, and nothing is painted until it is here.
+The `editor` the engine offers is not shown here. At a phone's width the sheet is the whole frame
+above the bar, and the bar the sheet's colour while it is open; a wider touch screen has it as the
+page, sized from the frame. On a touch screen it opens without the keyboard, which a tap in the text
+raises; putting the keyboard away leaves it open, and `done`, the back gesture, or a tap on the page
+beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
@@ -4604,11 +4604,15 @@ the app now does is described above; an entry repeats it only where the reason n
   drawn, a row being one line, and so does the note you are in read above the line. An image goes
   in by a paste or a drop in the open body, or by the word `image` in its foot, at every width,
   which opens the device's own picker, on a phone the camera and the photos: it is made smaller
-  as every face makes one, kept, and written on a line of its own with no alt text, after the
-  caret's line, or at the end of a body not yet written in, and the caret goes to the line after
-  it. An image pasted or dropped on a row or on the line is said to belong in a body. What it
-  costs: a body beside the list with many photos lays them out as they come into sight, and a
-  drawn photo takes up to 16 MiB of a tab's memory while it is on the screen. Weighed: a picture
+  as every face makes one, kept, and written on a line of its own with no alt text: in place of the
+  caret's line where that is empty and otherwise after it, or after the line it is dropped on,
+  anywhere on the sheet a drop counting as on the line nearest, past a table or a block of code
+  that line is in, or at the end of a body not yet written in, and the caret goes to the line
+  after it. A file that is not an image is said not to be one and written in as nothing. An image
+  pasted or dropped on a row or on the line is said to belong in a body. What it costs: a body
+  beside the list with many photos lays them out as they come into sight, a drawn photo takes up
+  to 16 MiB of a tab's memory while it is on the screen, and the pictures a tab has opened, up to
+  48 images of up to 2 MiB each as they are kept, are held for the visit. Weighed: a picture
   in place of its line, for the reason above; and a picture inline in its line, which would make
   the line as tall as the picture and move everything under it as the caret came.
 
