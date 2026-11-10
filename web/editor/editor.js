@@ -30,7 +30,9 @@ import {
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
 import { between, follows, highlighter, language, line, markdown } from './render.js';
-import { asHead, cellAt, fromPage, readEnd, readWhereNotWritten, readingMoved, writtenIn } from './reading.js';
+import {
+  asHead, cellAt, fromPage, labelsAt, placeLabels, readEnd, readWhereNotWritten, readingMoved, writtenIn,
+} from './reading.js';
 
 // A block of code is parsed in its language: by its grammar, or a stream mode made a parser here,
 // and while the language is on its way it is passed over, to be parsed again when it arrives.
@@ -154,6 +156,26 @@ function linkAt(view, pos) {
   }
   return null;
 }
+
+// Enter in a head with nothing after the caret but the place's labels, read hidden, breaks the line
+// after them and not at the caret, so that they stay on the head, where their row reads them, and
+// the caret starts the line under it, the spaces it stood before let go. Anywhere else, Enter is
+// Enter.
+const breakPastLabels = (view) => {
+  const { state } = view;
+  const labels = labelsAt(state);
+  const { main } = state.selection;
+  if (!labels || state.selection.ranges.length > 1 || !main.empty || main.head > labels.from) return false;
+  if (state.sliceDoc(main.head, labels.from).trim()) return false;
+  const changes = state.changes([{ from: main.head, to: labels.from }, { from: labels.to, insert: '\n' }]);
+  view.dispatch({
+    changes,
+    selection: { anchor: changes.mapPos(labels.to, 1) },
+    scrollIntoView: true,
+    userEvent: 'input',
+  });
+  return true;
+};
 
 // Bold, italic and code, as the chords of every editor make them: wrapped round what is selected,
 // or taken off when it is one span of them already, its marks outside the selection or just inside
@@ -311,13 +333,14 @@ export function mount(hooks, foot) {
     EditorView.domEventHandlers({ blur: (event) => hooks.onBlur(event), focus: () => hooks.onFocus() }),
   ];
   // A body wraps, and its keys are an editor's: Enter is a newline and no more, with or without
-  // Shift. Ctrl-O does nothing here, so that it never reaches the browser's file dialog. Tab
-  // indents and Shift-Tab takes the indent back, as in any editor, rather than moving the focus off
-  // the page's text: Escape, `:q` or the word in the foot is the way out. A press on a link read
+  // Shift, but before the place's labels that end the head (see breakPastLabels). Ctrl-O does
+  // nothing here, so that it never reaches the browser's file dialog. Tab indents and Shift-Tab
+  // takes the indent back, as in any editor, rather than moving the focus off the page's text:
+  // Escape, `:q` or the word in the foot is the way out. A press on a link read
   // follows it, and the caret stays where it was; one on a drawn table goes into its cell. Mod-B,
   // Mod-I and Mod-E make bold, italic and code; in vim's normal mode away from a Mac those chords
   // are vim's scrolls and jump, and vim has them first.
-  const body = () => [
+  const body = (hidden) => [
     EditorView.domEventHandlers({
       mousedown(event, view) {
         if (event.button !== 0) return false;
@@ -346,6 +369,7 @@ export function mount(hooks, foot) {
     }),
     vimSlot.of(vimKeys()),
     keymap.of([
+      { key: 'Enter', run: breakPastLabels, shift: breakPastLabels },
       { key: 'Enter', run: insertNewline, shift: insertNewline },
       { key: 'Ctrl-o', run: () => true },
       indentWithTab,
@@ -359,6 +383,7 @@ export function mount(hooks, foot) {
     ]),
     history(),
     note,
+    placeLabels.of(hidden),
     panels({ bottomContainer: foot }),
     EditorView.lineWrapping,
     ...shared,
@@ -370,7 +395,8 @@ export function mount(hooks, foot) {
     keymap.of(standardKeymap),
     headLine,
     oneLine,
-    asHead.of({ hidden }),
+    asHead.of(true),
+    placeLabels.of(hidden),
     EditorView.cursorScrollMargin.of({ x: margin, y: 5 }),
     EditorView.contentAttributes.of({ 'aria-multiline': 'false' }),
     ...shared,
@@ -405,10 +431,14 @@ export function mount(hooks, foot) {
       const state = EditorState.create({ doc: text, extensions: head(hidden, margin) });
       view.setState(state.update({ selection: EditorSelection.cursor(Math.min(at, readEnd(state))) }).state);
     },
-    // The whole note, with the caret at `at`.
-    openBody(text, at) {
+    // The whole note, given the place's labels its head reads without, with the caret at `at`, or
+    // before the labels if that is among them.
+    openBody(text, at, hidden = '') {
       whole = true;
-      view.setState(EditorState.create({ doc: text, selection: EditorSelection.cursor(at), extensions: body() }));
+      const state = EditorState.create({ doc: text, extensions: body(hidden) });
+      const labels = labelsAt(state);
+      const caret = labels && at > labels.from && at <= labels.to ? labels.from : at;
+      view.setState(state.update({ selection: EditorSelection.cursor(caret) }).state);
       listen();
     },
     get whole() {
@@ -453,14 +483,15 @@ export function mount(hooks, foot) {
     },
     // Where the caret is, for the page to draw: the position's own rectangle, on the side of the
     // soft wrap the selection keeps to, the right edge of the letter after it when that letter is
-    // on the same line, and the line it is on, whose size a heading's or the head's own may be.
+    // on the same line and shown, which a place's labels read hidden are not, and the line it is
+    // on, whose size a heading's or the head's own may be.
     caret() {
       const { empty, head, assoc } = view.state.selection.main;
       const rect = view.coordsAtPos(head, assoc || 1);
       let right = null;
       if (rect && head < view.state.doc.length && view.state.sliceDoc(head, head + 1) !== '\n') {
         const after = view.coordsAtPos(head + 1, -1);
-        if (after && after.top === rect.top) right = after;
+        if (after && after.top === rect.top && after.left > rect.left) right = after;
       }
       const { node } = view.domAtPos(head);
       const line = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest('.cm-line');

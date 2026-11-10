@@ -811,6 +811,12 @@ const headOf = (text) => {
 const hiddenOf = (row) =>
   row?.shown != null && row.head.startsWith(row.shown) ? row.head.slice(row.shown.length) : '';
 
+// The path's labels an open body's head reads without: those its row does, or in a new note with
+// nothing in it but what it opened with, which its row shows whole, all after where the caret
+// belongs, so that it opens as an empty title to write.
+const bodyHiddenOf = (field, row) =>
+  field.fresh != null ? field.text.slice(unitsIn(field.text, field.fresh)) : hiddenOf(row);
+
 // On a head the engine is told the note with the head as typed and the rest as it was, and where
 // the caret is after typing, for what is offered; with the body open, the whole of what the editor
 // holds. The caret is read once the editor has finished with a change, and in a head a move while
@@ -1429,7 +1435,8 @@ function paintRows() {
       // engine, which keeps the note without it: told the kept text, the editor would take the new
       // line away under the hands.
       const kept = (body) => body.replace(/[\r\n]+$/, '');
-      if (!wasWhole || landed) editor.openBody(text, to ?? headOf(text).length);
+      const hidden = bodyHiddenOf(field, view.rows[view.cursor]);
+      if (!wasWhole || landed) editor.openBody(text, to ?? headOf(text).length, hidden);
       else if (kept(editor.text()) !== kept(text)) editor.setText(text);
     } else if (landed || wasWhole) {
       editor.scrollDOM.scrollLeft = 0;

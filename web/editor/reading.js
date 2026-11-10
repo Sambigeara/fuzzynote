@@ -20,8 +20,8 @@
 // head's lead, drawn as a box while the selection does not touch it. In a row the box is drawn as
 // the list draws it and ticked by the page when it is pressed; in the open body it is drawn as a
 // body's box is, which a press does not tick. A row's head is one line, read as a head is read in
-// the list (see render.js), and has one thing a body does not: in a place, the place's labels
-// that end it read hidden, as the row reads off the cursor, until the caret goes into them; a
+// the list (see render.js). In a place, the place's labels that end the head read hidden, in a row
+// and in the open body alike, as the row reads off the cursor, until the caret goes into them; a
 // caret before them, where the caret lands, leaves them hidden and writes before them.
 //
 // Nothing here changes the text. Decorations hide marks and draw in their place, so the note, its
@@ -43,9 +43,12 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view
 import { syntaxTree } from '@codemirror/language';
 import { between, body, follows } from './render.js';
 
-// The text is a row's head, and these are the place's labels its row reads without, if any, as
-// the engine says them: what its head says past what it shows.
-export const asHead = Facet.define({ combine: (given) => given[0] ?? null });
+// The text is a row's head, one line, and not a whole note.
+export const asHead = Facet.define({ combine: (given) => given.length > 0 });
+
+// The place's labels that end the head, which its row reads without, as the page has them from
+// the engine; none outside a place.
+export const placeLabels = Facet.define({ combine: (given) => given[0] ?? '' });
 
 class Bullet extends WidgetType {
   eq() {
@@ -299,23 +302,29 @@ function reading(view, arrived) {
       },
     });
   }
-  // A place's labels that end a head read hidden until the caret goes into them, past their
+  // A place's labels that end the head read hidden until the caret goes into them, past their
   // start, so that the caret landing before them, and what it types there, leave them so.
-  const end = readEnd(state);
-  if (end < doc.length && (arrived || !selection.ranges.some((r) => r.to > end))) hide(end, doc.length);
+  const labels = labelsAt(state);
+  const into = (r) => r.to > labels.from && r.from <= labels.to;
+  if (labels && (arrived || !selection.ranges.some(into))) hide(labels.from, labels.to);
   return Decoration.set(out, true);
+}
+
+// Where the place's labels are while they end the head: from the space before them to the end of
+// its line. A new note's head that is nothing but them reads as nothing, a title to write.
+export function labelsAt(state) {
+  const labels = state.facet(placeLabels);
+  if (!labels) return null;
+  const line = state.doc.line(1);
+  const kept = line.text.trimEnd().length;
+  const from = kept - labels.length;
+  if (from < 0 || line.text.slice(from, kept) !== labels) return null;
+  return { from: line.from + from, to: line.to };
 }
 
 // Where what a head reads ends: before the place's labels while they end it, or at its end. A
 // caret the page puts past it goes there.
-export function readEnd(state) {
-  const labels = state.facet(asHead)?.hidden;
-  if (!labels) return state.doc.length;
-  const text = state.doc.toString();
-  const kept = text.trimEnd().length;
-  const ends = kept > labels.length && text.slice(kept - labels.length, kept) === labels;
-  return ends ? kept - labels.length : text.length;
-}
+export const readEnd = (state) => labelsAt(state)?.from ?? state.doc.length;
 
 // Whether a transaction put the whole text in place of the old, as a version from elsewhere does,
 // which leaves nothing for a held reading to be moved through.

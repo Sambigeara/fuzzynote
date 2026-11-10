@@ -905,16 +905,18 @@ terminal Ctrl-O hands it to your editor and the cursor stays on the line, and on
 sheet. On a new row there, typed into or not, the body chord opens the row's own body, as on any
 row, though the row reads the note you are in as the line does: from the row the note you are in
 opens by Esc, onto the line, and then the chord, or on the page by a tap on it where it is read,
-which steps onto the line first. A new row's body holds the labels it opened with, and a head and a
-body written before them, where the caret is, leave them ending the body, since Enter there is a
-line break; the labels are the place's and their place is the head, so when the body is left, closed
-or not, or the editor is, they go back to the end of the head, unless the writer moved them or took
-them out; a body typed under an empty head is the head, since writing drops blank lines first, and
-has them in it already. Opened from the line, the note you are in is put under the cursor, first on
-the list, where the note the line names is listed, or on its own row where the line names it
-already; closing it puts the cursor back on the line and takes the row away, so the list is as it
-was. In all else it is a row's body, Delete included. Inside labels alone, or at the top, there is
-no note you are in, and nothing to open.
+which steps onto the line first. A new row's body holds the labels it opened with. On the page they
+read hidden at the end of its head, as on its row, and stay there as a head and a body are written
+(see "An open body's head reads the place's labels as its row does"); in the terminal's editor a
+head and a body written before them, where the caret is, leave them ending the body, since Enter
+there is a line break. The labels are the place's and their place is the head, so when the body is
+left, closed or not, or the editor is, labels that end the body go back to the end of the head,
+unless the writer moved them or took them out; a body typed under an empty head is the head, since
+writing drops blank lines first, and has them in it already. Opened from the line, the note you are
+in is put under the cursor, first on the list, where the note the line names is listed, or on its
+own row where the line names it already; closing it puts the cursor back on the line and takes the
+row away, so the list is as it was. In all else it is a row's body, Delete included. Inside labels
+alone, or at the top, there is no note you are in, and nothing to open.
 
 A note on the path that goes steps you out to just before it, as stepping back would, the line kept
 as stepping back keeps it: deleted from its body, from its row where the line names it, by emptying
@@ -1282,7 +1284,9 @@ which shows its marks where they stand, a press on it the caret's, the marks in 
 the text in ink, headings and strong text heavier, the first three levels of heading larger and
 set closer than the text, its head set as a first-level heading is, as the page's title, a third
 of a line clear of the body, with its task's box drawn as a body's is (see "An open body's head is
-its title"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is
+its title") and the place's labels that end it read hidden as on its row, Enter before them and
+nothing else breaking the line after them (see "An open body's head reads the place's labels as its
+row does"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is
 landed on; soft wrap, step undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E
 for bold, italic and code, a pointer over a link that a press follows, and vim mode for the body,
 for the browser that asked for it with the word `vim` in the foot of an open body, which a touch
@@ -3523,7 +3527,8 @@ the app now does is described above; an entry repeats it only where the reason n
   given does not hold: the head is still the note's name, and the second tier already names every
   note without the labels that end its head, body or not, so typing what the row now reads still
   finds it and goes into it. The row under the cursor shows its text as it is, as any row's does,
-  and nothing else of the rule changes.
+  and nothing else of the rule changes. Revised 2026-11-10 by "An open body's head reads the place's
+  labels as its row does": the head of the note's open body reads without them too.
 
 - **The tags a word starts are offered as it is typed.** Decided 2026-10-19, at Sam's direction,
   revising the Principles' "One cursor" and "One cursor, no chrome" (2026-10-14), where nothing but
@@ -3801,7 +3806,9 @@ the app now does is described above; an entry repeats it only where the reason n
   the reveal machinery again; the lead rule in a row alone, which is two rules; showing what the
   caret touches on arrival, the body's rule unamended, which moves text under a cursor that is only
   walking; and keeping the `…` until the head is written in, which wants a state of the row's own
-  again for a mark the page draws on every other field as a fade.
+  again for a mark the page draws on every other field as a fade. Revised 2026-11-10 by "An open
+  body's head reads the place's labels as its row does": the place's labels that end a head read
+  hidden in the open body too, so that is no longer the row's own.
 
 - **A path steps back the same however it was made.** Decided 2026-10-22, at Sam's ask, revising the
   last rule of "The arrow at the end of a line of labels goes into each", where the whole line came
@@ -4374,7 +4381,9 @@ the app now does is described above; an entry repeats it only where the reason n
   there is no longer what Ctrl-O opens. Weighed: keeping the old meaning on the row opened on the
   way in only, which makes the key turn on how the row came; reading nothing on the untouched row,
   which brings back the flash; and opening the body with the caret after the labels, which puts the
-  writer's text after the place's labels in the head.
+  writer's text after the place's labels in the head. Revised 2026-11-10 by "An open body's head
+  reads the place's labels as its row does": on the page the labels read hidden on the head and stay
+  there as the body is written, so they are put back only from the terminal's editor.
 
 - **An open body's head is its title.** Decided 2026-11-10, at Sam's ask, revising the part of "An
   open body is the page" (2026-10-29) that set its head a little heavier, as it was on its row; the
@@ -4406,6 +4415,30 @@ the app now does is described above; an entry repeats it only where the reason n
   it than a line of the text does. Weighed: a size of the head's own between the heading's and the
   text's, a fourth size to tell apart; a rule under the head, which is chrome; and leading of 1.2,
   which on a wrapped head at a phone's width brought its lines' capitals and descenders close.
+
+- **An open body's head reads the place's labels as its row does.** Decided 2026-11-10, at Sam's
+  word, revising "A row's marks show only in the span being written" (2026-10-20), which kept the
+  hiding of the place's labels to the row's head, and the part of "The body chord opens the row it
+  is on" (2026-11-10) where on the page a head and a body written before the labels left them ending
+  the body until it was left. A new note's body opened titled with its place's label, `#house` set
+  as the page's title with the caret before it, and once a title, Enter and a body were written the
+  labels trailed the last line until the body closed and they were put back on the head. The head is
+  the title, and the place's labels are not the writer's, as on the row: the path says them. Now in
+  the open body the place's labels that end the head read hidden, the space before them included,
+  until the caret goes into them, by End or an arrow, as on the row under the cursor: the caret
+  lands before them, `Boiler overhaul #house` opened inside `#house` reads `Boiler overhaul`, and a
+  new note's body, nothing in it but its labels, opens as an empty title with the caret in it. Enter
+  on the head with nothing after the caret but those labels and spaces breaks the line after them,
+  not at the caret, the caret starting the line under, so the labels stay on the head; it is one
+  step to undo, vim's Enter in insert mode does the same, and anywhere else Enter is a line break.
+  The row is unchanged, a new one with nothing but its labels still showing them so that it is not
+  blank, and so is the terminal, whose editor is handed the labels as text and has them put back on
+  the head when it leaves them ending the body. What it costs: a line break before the labels, which
+  would start the body with them, takes moving them by hand; and while the body is written the
+  labels are out of sight, as on the row, so a note begun in the wrong place says so only in the
+  path. Weighed: drawing them faint, which is chrome on a title; hiding them only in a new note's
+  body, which reads a note two ways by its age; and putting them back on the head at each Enter by
+  the engine, which moves text under the hands.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
