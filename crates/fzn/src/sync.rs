@@ -32,6 +32,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
+use fzn_engine::image;
 use fzn_engine::replica::names_a_log;
 use fzn_engine::{Device, RELAY, Todo};
 use rustls::pki_types::ServerName;
@@ -398,10 +399,10 @@ impl Once {
     /// the device as it was or further on, never further back; the outer is what `keep` failed
     /// with, which is the directory's trouble and not the relay's.
     ///
-    /// An image that comes in the exchange is kept by `keep` with the lines, and one the relay
-    /// asks for is not sent: a command's exchange ends once its lines are in step, and an image
-    /// is no reason to keep it open. So an image only a command's note refers to reaches the
-    /// relay when a window next opens the space here.
+    /// The exchange asks the relay for no image, and sends none it asks for: it ends once its
+    /// lines are in step, and an image is no reason to keep it open. So an image only a
+    /// command's note refers to reaches the relay when a window next opens the space here, and
+    /// one the relay holds comes here with a window too.
     pub fn start(
         to: &Dial,
         space: &str,
@@ -460,10 +461,14 @@ impl Once {
         }
     }
 
-    /// Puts what a [`Todo`] has for the relay in line to go.
+    /// Puts what a [`Todo`] has for the relay in line to go, but for the device's asking for
+    /// images: the exchange is over once the lines are in step, and an image it asked for would
+    /// only hold up its close, to be read and thrown away.
     fn send(&mut self, todo: &Todo) -> Result<()> {
         for said in todo.send.iter().filter(|said| said.to == RELAY) {
-            self.wire.say(said.text.clone())?;
+            if !wants_images(&said.text) {
+                self.wire.say(said.text.clone())?;
+            }
         }
         Ok(())
     }
@@ -485,6 +490,11 @@ impl Once {
     }
 }
 
+/// Whether a message to the relay asks it for images.
+fn wants_images(text: &str) -> bool {
+    matches!(image::Message::decode(text), Some(image::Message::Want(_)))
+}
+
 /// Why a command's exchange with a relay ended, when the connection went before it was done.
 const LOST: &str = "the connection was lost";
 
@@ -494,6 +504,18 @@ mod tests {
     use std::net::TcpListener;
 
     const TOKEN: &str = "3f9a01c23f9a01c23f9a01c23f9a01c2";
+
+    #[test]
+    fn a_commands_exchange_asks_the_relay_for_no_image() {
+        let id = "4f998e75f22477b2519998d0731eeec8";
+        assert!(wants_images(
+            &image::Message::Want(vec![id.into()]).encode()
+        ));
+        assert!(!wants_images(
+            &image::Message::Images(vec![id.into()]).encode()
+        ));
+        assert!(!wants_images(r#"{"have":{}}"#));
+    }
 
     fn authority(relay: &str) -> Result<String> {
         dial_of(relay).map(|dial| dial.authority)
