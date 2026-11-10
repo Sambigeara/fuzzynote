@@ -165,17 +165,18 @@ function linkAt(view, pos) {
 
 // Enter in a head with nothing after the caret but the place's labels, read hidden, breaks the line
 // after them and not at the caret, so that they stay on the head, where their row reads them, and
-// the caret starts the line under it, the spaces it stood before let go. A head with nothing written
-// in it yet, but a box, is not one to keep them on: Enter there is Enter, and the line typed under
-// it is the head once the empty line is dropped on writing. Anywhere else, Enter is Enter.
+// the caret starts the line under it, the spaces either side of it let go. A head with nothing in
+// it yet but a box is no title to keep them on, and there, as anywhere else, Enter is Enter.
 const breakPastLabels = (view) => {
   const { state } = view;
   const labels = labelsAt(state);
   const { main } = state.selection;
   if (!labels || state.selection.ranges.length > 1 || !main.empty || main.head > labels.from) return false;
   if (state.sliceDoc(main.head, labels.from).trim()) return false;
-  if (!state.sliceDoc(0, labels.from).replace(/^\[[ x]\]/, '').trim()) return false;
-  const changes = state.changes([{ from: main.head, to: labels.from }, { from: labels.to, insert: '\n' }]);
+  const before = state.sliceDoc(0, labels.from);
+  if (!before.replace(/^\[[ x]\]/, '').trim()) return false;
+  const words = before.trimEnd().length;
+  const changes = state.changes([{ from: words, to: labels.from }, { from: labels.to, insert: '\n' }]);
   view.dispatch({
     changes,
     selection: { anchor: changes.mapPos(labels.to, 1) },
