@@ -913,11 +913,13 @@ head and a body written before them, where the caret is, leave them ending the b
 there is a line break. The labels are the place's and their place is the head, so when the body is
 left, closed or not, or the editor is, labels that end the body go back to the end of the head,
 unless the writer moved them or took them out; a body typed under an empty head is the head, since
-writing drops blank lines first, and has them in it already. Opened from the line, the note you are
-in is put under the cursor, first on the list, where the note the line names is listed, or on its
-own row where the line names it already; closing it puts the cursor back on the line and takes the
-row away, so the list is as it was. In all else it is a row's body, Delete included. Inside labels
-alone, or at the top, there is no note you are in, and nothing to open.
+writing drops blank lines first, and has them in it already, and so is the first line typed under a
+head of nothing but a box, joined onto the box, `[ ] \nClear the gutters #house` written as
+`[ ] Clear the gutters #house`, the lines after it staying the body. Opened from the line, the note
+you are in is put under the cursor, first on the list, where the note the line names is listed, or
+on its own row where the line names it already; closing it puts the cursor back on the line and
+takes the row away, so the list is as it was. In all else it is a row's body, Delete included.
+Inside labels alone, or at the top, there is no note you are in, and nothing to open.
 
 A note on the path that goes steps you out to just before it, as stepping back would, the line kept
 as stepping back keeps it: deleted from its body, from its row where the line names it, by emptying
@@ -4376,17 +4378,19 @@ the app now does is described above; an entry repeats it only where the reason n
   or took out are left as typed, and so is a note of one line, a head that holds one of them as a
   word already, and a note written before; blank lines before the head are passed over first, as
   writing drops them, so a body typed under an empty head is a note of one line with its labels in
-  it; this holds in labels alone too, where it could happen already. On the line Ctrl-O still opens
-  the note you are in. What it costs: from the untouched row the note you are in opens by Esc, onto
-  the line, and then Ctrl-O, or on the page by a press on the note read above the line or beside the
-  list; and on that row the body read beside the list, or in the terminal's foot, is still the note
-  you are in, kept so that a list written in a note does not flash its body away, so what is read
-  there is no longer what Ctrl-O opens. Weighed: keeping the old meaning on the row opened on the
-  way in only, which makes the key turn on how the row came; reading nothing on the untouched row,
-  which brings back the flash; and opening the body with the caret after the labels, which puts the
-  writer's text after the place's labels in the head. Revised 2026-11-10 by "An open body's head
-  reads the place's labels as its row does": on the page the labels read hidden on the head and stay
-  there as the body is written, so they are put back only from the terminal's editor.
+  it, and the first line typed under a head of nothing but a box is joined onto the box, so that the
+  box is not left heading nothing; this holds in labels alone too, where it could happen already. On
+  the line Ctrl-O still opens the note you are in. What it costs: from the untouched row the note
+  you are in opens by Esc, onto the line, and then Ctrl-O, or on the page by a press on the note
+  read above the line or beside the list; and on that row the body read beside the list, or in the
+  terminal's foot, is still the note you are in, kept so that a list written in a note does not
+  flash its body away, so what is read there is no longer what Ctrl-O opens. Weighed: keeping the
+  old meaning on the row opened on the way in only, which makes the key turn on how the row came;
+  reading nothing on the untouched row, which brings back the flash; and opening the body with the
+  caret after the labels, which puts the writer's text after the place's labels in the head. Revised
+  2026-11-10 by "An open body's head reads the place's labels as its row does": on the page the
+  labels read hidden on the head and stay there as the body is written, so they are put back only
+  from the terminal's editor.
 
 - **An open body's head is its title.** Decided 2026-11-10, at Sam's ask, revising the part of "An
   open body is the page" (2026-10-29) that set its head a little heavier, as it was on its row; the

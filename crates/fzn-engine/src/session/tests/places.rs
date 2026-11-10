@@ -2519,6 +2519,65 @@ fn two_labels_and_line_ends_of_a_carriage_return_go_back_on_the_head_too() {
 }
 
 #[test]
+fn a_line_written_under_a_box_with_nothing_after_it_is_the_head() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    go_to(&mut s, "[ ]");
+    assert_eq!(
+        written_in_a_body(&mut s, "[ ] \nClear the gutters #house"),
+        "[ ] Clear the gutters #house"
+    );
+    assert_eq!(
+        written_in_a_body(
+            &mut s,
+            "[ ]\n\nClear the gutters\nfrom the ladder\nboth sides #house\n"
+        ),
+        "[ ] Clear the gutters #house\nfrom the ladder\nboth sides",
+        "the lines after it stay the body, and the labels go back on the head"
+    );
+}
+
+#[test]
+fn an_editor_that_leaves_a_box_heading_nothing_has_the_line_under_it_joined_on() {
+    let mut s = session();
+    go_to(&mut s, "#house [ ]");
+    s.act(Action::Write);
+    let id = s.selected().unwrap().id.clone();
+    s.act(Action::Editor);
+    s.act(Action::Save {
+        id,
+        text: "[ ] \nClear the gutters #house\n".into(),
+    });
+    assert_eq!(held(&s).text, "[ ] Clear the gutters #house");
+}
+
+#[test]
+fn a_done_box_with_nothing_after_it_takes_the_line_under_it_too() {
+    let mut s = session();
+    go_to(&mut s, "#house [x]");
+    assert_eq!(
+        written_in_a_body(&mut s, "[x] \nSwept the chimney #house"),
+        "[x] Swept the chimney #house"
+    );
+}
+
+#[test]
+fn a_note_written_before_whose_box_heads_nothing_is_left_as_typed() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    select(&mut s, "[ ] Bleed the radiators #house");
+    s.act(Action::Open);
+    edited(&mut s, "[ ] \nBleed the radiators #house");
+    s.act(Action::Close);
+    assert_eq!(
+        s.notes.get("bleed").unwrap().text,
+        "[ ] \nBleed the radiators #house"
+    );
+}
+
+#[test]
 fn an_open_body_left_without_closing_it_puts_the_labels_back_on_the_head_as_closing_does() {
     let mut s = session();
     a_task_and_a_body(&mut s);

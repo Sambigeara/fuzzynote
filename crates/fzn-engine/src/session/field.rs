@@ -135,6 +135,31 @@ impl Writing {
         }
     }
 
+    /// Writes a new note's text as it was meant once it is written whole, from an open body or the
+    /// editor: a head of nothing but a box takes the line written under it (see `rehead_box`), and
+    /// the labels pushed off the head go back on it (see `rehead_labels`).
+    fn rehead(&mut self) {
+        self.rehead_box();
+        self.rehead_labels();
+    }
+
+    /// Joins the first line written under a new note's head of nothing but its box onto the box,
+    /// as a line written under an empty head is the head once writing drops the blank line: in an
+    /// editor the caret after the box and Enter there leave the box heading nothing. Blank lines
+    /// before the head are passed over first, and the lines after the one joined stay the body.
+    fn rehead_box(&mut self) {
+        if !self.new {
+            return;
+        }
+        let text = past_blank_lines(self.text.trim_end());
+        let Some((head, rest)) = text.split_once('\n') else {
+            return;
+        };
+        if text::task(head).is_some() && head[text::OPEN.len()..].trim().is_empty() {
+            self.text = format!("{} {}", &head[..text::OPEN.len()], rest.trim_start());
+        }
+    }
+
     /// Puts the labels a new note opened with back at the end of its head, where an open body
     /// written with the caret where the writer's text goes has pushed them to the end of its
     /// last line: in an editor Enter is a line break, so a head typed before the labels and then
@@ -149,12 +174,7 @@ impl Writing {
         if !self.new || labels.is_empty() {
             return;
         }
-        let mut text = self.text.trim_end();
-        while let Some((first, after)) = text.split_once('\n')
-            && first.trim().is_empty()
-        {
-            text = after;
-        }
+        let text = past_blank_lines(self.text.trim_end());
         let Some((head, _)) = text.split_once('\n') else {
             return;
         };
@@ -182,6 +202,16 @@ impl Writing {
             format!("{head}\n{body}")
         };
     }
+}
+
+/// A text without the blank lines it starts with, which writing drops.
+fn past_blank_lines(mut text: &str) -> &str {
+    while let Some((first, after)) = text.split_once('\n')
+        && first.trim().is_empty()
+    {
+        text = after;
+    }
+    text
 }
 
 /// A version of a note written in the visit that opened it, whose archived flag follows its
@@ -262,7 +292,7 @@ impl Session {
             }
             Action::Save { id, text } if id == field.id => {
                 field.text = text;
-                field.rehead_labels();
+                field.rehead();
                 if field.empty() {
                     // An editor that leaves nothing, or only the label the row opened with,
                     // leaves no note.
@@ -282,7 +312,7 @@ impl Session {
             // The note you are in, opened from the line, closes back onto the line, and its row,
             // put there for it, goes with the cursor.
             Action::Close => {
-                field.rehead_labels();
+                field.rehead();
                 self.flush();
                 match self.field.as_mut() {
                     Some(field) if field.from_line => {
@@ -893,7 +923,7 @@ impl Session {
         } else {
             // An open body left by any other way than closing it is written as closing it would.
             if let Some(field) = self.field.as_mut().filter(|field| field.whole) {
-                field.rehead_labels();
+                field.rehead();
             }
             self.flush();
             self.field = None;
