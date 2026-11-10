@@ -733,6 +733,10 @@ body.resting .row .head a,
 #sheet .cm-line.md-h3 { font-size: 1.15em; }
 #sheet .cm-line:is(.md-h1, .md-h2, .md-h3),
 #sheet .cm-content > .cm-line:first-child { line-height: 1.25; }
+/* The editor's empty stand-ins beside what is hidden or drawn are a letter high on the baseline,
+   which reaches above a line set this close; hung from the top of the letters, they leave its
+   height alone as a mark shows or hides. */
+#sheet .cm-line:is(.md-h1, .md-h2, .md-h3, :first-child) .cm-widgetBuffer { vertical-align: text-top; }
 .cm-editor .cm-line.md-quote { padding-left: 0.75em; border-left: 1px solid var(--rule); }
 .cm-editor .cm-line.md-rule {
   background: linear-gradient(var(--rule), var(--rule)) center / 100% 1px no-repeat;
