@@ -1510,7 +1510,9 @@ impl Images<'_> {
                 let room = self.hub.room();
                 (room.most, room.used)
             };
-            if used >= most {
+            // Near full, an image is asked for only if the largest there is would fit, so that
+            // nothing is sent all the way here to be thrown away.
+            if used + charged(SEALED_MOST as u64) > most {
                 self.offered.clear();
                 self.full(wire, used, most)?;
                 break;
@@ -1604,6 +1606,7 @@ impl Images<'_> {
             let mut room = self.hub.room();
             if room.used + size > room.most {
                 let _ = fs::remove_file(&fresh);
+                self.offered.clear();
                 no_room = Some((room.used, room.most));
             } else {
                 match fs::rename(&fresh, dir.join(id)) {
@@ -2268,14 +2271,16 @@ pub(crate) mod tests {
     #[test]
     fn a_relay_with_no_room_says_so_once_a_connection_and_keeps_nothing_more() {
         let root = temp_dir();
-        let images: Vec<_> = (0..3).map(|n| garden(n, 1000)).collect();
-        let size = charged(images[0].1.len() as u64);
-        let address = relay_room(&root, &config_of(&root), None, size * 3 / 2);
+        let images: Vec<_> = (0..4).map(|n| garden(n, 1_200_000)).collect();
+        // Room for the largest image there is, and no more.
+        let most = charged(SEALED_MOST as u64);
+        let address = relay_room(&root, &config_of(&root), None, most);
         let (mut raw, _) = Raw::entered(&address);
         let space = root.join("main");
         let full = image::Message::Full(image::FULL.into());
 
-        // Both are asked for while there is room, and the second is past it when it comes.
+        // Both are asked for while the largest image would fit, and the second is past the room
+        // when it comes.
         let (first, second) = (&images[0], &images[1]);
         raw.say_image(&image::Message::Images(vec![
             first.0.clone(),
@@ -2290,21 +2295,18 @@ pub(crate) mod tests {
         assert_eq!(raw.next_image(), full);
         assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
 
-        // Said once a connection: the next thing heard is the answer to a want.
+        // Said once a connection, and nothing more is asked for once the largest image would not
+        // fit: the next thing heard is the answer to a want.
         raw.say_image(&image::Message::Images(vec![images[2].0.clone()]));
-        assert_eq!(raw.next_image(), want(std::slice::from_ref(&images[2].0)));
-        raw.say_image(&image::Message::image(&images[2].0, &images[2].1));
         raw.say_image(&want(std::slice::from_ref(&first.0)));
         assert_eq!(raw.next_image(), image::Message::image(&first.0, &first.1));
         assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
 
-        // A connection after is told again, once what it sends is past the room.
+        // A connection after is told again, as soon as it offers anything, and is asked for
+        // nothing it would send only to have it thrown away.
         let (mut again, _) = Raw::entered(&address);
-        again.say_image(&image::Message::Images(vec![images[2].0.clone()]));
-        assert_eq!(again.next_image(), want(std::slice::from_ref(&images[2].0)));
-        again.say_image(&image::Message::image(&images[2].0, &images[2].1));
+        again.say_image(&image::Message::Images(vec![images[3].0.clone()]));
         assert_eq!(again.next_image(), full);
-        assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
         fs::remove_dir_all(&root).unwrap();
     }
 
