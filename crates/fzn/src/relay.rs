@@ -70,6 +70,9 @@ const LOCK_FILE: &str = ".lock";
 const AUTH_FILE: &str = ".auth";
 /// The directory a space's images are kept in, beside its logs.
 const IMAGES_DIR: &str = "images";
+/// How many images a device may have offered on a connection and not yet been asked for. It
+/// offers the rest again on its next connection.
+const OFFERED_MOST: usize = 4096;
 /// How many sealed lines of a space with no key a challenge offers at most, one a log.
 const LINES_OFFERED: usize = 16;
 /// How many connections may be in their greeting at once. Past it a new one is closed at once,
@@ -394,6 +397,17 @@ impl Hub {
         self.spaces()
             .get(label)
             .is_some_and(|space| space.images.contains_key(id))
+    }
+
+    /// Those of these images that a space that is open does not hold, under one look at it.
+    fn lacks_images(&self, label: &str, ids: Vec<String>) -> Vec<String> {
+        let spaces = self.spaces();
+        let Some(space) = spaces.get(label) else {
+            return Vec::new();
+        };
+        ids.into_iter()
+            .filter(|id| !space.images.contains_key(id))
+            .collect()
     }
 
     /// Opens a space if it is not open, or says why it cannot be, which is the relay's trouble
@@ -1414,6 +1428,7 @@ struct Images<'a> {
     peer: Peer,
     /// The space's images directory, or nothing if the space closed before the connection began.
     dir: Option<PathBuf>,
+    /// At most [`OFFERED_MOST`].
     offered: BTreeSet<String>,
     /// At most [`AT_ONCE`].
     wanted: BTreeSet<String>,
@@ -1430,14 +1445,23 @@ impl Images<'_> {
     fn heard(&mut self, message: image::Message, wire: &mut Wire) -> Result<()> {
         match message {
             image::Message::Images(ids) => {
+                // At most what fits under the bound is looked at, and all of it under one
+                // look at the space, so that a long list costs neither memory nor the hub's lock.
+                let room = OFFERED_MOST.saturating_sub(self.offered.len());
+                let mut new = BTreeSet::new();
                 for id in ids {
+                    if new.len() >= room {
+                        break;
+                    }
                     if image::is_id(&id)
                         && !self.wanted.contains(&id)
-                        && !self.hub.holds_image(self.label, &id)
+                        && !self.offered.contains(&id)
                     {
-                        self.offered.insert(id);
+                        new.insert(id);
                     }
                 }
+                let lacked = self.hub.lacks_images(self.label, new.into_iter().collect());
+                self.offered.extend(lacked);
                 self.ask(wire)
             }
             image::Message::Want(ids) => {
@@ -2093,6 +2117,24 @@ pub(crate) mod tests {
         assert_eq!(raw.next_image(), want(&all[4..5]));
         raw.say_image(&image::Message::image(&six[0].0, &six[0].1));
         assert_eq!(raw.next_image(), want(&all[5..]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_keeps_no_more_than_so_many_offers_and_asks_for_the_least_of_them() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        // Ids that are ids and name nothing, more than the bound, from the top down.
+        let ids: Vec<String> = (0..OFFERED_MOST + 100)
+            .rev()
+            .map(|n| format!("{n:032x}"))
+            .collect();
+        raw.say_image(&image::Message::Images(ids));
+        // The bound takes the first that came, the highest, and the least of those are asked
+        // for: the hundred least, past the bound, are not.
+        let first: Vec<String> = (100..104).map(|n| format!("{n:032x}")).collect();
+        assert_eq!(raw.next_image(), want(&first));
         fs::remove_dir_all(&root).unwrap();
     }
 
