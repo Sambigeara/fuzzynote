@@ -29,7 +29,7 @@ import {
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
-import { between, follows, highlighter, language, line, markdown } from './render.js';
+import { between, follows, highlighter, imageId, language, line, markdown } from './render.js';
 import {
   arrivedAt, asHead, cellAt, fromPage, labelsAt, picturesChanged, placeLabels, readEnd, readWhereNotWritten,
   readingMoved, writtenIn,
@@ -607,7 +607,8 @@ export function mount(hooks, foot) {
     // caret's line, or in a body not yet written in its last line, and past the table or the block
     // of code that line is in; an empty line takes them in its place, but for the one that ends a
     // table, and any other has them after it; the caret goes to the start of the line after the
-    // last, an empty one made at the end when there is none. One change to undo, the person's own.
+    // last, an empty one made there when there is none or when that line is an image's, whose
+    // source the caret would show. One change to undo, the person's own.
     insertImages(lines, at) {
       spots.delete(at);
       if (!whole) return;
@@ -638,7 +639,9 @@ export function mount(hooks, foot) {
           to,
           enter(node) {
             if (found) return false;
-            found = node.name === name;
+            if (node.name !== name) return;
+            const url = node.node.getChildren('URL').pop();
+            found = name !== 'Image' || !!(url && imageId(doc.sliceString(url.from, url.to)));
           },
         });
         return found;
@@ -649,7 +652,7 @@ export function mount(hooks, foot) {
       const from = empty ? target.from : target.to;
       let insert = `${empty ? '' : table ? '\n\n' : '\n'}${lines.join('\n')}`;
       const end = from + insert.length;
-      if (target.number === doc.lines) insert += '\n';
+      if (target.number === doc.lines || holds(target.number + 1, 'Image')) insert += '\n';
       view.dispatch({
         changes: { from, to: target.to, insert },
         selection: EditorSelection.cursor(end + 1),
