@@ -2170,13 +2170,94 @@ fn a_note_linked_both_ways_or_with_a_note_under_it_lands_on_the_line() {
 }
 
 #[test]
-fn opening_the_body_of_an_untouched_new_row_in_a_note_opens_the_note_you_are_in() {
+fn the_body_chord_on_an_empty_row_opens_the_rows_own_body() {
     let mut s = session();
     a_task_and_a_body(&mut s);
     go_into(&mut s, "Boiler overhaul #house");
-    assert!(fresh_row(&s).is_some());
+    let row = s.selected().unwrap().id.clone();
+    s.take_caret();
     let opened = s.act(Action::Open);
-    assert!(kept(&opened).is_empty(), "the untouched row writes nothing");
+    assert!(kept(&opened).is_empty(), "the empty row writes nothing");
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(
+        field.text, " #house",
+        "it is the row's own, not the note you are in"
+    );
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some(row.as_str()));
+    assert_eq!(
+        s.take_caret().head,
+        Some(0),
+        "the caret is where the writer's text goes, as on the row"
+    );
+    assert!(
+        !s.view().reads_here,
+        "its own body open, the sheet reads it"
+    );
+
+    // Opened by Enter, it is the same.
+    s.act(Action::Close);
+    s.act(Action::Select(None));
+    s.act(Action::Write);
+    let row = s.selected().unwrap().id.clone();
+    assert!(fresh_row(&s).is_some());
+    s.act(Action::Open);
+    let field = s.view().field.unwrap();
+    assert!(field.whole);
+    assert_eq!(field.text, " #house");
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some(row.as_str()));
+}
+
+#[test]
+fn the_editor_chord_on_an_empty_row_hands_over_the_rows_own_text() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    let row = s.selected().unwrap().id.clone();
+    let handed = s.act(Action::Editor);
+    assert_eq!(
+        handed,
+        [Effect::Editor {
+            id: row.clone(),
+            text: " #house".into()
+        }]
+    );
+    assert_eq!(s.cursor, Some(0), "the cursor stays on the row");
+    let saved = s.act(Action::Save {
+        id: row,
+        text: "Drain the tank #house\nfrom the valve at the bottom\n".into(),
+    });
+    let [new] = kept(&saved)[..] else {
+        panic!("{saved:?}");
+    };
+    assert_eq!(
+        new.text,
+        "Drain the tank #house\nfrom the valve at the bottom"
+    );
+    assert_eq!(new.links, ["overhaul"], "it is written in the note");
+
+    // Opened by Enter, it is the same.
+    s.act(Action::Select(None));
+    s.act(Action::Write);
+    let row = s.selected().unwrap().id.clone();
+    let handed = s.act(Action::Editor);
+    assert_eq!(
+        handed,
+        [Effect::Editor {
+            id: row,
+            text: " #house".into()
+        }]
+    );
+}
+
+#[test]
+fn the_body_chord_on_the_line_in_a_note_still_opens_the_note_you_are_in() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    s.act(Action::Select(None));
+    assert!(s.rows.is_empty(), "the empty row went with the cursor");
+    s.act(Action::Open);
     let field = s.view().field.unwrap();
     assert!(field.whole);
     assert_eq!(
@@ -2186,30 +2267,61 @@ fn opening_the_body_of_an_untouched_new_row_in_a_note_opens_the_note_you_are_in(
     assert_eq!(s.selected().map(|r| r.id.as_str()), Some("overhaul"));
     s.act(Action::Close);
     assert_eq!(s.cursor, None, "it closes back onto the line");
-    assert!(s.rows.is_empty(), "the row went, and so does the note's");
-    assert_eq!(s.notes.len(), 2);
 
-    // The editor is handed it the same way, and the cursor is on the line.
-    s.act(Action::Write);
-    assert!(fresh_row(&s).is_some());
     let handed = s.act(Action::Editor);
-    assert!(
-        handed.iter().any(|e| matches!(
-            e,
-            Effect::Editor { id, .. } if id == "overhaul"
-        )),
-        "{handed:?}"
+    assert_eq!(
+        handed,
+        [Effect::Editor {
+            id: "overhaul".into(),
+            text: "Boiler overhaul #house\nDrain it first, then refill.".into()
+        }]
     );
     assert_eq!(s.cursor, None);
-    assert!(s.rows.is_empty());
+}
 
-    // Typed into, the row's own body opens.
+#[test]
+fn a_body_closed_with_nothing_written_on_an_empty_row_leaves_no_note() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    s.act(Action::Open);
+    assert!(s.act(Action::Undo).is_empty(), "there is nothing to undo");
+    let closed = s.act(Action::Close);
+    assert!(kept(&closed).is_empty(), "{closed:?}");
+    assert_eq!(fresh_row(&s).as_deref(), Some(" #house"), "the row stays");
+    assert!(s.view().reads_here, "and reads the note you are in again");
+    s.act(Action::Select(None));
+    assert!(s.rows.is_empty());
+    assert_eq!(s.notes.len(), 2, "no note is left");
+
+    // Handed to the editor and left as it was, it leaves none either.
     s.act(Action::Write);
-    edited(&mut s, "Drain the tank #house");
+    let row = s.selected().unwrap().id.clone();
+    s.act(Action::Editor);
+    let saved = s.act(Action::Save {
+        id: row,
+        text: " #house\n".into(),
+    });
+    assert!(kept(&saved).is_empty(), "{saved:?}");
+    assert_eq!(s.notes.len(), 2);
+}
+
+#[test]
+fn the_body_of_an_empty_row_in_a_box_puts_the_caret_after_the_box() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    go_to(&mut s, "[ ]");
+    s.act(Action::Write);
+    s.take_caret();
     s.act(Action::Open);
     let field = s.view().field.unwrap();
     assert!(field.whole);
-    assert_eq!(field.text, "Drain the tank #house");
+    assert_eq!(field.text, "[ ]  #house");
+    assert_eq!(s.take_caret().head, Some("[ ] ".len()));
+    s.act(Action::Close);
+    assert_eq!(s.notes.len(), 1, "closed with nothing written, no note");
 }
 
 #[test]
@@ -2243,8 +2355,212 @@ fn a_new_row_in_a_note_typed_into_and_handed_to_the_editor_is_written_in_that_no
     assert_eq!(new.links, ["overhaul"], "it is written in the note");
 }
 
+/// What the note under the cursor is held as.
+fn held(s: &Session) -> &Record {
+    s.notes.get(&s.selected().unwrap().id).unwrap()
+}
+
 #[test]
-fn a_new_row_typed_into_and_cleared_opens_the_note_you_are_in_and_leaves_no_note() {
+fn a_head_and_a_body_written_before_the_labels_in_an_empty_rows_body_put_them_back_on_the_head() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    s.act(Action::Open);
+    edited(&mut s, "Drain the tank\nfrom the valve #house");
+    let closed = s.act(Action::Close);
+    let [new] = kept(&closed)[..] else {
+        panic!("{closed:?}");
+    };
+    assert_eq!(new.text, "Drain the tank #house\nfrom the valve");
+    assert_eq!(
+        new.links,
+        ["overhaul"],
+        "it is written in the note you are in"
+    );
+    let id = new.id.clone();
+    let field = s.view().field.unwrap();
+    assert_eq!(field.text, "Drain the tank #house\nfrom the valve");
+    s.act(Action::Undo);
+    assert!(
+        s.notes.get(&id).is_none_or(|r| r.deleted),
+        "undo takes the note away, as it was before: {:?}",
+        s.notes.get(&id)
+    );
+}
+
+#[test]
+fn an_editor_that_leaves_the_labels_ending_the_body_has_them_put_back_on_the_head() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    let id = s.selected().unwrap().id.clone();
+    s.act(Action::Editor);
+    s.act(Action::Save {
+        id,
+        text: "Drain the tank\nfrom the valve\nat the bottom #house\n".into(),
+    });
+    assert_eq!(
+        held(&s).text,
+        "Drain the tank #house\nfrom the valve\nat the bottom",
+        "with several lines of body, they come off the last"
+    );
+    assert_eq!(held(&s).links, ["overhaul"]);
+}
+
+#[test]
+fn the_labels_pushed_off_a_head_in_a_box_go_back_after_the_head_and_the_box_stays() {
+    let mut s = session();
+    put(&mut s, "overhaul", "Boiler overhaul #house", &[], 1_000);
+    go_to(&mut s, "#house");
+    go_to(&mut s, "boiler overhaul");
+    go_to(&mut s, "[ ]");
+    s.act(Action::Write);
+    s.act(Action::Open);
+    edited(&mut s, "[ ] Drain the tank\nfrom the valve #house");
+    s.act(Action::Close);
+    assert_eq!(held(&s).text, "[ ] Drain the tank #house\nfrom the valve");
+}
+
+/// Opens the body of a new row at the top of the place, writes `text` in it and closes it, and
+/// gives back what the note is held as.
+fn written_in_a_body(s: &mut Session, text: &str) -> String {
+    s.act(Action::Select(None));
+    s.act(Action::Write);
+    s.act(Action::Open);
+    edited(s, text);
+    s.act(Action::Close);
+    held(s).text.clone()
+}
+
+#[test]
+fn labels_the_writer_moved_out_of_the_end_are_left_where_they_are() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(
+        written_in_a_body(&mut s, "Drain the tank\n#house from the valve"),
+        "Drain the tank\n#house from the valve"
+    );
+}
+
+#[test]
+fn a_note_of_one_line_is_left_as_typed() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(
+        written_in_a_body(&mut s, "Drain the tank #house"),
+        "Drain the tank #house"
+    );
+}
+
+#[test]
+fn a_head_that_holds_the_labels_as_a_word_already_is_left_as_typed_and_a_longer_tag_is_not_them() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(
+        written_in_a_body(&mut s, "Drain the #house tank\nfrom the valve #house"),
+        "Drain the #house tank\nfrom the valve #house"
+    );
+    assert_eq!(
+        written_in_a_body(&mut s, "Fix the #household fuse\nfrom the board #house"),
+        "Fix the #household fuse #house\nfrom the board"
+    );
+}
+
+#[test]
+fn a_body_typed_under_an_empty_head_is_one_line_with_its_labels_in_it() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    assert_eq!(
+        written_in_a_body(&mut s, "\nfrom the valve #house"),
+        "from the valve #house"
+    );
+    assert_eq!(
+        written_in_a_body(&mut s, "\n\nfrom the valve #house\n"),
+        "from the valve #house"
+    );
+}
+
+#[test]
+fn two_labels_and_line_ends_of_a_carriage_return_go_back_on_the_head_too() {
+    let mut s = session();
+    go_to(&mut s, "#house #garden");
+    assert_eq!(
+        written_in_a_body(&mut s, "Drain the tank\nfrom the valve #house #garden"),
+        "Drain the tank #house #garden\nfrom the valve"
+    );
+    assert_eq!(
+        written_in_a_body(
+            &mut s,
+            "Fill the tank\r\nto a bar and a half #house #garden\r\n"
+        ),
+        "Fill the tank #house #garden\nto a bar and a half"
+    );
+}
+
+#[test]
+fn an_open_body_left_without_closing_it_puts_the_labels_back_on_the_head_as_closing_does() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    go_into(&mut s, "Boiler overhaul #house");
+    let id = s.selected().unwrap().id.clone();
+    s.act(Action::Open);
+    edited(&mut s, "Drain the tank\nfrom the valve #house");
+    s.act(Action::Select(None));
+    assert_eq!(
+        s.notes.get(&id).unwrap().text,
+        "Drain the tank #house\nfrom the valve"
+    );
+
+    // Kept with it open, it is written as it stands, the body still open under the hands.
+    s.act(Action::Write);
+    let id = s.selected().unwrap().id.clone();
+    s.act(Action::Open);
+    edited(&mut s, "Fill the tank\nto a bar and a half #house");
+    s.act(Action::Keep);
+    assert_eq!(
+        s.notes.get(&id).unwrap().text,
+        "Fill the tank\nto a bar and a half #house"
+    );
+}
+
+#[test]
+fn a_note_written_before_has_nothing_moved_in_its_body() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    select(&mut s, "[ ] Bleed the radiators #house");
+    s.act(Action::Open);
+    edited(&mut s, "[ ] Bleed the radiators\nupstairs first #house");
+    s.act(Action::Close);
+    assert_eq!(
+        s.notes.get("bleed").unwrap().text,
+        "[ ] Bleed the radiators\nupstairs first #house"
+    );
+}
+
+#[test]
+fn in_labels_alone_the_labels_pushed_off_a_new_head_go_back_too() {
+    let mut s = session();
+    a_task_and_a_body(&mut s);
+    s.act(Action::Write);
+    s.act(Action::Open);
+    edited(&mut s, "Drain the tank\nfrom the valve #house");
+    s.act(Action::Close);
+    assert_eq!(held(&s).text, "Drain the tank #house\nfrom the valve");
+    s.act(Action::Select(None));
+    let row = s.rows.iter().find(|r| r.head == "Drain the tank #house");
+    assert_eq!(
+        row.and_then(|r| r.shown.as_deref()),
+        Some("Drain the tank"),
+        "and its row reads its head, the labels hidden as any row's are"
+    );
+}
+
+#[test]
+fn a_new_row_typed_into_and_cleared_opens_its_own_body_and_leaves_no_note() {
     let mut s = session();
     a_task_and_a_body(&mut s);
     go_into(&mut s, "Boiler overhaul #house");
@@ -2252,17 +2568,18 @@ fn a_new_row_typed_into_and_cleared_opens_the_note_you_are_in_and_leaves_no_note
     let id = kept(&typed)[0].id.clone();
     edited(&mut s, " #house");
     assert!(fresh_row(&s).is_some(), "nothing but its labels is in it");
-    let opened = s.act(Action::Open);
-    let opened = kept(&opened);
-    assert!(
-        opened.len() == 1 && opened[0].id == id && opened[0].deleted,
-        "its deletion is written: {opened:?}"
-    );
+    s.act(Action::Open);
     let field = s.view().field.unwrap();
     assert!(field.whole);
-    assert_eq!(s.selected().map(|r| r.id.as_str()), Some("overhaul"));
-    s.act(Action::Close);
-    assert_eq!(s.cursor, None);
+    assert_eq!(field.text, " #house");
+    assert_eq!(s.selected().map(|r| r.id.as_str()), Some(id.as_str()));
+    let closed = s.act(Action::Close);
+    let closed = kept(&closed);
+    assert!(
+        closed.len() == 1 && closed[0].id == id && closed[0].deleted,
+        "what was kept of it is taken back: {closed:?}"
+    );
+    s.act(Action::Select(None));
     assert!(s.rows.is_empty());
     assert_eq!(s.notes.len(), 2, "no note is left");
 }

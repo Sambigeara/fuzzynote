@@ -2949,9 +2949,9 @@ mod tests {
         type_in(&mut app, "Boiler");
         press(&mut app, KeyCode::Tab, false);
         assert_eq!(path(&app), ["Boiler #house"]);
-        // Nothing is under it, so the cursor is on a row opened to write in. Untouched, it reads
-        // the note you are in, and Ctrl-O hands that over as on the line, the row going.
+        // Nothing is under it, so the cursor is on a row opened to write in, which Esc leaves.
         assert!(on_note(&app));
+        press(&mut app, KeyCode::Esc, false);
         let Flow::Editor { id, text } = chord(&mut app, 'o') else {
             panic!("the note you are in was not handed over");
         };
@@ -4586,7 +4586,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_o_on_an_untouched_new_row_hands_over_the_note_you_are_in_and_once_typed_its_own() {
+    fn ctrl_o_on_an_empty_row_in_a_note_hands_over_the_rows_own_text() {
         let (mut app, space) = app();
         write(&mut app, "Boiler");
         press(&mut app, KeyCode::Down, false);
@@ -4600,23 +4600,19 @@ mod tests {
             "nothing is under it, so a row opens to write in"
         );
         let Flow::Editor { id, text } = chord(&mut app, 'o') else {
-            panic!("the note you are in was not handed over");
+            panic!("the row was not handed over");
         };
-        assert_eq!(text, "Boiler\nThe combi under the stairs.");
-        assert!(
-            !on_note(&app),
-            "the untouched row went, and the cursor is on the line"
-        );
+        assert_eq!(text, "", "the row's own, not the note you are in");
+        assert!(on_note(&app), "the cursor stays on the row");
         app.act(Action::Save { id, text }).unwrap();
         assert!(heads(&app).is_empty(), "nothing was written");
 
-        // Enter, a head, and Ctrl-O hands over the new note's own body.
+        // Written in the editor, it is a note with a body, in the place.
         press(&mut app, KeyCode::Enter, false);
-        type_in(&mut app, "Drain the tank");
         let Flow::Editor { id, text } = chord(&mut app, 'o') else {
-            panic!("the new note was not handed over");
+            panic!("the new row was not handed over");
         };
-        assert_eq!(text, "Drain the tank");
+        assert_eq!(text, "");
         app.act(Action::Save {
             id,
             text: "Drain the tank\nOpen the valve at the bottom.".into(),

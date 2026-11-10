@@ -563,7 +563,8 @@ empty line comes back (see "Zoom and places"). The cursor lands on the line on t
 but for a note with nothing under it, gone into with the line left empty: there it lands on a new
 row at the top to write in, as Enter on the empty line would open it, above the notes it links to. A
 new row has nothing of its own to read until the cursor leaves it, so on it, as on the line, the
-note you are in is read, unless a body is written for it, and Ctrl-O opens it (see below).
+note you are in is read, unless a body is written for it, though Ctrl-O there opens the row's own
+(see below).
 
 On a row, the head is the field and typing changes it, with the caret landing at its end, and each
 change is kept at once. Up, Down and Esc leave the row, Esc keeping what was typed, as an editor's
@@ -576,8 +577,9 @@ it is under, linked to the note it is drawn under; beside a row that stands wher
 archived note stood, it opens after the last row standing there, since a note of its own cannot
 stand among them. Ctrl with an arrow moves the note among the notes beside it, all that is drawn
 under it going with it. Ctrl-O opens the body, which in the terminal is your editor and in the
-browser a sheet over the page that holds the whole note; on the line in a note, and on a new row
-there while nothing but its labels is in it, it opens the note you are in (see "Zoom and places").
+browser a sheet over the page that holds the whole note; on the line in a note it opens the note
+you are in (see "Zoom and places"), and on a row, a new one with nothing but its labels in it too,
+the row's own.
 Tab goes in. Right and Left are the caret's, on the line and in a head, and nothing else. Undo puts
 the head back as it was when the cursor landed, and otherwise takes back the last change, which for
 a row is the whole visit, one key for both. A chord acts on the note as it reads.
@@ -900,14 +902,19 @@ a link is picking its target here.
 On the line in a note's place, the body chord opens the note you are in, as it opens a row's: in the
 terminal Ctrl-O hands it to your editor and the cursor stays on the line, and on the page Ctrl-O,
 `body` in the foot, or a tap on the note read above the line or beside the list opens it in the
-sheet. On a new row there while nothing but its labels is in it, which reads the note you are in as
-the line does, the body chord does the same: the row goes, as leaving it does, and the note you are
-in opens as from the line, closing onto the line. Once anything else is in the row it opens the
-row's own body. To be opened there it is put under the cursor, first on the list, where the note the
-line names is listed, or on its own row where the line names it already; closing it puts the cursor
-back on the line and takes the row away, so the list is as it was. In all else it is a row's body,
-Delete included. Inside labels alone, or at the top, there is no note you are in, and nothing to
-open.
+sheet. On a new row there, typed into or not, the body chord opens the row's own body, as on any
+row, though the row reads the note you are in as the line does: from the row the note you are in
+opens by Esc, onto the line, and then the chord, or on the page by a tap on it where it is read,
+which steps onto the line first. A new row's body holds the labels it opened with, and a head and a
+body written before them, where the caret is, leave them ending the body, since Enter there is a
+line break; the labels are the place's and their place is the head, so when the body is left, closed
+or not, or the editor is, they go back to the end of the head, unless the writer moved them or took
+them out; a body typed under an empty head is the head, since writing drops blank lines first, and
+has them in it already. Opened from the line, the note you are in is put under the cursor, first on
+the list, where the note the line names is listed, or on its own row where the line names it
+already; closing it puts the cursor back on the line and takes the row away, so the list is as it
+was. In all else it is a row's body, Delete included. Inside labels alone, or at the top, there is
+no note you are in, and nothing to open.
 
 A note on the path that goes steps you out to just before it, as stepping back would, the line kept
 as stepping back keeps it: deleted from its body, from its row where the line names it, by emptying
@@ -4330,7 +4337,36 @@ the app now does is described above; an entry repeats it only where the reason n
   Weighed: doing it for every note, which would cost a key on every look in and back out since
   "Stepping back puts the cursor back on its row", when typing in a note with notes under it is
   mostly a search; doing it for labels too, when a label is searched in; and leaving it as it was,
-  since Enter is one key.
+  since Enter is one key. Revised 2026-11-10 by "The body chord opens the row it is on": Ctrl-O on
+  the untouched row opens the row's own body.
+
+- **The body chord opens the row it is on.** Decided 2026-11-10, at Sam's report, revising the part
+  of "Going into a note with nothing under it opens a row to write in" (2026-11-02) that made Ctrl-O
+  on the untouched row open the note you are in. The cursor is on a row, and on every other row
+  Ctrl-O opens that row's body, so a key whose meaning turned on whether the row was empty surprised
+  the hand: Sam reached for it to start a note with a body there, and got the note he was in. Now
+  Ctrl-O, in the terminal, or Ctrl-O or `body` in the foot on the page, opens the body of the row it
+  is on, a new row with nothing but its labels in it included, whether it opened on the way in or by
+  Enter. On the page the caret goes where the writer's text goes, as on the row; the terminal's
+  editor is handed the labels and puts its caret where it puts it. Closing the body, or leaving the
+  editor, with nothing written leaves no note. A head and a body written before the labels, as a
+  caret before them in an editor where Enter is a line break writes them, leave the labels ending
+  the body; they are the place's and their place is the head, so a new note's text that ends with
+  the labels it opened with, its head without them, has them put back at the end of the head when
+  its body is left, closed or not, or the editor is, `Drain the tank\nfrom the valve #house` written
+  as `Drain the tank #house\nfrom the valve`, the box staying where it is. Labels the writer moved
+  or took out are left as typed, and so is a note of one line, a head that holds one of them as a
+  word already, and a note written before; blank lines before the head are passed over first, as
+  writing drops them, so a body typed under an empty head is a note of one line with its labels in
+  it; this holds in labels alone too, where it could happen already. On the line Ctrl-O still opens
+  the note you are in. What it costs: from the untouched row the note you are in opens by Esc, onto
+  the line, and then Ctrl-O, or on the page by a press on the note read above the line or beside the
+  list; and on that row the body read beside the list, or in the terminal's foot, is still the note
+  you are in, kept so that a list written in a note does not flash its body away, so what is read
+  there is no longer what Ctrl-O opens. Weighed: keeping the old meaning on the row opened on the
+  way in only, which makes the key turn on how the row came; reading nothing on the untouched row,
+  which brings back the flash; and opening the body with the caret after the labels, which puts the
+  writer's text after the place's labels in the head.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

@@ -499,6 +499,7 @@ pub struct View<'a> {
     /// is written for it and its own is closed. A new row has nothing of its own to read until it
     /// is left, and a face cannot tell one from any other once a letter is typed, so the session
     /// says it, and writing a list in a note does not flash its body away at each first letter.
+    /// What is read is not what the row opens: its body, opened or handed to the editor, is its own.
     pub reads_here: bool,
     /// What is offered to complete the tag, person or bracketed name the caret ends, while it is
     /// offered.

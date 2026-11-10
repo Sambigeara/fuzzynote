@@ -134,6 +134,54 @@ impl Writing {
             None => 0,
         }
     }
+
+    /// Puts the labels a new note opened with back at the end of its head, where an open body
+    /// written with the caret where the writer's text goes has pushed them to the end of its
+    /// last line: in an editor Enter is a line break, so a head typed before the labels and then
+    /// a body leaves them ending the body. They are the place's, and their place is the head.
+    /// Blank lines before the head are passed over, as writing drops them, so a body typed under
+    /// an empty head is a note of one line, its labels in it already. A text that does not end
+    /// with them, since the writer moved or took them out, is left as typed, and so is one of a
+    /// single line, a head with nothing in it but a box, a head that holds any of them as a word
+    /// already, and a note that was not new.
+    fn rehead_labels(&mut self) {
+        let labels: Vec<&str> = self.label[self.start()..].split_whitespace().collect();
+        if !self.new || labels.is_empty() {
+            return;
+        }
+        let mut text = self.text.trim_end();
+        while let Some((first, after)) = text.split_once('\n')
+            && first.trim().is_empty()
+        {
+            text = after;
+        }
+        let Some((head, _)) = text.split_once('\n') else {
+            return;
+        };
+        let bare = match text::task(head) {
+            Some(_) => head.get(text::OPEN.len()..).unwrap_or(""),
+            None => head,
+        };
+        if bare.trim().is_empty() || head.split_whitespace().any(|word| labels.contains(&word)) {
+            return;
+        }
+        // Each label is a word of its own at the end, the last first.
+        let mut before = text;
+        for label in labels.iter().rev() {
+            match before.trim_end().strip_suffix(label) {
+                Some(rest) if rest.ends_with(char::is_whitespace) => before = rest,
+                _ => return,
+            }
+        }
+        let (head, body) = before.split_once('\n').unwrap_or((before, ""));
+        let head = format!("{} {}", head.trim_end(), labels.join(" "));
+        let body = body.trim_end();
+        self.text = if body.is_empty() {
+            head
+        } else {
+            format!("{head}\n{body}")
+        };
+    }
 }
 
 /// A version of a note written in the visit that opened it, whose archived flag follows its
@@ -183,7 +231,6 @@ impl Session {
         }
         let today = self.today();
         let steps_out = self.steps_out().is_some();
-        let here = self.place_note().is_some();
         let Some(field) = self.field.as_mut() else {
             return Some(action);
         };
@@ -206,14 +253,6 @@ impl Session {
             // Typing clears what there was to redo, so on a row typed into there is nothing, and
             // leaving the row to say so would split its visit into two entries to undo.
             Action::Redo if self.redo.is_empty() => self.status = "nothing to redo".into(),
-            // A new row with nothing typed in it in a note's place reads the note you are in, so
-            // that is what its body opens, as on the line: the row goes as leaving it does, and the
-            // note you are in is opened from the line.
-            Action::Open | Action::Editor if here && !field.whole && field.blank() => {
-                self.leave();
-                self.onto_line();
-                return Some(action);
-            }
             Action::Open => field.whole = true,
             // The editor is handed the note as it now reads, and what it leaves is written with
             // what was typed here and what was written there.
@@ -223,6 +262,7 @@ impl Session {
             }
             Action::Save { id, text } if id == field.id => {
                 field.text = text;
+                field.rehead_labels();
                 if field.empty() {
                     // An editor that leaves nothing, or only the label the row opened with,
                     // leaves no note.
@@ -242,6 +282,7 @@ impl Session {
             // The note you are in, opened from the line, closes back onto the line, and its row,
             // put there for it, goes with the cursor.
             Action::Close => {
+                field.rehead_labels();
                 self.flush();
                 match self.field.as_mut() {
                     Some(field) if field.from_line => {
@@ -851,6 +892,10 @@ impl Session {
                 self.onto_line();
             }
         } else {
+            // An open body left by any other way than closing it is written as closing it would.
+            if let Some(field) = self.field.as_mut().filter(|field| field.whole) {
+                field.rehead_labels();
+            }
             self.flush();
             self.field = None;
         }

@@ -359,7 +359,6 @@ fn what_arrives_while_the_cursor_is_on_the_list_is_listed_when_it_comes_back_to_
 
 #[test]
 fn the_editor_writes_a_draft() {
-    // At the top, where an untouched new row has no note you are in to open in its place.
     let mut s = session();
     s.act(Action::Write);
     let id = s.rows[0].id.clone();
