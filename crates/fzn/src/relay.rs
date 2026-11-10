@@ -2299,9 +2299,10 @@ pub(crate) mod tests {
             }
         }
         // Each want is owed once, and an image is sent only when the one before has gone, so
-        // only as many come as the sockets held while nothing was read, and never a hundred
-        // and sixty.
-        assert!((1..=6).contains(&came), "{came} came");
+        // only as many come as the sockets held while nothing was read. How many that is
+        // depends on the machine and what else runs on it, so the bound is the rule itself: at
+        // most the eight a device may be owed, and never the hundred and sixty asked for.
+        assert!((1..=ANSWERED_MOST).contains(&came), "{came} came");
         fs::remove_dir_all(&root).unwrap();
     }
 
