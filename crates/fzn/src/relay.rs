@@ -38,7 +38,7 @@
 //! answered `304` with nothing, and gzipped when the browser takes it.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
@@ -1367,6 +1367,7 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         dir,
         offered: BTreeSet::new(),
         wanted: BTreeSet::new(),
+        owed: VecDeque::new(),
         full_said: false,
     };
 
@@ -1390,6 +1391,7 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
                     Err(TryRecvError::Disconnected) => bail!("{label} was closed"),
                 }
             }
+            images.send_owed(&mut wire)?;
             wire.keep_up()?;
         }
     })();
@@ -1403,9 +1405,9 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
 }
 
 /// What one connection has to do with images, on its own thread: what the device offered that
-/// the space lacks, what the relay asked it for and has not had, and whether it was told the
-/// relay is full. Images are read and written here, outside the hub's lock, and only the
-/// moment an image is renamed into place is under it.
+/// the space lacks, what the relay asked it for and has not had, what the device asked for and
+/// has not been sent, and whether it was told the relay is full. Images are read and written
+/// here, outside the hub's lock, and only the moment an image is renamed into place is under it.
 struct Images<'a> {
     hub: &'a Hub,
     label: &'a str,
@@ -1415,6 +1417,11 @@ struct Images<'a> {
     offered: BTreeSet<String>,
     /// At most [`AT_ONCE`].
     wanted: BTreeSet<String>,
+    /// Images the device asked for, in the order asked, each once and at most
+    /// [`ANSWERED_MOST`]. One is read and sent only when everything said before it has gone, so
+    /// that a device asking again and again, and reading nothing, has at most one image waiting
+    /// in the relay's memory for it.
+    owed: VecDeque<String>,
     full_said: bool,
 }
 
@@ -1433,7 +1440,10 @@ impl Images<'_> {
                 }
                 self.ask(wire)
             }
-            image::Message::Want(ids) => self.answer(ids, wire),
+            image::Message::Want(ids) => {
+                self.answer(ids);
+                Ok(())
+            }
             image::Message::Image { id, c } => {
                 if self.wanted.remove(&id) {
                     self.take(&id, &c, wire)?;
@@ -1474,18 +1484,37 @@ impl Images<'_> {
         Ok(())
     }
 
-    /// Answers the device's want with each image held, in the order asked, for at most the
-    /// first [`ANSWERED_MOST`] ids, read from disk as it goes; one not held is passed over.
-    fn answer(&mut self, ids: Vec<String>, wire: &mut Wire) -> Result<()> {
+    /// Takes the device's want: the first [`ANSWERED_MOST`] of its ids are owed it, in the order
+    /// asked, each once, while fewer than that are owed already; the rest are passed over.
+    fn answer(&mut self, ids: Vec<String>) {
+        for id in ids.into_iter().take(ANSWERED_MOST) {
+            if self.owed.len() >= ANSWERED_MOST {
+                break;
+            }
+            if image::is_id(&id) && !self.owed.contains(&id) {
+                self.owed.push_back(id);
+            }
+        }
+    }
+
+    /// Sends the next image owed, read from disk, once everything said before has gone; one not
+    /// held is passed over.
+    fn send_owed(&mut self, wire: &mut Wire) -> Result<()> {
         let Some(dir) = &self.dir else {
+            self.owed.clear();
             return Ok(());
         };
-        for id in ids.iter().take(ANSWERED_MOST) {
-            if !image::is_id(id) {
-                continue;
+        while let Some(id) = self.owed.front() {
+            if !wire.drained()? {
+                return Ok(());
             }
-            match read_image(&dir.join(id)) {
-                Ok(Some(sealed)) => wire.say(image::Message::image(id, &sealed).encode())?,
+            let id = id.clone();
+            self.owed.pop_front();
+            match read_image(&dir.join(&id)) {
+                Ok(Some(sealed)) => {
+                    wire.say(image::Message::image(&id, &sealed).encode())?;
+                    return Ok(());
+                }
                 Ok(None) => {}
                 Err(why) => eprintln!("fzn relay: {}: {why:#}", self.label),
             }
@@ -2123,6 +2152,37 @@ pub(crate) mod tests {
             raw.next_image(),
             image::Message::image(&held[2].0, &held[2].1)
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_device_that_asks_again_and_again_and_reads_nothing_has_one_image_waiting_at_a_time() {
+        let root = temp_dir();
+        let space = root.join("main");
+        let big = garden(0, 2_000_000);
+        kept(&space, &big);
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        // Twenty wants of the one image, each naming it eight times, and nothing read.
+        for _ in 0..20 {
+            raw.say_image(&want(&vec![big.0.clone(); 8]));
+        }
+        thread::sleep(Duration::from_secs(2));
+        raw.socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut came = 0;
+        while let Some(text) = raw.next_text() {
+            if let Some(image::Message::Image { id, .. }) = image::Message::decode(&text) {
+                assert_eq!(id, big.0);
+                came += 1;
+            }
+        }
+        // Each want is owed once, and an image is sent only when the one before has gone, so
+        // only as many come as the sockets held while nothing was read, and never a hundred
+        // and sixty.
+        assert!((1..=6).contains(&came), "{came} came");
         fs::remove_dir_all(&root).unwrap();
     }
 

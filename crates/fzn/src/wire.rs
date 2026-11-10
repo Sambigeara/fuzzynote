@@ -141,6 +141,16 @@ impl Wire {
         false
     }
 
+    /// Sends on what is waiting to go, as far as the socket takes it now, and says whether it all
+    /// went: nothing is left waiting. An error means the connection is over.
+    pub fn drained(&mut self) -> Result<bool> {
+        match self.socket.flush() {
+            Ok(()) => Ok(true),
+            Err(e) if would_wait(&e) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Sends on what is waiting to go, pings a quiet peer, and gives up on a silent one.
     pub fn keep_up(&mut self) -> Result<()> {
         if self.heard.elapsed() > SILENCE {
