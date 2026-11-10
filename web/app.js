@@ -2968,7 +2968,9 @@ async function smaller(file) {
     const drawing = canvas.getContext('2d');
     drawing.imageSmoothingQuality = 'high';
     const encoded = (type, quality) =>
-      new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(unread())), type, quality));
+      new Promise((resolve, reject) =>
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(unread())), type, quality),
+      );
     let blob = null;
     if (file.type === 'image/png') {
       drawing.drawImage(img, 0, 0, w, h);
