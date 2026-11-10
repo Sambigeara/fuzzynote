@@ -1552,10 +1552,19 @@ impl App {
     }
 
     /// Does what the device asks: what it asks of the directory first, then what is to go to
-    /// the relay, then the rest.
-    fn carry_out(&mut self, todo: Todo) -> Result<Flow> {
+    /// the relay, then the rest. An image the relay asked for is read from the directory and
+    /// goes after the rest of what is said, so that lines are not kept waiting behind it.
+    fn carry_out(&mut self, mut todo: Todo) -> Result<Flow> {
         self.logs.keep(&todo, &mut self.slot)?;
         self.put_caret(todo.caret);
+        for id in std::mem::take(&mut todo.upload) {
+            // One that cannot be read is passed over as one not held: the relay asks again on
+            // the next connection.
+            if let Ok(Some(sealed)) = self.logs.image(&id) {
+                let sent = self.device.upload(&id, &sealed);
+                todo.send.extend(sent.send);
+            }
+        }
         if let Some((_, link)) = &self.sync {
             // The relay is this window's only peer: its siblings read what it writes in the
             // directory, as it reads theirs.
@@ -1624,13 +1633,20 @@ impl App {
 
     /// Takes in what another writer on this machine, another window or `fzn tick` say, has added
     /// to the space's logs since they were last read, as lines from the relay are taken in, and
-    /// says whether there was anything.
+    /// says whether there was anything. Images another client kept here, as `fzn image` keeps
+    /// them, are told to the device too, which offers them to the relay once a note refers to
+    /// them.
     fn look(&mut self) -> Result<bool> {
         let added = self.logs.load()?;
         let any = !added.is_empty();
         let on = under_cursor(&self.device.view());
         for (log, lines) in added {
             let todo = self.device.added(&log, lines);
+            self.carry_out(todo)?;
+        }
+        let images = self.logs.images_added()?;
+        if !images.is_empty() {
+            let todo = self.device.images_held(images);
             self.carry_out(todo)?;
         }
         self.read_from_start(on);

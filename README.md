@@ -150,6 +150,8 @@ proxy that has TLS in front of it, passing the websocket and its `Sec-WebSocket-
 through, and name the relay as `wss://joe:TOKEN@host` on the devices and `https://host/#joe:TOKEN`
 in a browser. Without either, the token and a space's first claim cross the wire as they are.
 
+Images take at most 512 MiB of the relay's disk in all, or what `--images` says.
+
 ## Browser
 
 The relay carries the page. Open its address, `http://nas.local:3960`. A tab is one more device:
@@ -196,7 +198,13 @@ fzn write 'Bleed the radiators /task' --in '#house' --in 'Boiler overhaul'   # a
 fzn query '#old' | jq -c '.text |= sub("#old"; "#house")' | fzn apply   # a change, by jq
 fzn import-jsonl notes.jsonl     # the way back in: a restore, ids and times as they were
 fzn import-markdown ~/pages      # a directory of markdown pages
+fzn image ~/photos/boiler.jpg     # keep an image, and write the reference to put in a note
+fzn image fzn:ID > boiler.jpg      # write an image the space holds back out
 ```
+
+`image` makes an image smaller, at most 2048 pixels on its long edge, keeps nothing of where it
+was taken, and prints `![](fzn:…)`, which reads it into a body from your editor, as `:r !fzn image
+boiler.jpg` does in vim.
 
 Each takes `--space` like the app. What `query` and `export` write is plain and unsealed, so your
 notes can always be read and taken away without fzn, and `jq` orders and picks from it. `apply`

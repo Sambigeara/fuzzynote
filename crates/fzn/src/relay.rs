@@ -21,6 +21,14 @@
 //! `names`), which is when the space is made, and everything that can be refused before the
 //! challenge is, so that a device can tell a refusal of its key from any other.
 //!
+//! A space's images are kept beside its logs, in `images/`, one sealed file each named by its id,
+//! and never pass through the replica: the relay takes one only when it asked for it, writes it
+//! under a name of its own and renames it into place, and reads one from disk only to send it, on
+//! the connection's own thread, so that no image is ever held in the hub's memory or waits on its
+//! lock. Images have a room across the whole relay, counted from what is on disk when it starts,
+//! past which it takes no more and says so; the logs, which are the notes, never run short for
+//! them. An id is checked to be one before it names a file, so no message names a path.
+//!
 //! A relay also hands out the web app, so that a browser has one address to open: the page
 //! comes from the relay and connects back to it. The page is built into fzn, so it and the
 //! policy it is served under are always of one release; `--web` points the relay at a directory
@@ -30,7 +38,7 @@
 //! answered `304` with nothing, and gzipped when the browser takes it.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
@@ -42,6 +50,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use fzn_engine::image::{self, ANSWERED_MOST, AT_ONCE, SEALED_LEAST, SEALED_MOST};
 use fzn_engine::replica::{Message, Out, Peer, Replica, names_a_log};
 use fzn_engine::seal::is_sealed;
 use fzn_engine::{Host, Key, Opened, Seal};
@@ -59,6 +68,8 @@ use crate::wire::{GREETING, MESSAGE_MAX, Stream, VERSION, Wire};
 const LOCK_FILE: &str = ".lock";
 /// The file a space's auth key is kept in, once a device has claimed the space.
 const AUTH_FILE: &str = ".auth";
+/// The directory a space's images are kept in, beside its logs.
+const IMAGES_DIR: &str = "images";
 /// How many sealed lines of a space with no key a challenge offers at most, one a log.
 const LINES_OFFERED: usize = 16;
 /// How many connections may be in their greeting at once. Past it a new one is closed at once,
@@ -83,11 +94,13 @@ const PAGE_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-ev
     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// A space as a relay holds it: its replica, its directory, which nothing else writes while
-/// the lock is held, and where to put what is to go to each peer.
+/// the lock is held, the images kept there by id and sealed size, and where to put what is to go
+/// to each peer.
 struct Space {
     name: String,
     dir: PathBuf,
     replica: Replica,
+    images: BTreeMap<String, u64>,
     peers: HashMap<Peer, Sender<String>>,
     _lock: File,
 }
@@ -112,6 +125,7 @@ impl Space {
             name: name.to_owned(),
             dir: dir.to_owned(),
             replica: Replica::new(),
+            images: held_images(&dir.join(IMAGES_DIR), true)?,
             peers: HashMap::new(),
             _lock: lock,
         };
@@ -194,6 +208,35 @@ impl Space {
         }
         Ok(())
     }
+}
+
+/// The images in a space's images directory, by id and size: every file named by an id, and
+/// nothing else. With `tidy`, what a relay stopped in the middle of writing left there, a hidden
+/// `.tmp` file, is deleted, which only the one relay holding the space's lock may do.
+fn held_images(dir: &Path, tidy: bool) -> Result<BTreeMap<String, u64>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(e).with_context(|| format!("read {}", dir.display())),
+    };
+    let mut images = BTreeMap::new();
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        if image::is_id(&name) {
+            images.insert(name, meta.len());
+        } else if tidy && name.starts_with('.') && name.ends_with(".tmp") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    Ok(images)
 }
 
 /// The lines of a log file, without their newlines. A last line with no newline is what a
@@ -326,12 +369,31 @@ struct Hub {
     /// When the relay last said it was closing connections at once, so that it says so at most
     /// once a minute however many come.
     crowded: Mutex<Option<Instant>>,
+    /// The room images have on the relay's disk, across every space, and how much they take.
+    room: Mutex<Room>,
     peers: AtomicU32,
+}
+
+/// The bytes images may take on a relay, and the bytes they take.
+struct Room {
+    most: u64,
+    used: u64,
 }
 
 impl Hub {
     fn spaces(&self) -> MutexGuard<'_, HashMap<String, Space>> {
         self.spaces.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn room(&self) -> MutexGuard<'_, Room> {
+        self.room.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether a space that is open holds an image.
+    fn holds_image(&self, label: &str, id: &str) -> bool {
+        self.spaces()
+            .get(label)
+            .is_some_and(|space| space.images.contains_key(id))
     }
 
     /// Opens a space if it is not open, or says why it cannot be, which is the relay's trouble
@@ -630,13 +692,15 @@ impl Relay {
     /// Starts listening. Nothing is served until [`Relay::serve`]. The relay hands out the page
     /// built into fzn, or with a directory for `web`, the files in it, and finds who may make
     /// spaces on it under `config`, fzn's config directory.
+    /// Images take at most `images` bytes of its disk, across every space.
     pub fn bind(
         root: PathBuf,
         config: PathBuf,
         listen: &str,
         web: Option<PathBuf>,
+        images: u64,
     ) -> Result<Self> {
-        Self::bind_with(root, config, listen, web, Page::built_in())
+        Self::bind_with(root, config, listen, web, Page::built_in(), images)
     }
 
     fn bind_with(
@@ -645,8 +709,10 @@ impl Relay {
         listen: &str,
         web: Option<PathBuf>,
         page: Option<Page>,
+        images: u64,
     ) -> Result<Self> {
         let listener = TcpListener::bind(listen).with_context(|| format!("listen on {listen}"))?;
+        let used = images_under(&root);
         Ok(Self {
             listener,
             hub: Arc::new(Hub {
@@ -659,6 +725,7 @@ impl Relay {
                 claiming: Mutex::new(()),
                 greeting: Mutex::new(Greetings::default()),
                 crowded: Mutex::new(None),
+                room: Mutex::new(Room { most: images, used }),
                 peers: AtomicU32::new(1),
             }),
         })
@@ -666,6 +733,12 @@ impl Relay {
 
     pub fn address(&self) -> Result<SocketAddr> {
         Ok(self.listener.local_addr()?)
+    }
+
+    /// The most bytes images may take on this relay, and the bytes they take.
+    pub fn images(&self) -> (u64, u64) {
+        let room = self.hub.room();
+        (room.most, room.used)
     }
 
     /// The build of the page this relay hands out, or nothing if it has none to hand out.
@@ -688,6 +761,35 @@ impl Relay {
         }
         Ok(())
     }
+}
+
+/// The bytes the images under a relay's root take: those of every space at the root, and of
+/// every space under a name. A directory that cannot be read counts nothing.
+fn images_under(root: &Path) -> u64 {
+    let dirs = |dir: &Path| -> Vec<PathBuf> {
+        fs::read_dir(dir).map_or_else(
+            |_| Vec::new(),
+            |entries| {
+                entries
+                    .filter_map(|entry| entry.ok().map(|e| e.path()))
+                    .filter(|path| path.is_dir())
+                    .collect()
+            },
+        )
+    };
+    let mut used = 0;
+    for first in dirs(root) {
+        used += images_in(&first);
+        for second in dirs(&first) {
+            used += images_in(&second);
+        }
+    }
+    used
+}
+
+/// The bytes the images of one space take.
+fn images_in(space: &Path) -> u64 {
+    held_images(&space.join(IMAGES_DIR), false).map_or(0, |images| images.values().sum())
 }
 
 /// The first byte of a TLS handshake, which a device that names this relay as `wss://` sends.
@@ -1095,9 +1197,12 @@ fn admit(hub: &Hub, asked: &Asked, label: &str) -> Result<Admitted, Refusal> {
                 )));
             }
             let dir = hub.root.join(space);
-            // A name taken off the relay leaves its spaces' directories, which are not a space.
+            // A name taken off the relay leaves its spaces' directories, which are not a space;
+            // a space's own directory of images does not make it one.
             if fs::read_dir(&dir).is_ok_and(|mut entries| {
-                entries.any(|entry| entry.is_ok_and(|e| e.path().is_dir()))
+                entries.any(|entry| {
+                    entry.is_ok_and(|e| e.path().is_dir() && names::holds_a_space(&e.path()))
+                })
             }) {
                 return Err(Refusal::said(format!(
                     "{space} holds spaces on this relay, and is not one"
@@ -1239,23 +1344,43 @@ fn enter(
 fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
     let peer = hub.peers.fetch_add(1, Ordering::Relaxed);
     let (to, waiting) = mpsc::channel();
+    let mut dir = None;
     // If the space was closed since it was opened, `to` is dropped here and the connection
-    // ends below, to be made again.
+    // ends below, to be made again. The images the space holds are said straight after what the
+    // replica says it holds, on the same channel, so that a device knows the relay takes images
+    // before it offers any.
     hub.with(label, |space| {
         space.peers.insert(peer, to);
         let out = space.replica.connect(peer);
-        space.carry_out(out)
+        space.carry_out(out)?;
+        let held = image::Message::Images(space.images.keys().cloned().collect());
+        if let Some(to) = space.peers.get(&peer) {
+            let _ = to.send(held.encode());
+        }
+        dir = Some(space.dir.join(IMAGES_DIR));
+        Ok(())
     });
+    let mut images = Images {
+        hub,
+        label,
+        peer,
+        dir,
+        offered: BTreeSet::new(),
+        wanted: BTreeSet::new(),
+        full_said: false,
+    };
 
     let ended = (|| -> Result<()> {
         loop {
-            if let Some(text) = wire.hear()?
-                && let Some(message) = Message::decode(&text)
-            {
-                hub.with(label, |space| {
-                    let out = space.replica.receive(peer, message);
-                    space.carry_out(out)
-                });
+            if let Some(text) = wire.hear()? {
+                if let Some(message) = Message::decode(&text) {
+                    hub.with(label, |space| {
+                        let out = space.replica.receive(peer, message);
+                        space.carry_out(out)
+                    });
+                } else if let Some(message) = image::Message::decode(&text) {
+                    images.heard(message, &mut wire)?;
+                }
             }
             loop {
                 match waiting.try_recv() {
@@ -1275,6 +1400,201 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         Ok(())
     });
     ended
+}
+
+/// What one connection has to do with images, on its own thread: what the device offered that
+/// the space lacks, what the relay asked it for and has not had, and whether it was told the
+/// relay is full. Images are read and written here, outside the hub's lock, and only the
+/// moment an image is renamed into place is under it.
+struct Images<'a> {
+    hub: &'a Hub,
+    label: &'a str,
+    peer: Peer,
+    /// The space's images directory, or nothing if the space closed before the connection began.
+    dir: Option<PathBuf>,
+    offered: BTreeSet<String>,
+    /// At most [`AT_ONCE`].
+    wanted: BTreeSet<String>,
+    full_said: bool,
+}
+
+impl Images<'_> {
+    /// Acts on an image message from the device.
+    fn heard(&mut self, message: image::Message, wire: &mut Wire) -> Result<()> {
+        match message {
+            image::Message::Images(ids) => {
+                for id in ids {
+                    if image::is_id(&id)
+                        && !self.wanted.contains(&id)
+                        && !self.hub.holds_image(self.label, &id)
+                    {
+                        self.offered.insert(id);
+                    }
+                }
+                self.ask(wire)
+            }
+            image::Message::Want(ids) => self.answer(ids, wire),
+            image::Message::Image { id, c } => {
+                if self.wanted.remove(&id) {
+                    self.take(&id, &c, wire)?;
+                    self.ask(wire)?;
+                }
+                Ok(())
+            }
+            image::Message::Full(_) | image::Message::Drop(_) => Ok(()),
+        }
+    }
+
+    /// Asks for what was offered, the least ids first, while fewer than [`AT_ONCE`] are
+    /// outstanding and there is room, and says once that there is none when there is not.
+    fn ask(&mut self, wire: &mut Wire) -> Result<()> {
+        let mut asked = Vec::new();
+        while self.wanted.len() < AT_ONCE {
+            let Some(id) = self.offered.pop_first() else {
+                break;
+            };
+            let (most, used) = {
+                let room = self.hub.room();
+                (room.most, room.used)
+            };
+            if used >= most {
+                self.offered.clear();
+                self.full(wire, used, most)?;
+                break;
+            }
+            // Another device may have brought it since it was offered.
+            if !self.hub.holds_image(self.label, &id) {
+                self.wanted.insert(id.clone());
+                asked.push(id);
+            }
+        }
+        if !asked.is_empty() {
+            wire.say(image::Message::Want(asked).encode())?;
+        }
+        Ok(())
+    }
+
+    /// Answers the device's want with each image held, in the order asked, for at most the
+    /// first [`ANSWERED_MOST`] ids, read from disk as it goes; one not held is passed over.
+    fn answer(&mut self, ids: Vec<String>, wire: &mut Wire) -> Result<()> {
+        let Some(dir) = &self.dir else {
+            return Ok(());
+        };
+        for id in ids.iter().take(ANSWERED_MOST) {
+            if !image::is_id(id) {
+                continue;
+            }
+            match read_image(&dir.join(id)) {
+                Ok(Some(sealed)) => wire.say(image::Message::image(id, &sealed).encode())?,
+                Ok(None) => {}
+                Err(why) => eprintln!("fzn relay: {}: {why:#}", self.label),
+            }
+        }
+        Ok(())
+    }
+
+    /// Keeps an image asked for, if it is one and there is room: written under a name of its own
+    /// outside the hub's lock, then renamed into place under it, counted, and offered to every
+    /// other device in the space.
+    fn take(&mut self, id: &str, c: &str, wire: &mut Wire) -> Result<()> {
+        let Some(dir) = &self.dir else {
+            return Ok(());
+        };
+        let Some(sealed) = image::sealed_of(c) else {
+            eprintln!(
+                "fzn relay: {}: an image came that is not one, and was passed over",
+                self.label
+            );
+            return Ok(());
+        };
+        let fresh = dir.join(format!(".{id}.{}.tmp", self.peer));
+        let written = fs::create_dir_all(dir)
+            .and_then(|()| File::create(&fresh))
+            .and_then(|mut file| file.write_all(&sealed).and_then(|()| file.sync_all()));
+        if let Err(why) = written {
+            let _ = fs::remove_file(&fresh);
+            eprintln!(
+                "fzn relay: {}: an image could not be written: {why}",
+                self.label
+            );
+            return Ok(());
+        }
+        let size = sealed.len() as u64;
+        let mut no_room = None;
+        let mut spaces = self.hub.spaces();
+        let Some(space) = spaces.get_mut(self.label) else {
+            let _ = fs::remove_file(&fresh);
+            return Ok(());
+        };
+        if space.images.contains_key(id) {
+            let _ = fs::remove_file(&fresh);
+        } else {
+            let mut room = self.hub.room();
+            if room.used + size > room.most {
+                let _ = fs::remove_file(&fresh);
+                no_room = Some((room.used, room.most));
+            } else {
+                match fs::rename(&fresh, dir.join(id)) {
+                    Ok(()) => {
+                        room.used += size;
+                        space.images.insert(id.to_owned(), size);
+                        let held = image::Message::Images(vec![id.to_owned()]).encode();
+                        for (peer, to) in &space.peers {
+                            if *peer != self.peer {
+                                let _ = to.send(held.clone());
+                            }
+                        }
+                    }
+                    Err(why) => {
+                        let _ = fs::remove_file(&fresh);
+                        eprintln!(
+                            "fzn relay: {}: an image could not be kept: {why}",
+                            self.label
+                        );
+                    }
+                }
+            }
+        }
+        drop(spaces);
+        match no_room {
+            Some((used, most)) => self.full(wire, used, most),
+            None => Ok(()),
+        }
+    }
+
+    /// Says the relay is full, and logs it, once a connection.
+    fn full(&mut self, wire: &mut Wire, used: u64, most: u64) -> Result<()> {
+        if self.full_said {
+            return Ok(());
+        }
+        self.full_said = true;
+        eprintln!(
+            "fzn relay: {}: no room for another image: images take {used} of {most} bytes",
+            self.label
+        );
+        wire.say(image::Message::Full(image::FULL.to_owned()).encode())
+    }
+}
+
+/// An image's sealed bytes as kept, read whole, or nothing if it is not there. A file of a
+/// length no sealed image has, which the relay never wrote, is passed over unread.
+fn read_image(path: &Path) -> Result<Option<Vec<u8>>> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+    };
+    let size = file
+        .metadata()
+        .with_context(|| format!("read {}", path.display()))?
+        .len();
+    if !(SEALED_LEAST as u64..=SEALED_MOST as u64).contains(&size) {
+        bail!("{} is no sealed image, and was not sent", path.display());
+    }
+    let mut sealed = Vec::with_capacity(size as usize);
+    file.read_to_end(&mut sealed)
+        .with_context(|| format!("read {}", path.display()))?;
+    Ok(Some(sealed))
 }
 
 #[cfg(test)]
@@ -1335,7 +1655,19 @@ pub(crate) mod tests {
     }
 
     fn relay_in(root: &Path, config: &Path, web: Option<PathBuf>) -> String {
-        let relay = Relay::bind(root.to_owned(), config.to_owned(), "127.0.0.1:0", web).unwrap();
+        relay_room(root, config, web, 512 << 20)
+    }
+
+    /// A relay whose images may take at most `images` bytes.
+    fn relay_room(root: &Path, config: &Path, web: Option<PathBuf>, images: u64) -> String {
+        let relay = Relay::bind(
+            root.to_owned(),
+            config.to_owned(),
+            "127.0.0.1:0",
+            web,
+            images,
+        )
+        .unwrap();
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         address
@@ -1585,6 +1917,387 @@ pub(crate) mod tests {
             self.answer(key, &nonce, claimed);
             self.outcome()
         }
+
+        /// The next message as it was sent, or nothing once the relay has closed.
+        fn next_text(&mut self) -> Option<String> {
+            loop {
+                match self.socket.read() {
+                    Ok(Frame::Text(text)) => return Some(text.as_str().to_owned()),
+                    Ok(Frame::Close(_)) | Err(_) => return None,
+                    Ok(_) => {}
+                }
+            }
+        }
+
+        /// The next image message, passing over whatever else of the space comes first.
+        fn next_image(&mut self) -> image::Message {
+            loop {
+                let text = self.next_text().expect("the relay closed");
+                if let Some(message) = image::Message::decode(&text) {
+                    return message;
+                }
+            }
+        }
+
+        fn say_image(&mut self, message: &image::Message) {
+            self.socket.send(Frame::text(message.encode())).unwrap();
+        }
+
+        /// Enters the space with the tests' key, and hears the images the relay holds.
+        fn entered(address: &str) -> (Self, Vec<String>) {
+            let mut raw = Self::knock(address, "/1/main", None);
+            raw.enter(&a_key()).unwrap();
+            match raw.next_image() {
+                image::Message::Images(ids) => (raw, ids),
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    /// The `n`th picture of a garden, a JPEG of `size` bytes sealed under the tests' key: its id
+    /// and its sealed bytes.
+    fn garden(n: u8, size: usize) -> (String, Vec<u8>) {
+        let mut plain = vec![n; size];
+        plain[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
+        image::seal(&Seal::new(a_key()), &plain, &system::System).unwrap()
+    }
+
+    /// Gardens of a few bytes, sorted by id.
+    fn gardens(n: u8) -> Vec<(String, Vec<u8>)> {
+        let mut all: Vec<_> = (0..n).map(|n| garden(n, 64)).collect();
+        all.sort();
+        all
+    }
+
+    fn ids(images: &[(String, Vec<u8>)]) -> Vec<String> {
+        images.iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    fn want(ids: &[String]) -> image::Message {
+        image::Message::Want(ids.to_vec())
+    }
+
+    /// Puts an image on disk in a space as a relay would have kept it.
+    fn kept(space: &Path, (id, sealed): &(String, Vec<u8>)) {
+        fs::create_dir_all(space.join(IMAGES_DIR)).unwrap();
+        fs::write(space.join(IMAGES_DIR).join(id), sealed).unwrap();
+    }
+
+    /// What a space's images directory holds, by name.
+    fn on_disk(space: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(space.join(IMAGES_DIR))
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_relay_says_the_images_it_holds_after_it_says_what_it_holds_even_when_none() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        raw.enter(&a_key()).unwrap();
+        assert_eq!(raw.next_text().as_deref(), Some(r#"{"images":[]}"#));
+
+        // A space that holds images says each, and what a relay stopped while writing left
+        // beside them goes when the space is opened.
+        let other = temp_dir();
+        let space = other.join("main");
+        let held = gardens(2);
+        held.iter().for_each(|image| kept(&space, image));
+        fs::write(
+            space.join(IMAGES_DIR).join(format!(".{}.3.tmp", held[0].0)),
+            b"half",
+        )
+        .unwrap();
+        fs::write(space.join(IMAGES_DIR).join("notes.txt"), b"left").unwrap();
+        let address = relay(&other);
+        let mut raw = Raw::knock(&address, "/1/main", None);
+        raw.enter(&a_key()).unwrap();
+        let said = format!(r#"{{"images":["{}","{}"]}}"#, held[0].0, held[1].0);
+        assert_eq!(raw.next_text(), Some(said));
+        let mut left = ids(&held);
+        left.push("notes.txt".into());
+        left.sort();
+        assert_eq!(on_disk(&space), left);
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&other).unwrap();
+    }
+
+    #[test]
+    fn a_relay_asks_for_an_image_a_device_offers_and_keeps_it_whole() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        let (id, sealed) = garden(0, 300_000);
+        raw.say_image(&image::Message::Images(vec![id.clone()]));
+        assert_eq!(raw.next_image(), want(std::slice::from_ref(&id)));
+        raw.say_image(&image::Message::image(&id, &sealed));
+        let space = root.join("main");
+        assert!(eventually(|| on_disk(&space) == [id.clone()]));
+        assert_eq!(fs::read(space.join(IMAGES_DIR).join(&id)).unwrap(), sealed);
+
+        // Held now, it is not asked for again.
+        let (mut again, held) = Raw::entered(&address);
+        assert_eq!(held, std::slice::from_ref(&id));
+        again.say_image(&image::Message::Images(vec![id.clone()]));
+        again.say_image(&want(std::slice::from_ref(&id)));
+        assert_eq!(again.next_image(), image::Message::image(&id, &sealed));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_asks_for_no_more_than_four_images_at_once_and_asks_for_the_next_as_each_comes() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        let six = gardens(6);
+        let all = ids(&six);
+        raw.say_image(&image::Message::Images(all.iter().rev().cloned().collect()));
+        assert_eq!(raw.next_image(), want(&all[..4]));
+        raw.say_image(&image::Message::image(&six[1].0, &six[1].1));
+        assert_eq!(raw.next_image(), want(&all[4..5]));
+        raw.say_image(&image::Message::image(&six[0].0, &six[0].1));
+        assert_eq!(raw.next_image(), want(&all[5..]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_takes_only_an_image_it_asked_for() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        let two = gardens(2);
+        // Never offered, so never asked for.
+        raw.say_image(&image::Message::image(&two[0].0, &two[0].1));
+        // Asked for once, and taken once.
+        raw.say_image(&image::Message::Images(vec![two[1].0.clone()]));
+        assert_eq!(raw.next_image(), want(&ids(&two[1..])));
+        raw.say_image(&image::Message::image(&two[1].0, &two[1].1));
+        raw.say_image(&image::Message::image(&two[1].0, b" not the image"));
+        let space = root.join("main");
+        assert!(eventually(|| on_disk(&space) == [two[1].0.clone()]));
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(on_disk(&space), [two[1].0.clone()]);
+        assert_eq!(
+            fs::read(space.join(IMAGES_DIR).join(&two[1].0)).unwrap(),
+            two[1].1
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_answers_a_want_with_each_image_as_it_keeps_it_and_passes_over_one_it_has_not() {
+        let root = temp_dir();
+        let space = root.join("main");
+        let held = gardens(3);
+        kept(&space, &held[0]);
+        kept(&space, &held[2]);
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        raw.say_image(&want(&[
+            held[2].0.clone(),
+            held[1].0.clone(),
+            held[0].0.clone(),
+        ]));
+        assert_eq!(
+            raw.next_image(),
+            image::Message::image(&held[2].0, &held[2].1)
+        );
+        assert_eq!(
+            raw.next_image(),
+            image::Message::image(&held[0].0, &held[0].1)
+        );
+
+        // Only the first eight ids of a want are answered.
+        let mut many = vec![held[1].0.clone(); 8];
+        many.push(held[0].0.clone());
+        raw.say_image(&want(&many));
+        raw.say_image(&want(std::slice::from_ref(&held[2].0)));
+        assert_eq!(
+            raw.next_image(),
+            image::Message::image(&held[2].0, &held[2].1)
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_image_a_relay_keeps_is_offered_to_the_other_devices_of_the_space() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut a, _) = Raw::entered(&address);
+        let (mut b, _) = Raw::entered(&address);
+        let (id, sealed) = garden(0, 64);
+        a.say_image(&image::Message::Images(vec![id.clone()]));
+        assert_eq!(a.next_image(), want(std::slice::from_ref(&id)));
+        a.say_image(&image::Message::image(&id, &sealed));
+        assert_eq!(b.next_image(), image::Message::Images(vec![id.clone()]));
+
+        // The device it came from is not told it again: the next it hears is its own answer.
+        a.say_image(&want(std::slice::from_ref(&id)));
+        assert_eq!(a.next_image(), image::Message::image(&id, &sealed));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_with_no_room_says_so_once_a_connection_and_keeps_nothing_more() {
+        let root = temp_dir();
+        let images: Vec<_> = (0..3).map(|n| garden(n, 1000)).collect();
+        let size = images[0].1.len() as u64;
+        let address = relay_room(&root, &config_of(&root), None, size * 3 / 2);
+        let (mut raw, _) = Raw::entered(&address);
+        let space = root.join("main");
+        let full = image::Message::Full(image::FULL.into());
+
+        // Both are asked for while there is room, and the second is past it when it comes.
+        let (first, second) = (&images[0], &images[1]);
+        raw.say_image(&image::Message::Images(vec![
+            first.0.clone(),
+            second.0.clone(),
+        ]));
+        let mut asked = vec![first.0.clone(), second.0.clone()];
+        asked.sort();
+        assert_eq!(raw.next_image(), want(&asked));
+        raw.say_image(&image::Message::image(&first.0, &first.1));
+        assert!(eventually(|| on_disk(&space) == [first.0.clone()]));
+        raw.say_image(&image::Message::image(&second.0, &second.1));
+        assert_eq!(raw.next_image(), full);
+        assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
+
+        // Said once a connection: the next thing heard is the answer to a want.
+        raw.say_image(&image::Message::Images(vec![images[2].0.clone()]));
+        assert_eq!(raw.next_image(), want(std::slice::from_ref(&images[2].0)));
+        raw.say_image(&image::Message::image(&images[2].0, &images[2].1));
+        raw.say_image(&want(std::slice::from_ref(&first.0)));
+        assert_eq!(raw.next_image(), image::Message::image(&first.0, &first.1));
+        assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
+
+        // A connection after is told again, once what it sends is past the room.
+        let (mut again, _) = Raw::entered(&address);
+        again.say_image(&image::Message::Images(vec![images[2].0.clone()]));
+        assert_eq!(again.next_image(), want(std::slice::from_ref(&images[2].0)));
+        again.say_image(&image::Message::image(&images[2].0, &images[2].1));
+        assert_eq!(again.next_image(), full);
+        assert_eq!(on_disk(&space), std::slice::from_ref(&first.0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_counts_the_images_on_its_disk_against_its_room_when_it_starts() {
+        let root = temp_dir();
+        let (a, b) = (garden(0, 500), garden(1, 700));
+        kept(&root.join("main"), &a);
+        kept(&root.join("joe").join("main"), &b);
+        let used = (a.1.len() + b.1.len()) as u64;
+        let relay = Relay::bind(root.clone(), config_of(&root), "127.0.0.1:0", None, used).unwrap();
+        assert_eq!(relay.images(), (used, used));
+        let address = relay.address().unwrap().to_string();
+        thread::spawn(move || relay.serve());
+        let (mut raw, _) = Raw::entered(&address);
+        raw.say_image(&image::Message::Images(vec![garden(2, 64).0]));
+        assert_eq!(raw.next_image(), image::Message::Full(image::FULL.into()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_id_that_is_not_32_hex_digits_is_passed_over() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let space = root.join("main");
+        let (mut raw, _) = Raw::entered(&address);
+        let auth = fs::read(space.join(AUTH_FILE)).unwrap();
+        let (id, sealed) = garden(0, 64);
+        let not_ids = [
+            "../.auth".to_owned(),
+            "..%2f.auth".to_owned(),
+            "../../main/.auth".to_owned(),
+            id.to_uppercase(),
+            format!("{id}0"),
+            id[..31].to_owned(),
+        ];
+        raw.say_image(&image::Message::Images(not_ids.to_vec()));
+        for not_id in &not_ids {
+            raw.say_image(&image::Message::image(not_id, &sealed));
+        }
+        raw.say_image(&want(&not_ids));
+        // Nothing is asked for or sent of them: the next thing heard answers what is an id.
+        raw.say_image(&image::Message::Images(vec![id.clone()]));
+        assert_eq!(raw.next_image(), want(std::slice::from_ref(&id)));
+        assert_eq!(fs::read(space.join(AUTH_FILE)).unwrap(), auth);
+        assert!(on_disk(&space).is_empty());
+        let mut names: Vec<String> = fs::read_dir(&space)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".auth", ".lock"]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_space_at_the_root_that_holds_images_is_still_a_space() {
+        let root = temp_dir();
+        let space = root.join("main");
+        kept(&space, &garden(0, 64));
+        let address = relay(&root);
+        assert_eq!(enters(&address, "/1/main", None, &a_key()), Ok(()));
+
+        // A directory that holds a space is still a name's, which is not one.
+        fs::create_dir_all(root.join("old").join("main")).unwrap();
+        fs::write(root.join("old").join("main").join(LOCK_FILE), b"").unwrap();
+        assert_eq!(
+            Raw::knock(&address, "/1/old", None)
+                .challenged()
+                .unwrap_err(),
+            "old holds spaces on this relay, and is not one"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_image_kept_by_one_device_reaches_another_through_the_relay() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let plain = {
+            let mut plain = vec![0u8; 200_000];
+            plain[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
+            plain
+        };
+        let seal = Seal::new(a_key());
+        let (id, sealed) = image::seal(&seal, &plain, &system::System).unwrap();
+
+        let (mut a, _) = Raw::entered(&address);
+        a.say_image(&image::Message::Images(vec![id.clone()]));
+        assert_eq!(a.next_image(), want(std::slice::from_ref(&id)));
+        a.say_image(&image::Message::image(&id, &sealed));
+
+        let mut b = Raw::knock(&address, "/1/main", None);
+        b.enter(&a_key()).unwrap();
+        assert!(eventually(|| on_disk(&root.join("main")) == [id.clone()]));
+        let held = loop {
+            match b.next_image() {
+                image::Message::Images(held) if held.contains(&id) => break held,
+                image::Message::Images(_) => {
+                    // It came before the image was kept, and is said when it is.
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(held, std::slice::from_ref(&id));
+        b.say_image(&want(std::slice::from_ref(&id)));
+        let image::Message::Image { id: came, c } = b.next_image() else {
+            panic!("no image came");
+        };
+        assert_eq!(came, id);
+        let carried = image::sealed_of(&c).unwrap();
+        assert_eq!(carried, sealed, "byte for byte");
+        assert_eq!(image::open(&seal, &id, &carried), Some(plain));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     fn enters(address: &str, path: &str, token: Option<&str>, key: &Key) -> Result<(), String> {
@@ -1864,8 +2577,15 @@ pub(crate) mod tests {
 
     /// A relay that carries this page and was given no directory.
     fn relay_page(root: &Path, page: Option<Page>) -> String {
-        let relay =
-            Relay::bind_with(root.to_owned(), config_of(root), "127.0.0.1:0", None, page).unwrap();
+        let relay = Relay::bind_with(
+            root.to_owned(),
+            config_of(root),
+            "127.0.0.1:0",
+            None,
+            page,
+            512 << 20,
+        )
+        .unwrap();
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         address
@@ -2055,6 +2775,7 @@ pub(crate) mod tests {
             "127.0.0.1:0",
             Some(web),
             Some(Page::from_files(a_page())),
+            512 << 20,
         )
         .unwrap();
         let address = relay.address().unwrap().to_string();
@@ -2568,8 +3289,15 @@ pub(crate) mod tests {
     #[test]
     fn no_more_than_so_many_connections_are_in_their_greeting_at_once() {
         let root = temp_dir();
-        let relay =
-            Relay::bind_with(root.clone(), config_of(&root), "127.0.0.1:0", None, None).unwrap();
+        let relay = Relay::bind_with(
+            root.clone(),
+            config_of(&root),
+            "127.0.0.1:0",
+            None,
+            None,
+            512 << 20,
+        )
+        .unwrap();
         let address = |n: usize| IpAddr::V4(Ipv4Addr::new(10, 0, (n >> 8) as u8, n as u8));
         let held: Vec<Greeting> = (0..GREETINGS_MAX)
             .map(|n| relay.hub.take(address(n)).unwrap())
@@ -2584,8 +3312,15 @@ pub(crate) mod tests {
     #[test]
     fn one_address_holding_its_share_of_the_greeting_does_not_keep_another_out() {
         let root = temp_dir();
-        let relay =
-            Relay::bind_with(root.clone(), config_of(&root), "127.0.0.1:0", None, None).unwrap();
+        let relay = Relay::bind_with(
+            root.clone(),
+            config_of(&root),
+            "127.0.0.1:0",
+            None,
+            None,
+            512 << 20,
+        )
+        .unwrap();
         let hub = Arc::clone(&relay.hub);
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
@@ -2674,8 +3409,15 @@ pub(crate) mod tests {
         let config = root.join("config");
         let spaces = root.join("spaces");
         let token = names::add(&config, &spaces, "joe").unwrap();
-        let relay =
-            Relay::bind_with(spaces.clone(), config.clone(), "127.0.0.1:0", None, None).unwrap();
+        let relay = Relay::bind_with(
+            spaces.clone(),
+            config.clone(),
+            "127.0.0.1:0",
+            None,
+            None,
+            512 << 20,
+        )
+        .unwrap();
         let wrong = "0123456789abcdef0123456789abcdef";
         fs::write(names::dir(&config).join("token"), "garbled").unwrap();
         for (name, space, offered) in [

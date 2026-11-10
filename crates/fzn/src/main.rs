@@ -10,6 +10,7 @@ mod import;
 mod key;
 mod names;
 mod relay;
+mod smaller;
 mod store;
 mod sync;
 mod system;
@@ -17,11 +18,11 @@ mod ui;
 mod web_files;
 mod wire;
 
-use std::io::{IsTerminal as _, Read as _};
+use std::io::{IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
-use fzn_engine::Seal;
+use fzn_engine::{Seal, image};
 
 const USAGE: &str = "\
 fzn [--space NAME]                      open your notes
@@ -31,10 +32,12 @@ fzn [--space NAME] apply [FILE]         write the notes given, from FILE or stan
 fzn [--space NAME] tick ID [ID ...]     tick these tasks, by the ids query writes
 fzn [--space NAME] untick ID [ID ...]   bring these ticked tasks back
 fzn [--space NAME] write TEXT [--in LINE]...  write a note, in the place the lines go into
+fzn [--space NAME] image FILE [FILE ...]  keep images in the space, and write a reference to each
+fzn [--space NAME] image fzn:ID         write an image the space holds to standard output
 fzn [--space NAME] import-jsonl FILE    import such a file, or a fuzzynote 2022 export
 fzn [--space NAME] import-markdown DIR  import a directory of markdown pages (Silverbullet, Obsidian)
 fzn [--space NAME] key                  type the space's passphrase again
-fzn relay [--listen ADDRESS] [--web DIR]  pass notes between your devices
+fzn relay [--listen ADDRESS] [--web DIR] [--images SIZE]  pass notes between your devices
 fzn relay add NAME                      let NAME make spaces on this relay, and print the token once
 fzn relay token                         the same for the spaces at the relay's root
 fzn --help
@@ -47,11 +50,12 @@ opens another, and creates it if it is new.
 The root is --root DIR, else $FZN_ROOT, else the root in the config file, else ~/.fzn. Only fzn
 writes a space's directory. Several windows may have a space open at once on one machine, each
 in its own place, and what one writes the others list within a moment; query, export, apply,
-tick, untick, write and the importers work beside them. A relay, not copying files, is how a
-space gets from one machine to another. With a relay named and no window open on the space,
-query, export, apply, tick, untick and write sync with it once before they read or write, and
-send what they wrote before they end; a relay out of reach is said on one line, not synced with
-HOST, and they go on with this machine's copy.
+tick, untick, write and the importers work beside them. image keeps images beside them and
+writes no note; an image goes to the relay once a note refers to it and fzn is open here. A
+relay, not copying files, is how a space gets from one machine to another. With a relay named
+and no window open on the space, query, export, apply, tick, untick and write sync with it once
+before they read or write, and send what they wrote before they end; a relay out of reach is
+said on one line, not synced with HOST, and they go on with this machine's copy.
 
 Every space has a passphrase. The first time fzn opens a space on a machine it asks for it,
 twice if the space is new, and keeps the key it makes from it in ~/.config/fzn/keys. Each note is
@@ -145,6 +149,12 @@ const WRITE_NEEDS: &str = "write needs the text of a note, as typed on the line"
 /// What `--in` with no line after it, or only spaces, is told.
 const IN_NEEDS: &str = "--in needs a line, as typed in the app";
 
+/// What `--images` with no size after it, or one that is not a size, is told.
+const IMAGES_TAKES: &str = "--images takes a size, as 512M or 2G";
+
+/// The most bytes images may take on a relay unless `--images` says otherwise: 512 MiB.
+const IMAGES_DEFAULT: u64 = 512 << 20;
+
 /// What the command line asked for.
 #[derive(Debug, PartialEq)]
 enum Cmd {
@@ -175,6 +185,8 @@ enum Cmd {
     },
     ImportJsonl(PathBuf),
     ImportMarkdown(PathBuf),
+    /// Files to keep as images, `-` for standard input, or one image's address to write out.
+    Image(Vec<String>),
 }
 
 /// What the command line said, besides the command.
@@ -185,6 +197,8 @@ struct Args {
     relay: Option<String>,
     listen: Option<String>,
     web: Option<PathBuf>,
+    /// The most bytes images may take on a relay.
+    images: Option<u64>,
     cmd: Cmd,
 }
 
@@ -220,6 +234,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
         relay: None,
         listen: None,
         web: None,
+        images: None,
         cmd: Cmd::Open,
     };
     // After `write`, its text and each `--in` with its line, in any order among the flags. Every
@@ -242,6 +257,10 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--relay" => parsed.relay = Some(value(&mut args, "--relay needs an address")?),
             "--listen" => parsed.listen = Some(value(&mut args, "--listen needs an address")?),
             "--web" => parsed.web = Some(value(&mut args, "--web needs a directory")?.into()),
+            "--images" => {
+                let size = value(&mut args, IMAGES_TAKES)?;
+                parsed.images = Some(size_of(&size).ok_or_else(|| usage(IMAGES_TAKES))?);
+            }
             "-h" | "--help" => parsed.cmd = Cmd::Help,
             "-V" | "--version" => parsed.cmd = Cmd::Version,
             "relay" => {
@@ -285,6 +304,11 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
                 };
             }
             "write" => writing = true,
+            "image" => {
+                let given =
+                    std::iter::from_fn(|| args.next_if(|arg| arg == "-" || !arg.starts_with('-')));
+                parsed.cmd = Cmd::Image(given.collect());
+            }
             "--in" if writing => {
                 let line = value(&mut args, IN_NEEDS)?;
                 if line.trim().is_empty() {
@@ -317,7 +341,44 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args> {
         }
         parsed.cmd = Cmd::Write { text, places };
     }
+    if let Cmd::Image(given) = &parsed.cmd {
+        let out = given.iter().any(|arg| image::id_in(arg).is_some());
+        if given.is_empty() {
+            return Err(usage(
+                "image needs a file to keep, or an image's address to write out",
+            ));
+        }
+        if out && given.len() > 1 {
+            return Err(usage(
+                "image takes files to keep, or one image's address to write out, not both",
+            ));
+        }
+    }
     Ok(parsed)
+}
+
+/// A size as `--images` takes one: decimal digits, then `K`, `M` or `G` for so many KiB, MiB or
+/// GiB, or nothing for bytes.
+fn size_of(text: &str) -> Option<u64> {
+    let (digits, shift) = match text.as_bytes().last()? {
+        b'K' => (&text[..text.len() - 1], 10),
+        b'M' => (&text[..text.len() - 1], 20),
+        b'G' => (&text[..text.len() - 1], 30),
+        _ => (text, 0),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok()?.checked_mul(1 << shift)
+}
+
+/// A size as the relay says one: whole MiB, rounded down, or KiB where the most is under 1 MiB.
+fn said_size(bytes: u64, most: u64) -> String {
+    if most < 1 << 20 {
+        format!("{} KiB", bytes >> 10)
+    } else {
+        format!("{} MiB", bytes >> 20)
+    }
 }
 
 fn main() {
@@ -344,6 +405,7 @@ fn run() -> Result<()> {
         relay: relay_flag,
         listen,
         web,
+        images,
         cmd,
     } = parse(std::env::args().skip(1))?;
     match cmd {
@@ -378,7 +440,13 @@ fn run() -> Result<()> {
         _ => {}
     }
     if let Cmd::Relay = cmd {
-        return serve(root, config_dir, listen, web);
+        return serve(
+            root,
+            config_dir,
+            listen,
+            web,
+            images.unwrap_or(IMAGES_DEFAULT),
+        );
     }
     let space = config::resolve_space(space_flag.as_deref(), &cfg)?;
     let dir = root.join(&space);
@@ -454,6 +522,10 @@ fn run() -> Result<()> {
             say(not_synced);
             say(beside.write(&places, &text, &mut std::io::stdout().lock())?);
         }
+        Cmd::Image(given) => match given.iter().find_map(|arg| image::id_in(arg)) {
+            Some(id) => image_out(&dir, &space, &config_dir, id)?,
+            None => image_in(&dir, &space, &config_dir, &given)?,
+        },
         Cmd::ImportJsonl(path) => {
             let mut into = importing(&dir, &space, &config_dir)?;
             let n = import::jsonl(&path, &mut into.store)?;
@@ -512,21 +584,102 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+/// Keeps images in a space, each made smaller by the rule every face keeps to, and writes the
+/// reference to each, one a line in the order given, to be read into a body. All or none: every
+/// image is read, made smaller and sealed before any is kept, so one that cannot be is said and
+/// nothing is kept. It writes no log, so it takes the space's shared lock and no slot, and it
+/// syncs nothing: a window here offers an image to the relay once a note refers to it.
+fn image_in(dir: &Path, space: &str, config_dir: &Path, given: &[String]) -> Result<()> {
+    if given.iter().any(|arg| arg == "-") && std::io::stdin().is_terminal() {
+        return Err(usage("image - reads an image from a pipe"));
+    }
+    let key = kept_key(space, config_dir)?;
+    let _in_use = store::Lock::share(dir, space)?;
+    let seal = Seal::new(key.clone());
+    // Opened only to check that the key opens what is there, so that no image is sealed under
+    // a key the space's notes are not.
+    store::Store::open(dir, String::new(), Seal::new(key))?;
+    let mut sealed = Vec::new();
+    for arg in given {
+        let (name, bytes) = if arg == "-" {
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut bytes)
+                .context("read standard input")?;
+            ("standard input", bytes)
+        } else {
+            let bytes = std::fs::read(arg).with_context(|| format!("read {arg}"))?;
+            (arg.as_str(), bytes)
+        };
+        let plain = smaller::smaller(&bytes).map_err(|why| match why {
+            smaller::Smaller::NotAnImage => {
+                anyhow!("{name} is not an image fzn can read: a JPEG, PNG, WebP or GIF")
+            }
+            smaller::Smaller::TooLarge => anyhow!("{name} is more than 2 MiB even made smaller"),
+        })?;
+        sealed.push(image::seal(&seal, &plain, &system::System).map_err(|why| anyhow!(why))?);
+    }
+    let logs = store::Logs::open(dir)?;
+    for (id, bytes) in &sealed {
+        logs.keep_image(id, bytes)?;
+    }
+    let mut out = std::io::stdout().lock();
+    for (id, _) in &sealed {
+        writeln!(out, "{}", image::reference(id))?;
+    }
+    Ok(())
+}
+
+/// Writes the image a space holds under an id to standard output, never to a terminal, opened
+/// with the space's key and checked against its id.
+fn image_out(dir: &Path, space: &str, config_dir: &Path, id: &str) -> Result<()> {
+    if std::io::stdout().is_terminal() {
+        return Err(usage(format!(
+            "image writes an image to a file or a pipe, not to the terminal: \
+             fzn image fzn:{id} > boiler.jpg"
+        )));
+    }
+    let key = kept_key(space, config_dir)?;
+    let sealed = store::Logs::open(dir)?
+        .image(id)?
+        .ok_or_else(|| anyhow!("fzn:{id} is not on this machine"))?;
+    let plain = image::open(&Seal::new(key), id, &sealed)
+        .ok_or_else(|| anyhow!("fzn:{id} here does not open with this space's key"))?;
+    let mut out = std::io::stdout().lock();
+    out.write_all(&plain)
+        .and_then(|()| out.flush())
+        .context("write standard output")?;
+    Ok(())
+}
+
 /// Serves every space under the root to whoever connects, until stopped.
 fn serve(
     root: PathBuf,
     config_dir: PathBuf,
     listen: Option<String>,
     web: Option<PathBuf>,
+    images: u64,
 ) -> Result<()> {
     // A relay is nobody's device: it writes nothing of its own, so it has no id.
     let listen = listen.unwrap_or_else(|| format!("127.0.0.1:{}", wire::PORT));
-    let relay = relay::Relay::bind(root.clone(), config_dir.clone(), &listen, web.clone())?;
+    let relay = relay::Relay::bind(
+        root.clone(),
+        config_dir.clone(),
+        &listen,
+        web.clone(),
+        images,
+    )?;
     println!("fzn relay: {}", version());
     println!(
         "fzn relay: passing on the spaces under {} to the devices that connect to {}",
         root.display(),
         relay.address()?
+    );
+    let (most, used) = relay.images();
+    println!(
+        "fzn relay: images take at most {} here, and {} are taken",
+        said_size(most, most),
+        said_size(used, most)
     );
     println!(
         "fzn relay: a space is entered with its passphrase and made with a token; there is \
@@ -772,6 +925,55 @@ mod tests {
             refused(&["write", "Boiler\nService it in May"]),
             "write takes one line, a note's head; a body is written with apply"
         );
+    }
+
+    #[test]
+    fn image_takes_files_or_one_images_address_and_not_both() {
+        let id = "4f998e75f22477b2519998d0731eeec8";
+        let address = format!("fzn:{id}");
+        let given = |args: &[&str]| Cmd::Image(args.iter().map(|&arg| arg.into()).collect());
+        assert_eq!(
+            cmd(&["image", "boiler.jpg", "garden.png"]),
+            given(&["boiler.jpg", "garden.png"])
+        );
+        assert_eq!(cmd(&["image", "-"]), given(&["-"]));
+        assert_eq!(cmd(&["image", &address]), given(&[&address]));
+        let reference = format!("![](fzn:{id})");
+        assert_eq!(cmd(&["image", &reference]), given(&[&reference]));
+        let args = parsed(&["image", "boiler.jpg", "--space", "garden"]).unwrap();
+        assert_eq!(
+            (args.space.as_deref(), args.cmd),
+            (Some("garden"), given(&["boiler.jpg"]))
+        );
+        assert_eq!(cmd(&["image", "--help"]), Cmd::Help);
+
+        let both = "image takes files to keep, or one image's address to write out, not both";
+        assert_eq!(refused(&["image", "boiler.jpg", &address]), both);
+        assert_eq!(refused(&["image", &address, &reference]), both);
+        assert_eq!(
+            refused(&["image"]),
+            "image needs a file to keep, or an image's address to write out"
+        );
+    }
+
+    #[test]
+    fn relay_images_takes_a_size_as_512m_or_2g() {
+        let images = |args: &[&str]| parsed(args).unwrap().images;
+        assert_eq!(images(&["relay"]), None);
+        assert_eq!(images(&["relay", "--images", "512M"]), Some(512 << 20));
+        assert_eq!(images(&["relay", "--images", "2G"]), Some(2 << 30));
+        assert_eq!(images(&["--images", "64K", "relay"]), Some(64 << 10));
+        assert_eq!(images(&["relay", "--images", "1000"]), Some(1000));
+        assert_eq!(images(&["relay", "--images", "0"]), Some(0));
+        let takes = "--images takes a size, as 512M or 2G";
+        for bad in ["", "M", "2T", "-1", "1.5G", "2 G", "99999999999999999999G"] {
+            assert_eq!(refused(&["relay", "--images", bad]), takes, "{bad:?}");
+        }
+        assert_eq!(refused(&["relay", "--images"]), takes);
+        assert_eq!(said_size(512 << 20, 512 << 20), "512 MiB");
+        assert_eq!(said_size((3 << 20) + 5, 512 << 20), "3 MiB");
+        assert_eq!(said_size(300 << 10, 512 << 10), "300 KiB");
+        assert_eq!(IMAGES_DEFAULT, 536_870_912);
     }
 
     #[test]

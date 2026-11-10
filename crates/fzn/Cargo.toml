@@ -28,6 +28,9 @@ webpki-roots = "1"
 # Names the page in a directory given with --web, as the build names the one it carries. The
 # engine already brings it in.
 sha2.workspace = true
+# Makes an image smaller before `fzn image` keeps it, as the page does with the browser's own
+# codecs: it reads the four kinds a phone or a screenshot gives, and writes a JPEG or a PNG.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 
 # For the offset of the local clock from UTC, which the standard library cannot say.
 [target.'cfg(unix)'.dependencies]

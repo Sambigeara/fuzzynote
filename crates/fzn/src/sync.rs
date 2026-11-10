@@ -397,6 +397,11 @@ impl Once {
     /// done with the relay is the inner error, said as `not synced with HOST: why`, and leaves
     /// the device as it was or further on, never further back; the outer is what `keep` failed
     /// with, which is the directory's trouble and not the relay's.
+    ///
+    /// An image that comes in the exchange is kept by `keep` with the lines, and one the relay
+    /// asks for is not sent: a command's exchange ends once its lines are in step, and an image
+    /// is no reason to keep it open. So an image only a command's note refers to reaches the
+    /// relay when a window next opens the space here.
     pub fn start(
         to: &Dial,
         space: &str,

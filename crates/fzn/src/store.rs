@@ -29,15 +29,16 @@
 //! A writer's id lives in the directory, not in the config, because it names the log this
 //! machine writes in this space, and a compaction changes it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::PoisonError;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, anyhow, bail};
+use fzn_engine::image;
 use fzn_engine::replica::{Header, names_a_log};
 use fzn_engine::seal::is_sealed;
 use fzn_engine::{
@@ -61,12 +62,17 @@ const TURN_FILE: &str = ".relay.command";
 const COMMANDS_FILE: &str = ".commands";
 /// More slots than this would be clients without end, which is a bug and not a use.
 const SLOTS_MOST: usize = 64;
+/// The directory a space's images are kept in, each a file named by its id, beside the logs.
+const IMAGES_DIR: &str = "images";
 
 /// The files of one space's logs.
 pub struct Logs {
     dir: PathBuf,
     /// For each log read or written here, how far in its last whole line ends, in bytes.
     ends: BTreeMap<String, u64>,
+    /// The images directory's modification time and the ids in it, as last listed here, so that
+    /// a window looking four times a second lists it only when something came.
+    seen: Option<(SystemTime, BTreeSet<String>)>,
 }
 
 impl Logs {
@@ -76,6 +82,7 @@ impl Logs {
         Ok(Self {
             dir: dir.to_owned(),
             ends: BTreeMap::new(),
+            seen: None,
         })
     }
 
@@ -236,6 +243,101 @@ impl Logs {
         for log in &todo.delete {
             self.delete(log)?;
         }
+        for kept in &todo.keep_images {
+            self.keep_image(&kept.id, &kept.sealed)?;
+        }
+        Ok(())
+    }
+
+    fn images_dir(&self) -> PathBuf {
+        self.dir.join(IMAGES_DIR)
+    }
+
+    /// Every image held here, by id; remembers what it saw for [`Logs::images_added`].
+    pub fn images(&mut self) -> Result<Vec<String>> {
+        let when = self.images_changed()?;
+        let ids = self.list_images()?;
+        self.seen = when.map(|when| (settled(when), ids.clone()));
+        Ok(ids.into_iter().collect())
+    }
+
+    /// The ids that have come into the images directory since it was last listed here: none,
+    /// without listing it, while its modification time is what it was.
+    pub fn images_added(&mut self) -> Result<Vec<String>> {
+        let Some(when) = self.images_changed()? else {
+            return Ok(Vec::new());
+        };
+        if self.seen.as_ref().is_some_and(|(seen, _)| *seen == when) {
+            return Ok(Vec::new());
+        }
+        let ids = self.list_images()?;
+        let before = self.seen.take().map(|(_, ids)| ids).unwrap_or_default();
+        let added = ids.difference(&before).cloned().collect();
+        self.seen = Some((settled(when), ids));
+        Ok(added)
+    }
+
+    /// When the images directory last changed, or nothing while there is none.
+    fn images_changed(&self) -> Result<Option<SystemTime>> {
+        let dir = self.images_dir();
+        match fs::metadata(&dir).and_then(|meta| meta.modified()) {
+            Ok(when) => Ok(Some(when)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("read {}", dir.display())),
+        }
+    }
+
+    /// The ids of the images in the directory. A file whose name is not an id, one still being
+    /// written say, is not an image.
+    fn list_images(&self) -> Result<BTreeSet<String>> {
+        let dir = self.images_dir();
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeSet::new()),
+            Err(e) => return Err(e).with_context(|| format!("read {}", dir.display())),
+        };
+        Ok(entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| image::is_id(name))
+            .collect())
+    }
+
+    /// An image's sealed bytes as kept here, or nothing if it is not.
+    pub fn image(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        if !image::is_id(id) {
+            return Ok(None);
+        }
+        let path = self.images_dir().join(id);
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
+        }
+    }
+
+    /// Keeps an image whole: written as `images/.<id>.<pid>.tmp` and renamed to `images/<id>`,
+    /// the directory made if it is not there; one already there is left as it is, since an id
+    /// names one image and what is there was renamed into place whole.
+    pub fn keep_image(&self, id: &str, sealed: &[u8]) -> Result<()> {
+        if !image::is_id(id) {
+            bail!("{id:?} is not an image's id");
+        }
+        let dir = self.images_dir();
+        let path = dir.join(id);
+        if path.exists() {
+            return Ok(());
+        }
+        fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+        let fresh = dir.join(format!(".{id}.{}.tmp", std::process::id()));
+        let written = File::create(&fresh)
+            .and_then(|mut file| file.write_all(sealed).and_then(|()| file.sync_all()))
+            .and_then(|()| fs::rename(&fresh, &path));
+        if let Err(e) = written {
+            let _ = fs::remove_file(&fresh);
+            return Err(e).with_context(|| format!("write {}", path.display()));
+        }
         Ok(())
     }
 }
@@ -253,6 +355,8 @@ pub fn open(dir: &Path, space: &str, slot: &mut Slot, device: &mut Device) -> Re
         bail!("the passphrase does not open {space}: run fzn key to enter it again");
     }
     let todo = device.opened();
+    logs.keep(&todo, slot)?;
+    let todo = device.images_held(logs.images()?);
     logs.keep(&todo, slot)?;
     Ok(logs)
 }
@@ -603,6 +707,17 @@ impl Slot {
     }
 }
 
+/// A directory's modification time as one to compare the next against, once it is old enough to
+/// be the last: a clock that stamps files ticks a few milliseconds at a time, so an image kept just
+/// after a listing, in the same tick, would leave the time as it was and never be listed. While
+/// the change is recent the time is taken as none, and the directory is listed again at each look.
+fn settled(when: SystemTime) -> SystemTime {
+    match SystemTime::now().duration_since(when) {
+        Ok(since) if since > Duration::from_secs(1) => when,
+        _ => SystemTime::UNIX_EPOCH,
+    }
+}
+
 /// Makes the commands' file from before slots slot 1's, once, by a link that fails when slot 1
 /// is there already, so that a client that took slot 1 meanwhile keeps the file it locked.
 fn commands_to_slot_one(dir: &Path) -> Result<()> {
@@ -884,6 +999,113 @@ pub(crate) mod tests {
         assert!(space.join("3f9a01c2.jsonl").exists());
         assert!(!path.exists());
         after.delete("dev-b").unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A boiler's data plate as a JPEG of a few bytes, sealed under the tests' key: its id and
+    /// its sealed bytes.
+    pub(crate) fn plate(n: u8) -> (String, Vec<u8>) {
+        let plain = [0xFF, 0xD8, 0xFF, b'p', b'l', b'a', b't', b'e', n];
+        image::seal(&seal(), &plain, &System).unwrap()
+    }
+
+    #[test]
+    fn an_image_is_kept_whole_under_its_id_and_read_back() {
+        let dir = temp_dir();
+        let logs = Logs::open(&dir).unwrap();
+        let (id, sealed) = plate(0);
+        assert_eq!(logs.image(&id).unwrap(), None);
+        logs.keep_image(&id, &sealed).unwrap();
+        assert_eq!(logs.image(&id).unwrap(), Some(sealed.clone()));
+        assert_eq!(fs::read(dir.join("images").join(&id)).unwrap(), sealed);
+        let names: Vec<String> = fs::read_dir(dir.join("images"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            std::slice::from_ref(&id),
+            "and nothing is left beside it"
+        );
+
+        // One already there is left as it is, and what is not an id names no file at all.
+        logs.keep_image(&id, b"other bytes").unwrap();
+        assert_eq!(logs.image(&id).unwrap(), Some(sealed.clone()));
+        assert!(logs.keep_image("../.writer", &sealed).is_err());
+        assert_eq!(logs.image("../.writer").unwrap(), None);
+        assert_eq!(logs.image(&id.to_uppercase()).unwrap(), None);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn images_come_into_the_directory_are_said_once_and_not_again() {
+        let dir = temp_dir();
+        let mut logs = Logs::open(&dir).unwrap();
+        assert!(logs.images().unwrap().is_empty());
+        assert!(logs.images_added().unwrap().is_empty());
+
+        let (first, second) = (plate(0), plate(1));
+        logs.keep_image(&first.0, &first.1).unwrap();
+        assert_eq!(logs.images_added().unwrap(), std::slice::from_ref(&first.0));
+        assert!(logs.images_added().unwrap().is_empty());
+
+        // Another client on the machine keeps one, and leaves a file it was writing, which is
+        // no image.
+        Logs::open(&dir)
+            .unwrap()
+            .keep_image(&second.0, &second.1)
+            .unwrap();
+        fs::write(dir.join("images").join(".0123.4567.tmp"), b"half").unwrap();
+        assert_eq!(
+            logs.images_added().unwrap(),
+            std::slice::from_ref(&second.0)
+        );
+        assert!(logs.images_added().unwrap().is_empty());
+
+        let mut all = vec![first.0, second.0];
+        all.sort();
+        assert_eq!(Logs::open(&dir).unwrap().images().unwrap(), all);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_space_holding_images_still_loads_only_its_logs() {
+        let dir = temp_dir();
+        let mut logs = Logs::open(&dir).unwrap();
+        logs.append("3f9a01c2", &["a1".to_owned()]).unwrap();
+        let (id, sealed) = plate(0);
+        logs.keep_image(&id, &sealed).unwrap();
+        assert_eq!(
+            Logs::open(&dir).unwrap().load().unwrap(),
+            [("3f9a01c2".to_owned(), vec!["a1".to_owned()])]
+        );
+        let store = Store::open(&dir, String::new(), seal()).unwrap();
+        assert_eq!(
+            store.skipped(),
+            1,
+            "the plain line, and nothing of the images"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_window_that_opens_a_space_tells_its_device_of_the_images_held_there() {
+        let dir = temp_dir();
+        let (id, sealed) = plate(0);
+        let mut logs = Logs::open(&dir).unwrap();
+        logs.keep_image(&id, &sealed).unwrap();
+        let note = rec("boiler", &format!("Boiler\n{}", image::reference(&id)), 1);
+        logs.append("c0ffee00", &[note.sealed(&seal(), &System).unwrap()])
+            .unwrap();
+
+        let key = Key::from_bytes([7; 32]);
+        let mut device = Device::new(Box::new(System), "3f9a01c2", Weights::default(), key);
+        let mut slot = Slot::take(&dir, &config(&dir)).unwrap();
+        super::open(&dir, "main", &mut slot, &mut device).unwrap();
+        device.connected(fzn_engine::RELAY);
+        let todo = device.received(fzn_engine::RELAY, r#"{"images":[]}"#);
+        let said: Vec<&str> = todo.send.iter().map(|said| said.text.as_str()).collect();
+        assert_eq!(said, [format!(r#"{{"images":["{id}"]}}"#)]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
