@@ -1473,6 +1473,7 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         owed: VecDeque::new(),
         full_said: false,
         unread_said: false,
+        untaken_said: false,
     };
 
     let ended = (|| -> Result<()> {
@@ -1536,6 +1537,9 @@ struct Images<'a> {
     full_said: bool,
     /// Whether an image that could not be read has been logged, which is once a connection.
     unread_said: bool,
+    /// Whether an image that came and could not be kept has been logged, once a connection too,
+    /// so that a device sending junk cannot fill the log.
+    untaken_said: bool,
 }
 
 impl Images<'_> {
@@ -1684,10 +1688,7 @@ impl Images<'_> {
             return Ok(());
         };
         let Some(sealed) = image::sealed_of(c) else {
-            eprintln!(
-                "fzn relay: {}: an image came that is not one, and was passed over",
-                self.label
-            );
+            self.untaken("an image came that is not one, and was passed over".to_owned());
             return Ok(());
         };
         // Another connection may have brought it meanwhile, and it is not written twice.
@@ -1701,14 +1702,12 @@ impl Images<'_> {
             .and_then(|mut file| file.write_all(&sealed).and_then(|()| file.sync_all()));
         if let Err(why) = written {
             let _ = fs::remove_file(&fresh);
-            eprintln!(
-                "fzn relay: {}: an image could not be written: {why}",
-                self.label
-            );
+            self.untaken(format!("an image could not be written: {why}"));
             return Ok(());
         }
         let size = charged(sealed.len() as u64);
         let mut no_room = None;
+        let mut unkept = None;
         let mut spaces = self.hub.spaces();
         let Some(space) = spaces.get_mut(self.label) else {
             let _ = fs::remove_file(&fresh);
@@ -1738,18 +1737,25 @@ impl Images<'_> {
                     }
                     Err(why) => {
                         let _ = fs::remove_file(&fresh);
-                        eprintln!(
-                            "fzn relay: {}: an image could not be kept: {why}",
-                            self.label
-                        );
+                        unkept = Some(format!("an image could not be kept: {why}"));
                     }
                 }
             }
         }
         drop(spaces);
+        if let Some(why) = unkept {
+            self.untaken(why);
+        }
         match no_room {
             Some(why) => self.full(wire, &why),
             None => Ok(()),
+        }
+    }
+
+    /// Logs why an image that came was not kept, the first time on this connection.
+    fn untaken(&mut self, why: String) {
+        if !std::mem::replace(&mut self.untaken_said, true) {
+            eprintln!("fzn relay: {}: {why}", self.label);
         }
     }
 
