@@ -2552,7 +2552,8 @@ mod tests {
     }
 
     #[test]
-    fn an_image_that_does_not_open_to_its_id_is_not_kept_nor_asked_for_again_on_that_connection() {
+    fn an_image_that_does_not_open_to_its_id_is_not_kept_nor_asked_for_again_while_the_device_runs()
+    {
         let ids = pictures(5);
         let mut device = referring(&ids);
         device.received(RELAY, &relay_holds(&ids));
@@ -2565,10 +2566,43 @@ mod tests {
         assert!(todo.keep_images.is_empty());
         assert!(said(&todo).is_empty(), "neither is asked for again");
 
+        // Nor on the next connection: a spoilt copy on the relay is fetched once a run.
         device.disconnected(RELAY);
         device.connected(RELAY);
         let todo = device.received(RELAY, &relay_holds(&ids));
-        assert_eq!(said(&todo), [image::Message::Want(ids[..4].to_vec())]);
+        assert_eq!(said(&todo), [image::Message::Want(ids[2..].to_vec())]);
+    }
+
+    #[test]
+    fn a_relay_asking_again_for_an_image_it_was_sent_is_not_answered_again() {
+        let ids = pictures(1);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        device.received(RELAY, &relay_holds(&[]));
+        let want = image::Message::Want(ids.clone()).encode();
+        assert_eq!(device.received(RELAY, &want).upload, ids);
+        let sealed = sealed_as(&ids[0], 1);
+        assert_eq!(device.upload(&ids[0], &sealed).send.len(), 1);
+        assert!(device.received(RELAY, &want).upload.is_empty());
+
+        // A new connection is a new exchange.
+        device.disconnected(RELAY);
+        device.connected(RELAY);
+        device.received(RELAY, &relay_holds(&[]));
+        assert_eq!(device.received(RELAY, &want).upload, ids);
+    }
+
+    #[test]
+    fn a_device_takes_the_relay_to_hold_no_more_than_so_many_images() {
+        let ids = pictures(1);
+        let mut device = referring(&ids);
+        let many: Vec<String> = (0..image::RELAY_MOST)
+            .map(|n| format!("{n:032x}"))
+            .collect();
+        device.received(RELAY, &relay_holds(&many));
+        // The one its note refers to, said after the bound was reached, is not taken in.
+        let todo = device.received(RELAY, &relay_holds(&ids));
+        assert!(said(&todo).is_empty());
     }
 
     #[test]

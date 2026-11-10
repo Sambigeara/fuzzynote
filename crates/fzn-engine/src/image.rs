@@ -32,6 +32,9 @@ pub const SEALED_LEAST: usize = SEALING + 1;
 pub const SEALED_MOST: usize = IMAGE_MOST + SEALING;
 /// Wants outstanding on a connection, either way.
 pub const AT_ONCE: usize = 4;
+/// The most images a device takes a relay to hold on one connection: twice what a relay's room
+/// holds by default at the least an image is counted as.
+pub const RELAY_MOST: usize = 65_536;
 /// The ids of one want that are answered.
 pub const ANSWERED_MOST: usize = 8;
 /// What a relay says when it will take no more images.
@@ -177,23 +180,29 @@ impl Message {
     }
 }
 
-/// What a device knows of its space's images, for its exchange with the relay. All but `here`
-/// is of one connection, and forgotten when it goes.
+/// What a device knows of its space's images, for its exchange with the relay. All but `here` and
+/// `shut` is of one connection, and forgotten when it goes.
 #[derive(Debug, Default)]
 pub(crate) struct Images {
     /// Held in this machine's store.
     here: BTreeSet<String>,
-    /// Said by the relay to be held there, on this connection; none until it says.
+    /// Said by the relay to be held there, on this connection; none until it says. At most
+    /// [`RELAY_MOST`], so that a relay cannot make a device set aside memory without end; a relay
+    /// keeps a few tens of thousands of a space's images in the room it has by default.
     relay: Option<BTreeSet<String>>,
     /// Said by this device to be held here, on this connection.
     said: BTreeSet<String>,
     /// Asked for and not yet come, on this connection, at most [`AT_ONCE`].
     asked: BTreeSet<String>,
-    /// Came on this connection and did not open, so not asked for again on it.
+    /// Came and did not open, so not asked for again while this device runs: a copy the relay
+    /// holds that is spoilt is fetched once a run, until letting images go can replace it.
     shut: BTreeSet<String>,
     /// Asked for by the relay on this connection, held here, and not yet sent, so that nothing
     /// goes to a relay that did not ask for it on the connection it goes over.
     owed: BTreeSet<String>,
+    /// Sent on this connection. A relay never asks twice for one it was sent, and one that does
+    /// is not answered again, so that it cannot make the device read and send without end.
+    sent: BTreeSet<String>,
 }
 
 /// What came of an image message from the relay.
@@ -216,8 +225,10 @@ impl Images {
     /// The connection to the relay went, or a new one came: all it knew is forgotten.
     pub fn went(&mut self) {
         let here = std::mem::take(&mut self.here);
+        let shut = std::mem::take(&mut self.shut);
         *self = Images {
             here,
+            shut,
             ..Images::default()
         };
     }
@@ -267,11 +278,15 @@ impl Images {
         match message {
             Message::Images(ids) => {
                 let relay = self.relay.get_or_insert_with(BTreeSet::new);
-                relay.extend(ids.into_iter().filter(|id| is_id(id)));
+                let room = RELAY_MOST.saturating_sub(relay.len());
+                relay.extend(ids.into_iter().filter(|id| is_id(id)).take(room));
             }
             Message::Want(ids) => {
                 for id in ids.into_iter().take(ANSWERED_MOST) {
-                    if self.here.contains(&id) && self.owed.insert(id.clone()) {
+                    if self.here.contains(&id)
+                        && !self.sent.contains(&id)
+                        && self.owed.insert(id.clone())
+                    {
                         heard.upload.push(id);
                     }
                 }
@@ -301,7 +316,11 @@ impl Images {
     /// Whether the relay asked for this image on this connection and it has not gone yet, which
     /// it now has: it is owed once.
     pub fn pay(&mut self, id: &str) -> bool {
-        self.owed.remove(id)
+        let owed = self.owed.remove(id);
+        if owed {
+            self.sent.insert(id.to_owned());
+        }
+        owed
     }
 }
 
