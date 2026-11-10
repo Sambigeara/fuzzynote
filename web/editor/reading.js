@@ -411,9 +411,9 @@ export const readingMoved = (update) => !!update.view.plugin(read)?.moved;
 // arrived at touches nothing. It stands in for whole lines, which only a state field may replace,
 // so it is apart from the reading above. A drawn table is as high as its source, its head's rule
 // taking the room of the row of dashes, so that nothing moves as the caret goes in or out; a press
-// on it puts the caret in the cell pressed (see `cellAt`), and the arrows walk into it (see
-// `walkIn`). One that does not start and end its
-// lines, inside a quote or a list, is shown as typed.
+// on it puts the caret in the cell pressed (see `cellAt`), one on its scrollbar only scrolls it,
+// and the arrows walk into it (see `walkIn`). One that does not start and end its lines, inside a
+// quote or a list, is shown as typed.
 class Drawn extends WidgetType {
   constructor(source) {
     super();
@@ -429,8 +429,17 @@ class Drawn extends WidgetType {
     box.append(body(this.source));
     return box;
   }
-  ignoreEvent() {
-    return false;
+  // A press on its own scrollbar is the browser's to scroll it by, so the editor does not hear it:
+  // the caret stays where it was and the table stays drawn. While the table is wider than the box,
+  // its cells cover the box everywhere but the scrollbar, drawn beside them or over them, so a
+  // press whose target is the box itself is a press on the scrollbar.
+  ignoreEvent(event) {
+    const pressed = event.target;
+    return (
+      event.type === 'mousedown' &&
+      pressed.classList?.contains('md-table-read') &&
+      pressed.scrollWidth > pressed.clientWidth
+    );
   }
 }
 

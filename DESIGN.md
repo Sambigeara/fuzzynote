@@ -1275,28 +1275,29 @@ second editor: the editor goes from the row into the sheet as the body opens, fo
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
 list reads, its marks hidden and a task's box drawn but never pressed, a table drawn with its
 columns aligned in the sheet's whole width and as high as its source, a press on a cell or an arrow
-into it showing it as typed, a link read followed by a
-press, an address in a tab of its own with the body left open and `[[Boiler]]` into Boiler as Tab
-goes, the body written as it closes, but for the span the selection touches, which shows its marks
-where they stand, a press on it the caret's, the marks in the faint grey and the text
-in ink, headings and strong text heavier, the first three levels of heading larger, its head set
-as a first-level heading is, as the page's title, with its task's box drawn as a body's is (see
-"An open body's head is its title"), emphasis slanted, code in the monospace; a body opens reading whole, as a head is landed on; soft wrap, step
-undo, a grey selection held to the text's measure, Mod-B, Mod-I and Mod-E for bold, italic and
-code, a pointer over a link that a press follows, and vim mode for the body, for the browser that asked for it with the word
-`vim` in the foot of an open body, which a touch screen, whose keyboard has no Escape, is not
-offered. In vim mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's
-long lines wrap, but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`,
-`:wq`, `:x`, `ZZ` or the word in the foot closes the body, `:q!` and `ZQ` put the text back first,
-and `:w` writes and stays, scrolled where it was; a yank is copied to the system's clipboard too.
-The page's caret is drawn from the editor's coordinates, in a head and in a body, a block as high
-as the line it is on, and in vim's insert mode a bar. Vim's prompt for a command is at the foot of the sheet, under the text and a hairline. The editor is fetched as the
-page starts, beside the engine, and nothing is painted until it is here. The `editor` the engine
-offers is not shown here. At a phone's width the sheet is the whole frame above the bar, and the bar
-the sheet's colour while it is open; a wider touch screen has it as the page, sized from the frame.
-On a touch screen it opens without the keyboard, which a tap in the text raises; putting the
-keyboard away leaves it open, and `done`, the back gesture, or a tap on the page beside it closes
-it.
+into it showing it as typed and a press on its scrollbar scrolling it and leaving it drawn, a link
+read followed by a press, an address in a tab of its own with the body left open and `[[Boiler]]`
+into Boiler as Tab goes, the body written as it closes, but for the span the selection touches,
+which shows its marks where they stand, a press on it the caret's, the marks in the faint grey and
+the text in ink, headings and strong text heavier, the first three levels of heading larger, its
+head set as a first-level heading is, as the page's title, with its task's box drawn as a body's is
+(see "An open body's head is its title"), emphasis slanted, code in the monospace; a body opens
+reading whole, as a head is landed on; soft wrap, step undo, a grey selection held to the text's
+measure, Mod-B, Mod-I and Mod-E for bold, italic and code, a pointer over a link that a press
+follows, and vim mode for the body, for the browser that asked for it with the word `vim` in the
+foot of an open body, which a touch screen, whose keyboard has no Escape, is not offered. In vim
+mode `j` and `k` move over the lines as shown, as `gj` and `gk` do, since a note's long lines wrap,
+but in a line-wise selection, which goes by vim's lines. Esc is vim's alone; `:q`, `:wq`, `:x`, `ZZ`
+or the word in the foot closes the body, `:q!` and `ZQ` put the text back first, and `:w` writes and
+stays, scrolled where it was; a yank is copied to the system's clipboard too. The page's caret is
+drawn from the editor's coordinates, in a head and in a body, a block as high as the line it is on,
+and in vim's insert mode a bar. Vim's prompt for a command is at the foot of the sheet, under the
+text and a hairline. The editor is fetched as the page starts, beside the engine, and nothing is
+painted until it is here. The `editor` the engine offers is not shown here. At a phone's width the
+sheet is the whole frame above the bar, and the bar the sheet's colour while it is open; a wider
+touch screen has it as the page, sized from the frame. On a touch screen it opens without the
+keyboard, which a tap in the text raises; putting the keyboard away leaves it open, and `done`, the
+back gesture, or a tap on the page beside it closes it.
 
 *Touch.* On a touch screen, at any width, the page is a frame the size of the visual viewport, the
 part of the screen the keyboard and the browser's bars have left, so that the foot sits on the
