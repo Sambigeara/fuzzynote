@@ -1,7 +1,7 @@
 //! The engine: owns the notes and the index, answers queries with reasons.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::index::{DocId, Index, TermId};
 use crate::note::Note;
@@ -37,6 +37,12 @@ pub struct Engine {
     free: Vec<DocId>,
     index: Index,
     weights: Weights,
+    /// For each image, how many notes held refer to it, so that a device can tell which images
+    /// its notes refer to without reading every note on every keystroke.
+    images: BTreeMap<String, usize>,
+    /// Stepped whenever an image comes into `images` or leaves it, so that a device can tell
+    /// whether the set changed without looking at it.
+    images_moved: u64,
 }
 
 /// How to answer a query.
@@ -161,9 +167,13 @@ impl Engine {
         let facts = text::facts(&note.text);
         let tokens = text::tokens(&note.text);
         let labels = doc_labels(&note, &facts);
+        self.refer(&facts.images, true);
         let doc = match self.by_id.get(&note.id) {
             Some(&d) => {
                 self.index.remove(d);
+                if let Some(old) = self.docs[d as usize].take() {
+                    self.refer(&old.facts.images, false);
+                }
                 d
             }
             None => {
@@ -191,7 +201,38 @@ impl Engine {
         let d = self.by_id.remove(id)?;
         self.index.remove(d);
         self.free.push(d);
-        self.docs[d as usize].take().map(|doc| doc.note)
+        let doc = self.docs[d as usize].take()?;
+        self.refer(&doc.facts.images, false);
+        Some(doc.note)
+    }
+
+    /// Counts one note more, or one fewer, as referring to each of these images, and steps the
+    /// move count if an image came or went. The new note's are counted before the old one's are
+    /// taken away, so that an edit that keeps an image moves nothing.
+    fn refer(&mut self, ids: &[String], more: bool) {
+        let mut moved = false;
+        for id in ids {
+            if more {
+                let count = self.images.entry(id.clone()).or_default();
+                moved |= *count == 0;
+                *count += 1;
+            } else if let Some(count) = self.images.get_mut(id) {
+                *count -= 1;
+                if *count == 0 {
+                    self.images.remove(id);
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            self.images_moved += 1;
+        }
+    }
+
+    /// The images the notes held refer to, sorted, and a count that steps whenever that set
+    /// changes, so that a caller can tell whether it changed by the count alone.
+    pub(crate) fn images(&self) -> (u64, impl Iterator<Item = &str>) {
+        (self.images_moved, self.images.keys().map(String::as_str))
     }
 
     /// What the line finds among the notes holding everything else on it, best first with the
@@ -1030,6 +1071,46 @@ mod tests {
 
     fn ids<'a>(hits: &[Hit<'a>]) -> Vec<&'a str> {
         hits.iter().map(|h| h.note.id.as_str()).collect()
+    }
+
+    #[test]
+    fn the_images_notes_refer_to_are_counted_as_notes_come_change_and_go() {
+        const PLATE: &str = "4f998e75f22477b2519998d0731eeec8";
+        const VALVE: &str = "3ae5eb6a75633c8ff7a8d2a11602aae2";
+        let images = |e: &Engine| {
+            let (moved, ids) = e.images();
+            (moved, ids.map(str::to_owned).collect::<Vec<_>>())
+        };
+        let mut e = engine(&[
+            ("a", &format!("Boiler\n![](fzn:{PLATE})")),
+            (
+                "b",
+                &format!("House\nthe plate again ![plate](fzn:{PLATE})"),
+            ),
+        ]);
+        assert_eq!(images(&e), (1, vec![PLATE.to_owned()]));
+
+        e.upsert(Note::new("a", "Boiler\nno picture now"));
+        assert_eq!(images(&e), (1, vec![PLATE.to_owned()]), "b still refers");
+        e.upsert(Note::new(
+            "b",
+            format!("House\n![plate](fzn:{PLATE}) and more"),
+        ));
+        assert_eq!(
+            images(&e).0,
+            1,
+            "an edit that keeps the image moves nothing"
+        );
+
+        e.remove("b");
+        assert_eq!(images(&e), (2, vec![]));
+
+        let mut archived = Note::new("c", format!("a garden\n![](fzn:{VALVE})"));
+        archived.archived = true;
+        e.upsert(archived);
+        assert_eq!(images(&e), (3, vec![VALVE.to_owned()]));
+        e.remove("missing");
+        assert_eq!(images(&e).0, 3);
     }
 
     /// The neighbourhood of a note alone.

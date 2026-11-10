@@ -41,8 +41,9 @@ use std::rc::Rc;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
+use crate::image::{self, Images};
 use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
@@ -74,6 +75,19 @@ pub struct Kept {
     pub log: String,
     pub from: u64,
     pub lines: Vec<String>,
+}
+
+/// An image to keep in the face's store under its id, sealed. As JSON its bytes are base64.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct KeptImage {
+    pub id: String,
+    #[serde(serialize_with = "base64")]
+    pub sealed: Vec<u8>,
+}
+
+/// Bytes as standard base64, for a face that is given JSON.
+fn base64<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&STANDARD.encode(bytes))
 }
 
 /// A message for a peer, to send as it is.
@@ -119,6 +133,11 @@ pub struct Todo {
     pub open: Option<String>,
     /// Where the session put the caret, for the face to put its own there.
     pub caret: Caret,
+    /// Images to keep in the face's store, in any order, beside the lines.
+    pub keep_images: Vec<KeptImage>,
+    /// Images the relay asked for, by id. For each, the face reads the sealed bytes from its
+    /// store and hands them to [`Device::upload`]; one it does not hold, it passes over.
+    pub upload: Vec<String>,
 }
 
 impl Todo {
@@ -135,6 +154,8 @@ impl Todo {
         self.copy = self.copy.take().or(after.copy);
         self.open = self.open.take().or(after.open);
         self.caret.then(after.caret);
+        self.keep_images.extend(after.keep_images);
+        self.upload.extend(after.upload);
     }
 }
 
@@ -188,6 +209,11 @@ pub struct Device {
     /// verdict on the key, which holds through whatever the relay says next of having heard no
     /// answer, until a relay takes the device in.
     shut: bool,
+    /// What this device knows of the space's images, here and on the relay.
+    images: Images,
+    /// The images the notes refer to, and the engine's move count when they were last read, so
+    /// that they are read again only when the set has changed.
+    referred: (Option<u64>, BTreeSet<String>),
 }
 
 impl Device {
@@ -218,6 +244,8 @@ impl Device {
             answered: false,
             refused_answer: false,
             shut: false,
+            images: Images::default(),
+            referred: (None, BTreeSet::new()),
         }
     }
 
@@ -258,6 +286,7 @@ impl Device {
             self.session.absorb(versions);
             todo.caret.then(self.session.take_caret());
         }
+        self.images_step(&mut todo);
         todo
     }
 
@@ -428,6 +457,7 @@ impl Device {
             }
         }
         self.compact_if_superseded(&mut todo);
+        self.images_step(&mut todo);
         todo
     }
 
@@ -435,6 +465,7 @@ impl Device {
     pub fn connected(&mut self, peer: Peer) -> Todo {
         if peer == RELAY {
             self.answered = false;
+            self.images.went();
         }
         let mut todo = Todo::default();
         let out = self.replica.connect(peer);
@@ -450,6 +481,7 @@ impl Device {
         if peer == RELAY {
             self.ahead = None;
             self.answered = false;
+            self.images.went();
         }
     }
 
@@ -500,10 +532,82 @@ impl Device {
                 let out = self.replica.receive(peer, message);
                 self.carry_out(out, &mut todo);
             }
+            // Images are only ever between a device and its relay: siblings share one store.
+            None if peer == RELAY => {
+                if let Some(message) = image::Message::decode(text) {
+                    let heard = self.images.heard(message, &self.seal);
+                    if let Some((id, sealed)) = heard.keep {
+                        todo.keep_images.push(KeptImage { id, sealed });
+                    }
+                    todo.upload.extend(heard.upload);
+                    if let Some(say) = heard.say {
+                        self.session.say(say);
+                    }
+                }
+            }
             None => {}
         }
         self.compact_if_superseded(&mut todo);
+        self.images_step(&mut todo);
         todo
+    }
+
+    /// Checks and seals an image the face has made smaller, and counts it as held here. The face
+    /// keeps what comes back under its id and writes `image::reference(id)` into the note.
+    pub fn keep_image(&mut self, plain: &[u8]) -> Result<KeptImage, String> {
+        if !self.key_verified() {
+            return Err(WRONG_KEY.to_owned());
+        }
+        let (id, sealed) = image::seal(&self.seal, plain, &*self.host)?;
+        self.images.held([id.clone()]);
+        Ok(KeptImage { id, sealed })
+    }
+
+    /// An image's bytes as the face's store holds them, opened, if they open to that id.
+    pub fn open_image(&self, id: &str, sealed: &[u8]) -> Option<Vec<u8>> {
+        image::open(&self.seal, id, sealed)
+    }
+
+    /// Images the face's store holds, by id: all of them once after `opened`, and any added there
+    /// since by another client on the machine. Ids that are not ids are passed over.
+    pub fn images_held(&mut self, ids: Vec<String>) -> Todo {
+        self.images.held(ids);
+        let mut todo = Todo::default();
+        self.images_step(&mut todo);
+        todo
+    }
+
+    /// An image the relay asked for, as the store holds it, sent to the relay. Nothing when no
+    /// relay that knows images is connected, the id is not one, or the bytes are not of a sealed
+    /// image's length.
+    pub fn upload(&mut self, id: &str, sealed: &[u8]) -> Todo {
+        let mut todo = Todo::default();
+        if self.images.relay_knows() && image::is_id(id) && image::sealed_length(sealed) {
+            todo.send.push(Said {
+                to: RELAY,
+                text: image::Message::image(id, sealed).encode(),
+            });
+        }
+        todo
+    }
+
+    /// Says to the relay what it is owed of images, as [`Images::step`] says, once the key is
+    /// known to be the space's. The images referred to are read again only when they changed.
+    fn images_step(&mut self, todo: &mut Todo) {
+        if !self.key_verified() {
+            return;
+        }
+        let (moved, ids) = self.session.images();
+        if self.referred.0 != Some(moved) {
+            let ids = ids.map(str::to_owned).collect();
+            self.referred = (Some(moved), ids);
+        }
+        for message in self.images.step(&self.referred.1) {
+            todo.send.push(Said {
+                to: RELAY,
+                text: message.encode(),
+            });
+        }
     }
 
     /// What answers the relay's challenge: the nonce sealed under the auth key when the relay
@@ -1341,20 +1445,24 @@ mod tests {
         let json = serde_json::to_string(&Todo::default()).unwrap();
         assert_eq!(
             json,
-            r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null,"caret":{"line":null,"head":null}}"#
+            r#"{"keep":[],"delete":[],"send":[],"device":null,"editor":null,"copy":null,"open":null,"caret":{"line":null,"head":null},"keep_images":[],"upload":[]}"#
         );
         let said = Todo {
             send: vec![Said {
                 to: 2,
                 text: "{}".into(),
             }],
+            keep_images: vec![KeptImage {
+                id: "4f998e75f22477b2519998d0731eeec8".into(),
+                sealed: vec![1, 2, 3],
+            }],
             ..Todo::default()
         };
-        assert!(
-            serde_json::to_string(&said)
-                .unwrap()
-                .contains(r#""send":[{"to":2,"text":"{}"}]"#)
-        );
+        let json = serde_json::to_string(&said).unwrap();
+        assert!(json.contains(r#""send":[{"to":2,"text":"{}"}]"#));
+        assert!(json.contains(
+            r#""keep_images":[{"id":"4f998e75f22477b2519998d0731eeec8","sealed":"AQID"}]"#
+        ));
     }
 
     #[test]
@@ -2334,5 +2442,295 @@ mod tests {
         let have = Message::Have(BTreeMap::new()).encode().unwrap();
         device.received(RELAY, &have);
         assert_eq!(device.clock(), None);
+    }
+
+    /// The `n`th of the space's images, a JPEG of a few bytes: its id and its sealed bytes.
+    fn picture(n: u8) -> (String, Vec<u8>) {
+        let (seal, host) = (Seal::new(key()), host("dev-a", 100));
+        let plain = [0xFF, 0xD8, 0xFF, b'h', b'o', b'u', b's', b'e', n];
+        (seal.image_id(&plain), seal.seal_bytes(&plain, &*host))
+    }
+
+    /// The ids of the first `n` pictures, sorted.
+    fn pictures(n: u8) -> Vec<String> {
+        let mut ids: Vec<String> = (0..n).map(|n| picture(n).0).collect();
+        ids.sort();
+        ids
+    }
+
+    /// A device with a note that refers to each of these images, connected to the relay.
+    fn referring(ids: &[String]) -> Device {
+        let mut device = device("dev-a");
+        let refs: Vec<String> = ids.iter().map(|id| image::reference(id)).collect();
+        write(&mut device, &format!("Boiler {}", refs.join(" ")));
+        device.connected(RELAY);
+        device
+    }
+
+    /// The image messages said to the relay.
+    fn said(todo: &Todo) -> Vec<image::Message> {
+        assert!(todo.send.iter().all(|said| said.to == RELAY));
+        todo.send
+            .iter()
+            .filter_map(|said| image::Message::decode(&said.text))
+            .collect()
+    }
+
+    fn relay_holds(ids: &[String]) -> String {
+        image::Message::Images(ids.to_vec()).encode()
+    }
+
+    fn carried(id: &str, sealed: &[u8]) -> String {
+        image::Message::image(id, sealed).encode()
+    }
+
+    #[test]
+    fn a_device_says_and_asks_nothing_of_images_until_the_relay_says_it_holds_some() {
+        let ids = pictures(2);
+        let mut device = device("dev-a");
+        let (_, sealed) = picture(0);
+        let kept = device.keep_image(&[0xFF, 0xD8, 0xFF, b'h', b'o', b'u', b's', b'e', 0]);
+        assert_eq!(kept.as_ref().map(|k| k.sealed.len()), Ok(sealed.len()));
+        device.connected(RELAY);
+        let todo = write(
+            &mut device,
+            &format!("Boiler {}", image::reference(&ids[0])),
+        );
+        assert!(said(&todo).is_empty());
+        assert!(said(&device.images_held(ids.clone())).is_empty());
+        assert!(said(&device.upload(&ids[0], &sealed)).is_empty());
+        let todo = device.received(RELAY, &relay_holds(&[]));
+        assert_eq!(said(&todo), [image::Message::Images(vec![ids[0].clone()])]);
+    }
+
+    #[test]
+    fn a_device_announces_an_image_its_notes_refer_to_that_the_relay_lacks_once_a_connection() {
+        let ids = pictures(2);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        let todo = device.received(RELAY, &relay_holds(&ids[1..]));
+        assert_eq!(said(&todo), [image::Message::Images(vec![ids[0].clone()])]);
+        assert!(said(&device.received(RELAY, &relay_holds(&[]))).is_empty());
+        assert!(said(&write(&mut device, "House")).is_empty());
+
+        device.disconnected(RELAY);
+        device.connected(RELAY);
+        let todo = device.received(RELAY, &relay_holds(&[]));
+        assert_eq!(said(&todo), [image::Message::Images(ids.clone())]);
+    }
+
+    #[test]
+    fn a_device_asks_the_relay_for_the_images_its_notes_refer_to_four_at_a_time_in_order() {
+        let ids = pictures(6);
+        let mut device = referring(&ids);
+        let todo = device.received(RELAY, &relay_holds(&ids));
+        assert_eq!(said(&todo), [image::Message::Want(ids[..4].to_vec())]);
+        assert!(said(&device.received(RELAY, &relay_holds(&[]))).is_empty());
+        assert!(said(&write(&mut device, "House")).is_empty());
+    }
+
+    #[test]
+    fn an_image_that_comes_is_kept_and_the_next_is_asked_for() {
+        let ids = pictures(6);
+        let mut device = referring(&ids);
+        device.received(RELAY, &relay_holds(&ids));
+        let (_, sealed) = (0..6).map(picture).find(|(id, _)| *id == ids[2]).unwrap();
+        let todo = device.received(RELAY, &carried(&ids[2], &sealed));
+        assert_eq!(
+            todo.keep_images,
+            [KeptImage {
+                id: ids[2].clone(),
+                sealed: sealed.clone()
+            }]
+        );
+        assert_eq!(said(&todo), [image::Message::Want(vec![ids[4].clone()])]);
+        let opened = device.open_image(&ids[2], &sealed).unwrap();
+        assert_eq!(opened[..3], [0xFF, 0xD8, 0xFF]);
+        assert_eq!(device.open_image(&ids[3], &sealed), None);
+    }
+
+    #[test]
+    fn an_image_that_does_not_open_to_its_id_is_not_kept_nor_asked_for_again_on_that_connection() {
+        let ids = pictures(5);
+        let mut device = referring(&ids);
+        device.received(RELAY, &relay_holds(&ids));
+        let (other, wrong) = (0..5).map(picture).find(|(id, _)| *id == ids[1]).unwrap();
+        assert_ne!(other, ids[0]);
+        let todo = device.received(RELAY, &carried(&ids[0], &wrong));
+        assert!(todo.keep_images.is_empty());
+        assert_eq!(said(&todo), [image::Message::Want(vec![ids[4].clone()])]);
+        let todo = device.received(RELAY, &carried(&ids[1], &[1; 10]));
+        assert!(todo.keep_images.is_empty());
+        assert!(said(&todo).is_empty(), "neither is asked for again");
+
+        device.disconnected(RELAY);
+        device.connected(RELAY);
+        let todo = device.received(RELAY, &relay_holds(&ids));
+        assert_eq!(said(&todo), [image::Message::Want(ids[..4].to_vec())]);
+    }
+
+    #[test]
+    fn an_image_the_device_did_not_ask_for_is_passed_over() {
+        let ids = pictures(1);
+        let mut device = referring(&ids);
+        let (id, sealed) = picture(0);
+        assert!(
+            device
+                .received(RELAY, &carried(&id, &sealed))
+                .keep_images
+                .is_empty()
+        );
+        device.received(RELAY, &relay_holds(&[]));
+        assert!(
+            device
+                .received(RELAY, &carried(&id, &sealed))
+                .keep_images
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_want_from_the_relay_asks_the_face_for_the_images_held_here_and_upload_sends_them() {
+        let ids = pictures(10);
+        let mut device = referring(&ids);
+        device.images_held(ids[1..].to_vec());
+        device.received(RELAY, &relay_holds(&[]));
+        let want = image::Message::Want(ids.clone()).encode();
+        let todo = device.received(RELAY, &want);
+        assert_eq!(
+            todo.upload,
+            ids[1..8].to_vec(),
+            "of the first eight, those held"
+        );
+
+        let (id, sealed) = picture(3);
+        let todo = device.upload(&id, &sealed);
+        assert_eq!(
+            todo.send,
+            [Said {
+                to: RELAY,
+                text: carried(&id, &sealed)
+            }]
+        );
+        assert!(device.upload("3f9a01c2", &sealed).send.is_empty());
+        assert!(device.upload(&id, &sealed[..41]).send.is_empty());
+    }
+
+    #[test]
+    fn an_image_only_a_deleted_note_refers_to_is_neither_announced_nor_asked_for_but_an_archived_ones_is()
+     {
+        let ids = pictures(4);
+        let (seal, host) = (Seal::new(key()), host("dev-b", 0));
+        let note = |id: &str, n: usize, deleted: bool, archived: bool| {
+            Record {
+                created: Some(Moment::utc(1)),
+                updated: Some(Moment::utc(1)),
+                stamp: Some(Moment::utc(1)),
+                device: "dev-b".to_owned(),
+                deleted,
+                archived,
+                ..Record::new(id, format!("Boiler {}", image::reference(&ids[n])))
+            }
+            .sealed(&seal, &*host)
+            .unwrap()
+        };
+        let mut device = device("dev-a");
+        device.load(
+            "dev-b",
+            vec![
+                note("gone", 0, true, false),
+                note("gone-too", 1, true, false),
+                note("done", 2, false, true),
+                note("done-too", 3, false, true),
+            ],
+        );
+        device.images_held(vec![ids[0].clone(), ids[2].clone()]);
+        device.connected(RELAY);
+        let todo = device.received(RELAY, &relay_holds(&[ids[1].clone(), ids[3].clone()]));
+        assert_eq!(
+            said(&todo),
+            [
+                image::Message::Images(vec![ids[2].clone()]),
+                image::Message::Want(vec![ids[3].clone()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_full_relay_is_said_on_the_status_line() {
+        let mut device = referring(&[]);
+        let full = image::Message::Full(image::FULL.to_owned()).encode();
+        device.received(RELAY, &full);
+        assert_eq!(status(&device), image::FULL);
+    }
+
+    #[test]
+    fn a_device_whose_key_is_not_the_spaces_keeps_no_image() {
+        let mut a = device("dev-a");
+        let lines: Vec<String> = write(&mut a, "House")
+            .keep
+            .into_iter()
+            .flat_map(|k| k.lines)
+            .collect();
+        let mut b = Device::new(
+            host("dev-b", 0),
+            "dev-b",
+            Weights::default(),
+            Key::from_bytes([9; 32]),
+        );
+        b.load("dev-a", lines);
+        assert_eq!(
+            b.keep_image(&[0xFF, 0xD8, 0xFF, 1]),
+            Err(WRONG_KEY.to_owned())
+        );
+        b.connected(RELAY);
+        let (id, sealed) = picture(0);
+        b.images_held(vec![id.clone()]);
+        assert!(said(&b.received(RELAY, &relay_holds(&[]))).is_empty());
+        assert!(said(&b.received(RELAY, &relay_holds(std::slice::from_ref(&id)))).is_empty());
+        assert!(
+            b.received(RELAY, &carried(&id, &sealed))
+                .keep_images
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn image_messages_from_a_sibling_are_passed_over() {
+        let ids = pictures(1);
+        let mut device = referring(&ids);
+        device.images_held(ids.clone());
+        device.connected(1);
+        let before = status(&device);
+        let (id, sealed) = picture(0);
+        for text in [
+            relay_holds(&[]),
+            image::Message::Want(ids.clone()).encode(),
+            carried(&id, &sealed),
+            image::Message::Full(image::FULL.to_owned()).encode(),
+        ] {
+            assert_eq!(device.received(1, &text), Todo::default(), "{text}");
+        }
+        assert_eq!(status(&device), before);
+    }
+
+    #[test]
+    fn what_a_device_knew_of_the_relays_images_is_forgotten_when_it_goes() {
+        let ids = pictures(2);
+        let mut device = referring(&ids);
+        device.images_held(ids[..1].to_vec());
+        device.received(RELAY, &relay_holds(&ids));
+        device.disconnected(RELAY);
+        assert!(said(&device.images_held(vec![])).is_empty());
+        assert!(device.upload(&picture(0).0, &picture(0).1).send.is_empty());
+
+        device.connected(RELAY);
+        assert!(said(&write(&mut device, "House")).is_empty());
+        let todo = device.received(RELAY, &relay_holds(&[]));
+        assert_eq!(
+            said(&todo),
+            [image::Message::Images(ids[..1].to_vec())],
+            "said again, and nothing asked of what the relay held before"
+        );
     }
 }

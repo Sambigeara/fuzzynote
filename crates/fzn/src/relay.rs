@@ -74,11 +74,12 @@ const PROTOCOL: &str = "fzn";
 /// a query.
 const TOKEN_PROTOCOL: &str = "fzn.token.";
 /// What a page of the web app may do: load its own files and its own WebAssembly, talk to the
-/// relay it came from, and use inline styles, because the body's editor injects its stylesheet.
-/// No script from anywhere else; and the page writes nothing into itself as markup, which is its
-/// own practice, since allowing inline styles means the policy no longer holds it to that.
+/// relay it came from, use inline styles, because the body's editor injects its stylesheet, and
+/// draw the space's own images, which it opens into `blob:` addresses of its own. No script from
+/// anywhere else; and the page writes nothing into itself as markup, which is its own practice,
+/// since allowing inline styles means the policy no longer holds it to that.
 const PAGE_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
-    style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; \
+    style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; \
     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// A space as a relay holds it: its replica, its directory, which nothing else writes while
@@ -1822,6 +1823,7 @@ pub(crate) mod tests {
         assert!(head.contains("Content-Type: text/html; charset=utf-8"));
         assert!(head.contains("Content-Security-Policy: default-src 'self'"));
         assert!(head.contains("style-src 'self' 'unsafe-inline'"));
+        assert!(head.contains("img-src 'self' data: blob:"));
         assert_eq!(body, b"<!doctype html><title>fzn</title>");
         let (head, body) = get(&address, "/app.js?v=2");
         assert!(head.contains("Content-Type: text/javascript"), "{head}");

@@ -623,6 +623,11 @@ impl Session {
         &self.device
     }
 
+    /// The images the notes held refer to, and a count that steps whenever that set changes.
+    pub(crate) fn images(&self) -> (u64, impl Iterator<Item = &str>) {
+        self.engine.images()
+    }
+
     /// Whether Write would go in rather than write: the cursor is on a line of labels and
     /// nothing else, which is the name of a place and is gone into as Tab goes.
     pub(crate) fn write_goes_in(&self) -> bool {

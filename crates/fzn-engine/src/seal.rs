@@ -11,6 +11,10 @@
 //! Lines from before sealing are still plain, and are read as they are. That is why opening a
 //! line has three outcomes and not two: a line that is not an envelope at all is told apart from
 //! one this key does not open, which is the sign of a wrong passphrase.
+//!
+//! An image is sealed the same way but kept as bytes, since it is a file of its own and never a
+//! line, and it is named by an id made under a key of its own, so that the name of an image says
+//! nothing to anyone without the space's key.
 
 use std::fmt;
 
@@ -19,6 +23,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -27,7 +32,13 @@ use crate::session::Host;
 /// The version of the envelope this build writes, and the only one it opens.
 const ENVELOPE: u32 = 1;
 
+/// The first byte of a sealed image, the version of its form, and the only one this build opens.
+const IMAGE_FORMAT: u8 = 1;
+
 const NONCE: usize = 24;
+
+/// The length of XChaCha20-Poly1305's tag, which every ciphertext carries at its end.
+const TAG: usize = 16;
 
 /// The cost of deriving a key: 19 MiB, two passes, one lane. Slow enough to make guessing a
 /// passphrase expensive, quick enough to do once a device, on a phone, in a tab.
@@ -82,6 +93,16 @@ impl Key {
         Key(hash.finalize().into())
     }
 
+    /// The key an image's id is made under: SHA-256 of `fzn/image/` and then the space's key. An
+    /// id made with no key would let a relay test whether a space holds a picture it has seen
+    /// elsewhere, and nothing of the space's key can be had from this one.
+    pub(crate) fn image(&self) -> Key {
+        let mut hash = Sha256::new();
+        hash.update(b"fzn/image/");
+        hash.update(self.0);
+        Key(hash.finalize().into())
+    }
+
     /// The key as text to keep: standard base64 with padding, 44 characters.
     pub fn encode(&self) -> String {
         STANDARD.encode(self.0)
@@ -128,11 +149,15 @@ pub fn is_sealed(line: &str) -> bool {
 #[derive(Clone, Debug)]
 pub struct Seal {
     key: Key,
+    image: Key,
 }
 
 impl Seal {
     pub fn new(key: Key) -> Seal {
-        Seal { key }
+        Seal {
+            image: key.image(),
+            key,
+        }
     }
 
     fn cipher(&self) -> XChaCha20Poly1305 {
@@ -184,6 +209,46 @@ impl Seal {
             Some(text) => Opened::Text(text),
             None => Opened::Shut,
         }
+    }
+
+    /// An image sealed as bytes: the byte 1, a fresh 24-byte nonce from the host, and then the
+    /// ciphertext with its tag. Bytes and not base64, since an image is kept as a file of its own
+    /// and not as a line. It comes to 41 bytes more than what was sealed.
+    pub fn seal_bytes(&self, plain: &[u8], host: &dyn Host) -> Vec<u8> {
+        let mut nonce = [0u8; NONCE];
+        host.random(&mut nonce);
+        // Encryption fails only on hundreds of gigabytes, and an image is at most a few MiB.
+        let sealed = self
+            .cipher()
+            .encrypt(XNonce::from_slice(&nonce), plain)
+            .expect("an image is far shorter than XChaCha20-Poly1305's limit");
+        let mut out = Vec::with_capacity(1 + NONCE + sealed.len());
+        out.push(IMAGE_FORMAT);
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(&sealed);
+        out
+    }
+
+    /// What [`Seal::seal_bytes`] sealed, if these bytes are of its form and open under this key.
+    pub fn open_bytes(&self, sealed: &[u8]) -> Option<Vec<u8>> {
+        if sealed.len() < 1 + NONCE + TAG || sealed[0] != IMAGE_FORMAT {
+            return None;
+        }
+        let (nonce, sealed) = sealed[1..].split_at(NONCE);
+        self.cipher()
+            .decrypt(XNonce::from_slice(nonce), sealed)
+            .ok()
+    }
+
+    /// An image's id in this space: the first 16 bytes of HMAC-SHA256 over its bytes, under the
+    /// key [`Key::image`] derives, as 32 lowercase hex digits. The same bytes give the same id on
+    /// every device of the space, and another id in any other space.
+    pub fn image_id(&self, plain: &[u8]) -> String {
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.image.0)
+            .expect("HMAC takes a key of any length");
+        mac.update(plain);
+        let digest = mac.finalize().into_bytes();
+        digest[..16].iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 
@@ -318,6 +383,61 @@ mod tests {
         assert!(line.starts_with(r#"{"s":1,"c":""#));
         assert!(line.ends_with(r#""}"#));
         assert!(!line.contains(char::is_whitespace));
+    }
+
+    #[test]
+    fn an_image_is_sealed_as_bytes_and_opens_to_what_was_sealed() {
+        let seal = seal(7);
+        let plain = b"\xFF\xD8\xFFa boiler's data plate";
+        let sealed = seal.seal_bytes(plain, &host());
+        assert_eq!(sealed.len(), plain.len() + 41);
+        assert_eq!(sealed[0], 1);
+        assert_eq!(seal.open_bytes(&sealed).as_deref(), Some(&plain[..]));
+    }
+
+    #[test]
+    fn an_image_sealed_twice_is_two_different_sealings_of_one_image() {
+        let (seal, host) = (seal(7), host());
+        let plain = b"\x89PNG\r\n\x1a\na garden";
+        let first = seal.seal_bytes(plain, &host);
+        let second = seal.seal_bytes(plain, &host);
+        assert_ne!(first, second);
+        for sealed in [first, second] {
+            assert_eq!(seal.open_bytes(&sealed).as_deref(), Some(&plain[..]));
+        }
+    }
+
+    #[test]
+    fn a_sealed_image_opens_under_its_own_key_alone() {
+        let sealed = seal(7).seal_bytes(b"\xFF\xD8\xFFhouse", &host());
+        assert_eq!(seal(8).open_bytes(&sealed), None);
+        let mut tampered = sealed.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+        assert_eq!(seal(7).open_bytes(&tampered), None);
+    }
+
+    #[test]
+    fn a_sealed_image_with_another_first_byte_or_too_short_does_not_open() {
+        let seal = seal(7);
+        let sealed = seal.seal_bytes(b"", &host());
+        assert_eq!(sealed.len(), 41);
+        assert_eq!(seal.open_bytes(&sealed), Some(vec![]));
+        let mut other = sealed.clone();
+        other[0] = 2;
+        assert_eq!(seal.open_bytes(&other), None);
+        assert_eq!(seal.open_bytes(&sealed[..40]), None);
+        assert_eq!(seal.open_bytes(&[]), None);
+    }
+
+    #[test]
+    fn an_images_id_is_pinned_so_that_every_build_names_an_image_alike() {
+        let (seven, eight) = (seal(7), seal(8));
+        let png = [b"\x89PNG\r\n\x1a\n".as_slice(), b"garden"].concat();
+        let jpeg = [b"\xFF\xD8\xFF".as_slice(), b"house"].concat();
+        assert_eq!(seven.image_id(&png), "4f998e75f22477b2519998d0731eeec8");
+        assert_eq!(seven.image_id(&jpeg), "3ae5eb6a75633c8ff7a8d2a11602aae2");
+        assert_ne!(eight.image_id(&png), seven.image_id(&png));
     }
 
     #[test]

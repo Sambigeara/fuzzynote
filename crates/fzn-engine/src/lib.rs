@@ -13,9 +13,11 @@
 //! shape, with messages in and out in place of files and sockets. What it carries is sealed
 //! under the space's key first, in [`seal`], so that a relay holds nothing it can read. The two
 //! meet in a [`Device`], which is what a face that syncs drives in place of a bare session.
+//! Images a note refers to are sealed and carried beside the logs and never in one, in [`image`].
 
 pub mod device;
 mod engine;
+pub mod image;
 mod index;
 mod note;
 mod query;
@@ -27,7 +29,7 @@ mod session;
 pub mod text;
 pub mod time;
 
-pub use device::{Device, Editing, Kept, RELAY, Said, Todo, Unwritten};
+pub use device::{Device, Editing, Kept, KeptImage, RELAY, Said, Todo, Unwritten};
 pub use engine::Engine;
 pub use note::Note;
 pub use record::{Notes, Read, Record};

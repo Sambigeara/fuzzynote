@@ -23,14 +23,35 @@ pub(crate) fn lower(c: char) -> char {
 }
 
 /// Lowercased words in order, per Unicode word segmentation. A URL contributes only its host
-/// (without `www.`), so that "same site" counts and scheme fragments do not. Single characters
-/// are dropped.
+/// (without `www.`), so that "same site" counts and scheme fragments do not. An image's address
+/// contributes nothing, since its digits are no word anyone would look for, and its alt text
+/// counts as any words do. Single characters are dropped.
 pub fn tokens(text: &str) -> Vec<String> {
-    hosts_for_urls(text)
+    hosts_for_urls(&without_images(text))
         .unicode_words()
         .filter(|w| (2..=MAX_TERM_CHARS).contains(&w.chars().count()))
         .map(str::to_lowercase)
         .collect()
+}
+
+/// Blanks every image's address in `text`, `fzn:` and its digits, as spaces.
+fn without_images(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("(fzn:") {
+        return text.into();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '('
+            && let Some((_, end)) = take_image(&chars, i + 1)
+        {
+            chars[i + 1..end].fill(' ');
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    chars.into_iter().collect::<String>().into()
 }
 
 /// Replaces every URL in `text` with its host.
@@ -95,12 +116,14 @@ pub struct Facts {
     pub links: Vec<String>,
     pub urls: Vec<String>,
     pub dates: Vec<Day>,
+    /// The ids of the images the text refers to, outside code, sorted and each once.
+    pub images: Vec<String>,
 }
 
-/// Extracts `#tags`, `@mentions`, `[[wikilinks]]`, URLs and dates written as `2026-09-05` or
-/// `Mon, Jan 02, 2006` (the form the old `{d}` token expanded to). A tag or a person straight
-/// after a `!` that starts a word is not one, since on the line that `!` leaves it out, and a
-/// note written from such a line should not carry what it was meant to leave out.
+/// Extracts `#tags`, `@mentions`, `[[wikilinks]]`, URLs, images' addresses and dates written as
+/// `2026-09-05` or `Mon, Jan 02, 2006` (the form the old `{d}` token expanded to). A tag or a
+/// person straight after a `!` that starts a word is not one, since on the line that `!` leaves
+/// it out, and a note written from such a line should not carry what it was meant to leave out.
 pub fn facts(text: &str) -> Facts {
     let chars: Vec<char> = text.chars().collect();
     let code = code(&chars);
@@ -142,6 +165,11 @@ pub fn facts(text: &str) -> Facts {
                 f.links.push(target);
                 end
             })
+        } else if c == '(' {
+            take_image(&chars, i + 1).map(|(id, end)| {
+                f.images.push(id);
+                end
+            })
         } else if boundary && c.is_ascii_digit() {
             take_iso_date(&chars, i).map(|(day, end)| {
                 f.dates.push(day);
@@ -162,7 +190,13 @@ pub fn facts(text: &str) -> Facts {
         };
         i = next.unwrap_or(i + 1);
     }
-    for v in [&mut f.tags, &mut f.mentions, &mut f.links, &mut f.urls] {
+    for v in [
+        &mut f.tags,
+        &mut f.mentions,
+        &mut f.links,
+        &mut f.urls,
+        &mut f.images,
+    ] {
         v.sort();
         v.dedup();
     }
@@ -465,6 +499,22 @@ pub(crate) fn take_mention(chars: &[char], start: usize) -> Option<(String, usiz
         chars[start..end].iter().collect::<String>().to_lowercase(),
         end,
     ))
+}
+
+/// An image's id from its address, `fzn:` and 32 lowercase hex digits, read from `at`, the
+/// character after a `(`, and the index after the digits. The address has to end there, at a `)`,
+/// a space or a tab, so that a longer run of digits is no image at all and not a different one.
+fn take_image(chars: &[char], at: usize) -> Option<(String, usize)> {
+    let digits = at + 4;
+    let end = digits + crate::image::ID_DIGITS;
+    if chars.get(at..digits)? != ['f', 'z', 'n', ':'] {
+        return None;
+    }
+    let id = chars.get(digits..end)?;
+    if !id.iter().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
+        return None;
+    }
+    matches!(chars.get(end), Some(')' | ' ' | '\t')).then(|| (id.iter().collect(), end))
 }
 
 fn take_wikilink(chars: &[char], start: usize) -> Option<(String, usize)> {
@@ -1167,5 +1217,52 @@ mod tests {
         assert!(!in_code(&chars("a #fo"), 5));
         assert!(!in_code(&chars("a `b`"), 5));
         assert!(!in_code(&chars("```\n#a\n```"), 10));
+    }
+
+    const GARDEN: &str = "4f998e75f22477b2519998d0731eeec8";
+    const HOUSE: &str = "3ae5eb6a75633c8ff7a8d2a11602aae2";
+
+    #[test]
+    fn an_image_is_read_by_its_address_and_only_outside_code() {
+        let body = format!(
+            "the boiler's data plate ![](fzn:{GARDEN})\n\
+             `![](fzn:{HOUSE})`\n\
+             ```\n![x](fzn:3f9a01c23f9a01c23f9a01c23f9a01c2)\n```\n"
+        );
+        assert_eq!(facts(&body).images, [GARDEN]);
+        assert_eq!(facts(&format!("[plate](fzn:{GARDEN})")).images, [GARDEN]);
+        assert_eq!(
+            facts(&format!("![plate](fzn:{GARDEN} \"the plate\")")).images,
+            [GARDEN]
+        );
+        assert_eq!(facts(&format!("(fzn:{GARDEN}\tand on")).images, [GARDEN]);
+    }
+
+    #[test]
+    fn an_images_address_adds_no_words_and_its_alt_text_does() {
+        assert_eq!(
+            tokens(&format!("![radiator valve](fzn:{GARDEN})")),
+            ["radiator", "valve"]
+        );
+    }
+
+    #[test]
+    fn an_address_that_is_not_32_lowercase_hex_digits_refers_to_no_image() {
+        let short = &GARDEN[..31];
+        let upper = GARDEN.to_uppercase();
+        for text in [
+            format!("![](fzn:{short})"),
+            format!("![](fzn:{GARDEN}0)"),
+            format!("![](fzn:{upper})"),
+            format!("![]fzn:{GARDEN})"),
+        ] {
+            assert!(facts(&text).images.is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn one_image_referred_to_twice_is_one_image() {
+        let body = format!("![](fzn:{HOUSE})\nthe valve again ![valve](fzn:{HOUSE})");
+        assert_eq!(facts(&body).images, [HOUSE]);
     }
 }

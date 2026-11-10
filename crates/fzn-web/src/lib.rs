@@ -1,10 +1,12 @@
 //! fuzzynote in a browser tab.
 //!
 //! The engine is compiled to WebAssembly and the page drives it through [`Fzn`], which is the
-//! engine's [`Device`] with a text boundary round it. Everything crosses as text: an action goes
-//! in as JSON and what the page has to do comes back as JSON, and so does the view. The page
-//! owns what only a page can: the keys, the painting, the socket to the relay, somewhere to keep
-//! lines between visits, and the asking for a passphrase.
+//! engine's [`Device`] with a text boundary round it. Everything crosses as text but an image: an
+//! action goes in as JSON and what the page has to do comes back as JSON, and so does the view.
+//! An image crosses as bytes, since it is not text, and base64 of a few MiB made and read on each
+//! crossing would be work for nothing. The page owns what only a page can: the keys, the
+//! painting, the socket to the relay, somewhere to keep lines and images between visits, making
+//! an image smaller, and the asking for a passphrase.
 
 use fzn_engine::{Action, Device, Host, Key, Moment, Todo, Weights};
 use wasm_bindgen::prelude::*;
@@ -158,6 +160,34 @@ impl Fzn {
     /// How far this tab's clock is from the relay's, when that is far enough to say.
     pub fn clock(&self) -> Option<String> {
         self.device.clock()
+    }
+
+    /// Seals an image the page has made smaller and counts it as held:
+    /// `{"id":"…","sealed":"<base64>"}` for the page to keep, or why not, as an error the page
+    /// shows.
+    pub fn keep_image(&mut self, plain: &[u8]) -> Result<String, JsValue> {
+        let kept = self
+            .device
+            .keep_image(plain)
+            .map_err(|why| JsValue::from_str(&why))?;
+        // An id and base64 always serialise.
+        Ok(serde_json::to_string(&kept).unwrap_or_default())
+    }
+
+    /// An image's bytes as the page's store holds them, opened, or undefined if they do not open
+    /// to it.
+    pub fn open_image(&self, id: &str, sealed: &[u8]) -> Option<Vec<u8>> {
+        self.device.open_image(id, sealed)
+    }
+
+    /// The images the page's store holds, by id, given once after `opened`. What to do, as JSON.
+    pub fn images_held(&mut self, ids: Vec<String>) -> String {
+        json(&self.device.images_held(ids))
+    }
+
+    /// An image the relay asked for, as the store holds it. What to do, as JSON.
+    pub fn upload(&mut self, id: &str, sealed: &[u8]) -> String {
+        json(&self.device.upload(id, sealed))
     }
 }
 

@@ -18,6 +18,8 @@ anyhow = "1"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
+# An image's id. 0.12, since 0.13 is on digest 0.11 and sha2 0.10 is on digest 0.10.
+hmac = { version = "0.12", default-features = false }
 base64 = "0.22"
 
 # Deriving a key is deliberately slow, and unoptimised it is slower still; tests derive keys.
