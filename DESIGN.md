@@ -386,7 +386,8 @@ added to the engine until daily use asks for it.
   apply, tick or untick again writes nothing. `fzn image FILE …` keeps each image in the space, made
   smaller as the page makes one, its colour profile kept so that a phone's photo keeps its colours,
   and a file of more than 64 MiB, or an image of more than 100 million pixels, 32,768 on a side or
-  256 MiB decoded, refused unread, so that making one smaller takes about 512 MiB at most, and
+  256 MiB decoded, refused unread, so that making one smaller takes about 512 MiB, a progressive
+  JPEG near the pixel limit some 800 MiB, whose decoder sets aside more than it is held to, and
   writes its reference, `![](fzn:…)`, one a line, so that it can be read into a body from your
   editor; `-` takes one from standard input, and it is all or none. `fzn image fzn:…` writes the
   image the space holds under that id to standard output, never to a terminal, by your own hand as
@@ -533,38 +534,39 @@ relay all run the same code.
   rest, since over a slow link they come one after another. Images take at most 512 MiB of a relay's
   disk in all, or what `fzn relay --images 2G` says, shared equally among the names it serves, the
   spaces at its root counting as one, so that a member of one name's spaces cannot take another
-  name's room; they are counted from what is there when it starts and each as the disk keeps it, in
-  whole 4 KiB blocks and never less than 16 KiB, since a file costs an inode too and ext4 makes one
-  for every 16 KiB; and an image is asked for only while the largest there is would still fit, so
-  that nothing is sent to be thrown away. It listens on `127.0.0.1:3960` until told otherwise.
-  Beside each space's logs it keeps the space's auth key, in `.auth`, readable only by itself, and
-  it lets a connection in only once the device has proved that key; the first device to answer for a
-  space it keeps none for gives it the key, and the space is that key's from then on. A connection
-  goes in this order: the clock; the name resolved, and one the relay does not have refused; for a
-  space with no key kept yet, the token offered checked against the name's, or nothing checked at an
-  open root; the challenge, with the first sealed line of each of the space's logs, up to sixteen,
-  when it keeps no key but holds lines; whatever the device says before its answer passed over; the
-  answer checked, or the claim kept; and only then the space opened and the device given what it
-  lacks. Nothing is opened, made or written for a connection before that, and each step of the
-  greeting has five seconds, so a peer with no key holds a thread for fifteen seconds at most and
-  puts nothing on disk; past 64 connections in their greeting at once, or 8 from one address, so
-  that one peer cannot keep the rest out, a new one is closed straight away. A refusal of a name, a
-  token or a key is said as `{"refused":"…"}` after the greeting, since a browser is never shown why
-  a greeting failed, and logged with the address, the name and the space, never a token, a nonce or
-  a key; the relay's own trouble after the answer, a space it cannot open or a key it cannot keep,
-  is only logged, and the connection closed, so that a device tries again and does not doubt its
-  passphrase. A space's key is kept only with a token: under a name the relay's admin has given one,
-  `fzn relay add joe` for joe's spaces, under `joe` in its root, and `fzn relay token` for the
-  spaces at the root, which anyone who connects may make until then, as the relay says when it
-  starts. That is when a space is made, and again if its key file is ever lost. It keeps only the
-  SHA-256 of each token, in its config directory as `relay/tenants/joe` and `relay/token`; whether a
-  name is there is looked at on every connection and its token read whenever a space has no key yet,
-  so a copy of its files gives no token and a name given or taken away holds without a restart. It
-  has no TLS of its own: on a private network the network encrypts the wire, and elsewhere a proxy
-  in front of the relay has to, and a device then names the relay as `wss://` (see "The terminal
-  speaks wss"). What keeps a relay private is the key, which it never has; what keeps its disk is
-  the token. It carries the page and hands it out on the same address, so a browser has one address
-  to open (see "Where the page comes from" under Browser).
+  name's room, and a relay that cannot list the names it serves, its file descriptors spent say,
+  takes no image until it can; they are counted from what is there when it starts and each as the
+  disk keeps it, in whole 4 KiB blocks and never less than 16 KiB, since a file costs an inode too
+  and ext4 makes one for every 16 KiB; and an image is asked for only while the largest there is
+  would still fit, so that nothing is sent to be thrown away. It listens on `127.0.0.1:3960` until
+  told otherwise. Beside each space's logs it keeps the space's auth key, in `.auth`, readable only
+  by itself, and it lets a connection in only once the device has proved that key; the first device
+  to answer for a space it keeps none for gives it the key, and the space is that key's from then
+  on. A connection goes in this order: the clock; the name resolved, and one the relay does not have
+  refused; for a space with no key kept yet, the token offered checked against the name's, or
+  nothing checked at an open root; the challenge, with the first sealed line of each of the space's
+  logs, up to sixteen, when it keeps no key but holds lines; whatever the device says before its
+  answer passed over; the answer checked, or the claim kept; and only then the space opened and the
+  device given what it lacks. Nothing is opened, made or written for a connection before that, and
+  each step of the greeting has five seconds, so a peer with no key holds a thread for fifteen
+  seconds at most and puts nothing on disk; past 64 connections in their greeting at once, or 8 from
+  one address, so that one peer cannot keep the rest out, a new one is closed straight away. A
+  refusal of a name, a token or a key is said as `{"refused":"…"}` after the greeting, since a
+  browser is never shown why a greeting failed, and logged with the address, the name and the space,
+  never a token, a nonce or a key; the relay's own trouble after the answer, a space it cannot open
+  or a key it cannot keep, is only logged, and the connection closed, so that a device tries again
+  and does not doubt its passphrase. A space's key is kept only with a token: under a name the
+  relay's admin has given one, `fzn relay add joe` for joe's spaces, under `joe` in its root, and
+  `fzn relay token` for the spaces at the root, which anyone who connects may make until then, as
+  the relay says when it starts. That is when a space is made, and again if its key file is ever
+  lost. It keeps only the SHA-256 of each token, in its config directory as `relay/tenants/joe` and
+  `relay/token`; whether a name is there is looked at on every connection and its token read
+  whenever a space has no key yet, so a copy of its files gives no token and a name given or taken
+  away holds without a restart. It has no TLS of its own: on a private network the network encrypts
+  the wire, and elsewhere a proxy in front of the relay has to, and a device then names the relay as
+  `wss://` (see "The terminal speaks wss"). What keeps a relay private is the key, which it never
+  has; what keeps its disk is the token. It carries the page and hands it out on the same address,
+  so a browser has one address to open (see "Where the page comes from" under Browser).
 - **A device syncs by having a relay named**, in the config file, in `$FZN_RELAY` or with `--relay`.
   There is no command for it. While the app is open a thread keeps the space's logs in step with the
   relay, and the foot says only when that is not going. With no window holding the keeper's lease,

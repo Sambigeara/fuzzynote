@@ -15,7 +15,9 @@
 //! that says it is enormous is refused before anything is set aside for it. A large image is first
 //! made 4096 on its long edge by a quick filter that needs nothing beside its output, then 2048
 //! by the fine one, whose working copy would otherwise be as wide as the original, and turned
-//! last, once it is small; so making one smaller takes about 512 MiB at the most.
+//! last, once it is small; so making one smaller takes about 512 MiB, but for a progressive JPEG
+//! near the pixel limit, whose decoder keeps its coefficients outside the limit it is given and so
+//! takes some 800 MiB.
 
 use std::io::Cursor;
 

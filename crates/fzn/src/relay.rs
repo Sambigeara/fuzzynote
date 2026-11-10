@@ -456,10 +456,16 @@ impl Hub {
         (names.len() as u64 + u64::from(root)).max(1)
     }
 
-    /// The share of the room each name may take.
+    /// The share of the room each name may take. A relay that cannot list who it serves, its
+    /// file descriptors spent say, cannot tell a name's share, and shares out none rather than
+    /// the whole room to whoever asks first.
     fn share(&self) -> u64 {
-        let names = self.names_served();
-        self.room().most / names
+        let root =
+            fs::read_dir(&self.root).map_or_else(|err| err.kind() == ErrorKind::NotFound, |_| true);
+        if !root || !names::readable(&self.config) {
+            return 0;
+        }
+        self.room().most / self.names_served()
     }
 
     /// Whether a space that is open holds an image.
@@ -2501,6 +2507,21 @@ pub(crate) mod tests {
         joe.say_image(&image::Message::image(&third.0, &third.1));
         let joes = spaces.join("joe").join("main");
         assert!(eventually(|| on_disk(&joes) == [third.0.clone()]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_relay_that_cannot_list_the_names_it_serves_takes_no_image() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        // Where the names are kept is a file, so that listing them fails as other than missing.
+        fs::create_dir_all(names::dir(&config)).unwrap();
+        fs::write(names::dir(&config).join("tenants"), b"").unwrap();
+        let address = relay_room(&spaces, &config, None, 4 * charged(SEALED_MOST as u64));
+        let (mut raw, _) = Raw::entered(&address);
+        raw.say_image(&image::Message::Images(vec![garden(0, 500).0]));
+        assert_eq!(raw.next_image(), image::Message::Full(image::FULL.into()));
         fs::remove_dir_all(&root).unwrap();
     }
 

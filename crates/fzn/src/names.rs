@@ -110,6 +110,15 @@ pub fn is_name(config: &Path, name: &str) -> bool {
     names_a_log(name) && name_file(config, name).is_file()
 }
 
+/// Whether the names given on this relay can be read: a relay with none given has no directory
+/// for them, which reads as none, but one that cannot be listed says nothing of who is served.
+pub fn readable(config: &Path) -> bool {
+    match fs::read_dir(dir(config).join(NAMES_DIR)) {
+        Ok(_) => true,
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
 /// The names given on this relay, in order.
 pub fn names(config: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(dir(config).join(NAMES_DIR)) else {
