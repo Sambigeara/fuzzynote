@@ -21,7 +21,7 @@ mod wire;
 use std::io::{IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use fzn_engine::{Seal, image};
 
 const USAGE: &str = "\
@@ -617,24 +617,32 @@ fn image_in(dir: &Path, space: &str, config_dir: &Path, given: &[String]) -> Res
     store::Store::open(dir, String::new(), Seal::new(key))?;
     let mut sealed = Vec::new();
     for arg in given {
-        let (name, bytes) = if arg == "-" {
-            let mut bytes = Vec::new();
+        // Read no further than the most a file may be, and a byte past it to know it is more.
+        let mut bytes = Vec::new();
+        let name = if arg == "-" {
             std::io::stdin()
+                .take(smaller::FILE_MOST + 1)
                 .read_to_end(&mut bytes)
                 .context("read standard input")?;
-            ("standard input", bytes)
+            "standard input"
         } else {
-            let bytes = std::fs::read(arg).with_context(|| format!("read {arg}"))?;
-            (arg.as_str(), bytes)
+            std::fs::File::open(arg)
+                .and_then(|file| file.take(smaller::FILE_MOST + 1).read_to_end(&mut bytes))
+                .with_context(|| format!("read {arg}"))?;
+            arg.as_str()
         };
+        if bytes.len() as u64 > smaller::FILE_MOST {
+            bail!("{name} is larger than fzn reads, which is 64 MiB");
+        }
         let plain = smaller::smaller(&bytes).map_err(|why| match why {
             smaller::Smaller::NotAnImage => {
                 anyhow!("{name} is not an image fzn can read: a JPEG, PNG, WebP or GIF")
             }
             smaller::Smaller::TooLarge => anyhow!("{name} is more than 2 MiB even made smaller"),
-            smaller::Smaller::TooBig => {
-                anyhow!("{name} is larger than fzn reads, which is 100 million pixels")
-            }
+            smaller::Smaller::TooBig => anyhow!(
+                "{name} is larger than fzn reads: 100 million pixels, 32768 on a side, and \
+                 256 MiB once read"
+            ),
         })?;
         sealed.push(image::seal(&seal, &plain, &system::System).map_err(|why| anyhow!(why))?);
     }

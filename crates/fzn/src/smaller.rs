@@ -10,9 +10,12 @@
 //! pixels alone, so nothing of the original's metadata, where it was taken included, is kept,
 //! but for its colour profile: a phone's photo is in a wider space than sRGB, and without its
 //! profile it would show duller than it was taken, so the profile goes with the pixels it
-//! describes. An image is read only if it is of at most 100 million pixels and its decoding takes
-//! at most 512 MiB, so that a small file that says it is enormous is refused before anything is
-//! set aside for it.
+//! describes. A file is read only if it is of at most 64 MiB, and an image decoded only if it is
+//! of at most 100 million pixels, 32,768 on a side, and 256 MiB once decoded, so that a small file
+//! that says it is enormous is refused before anything is set aside for it. A large image is first
+//! made 4096 on its long edge by a quick filter that needs nothing beside its output, then 2048
+//! by the fine one, whose working copy would otherwise be as wide as the original, and turned
+//! last, once it is small; so making one smaller takes about 512 MiB at the most.
 
 use std::io::Cursor;
 
@@ -33,10 +36,14 @@ const PNG_MOST: usize = 1536 * 1024;
 /// A JPEG's quality, and its quality again when the first is too large.
 const QUALITY: u8 = 82;
 const QUALITY_AGAIN: u8 = 70;
+/// The most a file may be to be read at all.
+pub const FILE_MOST: u64 = 64 << 20;
 /// The most pixels an image may have to be read: a phone's largest camera gives 50 million.
 const PIXELS_MOST: u64 = 100_000_000;
-/// The most memory decoding an image may set aside.
-const ALLOC_MOST: u64 = 512 << 20;
+/// The longest side an image may have to be read.
+const SIDE_MOST: u32 = 32_768;
+/// The most memory an image may take decoded, and decoding it set aside, its profile included.
+const DECODED_MOST: u64 = 256 << 20;
 /// The largest colour profile kept; a real one is a few KiB, a display's at most a few hundred.
 const PROFILE_MOST: usize = 1 << 20;
 
@@ -57,7 +64,9 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
         .with_guessed_format()
         .map_err(|_| Smaller::NotAnImage)?;
     let mut limits = Limits::default();
-    limits.max_alloc = Some(ALLOC_MOST);
+    limits.max_alloc = Some(DECODED_MOST);
+    limits.max_image_width = Some(SIDE_MOST);
+    limits.max_image_height = Some(SIDE_MOST);
     reader.limits(limits);
     let format = reader.format();
     if !matches!(
@@ -72,7 +81,10 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
     };
     let mut decoder = reader.into_decoder().map_err(refused)?;
     let (width, height) = decoder.dimensions();
-    if u64::from(width) * u64::from(height) > PIXELS_MOST {
+    if u64::from(width) * u64::from(height) > PIXELS_MOST
+        || width.max(height) > SIDE_MOST
+        || decoder.total_bytes() > DECODED_MOST
+    {
         return Err(Smaller::TooBig);
     }
     // An orientation that cannot be read is no turn at all, as a browser takes it, and a
@@ -84,11 +96,15 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
         .flatten()
         .filter(|profile| profile.len() <= PROFILE_MOST);
     let mut picture = DynamicImage::from_decoder(decoder).map_err(refused)?;
-    if let Some(orientation) = orientation {
-        picture.apply_orientation(orientation);
+    // Made smaller before it is turned, since the box it is fitted to is square either way.
+    if picture.width().max(picture.height()) > 2 * EDGE {
+        picture = picture.thumbnail(2 * EDGE, 2 * EDGE);
     }
     if picture.width().max(picture.height()) > EDGE {
         picture = picture.resize(EDGE, EDGE, FilterType::Lanczos3);
+    }
+    if let Some(orientation) = orientation {
+        picture.apply_orientation(orientation);
     }
     if format == Some(ImageFormat::Png)
         && let Some(png) = png(&picture, profile.clone())
@@ -240,11 +256,19 @@ mod tests {
 
     #[test]
     fn an_image_that_says_it_has_more_pixels_than_are_read_is_refused_unread() {
-        // A PNG of a header saying 13000 by 13000 pixels, and no pixels after it.
+        assert_eq!(
+            smaller(&png_saying(13_000, 13_000, 8, 2)),
+            Err(Smaller::TooBig)
+        );
+    }
+
+    /// A PNG of a header saying so many pixels, of so many bits in a colour type, and no pixels
+    /// after it.
+    fn png_saying(width: u32, height: u32, depth: u8, colour: u8) -> Vec<u8> {
         let mut header = Vec::new();
-        header.extend_from_slice(&13_000u32.to_be_bytes());
-        header.extend_from_slice(&13_000u32.to_be_bytes());
-        header.extend_from_slice(&[8, 2, 0, 0, 0]);
+        header.extend_from_slice(&width.to_be_bytes());
+        header.extend_from_slice(&height.to_be_bytes());
+        header.extend_from_slice(&[depth, colour, 0, 0, 0]);
         let mut crc = flate2::Crc::new();
         crc.update(b"IHDR");
         crc.update(&header);
@@ -258,7 +282,20 @@ mod tests {
         png.extend_from_slice(&0u32.to_be_bytes());
         png.extend_from_slice(b"IDAT");
         png.extend_from_slice(&crc.sum().to_be_bytes());
-        assert_eq!(smaller(&png), Err(Smaller::TooBig));
+        png
+    }
+
+    #[test]
+    fn an_image_too_long_on_a_side_or_too_large_decoded_is_refused_unread() {
+        // A line of 40,000 pixels, small as a file.
+        let line = encoded(&garden(40_000, 1), ImageFormat::Png);
+        assert_eq!(smaller(&line), Err(Smaller::TooBig));
+        // 7,000 by 7,000 is fewer than 100 million pixels, but in sixteen bits a channel with
+        // alpha it is 392 MB once decoded.
+        assert_eq!(
+            smaller(&png_saying(7_000, 7_000, 16, 6)),
+            Err(Smaller::TooBig)
+        );
     }
 
     #[test]
