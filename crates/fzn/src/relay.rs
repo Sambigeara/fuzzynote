@@ -393,10 +393,39 @@ struct Hub {
     peers: AtomicU32,
 }
 
-/// The bytes images may take on a relay, and the bytes they take.
+/// The bytes images may take on a relay, and the bytes they take, in all and by name, the
+/// spaces at the root counting as one name, `""`. The room is the relay's, shared equally among
+/// the names it serves, so that a member of one name's space cannot fill another's room.
 struct Room {
     most: u64,
     used: u64,
+    by_name: HashMap<String, u64>,
+}
+
+impl Room {
+    /// Whether an image counted as `size` may be kept under a name whose share is `share`, or
+    /// why not: the bytes taken and the bound that stops it, in words for the log.
+    fn fits(&self, name: &str, share: u64, size: u64) -> Result<(), String> {
+        let theirs = self.by_name.get(name).copied().unwrap_or(0);
+        if self.used + size > self.most {
+            Err(format!("images take {} of {} bytes", self.used, self.most))
+        } else if theirs + size > share {
+            let whose = match name {
+                "" => "the root's".to_owned(),
+                name => format!("{name}'s"),
+            };
+            Err(format!(
+                "{whose} images take {theirs} of the {share} bytes that are its share"
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// The name a space is under, by the label the relay knows it by: `""` for one at the root.
+fn name_of(label: &str) -> &str {
+    label.split_once('/').map_or("", |(name, _)| name)
 }
 
 impl Hub {
@@ -406,6 +435,31 @@ impl Hub {
 
     fn room(&self) -> MutexGuard<'_, Room> {
         self.room.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// How many names the relay serves, which share its room for images equally: every name
+    /// given on it, and the root's spaces as one more while there are any. Read again each time,
+    /// so that a name given or taken away, or a first space at the root, changes the shares at
+    /// once.
+    fn names_served(&self) -> u64 {
+        let names = names::names(&self.config);
+        let root = fs::read_dir(&self.root).is_ok_and(|entries| {
+            entries.filter_map(|entry| entry.ok()).any(|entry| {
+                let path = entry.path();
+                let named = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| names.iter().any(|n| n == name));
+                !named && path.is_dir() && names::holds_a_space(&path)
+            })
+        });
+        (names.len() as u64 + u64::from(root)).max(1)
+    }
+
+    /// The share of the room each name may take.
+    fn share(&self) -> u64 {
+        let names = self.names_served();
+        self.room().most / names
     }
 
     /// Whether a space that is open holds an image.
@@ -742,7 +796,8 @@ impl Relay {
         images: u64,
     ) -> Result<Self> {
         let listener = TcpListener::bind(listen).with_context(|| format!("listen on {listen}"))?;
-        let used = images_under(&root);
+        let by_name = images_under(&root);
+        let used = by_name.values().sum();
         Ok(Self {
             listener,
             hub: Arc::new(Hub {
@@ -755,7 +810,11 @@ impl Relay {
                 claiming: Mutex::new(()),
                 greeting: Mutex::new(Greetings::default()),
                 crowded: Mutex::new(None),
-                room: Mutex::new(Room { most: images, used }),
+                room: Mutex::new(Room {
+                    most: images,
+                    used,
+                    by_name,
+                }),
                 peers: AtomicU32::new(1),
             }),
         })
@@ -765,10 +824,12 @@ impl Relay {
         Ok(self.listener.local_addr()?)
     }
 
-    /// The most bytes images may take on this relay, and the bytes they take.
-    pub fn images(&self) -> (u64, u64) {
+    /// The most bytes images may take on this relay, the bytes they take, how many names share
+    /// the room, and each one's share.
+    pub fn images(&self) -> (u64, u64, u64, u64) {
+        let names = self.hub.names_served();
         let room = self.hub.room();
-        (room.most, room.used)
+        (room.most, room.used, names, room.most / names)
     }
 
     /// The build of the page this relay hands out, or nothing if it has none to hand out.
@@ -795,7 +856,7 @@ impl Relay {
 
 /// The bytes the images under a relay's root take: those of every space at the root, and of
 /// every space under a name. A directory that cannot be read counts nothing.
-fn images_under(root: &Path) -> u64 {
+fn images_under(root: &Path) -> HashMap<String, u64> {
     let dirs = |dir: &Path| -> Vec<PathBuf> {
         fs::read_dir(dir).map_or_else(
             |_| Vec::new(),
@@ -807,11 +868,16 @@ fn images_under(root: &Path) -> u64 {
             },
         )
     };
-    let mut used = 0;
+    let mut used: HashMap<String, u64> = HashMap::new();
     for first in dirs(root) {
-        used += images_in(&first);
+        *used.entry(String::new()).or_default() += images_in(&first);
+        let name = first
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
         for second in dirs(&first) {
-            used += images_in(&second);
+            *used.entry(name.clone()).or_default() += images_in(&second);
         }
     }
     used
@@ -1526,15 +1592,16 @@ impl Images<'_> {
             let Some(id) = self.offered.pop_first() else {
                 break;
             };
-            let (most, used) = {
-                let room = self.hub.room();
-                (room.most, room.used)
-            };
             // Near full, an image is asked for only if the largest there is would fit, so that
             // nothing is sent all the way here to be thrown away.
-            if used + charged(SEALED_MOST as u64) > most {
+            let share = self.hub.share();
+            let fits =
+                self.hub
+                    .room()
+                    .fits(name_of(self.label), share, charged(SEALED_MOST as u64));
+            if let Err(why) = fits {
                 self.offered.clear();
-                self.full(wire, used, most)?;
+                self.full(wire, &why)?;
                 break;
             }
             // Another device may have brought it since it was offered.
@@ -1623,6 +1690,11 @@ impl Images<'_> {
             );
             return Ok(());
         };
+        // Another connection may have brought it meanwhile, and it is not written twice.
+        if self.hub.holds_image(self.label, id) {
+            return Ok(());
+        }
+        let share = self.hub.share();
         let fresh = dir.join(format!(".{id}.{}.tmp", self.peer));
         let written = fs::create_dir_all(dir)
             .and_then(|()| File::create(&fresh))
@@ -1646,14 +1718,16 @@ impl Images<'_> {
             let _ = fs::remove_file(&fresh);
         } else {
             let mut room = self.hub.room();
-            if room.used + size > room.most {
+            let name = name_of(self.label);
+            if let Err(why) = room.fits(name, share, size) {
                 let _ = fs::remove_file(&fresh);
                 self.offered.clear();
-                no_room = Some((room.used, room.most));
+                no_room = Some(why);
             } else {
                 match fs::rename(&fresh, dir.join(id)) {
                     Ok(()) => {
                         room.used += size;
+                        *room.by_name.entry(name.to_owned()).or_default() += size;
                         space.images.insert(id.to_owned(), size);
                         let held = image::Message::Images(vec![id.to_owned()]).encode();
                         for (peer, to) in &space.peers {
@@ -1674,19 +1748,19 @@ impl Images<'_> {
         }
         drop(spaces);
         match no_room {
-            Some((used, most)) => self.full(wire, used, most),
+            Some(why) => self.full(wire, &why),
             None => Ok(()),
         }
     }
 
     /// Says the relay is full, and logs it, once a connection.
-    fn full(&mut self, wire: &mut Wire, used: u64, most: u64) -> Result<()> {
+    fn full(&mut self, wire: &mut Wire, why: &str) -> Result<()> {
         if self.full_said {
             return Ok(());
         }
         self.full_said = true;
         eprintln!(
-            "fzn relay: {}: no room for another image: images take {used} of {most} bytes",
+            "fzn relay: {}: no room for another image: {why}",
             self.label
         );
         wire.say(image::Message::Full(image::FULL.to_owned()).encode())
@@ -2381,6 +2455,50 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn one_name_cannot_take_the_room_another_names_images_have() {
+        let root = temp_dir();
+        let config = root.join("config");
+        let spaces = root.join("spaces");
+        let token = names::add(&config, &spaces, "joe").unwrap();
+        // A space at the root, so that two names share the room: joe, and the root's spaces.
+        fs::create_dir_all(spaces.join("main")).unwrap();
+        fs::write(spaces.join("main").join(LOCK_FILE), b"").unwrap();
+        let share = charged(SEALED_MOST as u64);
+        let address = relay_room(&spaces, &config, None, 2 * share);
+        let images: Vec<_> = (0..3).map(|n| garden(n, 1_200_000)).collect();
+
+        // The root's spaces fill their share, and are told the relay is full.
+        let (mut raw, _) = Raw::entered(&address);
+        let (first, second) = (&images[0], &images[1]);
+        raw.say_image(&image::Message::Images(vec![
+            first.0.clone(),
+            second.0.clone(),
+        ]));
+        let mut asked = vec![first.0.clone(), second.0.clone()];
+        asked.sort();
+        assert_eq!(raw.next_image(), want(&asked));
+        raw.say_image(&image::Message::image(&first.0, &first.1));
+        raw.say_image(&image::Message::image(&second.0, &second.1));
+        assert_eq!(raw.next_image(), image::Message::Full(image::FULL.into()));
+        assert_eq!(
+            on_disk(&spaces.join("main")),
+            std::slice::from_ref(&first.0)
+        );
+
+        // joe's share is still joe's.
+        let mut joe = Raw::knock(&address, "/1/joe/main", Some(&token));
+        joe.enter(&a_key()).unwrap();
+        assert_eq!(joe.next_image(), image::Message::Images(Vec::new()));
+        let third = &images[2];
+        joe.say_image(&image::Message::Images(vec![third.0.clone()]));
+        assert_eq!(joe.next_image(), want(std::slice::from_ref(&third.0)));
+        joe.say_image(&image::Message::image(&third.0, &third.1));
+        let joes = spaces.join("joe").join("main");
+        assert!(eventually(|| on_disk(&joes) == [third.0.clone()]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn a_relay_counts_the_images_on_its_disk_against_its_room_when_it_starts() {
         let root = temp_dir();
         let (a, b) = (garden(0, 500), garden(1, 700));
@@ -2388,7 +2506,7 @@ pub(crate) mod tests {
         kept(&root.join("joe").join("main"), &b);
         let used = charged(a.1.len() as u64) + charged(b.1.len() as u64);
         let relay = Relay::bind(root.clone(), config_of(&root), "127.0.0.1:0", None, used).unwrap();
-        assert_eq!(relay.images(), (used, used));
+        assert_eq!(relay.images(), (used, used, 1, used));
         let address = relay.address().unwrap().to_string();
         thread::spawn(move || relay.serve());
         let (mut raw, _) = Raw::entered(&address);

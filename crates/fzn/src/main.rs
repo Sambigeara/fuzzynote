@@ -377,6 +377,17 @@ fn size_of(text: &str) -> Option<u64> {
     digits.parse::<u64>().ok()?.checked_mul(1 << shift)
 }
 
+/// How the room for images is shared among the names a relay serves.
+fn said_share(names: u64, share: u64, most: u64) -> String {
+    match names {
+        1 => "one name holds spaces here, and may take all of it".to_owned(),
+        n => format!(
+            "{n} names hold spaces here, and each may take {}",
+            said_size(share, most)
+        ),
+    }
+}
+
 /// A size as the relay says one: whole MiB, rounded down, or KiB where the most is under 1 MiB.
 fn said_size(bytes: u64, most: u64) -> String {
     if most < 1 << 20 {
@@ -683,11 +694,12 @@ fn serve(
         root.display(),
         relay.address()?
     );
-    let (most, used) = relay.images();
+    let (most, used, names, share) = relay.images();
     println!(
-        "fzn relay: images take at most {} here, and {} are taken",
+        "fzn relay: images take at most {} here, and {} are taken; {}",
         said_size(most, most),
-        said_size(used, most)
+        said_size(used, most),
+        said_share(names, share, most)
     );
     println!(
         "fzn relay: a space is entered with its passphrase and made with a token; there is \
@@ -985,6 +997,10 @@ mod tests {
         assert_eq!(said_size(512 << 20, 512 << 20), "512 MiB");
         assert_eq!(said_size((3 << 20) + 5, 512 << 20), "3 MiB");
         assert_eq!(said_size(300 << 10, 512 << 10), "300 KiB");
+        assert_eq!(
+            said_share(2, 256 << 20, 512 << 20),
+            "2 names hold spaces here, and each may take 256 MiB"
+        );
         assert_eq!(IMAGES_DEFAULT, 536_870_912);
     }
 
