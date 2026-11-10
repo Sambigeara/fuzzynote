@@ -76,6 +76,8 @@ const OFFERED_MOST: usize = 4096;
 /// How many ids one `images` message from the relay holds at most, so that a space with more
 /// images than fit in a message says them in several, each well within [`MESSAGE_MAX`].
 const SAID_MOST: usize = 65_536;
+/// How long an image asked of a device may take to come before its place goes to the next.
+const WANT_LAPSE: Duration = Duration::from_secs(if cfg!(test) { 5 } else { 60 });
 /// The least an image is counted as taking of the room, whatever its size. A file costs a
 /// filesystem an inode as well as its blocks, and ext4 makes one inode for every 16 KiB of a
 /// disk unless told otherwise, so a room counted so can never use more inodes than its share.
@@ -1399,7 +1401,8 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         peer,
         dir,
         offered: BTreeSet::new(),
-        wanted: BTreeSet::new(),
+        wanted: BTreeMap::new(),
+        lapsed: BTreeSet::new(),
         owed: VecDeque::new(),
         full_said: false,
     };
@@ -1424,6 +1427,7 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
                     Err(TryRecvError::Disconnected) => bail!("{label} was closed"),
                 }
             }
+            images.lapse(&mut wire)?;
             images.send_owed(&mut wire)?;
             wire.keep_up()?;
         }
@@ -1449,8 +1453,12 @@ struct Images<'a> {
     dir: Option<PathBuf>,
     /// At most [`OFFERED_MOST`].
     offered: BTreeSet<String>,
-    /// At most [`AT_ONCE`].
-    wanted: BTreeSet<String>,
+    /// At most [`AT_ONCE`], each with when it was asked for.
+    wanted: BTreeMap<String, Instant>,
+    /// Asked for and never sent within [`WANT_LAPSE`], and not asked for again on this
+    /// connection: a device that offered an image it then could not send, one spoilt on its disk
+    /// say, keeps no place for it.
+    lapsed: BTreeSet<String>,
     /// Images the device asked for, in the order asked, each once and at most
     /// [`ANSWERED_MOST`]. One is read and sent only when everything said before it has gone, so
     /// that a device asking again and again, and reading nothing, has at most one image waiting
@@ -1473,7 +1481,8 @@ impl Images<'_> {
                         break;
                     }
                     if image::is_id(&id)
-                        && !self.wanted.contains(&id)
+                        && !self.wanted.contains_key(&id)
+                        && !self.lapsed.contains(&id)
                         && !self.offered.contains(&id)
                     {
                         new.insert(id);
@@ -1488,7 +1497,7 @@ impl Images<'_> {
                 Ok(())
             }
             image::Message::Image { id, c } => {
-                if self.wanted.remove(&id) {
+                if self.wanted.remove(&id).is_some() {
                     self.take(&id, &c, wire)?;
                     self.ask(wire)?;
                 }
@@ -1519,12 +1528,30 @@ impl Images<'_> {
             }
             // Another device may have brought it since it was offered.
             if !self.hub.holds_image(self.label, &id) {
-                self.wanted.insert(id.clone());
+                self.wanted.insert(id.clone(), Instant::now());
                 asked.push(id);
             }
         }
         if !asked.is_empty() {
             wire.say(image::Message::Want(asked).encode())?;
+        }
+        Ok(())
+    }
+
+    /// Lets go of what was asked for and has not come within [`WANT_LAPSE`], so that its place
+    /// goes to the next offered, and asks for that.
+    fn lapse(&mut self, wire: &mut Wire) -> Result<()> {
+        let before = self.wanted.len();
+        let lapsed = &mut self.lapsed;
+        self.wanted.retain(|id, asked| {
+            let keep = asked.elapsed() < WANT_LAPSE;
+            if !keep {
+                lapsed.insert(id.clone());
+            }
+            keep
+        });
+        if self.wanted.len() < before {
+            self.ask(wire)?;
         }
         Ok(())
     }
@@ -2157,6 +2184,26 @@ pub(crate) mod tests {
         // for: the hundred least, past the bound, are not.
         let first: Vec<String> = (100..104).map(|n| format!("{n:032x}")).collect();
         assert_eq!(raw.next_image(), want(&first));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_image_asked_for_and_never_sent_gives_its_place_to_the_next_and_is_not_asked_again() {
+        let root = temp_dir();
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        let five = ids(&gardens(5));
+        raw.say_image(&image::Message::Images(five.clone()));
+        assert_eq!(raw.next_image(), want(&five[..4]));
+        // Nothing is sent, and once the four lapse the fifth is asked for in their place.
+        let began = Instant::now();
+        assert_eq!(raw.next_image(), want(&five[4..]));
+        assert!(began.elapsed() >= WANT_LAPSE - Duration::from_millis(200));
+        // Offered again on this connection, a lapsed one is not asked for again.
+        raw.say_image(&image::Message::Images(five[..1].to_vec()));
+        raw.say_image(&want(&five[..1]));
+        raw.say_image(&image::Message::Images(vec![format!("{:032x}", 7)]));
+        assert_eq!(raw.next_image(), want(&[format!("{:032x}", 7)]));
         fs::remove_dir_all(&root).unwrap();
     }
 
