@@ -73,6 +73,19 @@ const IMAGES_DIR: &str = "images";
 /// How many images a device may have offered on a connection and not yet been asked for. It
 /// offers the rest again on its next connection.
 const OFFERED_MOST: usize = 4096;
+/// How many ids one `images` message from the relay holds at most, so that a space with more
+/// images than fit in a message says them in several, each well within [`MESSAGE_MAX`].
+const SAID_MOST: usize = 65_536;
+/// The least an image is counted as taking of the room, whatever its size. A file costs a
+/// filesystem an inode as well as its blocks, and ext4 makes one inode for every 16 KiB of a
+/// disk unless told otherwise, so a room counted so can never use more inodes than its share.
+const IMAGE_LEAST: u64 = 16 << 10;
+
+/// What an image of so many bytes is counted as taking of the room: its size in whole 4 KiB
+/// blocks, as a disk keeps it, and never less than [`IMAGE_LEAST`].
+fn charged(size: u64) -> u64 {
+    size.next_multiple_of(4096).max(IMAGE_LEAST)
+}
 /// How many sealed lines of a space with no key a challenge offers at most, one a log.
 const LINES_OFFERED: usize = 16;
 /// How many connections may be in their greeting at once. Past it a new one is closed at once,
@@ -801,9 +814,10 @@ fn images_under(root: &Path) -> u64 {
     used
 }
 
-/// The bytes the images of one space take.
+/// The bytes the images of one space take of the room.
 fn images_in(space: &Path) -> u64 {
-    held_images(&space.join(IMAGES_DIR), false).map_or(0, |images| images.values().sum())
+    held_images(&space.join(IMAGES_DIR), false)
+        .map_or(0, |images| images.values().map(|&size| charged(size)).sum())
 }
 
 /// The first byte of a TLS handshake, which a device that names this relay as `wss://` sends.
@@ -1367,9 +1381,14 @@ fn connected(hub: &Hub, mut wire: Wire, label: &str) -> Result<()> {
         space.peers.insert(peer, to);
         let out = space.replica.connect(peer);
         space.carry_out(out)?;
-        let held = image::Message::Images(space.images.keys().cloned().collect());
+        let held: Vec<String> = space.images.keys().cloned().collect();
         if let Some(to) = space.peers.get(&peer) {
-            let _ = to.send(held.encode());
+            if held.is_empty() {
+                let _ = to.send(image::Message::Images(Vec::new()).encode());
+            }
+            for ids in held.chunks(SAID_MOST) {
+                let _ = to.send(image::Message::Images(ids.to_vec()).encode());
+            }
         }
         dir = Some(space.dir.join(IMAGES_DIR));
         Ok(())
@@ -1572,7 +1591,7 @@ impl Images<'_> {
             );
             return Ok(());
         }
-        let size = sealed.len() as u64;
+        let size = charged(sealed.len() as u64);
         let mut no_room = None;
         let mut spaces = self.hub.spaces();
         let Some(space) = spaces.get_mut(self.label) else {
@@ -2250,7 +2269,7 @@ pub(crate) mod tests {
     fn a_relay_with_no_room_says_so_once_a_connection_and_keeps_nothing_more() {
         let root = temp_dir();
         let images: Vec<_> = (0..3).map(|n| garden(n, 1000)).collect();
-        let size = images[0].1.len() as u64;
+        let size = charged(images[0].1.len() as u64);
         let address = relay_room(&root, &config_of(&root), None, size * 3 / 2);
         let (mut raw, _) = Raw::entered(&address);
         let space = root.join("main");
@@ -2295,7 +2314,7 @@ pub(crate) mod tests {
         let (a, b) = (garden(0, 500), garden(1, 700));
         kept(&root.join("main"), &a);
         kept(&root.join("joe").join("main"), &b);
-        let used = (a.1.len() + b.1.len()) as u64;
+        let used = charged(a.1.len() as u64) + charged(b.1.len() as u64);
         let relay = Relay::bind(root.clone(), config_of(&root), "127.0.0.1:0", None, used).unwrap();
         assert_eq!(relay.images(), (used, used));
         let address = relay.address().unwrap().to_string();
@@ -2304,6 +2323,17 @@ pub(crate) mod tests {
         raw.say_image(&image::Message::Images(vec![garden(2, 64).0]));
         assert_eq!(raw.next_image(), image::Message::Full(image::FULL.into()));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_image_is_counted_as_the_disk_keeps_it_and_never_as_less_than_16_kib() {
+        assert_eq!(charged(42), 16 << 10);
+        assert_eq!(charged(16 << 10), 16 << 10);
+        assert_eq!(charged((16 << 10) + 1), 20 << 10);
+        assert_eq!(charged(1_000_000), 1_003_520);
+        // A space with more images than one message holds says them in several.
+        let ids: Vec<String> = (0..SAID_MOST).map(|n| format!("{n:032x}")).collect();
+        assert!(image::Message::Images(ids).encode().len() < MESSAGE_MAX);
     }
 
     #[test]
