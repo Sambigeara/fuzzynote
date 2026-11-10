@@ -7,14 +7,22 @@
 //! step for step: turned as the camera said, at most 2048 pixels on the long edge and never
 //! enlarged, a PNG kept as a PNG while it comes to 1.5 MiB or less, anything else a JPEG at 82 on
 //! white, at 70 if that is over 2 MiB, and refused past that. What is written is made from the
-//! pixels alone, so nothing of the original's metadata, where it was taken included, is kept.
+//! pixels alone, so nothing of the original's metadata, where it was taken included, is kept,
+//! but for its colour profile: a phone's photo is in a wider space than sRGB, and without its
+//! profile it would show duller than it was taken, so the profile goes with the pixels it
+//! describes. An image is read only if it is of at most 100 million pixels and its decoding takes
+//! at most 512 MiB, so that a small file that says it is enormous is refused before anything is
+//! set aside for it.
 
 use std::io::Cursor;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::imageops::FilterType;
-use image::{ColorType, DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
+use image::{
+    ColorType, DynamicImage, ImageDecoder, ImageEncoder, ImageError, ImageFormat, ImageReader,
+    Limits, RgbImage,
+};
 
 use fzn_engine::image::IMAGE_MOST;
 
@@ -25,6 +33,12 @@ const PNG_MOST: usize = 1536 * 1024;
 /// A JPEG's quality, and its quality again when the first is too large.
 const QUALITY: u8 = 82;
 const QUALITY_AGAIN: u8 = 70;
+/// The most pixels an image may have to be read: a phone's largest camera gives 50 million.
+const PIXELS_MOST: u64 = 100_000_000;
+/// The most memory decoding an image may set aside.
+const ALLOC_MOST: u64 = 512 << 20;
+/// The largest colour profile kept; a real one is a few KiB, a display's at most a few hundred.
+const PROFILE_MOST: usize = 1 << 20;
 
 /// Why an image could not be made smaller.
 #[derive(Debug, PartialEq, Eq)]
@@ -33,13 +47,18 @@ pub enum Smaller {
     NotAnImage,
     /// It is more than 2 MiB even made smaller.
     TooLarge,
+    /// It has more pixels than are read, or would take more memory to read.
+    TooBig,
 }
 
 /// An image made smaller by the rule: a JPEG or a PNG of at most 2 MiB.
 pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
-    let reader = ImageReader::new(Cursor::new(bytes))
+    let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| Smaller::NotAnImage)?;
+    let mut limits = Limits::default();
+    limits.max_alloc = Some(ALLOC_MOST);
+    reader.limits(limits);
     let format = reader.format();
     if !matches!(
         format,
@@ -47,10 +66,24 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
     ) {
         return Err(Smaller::NotAnImage);
     }
-    let mut decoder = reader.into_decoder().map_err(|_| Smaller::NotAnImage)?;
-    // An orientation that cannot be read is no turn at all, as a browser takes it.
+    let refused = |why: ImageError| match why {
+        ImageError::Limits(_) => Smaller::TooBig,
+        _ => Smaller::NotAnImage,
+    };
+    let mut decoder = reader.into_decoder().map_err(refused)?;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > PIXELS_MOST {
+        return Err(Smaller::TooBig);
+    }
+    // An orientation that cannot be read is no turn at all, as a browser takes it, and a
+    // profile that cannot be read is sRGB.
     let orientation = decoder.orientation().ok();
-    let mut picture = DynamicImage::from_decoder(decoder).map_err(|_| Smaller::NotAnImage)?;
+    let profile = decoder
+        .icc_profile()
+        .ok()
+        .flatten()
+        .filter(|profile| profile.len() <= PROFILE_MOST);
+    let mut picture = DynamicImage::from_decoder(decoder).map_err(refused)?;
     if let Some(orientation) = orientation {
         picture.apply_orientation(orientation);
     }
@@ -58,14 +91,14 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
         picture = picture.resize(EDGE, EDGE, FilterType::Lanczos3);
     }
     if format == Some(ImageFormat::Png)
-        && let Some(png) = png(&picture)
+        && let Some(png) = png(&picture, profile.clone())
         && png.len() <= PNG_MOST
     {
         return Ok(png);
     }
     let on_white = on_white(&picture);
     for quality in [QUALITY, QUALITY_AGAIN] {
-        let jpeg = jpeg(&on_white, quality).ok_or(Smaller::NotAnImage)?;
+        let jpeg = jpeg(&on_white, quality, profile.clone()).ok_or(Smaller::NotAnImage)?;
         if jpeg.len() <= IMAGE_MOST {
             return Ok(jpeg);
         }
@@ -73,15 +106,20 @@ pub fn smaller(bytes: &[u8]) -> Result<Vec<u8>, Smaller> {
     Err(Smaller::TooLarge)
 }
 
-/// The picture as a PNG, its transparency kept, in eight bits a channel.
-fn png(picture: &DynamicImage) -> Option<Vec<u8>> {
+/// The picture as a PNG, its transparency and its colour profile kept, in eight bits a channel.
+fn png(picture: &DynamicImage, profile: Option<Vec<u8>>) -> Option<Vec<u8>> {
     let eight = match picture.color() {
         ColorType::L8 | ColorType::La8 | ColorType::Rgb8 | ColorType::Rgba8 => picture.clone(),
         _ if picture.has_alpha() => DynamicImage::ImageRgba8(picture.to_rgba8()),
         _ => DynamicImage::ImageRgb8(picture.to_rgb8()),
     };
     let mut out = Vec::new();
-    eight.write_with_encoder(PngEncoder::new(&mut out)).ok()?;
+    let mut encoder = PngEncoder::new(&mut out);
+    if let Some(profile) = profile {
+        // A profile the encoder will not take is left out, and the colours are as sRGB.
+        let _ = encoder.set_icc_profile(profile);
+    }
+    eight.write_with_encoder(encoder).ok()?;
     Some(out)
 }
 
@@ -95,11 +133,13 @@ fn on_white(picture: &DynamicImage) -> RgbImage {
     })
 }
 
-fn jpeg(picture: &RgbImage, quality: u8) -> Option<Vec<u8>> {
+fn jpeg(picture: &RgbImage, quality: u8, profile: Option<Vec<u8>>) -> Option<Vec<u8>> {
     let mut out = Vec::new();
-    picture
-        .write_with_encoder(JpegEncoder::new_with_quality(&mut out, quality))
-        .ok()?;
+    let mut encoder = JpegEncoder::new_with_quality(&mut out, quality);
+    if let Some(profile) = profile {
+        let _ = encoder.set_icc_profile(profile);
+    }
+    picture.write_with_encoder(encoder).ok()?;
     Some(out)
 }
 
@@ -178,6 +218,47 @@ mod tests {
         let holds = |what: &[u8]| made.windows(what.len()).any(|w| w == what);
         assert!(!holds(b"Exif"));
         assert!(!holds(b"a garden in spring"));
+    }
+
+    #[test]
+    fn an_images_colour_profile_is_kept_with_its_pixels() {
+        // Not a real profile, which nothing here reads: only that it goes through.
+        let profile = b"a garden profile, wide of gamut".to_vec();
+        let mut photo = Vec::new();
+        let mut encoder = JpegEncoder::new_with_quality(&mut photo, 90);
+        encoder.set_icc_profile(profile.clone()).unwrap();
+        garden(300, 200).write_with_encoder(encoder).unwrap();
+
+        let made = smaller(&photo).unwrap();
+        let mut decoder = ImageReader::new(Cursor::new(&made))
+            .with_guessed_format()
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert_eq!(decoder.icc_profile().unwrap(), Some(profile));
+    }
+
+    #[test]
+    fn an_image_that_says_it_has_more_pixels_than_are_read_is_refused_unread() {
+        // A PNG of a header saying 13000 by 13000 pixels, and no pixels after it.
+        let mut header = Vec::new();
+        header.extend_from_slice(&13_000u32.to_be_bytes());
+        header.extend_from_slice(&13_000u32.to_be_bytes());
+        header.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut crc = flate2::Crc::new();
+        crc.update(b"IHDR");
+        crc.update(&header);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&header);
+        png.extend_from_slice(&crc.sum().to_be_bytes());
+        let mut crc = flate2::Crc::new();
+        crc.update(b"IDAT");
+        png.extend_from_slice(&0u32.to_be_bytes());
+        png.extend_from_slice(b"IDAT");
+        png.extend_from_slice(&crc.sum().to_be_bytes());
+        assert_eq!(smaller(&png), Err(Smaller::TooBig));
     }
 
     #[test]

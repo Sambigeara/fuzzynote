@@ -621,6 +621,9 @@ fn image_in(dir: &Path, space: &str, config_dir: &Path, given: &[String]) -> Res
                 anyhow!("{name} is not an image fzn can read: a JPEG, PNG, WebP or GIF")
             }
             smaller::Smaller::TooLarge => anyhow!("{name} is more than 2 MiB even made smaller"),
+            smaller::Smaller::TooBig => {
+                anyhow!("{name} is larger than fzn reads, which is 100 million pixels")
+            }
         })?;
         sealed.push(image::seal(&seal, &plain, &system::System).map_err(|why| anyhow!(why))?);
     }
