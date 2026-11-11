@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "fzn"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "fzn-engine"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "argon2",
  "base64",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "fzn-web"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "fzn-engine",
  "js-sys",
