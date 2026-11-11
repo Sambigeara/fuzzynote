@@ -8,9 +8,9 @@
 //! note taken out as a tar. A sealed image the page is to keep comes back as base64 inside the
 //! JSON it is told to act on, from `keep_image` and in a todo's `keep_images`, so that what to do
 //! stays one shape of text; that costs a third more and an encoding of a few MiB, and is paid only
-//! when an image is kept or fetched, never on a keystroke or a view. The page owns what only a page can: the keys, the painting, the socket to the
-//! relay, somewhere to keep lines and images between visits, making an image smaller, and the
-//! asking for a passphrase.
+//! when an image is kept or fetched, never on a keystroke or a view. The page owns what only a
+//! page can: the keys, the painting, the socket to the relay, somewhere to keep lines and images
+//! between visits, making an image smaller, saving a file, and the asking for a passphrase.
 
 use std::collections::HashMap;
 
@@ -207,51 +207,46 @@ impl Fzn {
     /// Undefined while the cursor is on no note.
     pub fn bundle(&self, ids: Vec<String>, sealed: Vec<js_sys::Uint8Array>) -> Option<Bundle> {
         let held: HashMap<String, js_sys::Uint8Array> = ids.into_iter().zip(sealed).collect();
-        let bundle = self
-            .device
-            .bundle(|id| held.get(id).map(js_sys::Uint8Array::to_vec))?;
-        Some(Bundle {
-            name: bundle.name,
-            tar: bundle.tar,
-            put: bundle.put,
-            missing: bundle.missing,
-        })
+        self.device
+            .bundle(|id| held.get(id).map(js_sys::Uint8Array::to_vec))
+            .map(Bundle)
     }
 }
 
 /// A note made into a tar, for the page to save as `<name>.tar`.
 #[wasm_bindgen]
-pub struct Bundle {
-    name: String,
-    tar: Vec<u8>,
-    put: usize,
-    missing: usize,
-}
+pub struct Bundle(fzn_engine::bundle::Bundle);
 
 #[wasm_bindgen]
 impl Bundle {
     /// What the note's directory and file are called, and so the tar.
     #[wasm_bindgen(getter)]
     pub fn name(&self) -> String {
-        self.name.clone()
+        self.0.name.clone()
     }
 
-    /// The tar's bytes.
-    #[wasm_bindgen(getter)]
-    pub fn tar(&self) -> Vec<u8> {
-        self.tar.clone()
+    /// The tar's bytes, taken out, so that the page's copy is the only one left: a tab's memory
+    /// grows to what it has held and never gives it back, and a note's photos are megabytes.
+    pub fn take_tar(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0.tar)
     }
 
     /// How many images went in.
     #[wasm_bindgen(getter)]
     pub fn put(&self) -> usize {
-        self.put
+        self.0.put
     }
 
-    /// How many the note refers to that this device does not have, or that did not open.
+    /// How many the note refers to that this device does not have yet.
     #[wasm_bindgen(getter)]
     pub fn missing(&self) -> usize {
-        self.missing
+        self.0.missing
+    }
+
+    /// How many this device has that could not be read as an image.
+    #[wasm_bindgen(getter)]
+    pub fn unread(&self) -> usize {
+        self.0.unread
     }
 }
 

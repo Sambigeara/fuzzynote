@@ -30,18 +30,23 @@ const RECORD: usize = 20 * BLOCK;
 pub struct Bundle {
     /// What the directory and the note's file are called, which the tar's own file is called too.
     pub name: String,
+    /// The tar's bytes, whole records of them.
     pub tar: Vec<u8>,
     /// How many images went in, each once however often the note refers to it.
     pub put: usize,
-    /// How many the note refers to that were not to be had, or were no image that is kept: their
-    /// addresses are left in the markdown as they were.
+    /// How many the note refers to that are not here: their addresses are left in the markdown
+    /// as they were.
     pub missing: usize,
+    /// How many are here but could not be read as an image that is kept, their addresses left as
+    /// well.
+    pub unread: usize,
 }
 
 /// Makes a note into a tar: `<name>/<name>.md`, its head made a title and each image's address
 /// that of its file, and `<name>/images/`, one file an image. `changed` is the time every entry
-/// carries, the note's last change. `image` gives an image's plain bytes by its id, if they are
-/// to be had.
+/// carries, the note's last change. `image` gives an image's plain bytes by its id, or none if it
+/// is not here; bytes that are no JPEG or PNG, as an image that did not open is given, are
+/// unread. Each image goes into the tar as it comes, so that no more than one is held twice.
 pub fn bundle(
     text: &str,
     changed: Moment,
@@ -68,15 +73,20 @@ pub fn bundle(
         }
     }
 
+    let name = name_of(text);
+    let secs = changed.ms.div_euclid(1000);
+    let mut tar = Tar::default();
+    tar.directory(&format!("{name}/"), secs);
     let mut taken = HashSet::new();
     let mut files: HashMap<String, String> = HashMap::new();
-    let mut put = Vec::new();
-    let mut missing = 0;
+    let (mut missing, mut unread) = (0, 0);
     for (n, (id, alt)) in images.iter().enumerate() {
-        let Some((plain, kind)) =
-            image(id).and_then(|plain| Kind::of(&plain).map(|kind| (plain, kind)))
-        else {
+        let Some(plain) = image(id) else {
             missing += 1;
+            continue;
+        };
+        let Some(kind) = Kind::of(&plain) else {
+            unread += 1;
             continue;
         };
         let stem = alt
@@ -90,8 +100,11 @@ pub fn bundle(
             unique = format!("{stem}-{k}");
         }
         let file = format!("{unique}.{}", kind.extension());
-        files.insert(id.clone(), file.clone());
-        put.push((file, plain));
+        if files.is_empty() {
+            tar.directory(&format!("{name}/images/"), secs);
+        }
+        tar.file(&format!("{name}/images/{file}"), &plain, secs);
+        files.insert(id.clone(), file);
     }
 
     let mut markdown = String::with_capacity(text.len());
@@ -108,27 +121,17 @@ pub fn bundle(
         from = at.end;
     }
     markdown.extend(&chars[from..]);
-
-    let name = name_of(text::head(text));
-    let secs = changed.ms.div_euclid(1000);
-    let mut tar = Tar::default();
-    tar.directory(&format!("{name}/"), secs);
     tar.file(
         &format!("{name}/{name}.md"),
         titled(&markdown).as_bytes(),
         secs,
     );
-    if !put.is_empty() {
-        tar.directory(&format!("{name}/images/"), secs);
-    }
-    for (file, plain) in &put {
-        tar.file(&format!("{name}/images/{file}"), plain, secs);
-    }
     Bundle {
         name,
         tar: tar.end(),
-        put: put.len(),
+        put: files.len(),
         missing,
+        unread,
     }
 }
 
@@ -161,11 +164,46 @@ fn heading(line: &str) -> bool {
             .is_none_or(|c| c == ' ' || c == '\t')
 }
 
+/// A heading's words without its marks, a closing run of them included; any other line as it is.
+fn unheaded(line: &str) -> &str {
+    let line = line.trim();
+    if !heading(line) {
+        return line;
+    }
+    let words = line.trim_start_matches('#').trim();
+    let closed = words.trim_end_matches('#');
+    if closed.is_empty() || closed.ends_with([' ', '\t']) {
+        closed.trim_end()
+    } else {
+        words
+    }
+}
+
+/// Whether a line under a head makes it a heading already, as a line of `=` or of `-` does.
+fn underline(line: &str) -> bool {
+    let line = line.trim();
+    !line.is_empty() && (line.bytes().all(|b| b == b'=') || line.bytes().all(|b| b == b'-'))
+}
+
+/// Whether a head is something other than words: a block of code it opens, which the engine reads
+/// as code running past it, or a table's row. A `# ` before either would break what follows, and
+/// neither is a name.
+fn unworded(head: &str) -> bool {
+    let probe: Vec<char> = head.chars().chain(['\n']).collect();
+    let block = text::code(&probe).iter().any(|r| r.end >= probe.len());
+    block || head.trim_start().starts_with('|')
+}
+
 /// The text with its head made its title, as the page shows an open note's, unless it is a
-/// heading already or says nothing. The rest is as it was.
+/// heading already, says nothing, or is no words. The rest is as it was.
 fn titled(text: &str) -> String {
-    let head = text.split('\n').next().unwrap_or("");
-    if head.trim().is_empty() || heading(head) {
+    let mut lines = text.lines();
+    let head = lines.next().unwrap_or("");
+    let leave = head.trim().is_empty()
+        || heading(head)
+        || lines.next().is_some_and(underline)
+        || unworded(head);
+    if leave {
         text.to_owned()
     } else {
         format!("# {text}")
@@ -173,41 +211,55 @@ fn titled(text: &str) -> String {
 }
 
 /// What the directory and the note's file are called: the head as brackets name it, without a
-/// heading's marks, its box and the labels that end it, made a name every system takes. A name
-/// is no wider than [`NAME_MOST`] bytes; one with nothing left is `note`.
-fn name_of(head: &str) -> String {
-    let mut head = head.trim();
-    if heading(head) {
-        head = head.trim_start_matches('#').trim();
-        // A heading may close with a run of its marks after a space.
-        let closed = head.trim_end_matches('#');
-        if closed.is_empty() || closed.ends_with([' ', '\t']) {
-            head = closed.trim_end();
-        }
+/// heading's marks, its box and the labels that end it, made a name every system takes, Windows'
+/// devices given ` note` after them. A name is no wider than [`NAME_MOST`] bytes; one with no
+/// letter or digit left, or a head that is no words, is `note`.
+fn name_of(text: &str) -> String {
+    let head = text::head(text);
+    if unworded(head) {
+        return "note".to_owned();
     }
     let unsafe_char = |c: char| {
         c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
     };
-    let spaced: String = text::bracket_name(head)
+    let spaced: String = unheaded(text::bracket_name(unheaded(head)))
         .chars()
         .map(|c| if unsafe_char(c) { ' ' } else { c })
         .collect();
     let joined = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
     let trim = |name: &str| name.trim_matches([' ', '.']).to_owned();
     let name = trim(cut(&trim(&joined), NAME_MOST));
-    if name.is_empty() {
+    if !name.chars().any(char::is_alphanumeric) {
         "note".to_owned()
+    } else if device(&name) {
+        format!("{} note", trim(cut(&name, NAME_MOST - 5)))
     } else {
         name
     }
 }
 
-/// An alt text as a file's name: lowercased, letters and digits of any script kept, every run of
-/// anything else one `-`, none at either end, and no wider than [`SLUG_MOST`] bytes.
+/// Whether Windows takes a name for a device, whatever follows its first dot: `CON`, `PRN`, `AUX`,
+/// `NUL`, and `COM` or `LPT` with a digit, in any case.
+fn device(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end();
+    let upper = stem.to_ascii_uppercase();
+    match upper.as_bytes() {
+        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
+        [b'C', b'O', b'M', d] | [b'L', b'P', b'T', d] => d.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+/// An alt text as a file's name: lowercased, ASCII letters and digits kept and every character
+/// past ASCII but a space or a control, combining marks included, every run of anything else one
+/// `-`, none at either end, no wider than [`SLUG_MOST`] bytes, and Windows' devices given
+/// `-image` after them.
 fn slug(alt: &str) -> String {
     let mut slug = String::new();
     for c in alt.chars().flat_map(char::to_lowercase) {
-        if c.is_alphanumeric() {
+        let kept =
+            c.is_ascii_alphanumeric() || !(c.is_ascii() || c.is_whitespace() || c.is_control());
+        if kept {
             if slug.len() + c.len_utf8() > SLUG_MOST {
                 break;
             }
@@ -216,7 +268,12 @@ fn slug(alt: &str) -> String {
             slug.push('-');
         }
     }
-    slug.trim_end_matches('-').to_owned()
+    let slug = slug.trim_end_matches('-');
+    if device(slug) {
+        format!("{slug}-image")
+    } else {
+        slug.to_owned()
+    }
 }
 
 /// A POSIX ustar archive, written an entry at a time.
@@ -413,18 +470,18 @@ mod tests {
             entries,
             [
                 made("Boiler service/", b'5', 0o755, b""),
-                made(
-                    "Boiler service/Boiler service.md",
-                    b'0',
-                    0o644,
-                    b"# Boiler service\nthe valve ![radiator valve](images/radiator-valve.jpg)\n"
-                ),
                 made("Boiler service/images/", b'5', 0o755, b""),
                 made(
                     "Boiler service/images/radiator-valve.jpg",
                     b'0',
                     0o644,
                     &jpeg(b"a radiator valve")
+                ),
+                made(
+                    "Boiler service/Boiler service.md",
+                    b'0',
+                    0o644,
+                    b"# Boiler service\nthe valve ![radiator valve](images/radiator-valve.jpg)\n"
                 ),
             ]
         );
@@ -498,7 +555,29 @@ mod tests {
     }
 
     #[test]
-    fn an_image_not_to_be_had_keeps_its_address_and_is_counted_missing() {
+    fn a_slug_keeps_every_character_past_ascii_but_spaces_and_controls() {
+        assert_eq!(slug("İstanbul"), "i\u{307}stanbul");
+        assert_eq!(slug("cafe\u{301} (old)"), "cafe\u{301}-old");
+        assert_eq!(slug("a\u{a0}b\u{85}c"), "a-b-c");
+    }
+
+    #[test]
+    fn a_name_windows_keeps_for_a_device_is_given_more() {
+        let name = |head: &str| bundle(head, at(), held).name;
+        assert_eq!(name("CON"), "CON note");
+        assert_eq!(name("nul.txt #house"), "nul.txt note");
+        assert_eq!(name("Com1"), "Com1 note");
+        assert_eq!(name("LPT9"), "LPT9 note");
+        assert_eq!(name("Console"), "Console");
+        assert_eq!(name("COM"), "COM");
+        assert_eq!(slug("Aux"), "aux-image");
+        assert_eq!(slug("prn.x"), "prn-x");
+        let text = format!("Boiler\n![con](fzn:{VALVE})");
+        assert!(markdown(&bundle(&text, at(), held)).ends_with("![con](images/con-image.jpg)"));
+    }
+
+    #[test]
+    fn an_image_not_here_keeps_its_address_and_is_counted_missing_and_one_unread_apart() {
         let text = format!(
             "Boiler\n![](fzn:{NEVER})\n![](fzn:{VALVE})\n![](fzn:{PLATE})\n![](fzn:{NEVER})"
         );
@@ -510,7 +589,7 @@ mod tests {
             }
         };
         let bundle = bundle(&text, at(), gif);
-        assert_eq!((bundle.put, bundle.missing), (1, 2));
+        assert_eq!((bundle.put, bundle.missing, bundle.unread), (1, 1, 1));
         assert_eq!(
             markdown(&bundle),
             format!(
@@ -532,6 +611,38 @@ mod tests {
         assert_eq!(md("#house Boiler"), "# #house Boiler");
         assert_eq!(md("####### Boiler"), "# ####### Boiler");
         assert_eq!(md("\nbook it"), "\nbook it");
+        assert_eq!(md("#\r\nbook it"), "#\r\nbook it");
+        assert_eq!(md("Boiler\r\nbook it"), "# Boiler\r\nbook it");
+    }
+
+    #[test]
+    fn a_head_that_is_no_words_or_a_heading_by_its_underline_is_left_as_it_is() {
+        let md = |text: &str| markdown(&bundle(text, at(), held));
+        for text in [
+            "```\ncode\n```\nafter",
+            "```sh\nls",
+            "  ~~~\ncode\n~~~",
+            "| Boiler | House |\n| --- | --- |",
+            "Boiler\n======\nbook it",
+            "Boiler\n---\nbook it",
+            "Boiler\n  -- \nbook it",
+        ] {
+            assert_eq!(md(text), text);
+        }
+        assert_eq!(md("``ls`` Boiler\nbook it"), "# ``ls`` Boiler\nbook it");
+        assert_eq!(md("```ls``` Boiler"), "# ```ls``` Boiler");
+        assert_eq!(md("Boiler\n-- x"), "# Boiler\n-- x");
+    }
+
+    #[test]
+    fn a_head_that_is_no_words_names_the_note_note() {
+        let name = |head: &str| bundle(head, at(), held).name;
+        assert_eq!(name("```\ncode\n```"), "note");
+        assert_eq!(name("```sh"), "note");
+        assert_eq!(name("~~~"), "note");
+        assert_eq!(name("| Boiler | House |"), "note");
+        assert_eq!(name("---"), "note");
+        assert_eq!(name("Boiler\n======"), "Boiler");
     }
 
     #[test]
@@ -543,6 +654,8 @@ mod tests {
         );
         assert_eq!(name("## Boiler ##"), "Boiler");
         assert_eq!(name("# House #garden"), "House");
+        assert_eq!(name("[ ] # Boiler #house"), "Boiler");
+        assert_eq!(name("# [x] Boiler"), "Boiler");
         assert_eq!(name("Boiler: a/b \\ c*?\"<>|\u{7}d"), "Boiler a b c d");
         assert_eq!(name("..Boiler.. "), "Boiler");
         assert_eq!(name("#house"), "note");
@@ -561,7 +674,7 @@ mod tests {
         let path = format!("{head}/images/{}.jpg", "v".repeat(40));
         assert!(path.len() > 100);
         let entries = untar(&bundle.tar);
-        assert_eq!(entries.last().unwrap().path, path);
+        assert!(entries.iter().any(|e| e.path == path));
         assert_eq!(split(&path), (head.as_str(), &path[head.len() + 1..]));
     }
 

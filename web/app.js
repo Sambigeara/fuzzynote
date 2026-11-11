@@ -1549,7 +1549,7 @@ function paintHints() {
   const said = (hint) => [hint, keyFor(hint.action)];
   set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
   const words = $('hints');
-  const changed = set(words, JSON.stringify([hints.map(said), vimWord, imageWord, exportWord]), () => {
+  const changed = set(words, JSON.stringify([hints.map(said), vimWord, imageWord]), () => {
     const words = hints.map((hint) => word(hint));
     if (imageWord) {
       const button = el('button', 'word image', imageWord);
@@ -2954,12 +2954,25 @@ async function addImages(files, at) {
 
 // The open note taken out as a tar, as it reads now: its markdown and its images beside it, made by
 // the engine from the images this device holds, sealed as they are kept. The tar is saved by a
-// link of the page's own pressed for it, which every browser saves from, a phone's included; its
-// address is let go a minute later, by when the browser has long had it. An image not here yet
-// keeps its address in the markdown, and how many did is said.
+// link of the page's own pressed for it, which every browser saves from, a phone's included. Its
+// address is kept until the next export or the page going, since a phone's sheet asking where to
+// save it can wait as long as the person does. The press comes after the store has been read, a
+// moment after the word's; should Safari ever save only on a press straight from a person, that is
+// where to look. An image not here yet, or that could not be read, keeps its address in the
+// markdown, and how many did is said. A second press while one is being made does nothing.
+let exporting = false;
+let exported = null;
+const letExportGo = () => {
+  if (exported) URL.revokeObjectURL(exported);
+  exported = null;
+};
+window.addEventListener('pagehide', letExportGo);
+
 async function exportNote() {
   const from = bodyOpen();
-  if (!from) return;
+  if (!from || exporting) return;
+  exporting = true;
+  letExportGo();
   let bundle = null;
   try {
     const ids = fzn.bundle_images();
@@ -2975,24 +2988,26 @@ async function exportNote() {
     );
     if (!bundle) return;
     const file = `${bundle.name}.tar`;
-    const address = URL.createObjectURL(new Blob([bundle.tar], { type: 'application/x-tar' }));
+    const { put, missing, unread } = bundle;
+    exported = URL.createObjectURL(new Blob([bundle.take_tar()], { type: 'application/x-tar' }));
     const link = el('a');
-    link.href = address;
+    link.href = exported;
     link.download = file;
     link.hidden = true;
     document.body.append(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(address), 60000);
-    const { put, missing } = bundle;
-    const images = put ? ` with ${put} ${put > 1 ? 'images' : 'image'}` : '';
-    const unput = missing > 1 ? `; ${missing} not here yet keep their addresses` : '; 1 not here yet keeps its address';
-    fzn.say(`exported ${file}${images}${missing ? unput : ''}`);
+    const kept = (n) => (n > 1 ? 'keep their addresses' : 'keeps its address');
+    const said = [`exported ${file}${put ? ` with ${put} ${put > 1 ? 'images' : 'image'}` : ''}`];
+    if (missing) said.push(`${missing} not here yet ${kept(missing)}`);
+    if (unread) said.push(`${unread} could not be read and ${kept(unread)}`);
+    fzn.say(said.join('; '));
   } catch (cause) {
     console.error(cause);
     fzn.say(`fzn could not export the note: ${cause?.message ?? cause}`);
   } finally {
     bundle?.free();
+    exporting = false;
     look();
   }
 }

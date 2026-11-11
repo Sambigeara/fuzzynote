@@ -580,12 +580,13 @@ impl Device {
     }
 
     /// The note under the cursor as it reads now made into a tar with its images, which `sealed`
-    /// gives as the face's store holds them, by id; one that is not given, or does not open, is
-    /// counted missing. None while the cursor is on no note.
+    /// gives as the face's store holds them, by id: one that is not given is counted missing, and
+    /// one that does not open, unread. None while the cursor is on no note.
     pub fn bundle(&self, mut sealed: impl FnMut(&str) -> Option<Vec<u8>>) -> Option<Bundle> {
         let (text, changed) = self.session.writing()?;
+        // What does not open is given as no bytes at all, which are no image, and so unread.
         Some(bundle::bundle(text, changed, |id| {
-            sealed(id).and_then(|kept| image::open(&self.seal, id, &kept))
+            sealed(id).map(|kept| image::open(&self.seal, id, &kept).unwrap_or_default())
         }))
     }
 
@@ -2853,24 +2854,24 @@ mod tests {
 
     #[test]
     fn the_note_under_the_cursor_is_bundled_as_it_reads_now_with_the_images_the_store_opens() {
-        let ((valve, sealed), (plate, _)) = (picture(0), picture(1));
+        let ((valve, sealed), (plate, _), (never, _)) = (picture(0), picture(1), picture(2));
         let mut device = device("dev-a");
-        let body = format!("Boiler\n![radiator valve](fzn:{valve}) ![](fzn:{plate})");
+        let body =
+            format!("Boiler\n![radiator valve](fzn:{valve}) ![](fzn:{plate}) ![](fzn:{never})");
         device.load("dev-x", vec![plain("x-1", &body, 100)]);
-        // The store holds the valve's sealed bytes under both ids, and the plate's do not open.
+        // The store holds the valve's sealed bytes under the valve and the plate, which do not
+        // open as the plate, and nothing under the third.
         let store = |id: &str| (id == valve || id == plate).then(|| sealed.clone());
         assert_eq!(device.bundle(store), None, "nothing under the cursor");
         assert!(device.bundle_images().is_empty());
 
         device.act(Action::Move(1));
-        let mut ids = vec![valve.clone(), plate.clone()];
+        let mut ids = vec![valve.clone(), plate.clone(), never.clone()];
         ids.sort();
         assert_eq!(device.bundle_images(), ids);
         let bundle = device.bundle(store).unwrap();
-        assert_eq!(
-            (bundle.name.as_str(), bundle.put, bundle.missing),
-            ("Boiler", 1, 1)
-        );
+        assert_eq!((bundle.name.as_str(), bundle.put), ("Boiler", 1));
+        assert_eq!((bundle.missing, bundle.unread), (1, 1));
         let mtime = |tar: &[u8]| String::from_utf8(tar[136..147].to_vec()).unwrap();
         assert_eq!(mtime(&bundle.tar), format!("{:011o}", 100));
 

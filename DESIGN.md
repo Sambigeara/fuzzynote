@@ -1298,17 +1298,18 @@ the chords are the editor's, so only the way out has its key there, `done Esc`, 
 vim's keys, Escape being vim's alone. An open body's foot has the word `image` too, at every width,
 which opens the device's own picker of files, on a phone the camera and the photos, and after it
 `export`, which saves the note as a tar of its markdown and its images (see "An open note is taken
-out as a tar, with its images beside it"). The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds still"): the words never
-wrap; the way back, Escape's next rung, `up` on a row, `clear` while the line has text, `back` in a
-place with the line empty or `done` in an open body, is the last word wherever there is one, as the
-terminal's footer ends with it, and follows the words and stays in sight when they do not fit; the
-rest scroll sideways, under a fade at each edge that hides words, by a wheel, a swipe or a trackpad,
-and go back to their start whenever they change or the cursor moves to another row. Wider than a
-phone the foot reaches from the column's left to the window's right margin, so that on a wide page
-the busiest rows' words run on under the pane rather than scroll. At a phone's width the words are a
-bar at the foot, each as tall as a thumb, with the way back pinned at its right; `move up` and `move
-down` there move the note. What was said floats above the words, at the column's right, taking no
-room, and nothing is drawn there when nothing is said.
+out as a tar, with its images beside it"). The foot is one line at every width, 3.25rem tall, and
+holds still (see "The foot holds still"): the words never wrap; the way back, Escape's next rung,
+`up` on a row, `clear` while the line has text, `back` in a place with the line empty or `done` in
+an open body, is the last word wherever there is one, as the terminal's footer ends with it, and
+follows the words and stays in sight when they do not fit; the rest scroll sideways, under a fade at
+each edge that hides words, by a wheel, a swipe or a trackpad, and go back to their start whenever
+they change or the cursor moves to another row. Wider than a phone the foot reaches from the
+column's left to the window's right margin, so that on a wide page the busiest rows' words run on
+under the pane rather than scroll. At a phone's width the words are a bar at the foot, each as tall
+as a thumb, with the way back pinned at its right; `move up` and `move down` there move the note.
+What was said floats above the words, at the column's right, taking no room, and nothing is drawn
+there when nothing is said.
 
 *The line* is an ordinary text field, so the phone's keyboard and the browser's own editing work in
 it. A line longer than its field scrolls sideways under the caret as a head being written does (see
@@ -4671,36 +4672,40 @@ the app now does is described above; an entry repeats it only where the reason n
   its markdown. A note with its pictures is a document, and a document should leave fzn as plain
   markdown that any editor or Obsidian reads, the pictures beside it, without fzn to read it; the
   snapshot line carries an image's address and never its picture, and `fzn image fzn:…` takes
-  pictures out one at a time. In an open body the foot has the word `export` after `image`, at
-  every width, which saves `Boiler service.tar`: a directory named for the note, holding
+  pictures out one at a time. In an open body the foot has the word `export` after `image`, at every
+  width, which saves `Boiler service.tar`: a directory named for the note, holding
   `Boiler service.md` and, when any image went in, `images/`, a file an image. The markdown is the
   note as it reads now, what is typed in the open body and not yet written included. Its head is
-  made a `# ` title, as the page shows an open note's head as its title, unless it is a heading
-  already, its box and labels kept as typed, `# [ ] Boiler service #house`; each image's address
-  outside code, exactly those the engine reads as images and by the same reading, becomes
-  `images/<file>`, and nothing else changes. An image's file is named by its alt text,
-  `radiator-valve.jpg`, or by its place among the note's images, `image-2.png`, a clash taking
-  `-2`, and one image referred to twice is one file both point to. The directory is named as
-  brackets name the head, without a heading's marks, its box and the labels that end it, made a
-  name Linux, macOS, Windows and iOS all take, and `note` where nothing is left. Every entry carries
-  the time of the note's last change, or now while what is typed is not yet written. An image this
-  device does not have yet does not stop it: its address is left as it was and the page says how
-  many were. The tar is POSIX ustar, written by the engine by hand, with no new dependency, and the
-  rule is the engine's, `bundle`, which takes the images opened from what the face holds, so a
-  terminal route would be one command over it. What it costs: a second way out beside the snapshot
-  line, which stays the way in and out for good, `fzn export` still every note and no argument; the
-  pictures and the text leave unsealed, to wherever the tar is saved, by your own hand as an export
-  does; the page holds the note's images and the tar in memory while it is made, a few
-  megabytes a photo; and an address left for a missing image means nothing outside fzn. Weighed: a
-  zip, which the iPhone's Files is reported to open as well, where a tar was asked for and is
-  native on Linux and macOS, and pictures already compressed gain nothing from compressing; a
-  terminal route, which waits for use to ask for it, the rule being in the engine for it; refusing
-  while an image is missing, which would leave a note whose picture never comes without a way out;
-  the head left exactly as typed, which would make the page's title a plain first line; and a
-  single `.md` with each image a `data:` address, one file but megabytes of base64 a picture that
-  no one can read as text and not every editor draws. The whole space as a directory of markdown is
-  still the possible second export it was (see Storage and sync), and would take a note out by this
-  rule.
+  made a `# ` title, as the page shows an open note's head as its title, its box and labels kept as
+  typed, `# [ ] Boiler service #house`, unless it is a heading already, by its marks or by a line of
+  `=` or `-` under it, or is no words: a block of code it opens, which a `#` before would leave open
+  to swallow the rest, or a table's row; each image's address outside code, exactly those the engine
+  reads as images and by the same reading, becomes `images/<file>`, and nothing else changes. An
+  image's file is named by its alt text, `radiator-valve.jpg`, or by its place among the note's
+  images, `image-2.png`, a clash taking `-2`, and one image referred to twice is one file both point
+  to. The directory is named as brackets name the head, without a heading's marks, its box and the
+  labels that end it, made a name Linux, macOS, Windows and iOS all take, a name Windows keeps for a
+  device given ` note` after it, `CON note`, as an image's is given `-image`, and `note` where no
+  letter or digit is left or the head is no words. Every entry carries the time of the note's last
+  change, or now while what is typed is not yet written. An image this device does not have yet, or
+  has and cannot read, does not stop it: its address is left as it was, and the page says how many
+  of each there were, `1 not here yet`, `1 could not be read`. The tar is POSIX ustar, written by
+  the engine by hand, with no new dependency, and the rule is the engine's, `bundle`, which takes
+  the images opened from what the face holds and writes each into the tar as it comes, so that a
+  phone's memory, which a tab never gives back, holds the photos once, and a terminal route would be
+  one command over it. What it costs: a second way out beside the snapshot line, which stays the way
+  in and out for good, `fzn export` still every note and no argument; the pictures and the text
+  leave unsealed, to wherever the tar is saved, by your own hand as an export does; the page holds
+  the note's images and the tar in memory while it is made, a few megabytes a photo; and an address
+  left for a missing image means nothing outside fzn. Weighed: a zip, which the iPhone's Files is
+  reported to open as well, where a tar was asked for and is native on Linux and macOS, and pictures
+  already compressed gain nothing from compressing; a terminal route, which waits for use to ask for
+  it, the rule being in the engine for it; refusing while an image is missing, which would leave a
+  note whose picture never comes without a way out; the head left exactly as typed, which would make
+  the page's title a plain first line; and a single `.md` with each image a `data:` address, one
+  file but megabytes of base64 a picture that no one can read as text and not every editor draws.
+  The whole space as a directory of markdown is still the possible second export it was (see Storage
+  and sync), and would take a note out by this rule.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
