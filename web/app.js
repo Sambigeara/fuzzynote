@@ -1537,6 +1537,8 @@ function paintHints() {
   const vimWord = view.field?.whole && editor ? (vimOn ? 'no vim' : 'vim') : null;
   // An image is added to an open body by the device's own picker, at every width, touch included.
   const imageWord = view.field?.whole && editor ? 'image' : null;
+  // And the open note is taken out with its images, as a tar to save, from the same place.
+  const exportWord = imageWord ? 'export' : null;
   // The way back, Escape's next rung, which the engine offers last, follows the words and stays in
   // sight when they do not fit, the rest scrolling; on a phone it is pinned at the right of the
   // bar, where a thumb finds it without reading, so that a way out of a place several steps deep
@@ -1547,12 +1549,18 @@ function paintHints() {
   const said = (hint) => [hint, keyFor(hint.action)];
   set($('way'), JSON.stringify(way && said(way)), () => (way ? [word(way)] : []));
   const words = $('hints');
-  const changed = set(words, JSON.stringify([hints.map(said), vimWord, imageWord]), () => {
+  const changed = set(words, JSON.stringify([hints.map(said), vimWord, imageWord, exportWord]), () => {
     const words = hints.map((hint) => word(hint));
     if (imageWord) {
       const button = el('button', 'word image', imageWord);
       button.type = 'button';
       button.onclick = () => picker().click();
+      words.push(button);
+    }
+    if (exportWord) {
+      const button = el('button', 'word export', exportWord);
+      button.type = 'button';
+      button.onclick = () => exportNote();
       words.push(button);
     }
     if (vimWord) {
@@ -2942,6 +2950,51 @@ async function addImages(files, at) {
     }
   }
   look();
+}
+
+// The open note taken out as a tar, as it reads now: its markdown and its images beside it, made by
+// the engine from the images this device holds, sealed as they are kept. The tar is saved by a
+// link of the page's own pressed for it, which every browser saves from, a phone's included; its
+// address is let go a minute later, by when the browser has long had it. An image not here yet
+// keeps its address in the markdown, and how many did is said.
+async function exportNote() {
+  const from = bodyOpen();
+  if (!from) return;
+  let bundle = null;
+  try {
+    const ids = fzn.bundle_images();
+    const records = await Promise.all(ids.map((id) => imageRecord(id)));
+    if (bodyOpen() !== from) {
+      fzn.say('the body was closed before it was exported');
+      return;
+    }
+    const held = records.filter(Boolean);
+    bundle = fzn.bundle(
+      held.map((record) => record.id),
+      held.map((record) => record.sealed),
+    );
+    if (!bundle) return;
+    const file = `${bundle.name}.tar`;
+    const address = URL.createObjectURL(new Blob([bundle.tar], { type: 'application/x-tar' }));
+    const link = el('a');
+    link.href = address;
+    link.download = file;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(address), 60000);
+    const { put, missing } = bundle;
+    const images = put ? ` with ${put} ${put > 1 ? 'images' : 'image'}` : '';
+    const unput = missing > 1 ? `; ${missing} not here yet keep their addresses` : '; 1 not here yet keeps its address';
+    fzn.say(`exported ${file}${images}${missing ? unput : ''}`);
+  } catch (cause) {
+    console.error(cause);
+    fzn.say(`fzn could not export the note: ${cause?.message ?? cause}`);
+  } finally {
+    bundle?.free();
+    look();
+  }
 }
 
 // An image made smaller: turned upright as its camera said, as the browser turns one, no more than

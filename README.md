@@ -167,6 +167,9 @@ written after it, `new note ↵`, `go in Tab`, `tick ⇧↵`, `delete ^D`, `up E
 an arrow on a Mac, where it is the system's, is not written, and in an open body, whose chords are
 the editor's, only `done` has its key. The word `vim`, in the foot
 of an open body, turns vim mode on for the body in this browser; a touch screen does without.
+The word `export`, there too, saves the note as `Boiler service.tar`: a directory holding
+`Boiler service.md`, its head made a title, and its images in `images/` beside it, which any
+markdown editor, Obsidian included, reads as a document with its pictures.
 
 Vimium takes Esc and Ctrl-[ from the page before it sees them, and both are needed: Esc comes
 back a rung at a time, and in the body's vim mode it is vim's.

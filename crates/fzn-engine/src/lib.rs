@@ -13,8 +13,10 @@
 //! shape, with messages in and out in place of files and sockets. What it carries is sealed
 //! under the space's key first, in [`seal`], so that a relay holds nothing it can read. The two
 //! meet in a [`Device`], which is what a face that syncs drives in place of a bare session.
-//! Images a note refers to are sealed and carried beside the logs and never in one, in [`image`].
+//! Images a note refers to are sealed and carried beside the logs and never in one, in [`image`],
+//! and a note is taken out with its images as a tar, in [`bundle`].
 
+pub mod bundle;
 pub mod device;
 mod engine;
 pub mod image;

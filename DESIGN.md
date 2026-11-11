@@ -402,7 +402,9 @@ added to the engine until daily use asks for it.
   corpus is what it looks like when only the text gets out (creation time survives on 7% of its
   notes).
 - A directory of markdown files for grep or Obsidian is a possible second export. It would be
-  derived, never the source of truth.
+  derived, never the source of truth. One note already goes out so, from the page, as a tar of its
+  markdown with its images beside it (see "An open note is taken out as a tar, with its images
+  beside it"); this would be the whole space, and its rule for a note would be that one.
 
 ## Sync
 A space gets from one device to another by each side sending the other the rest of each log. That is
@@ -1294,8 +1296,9 @@ and keys are written only where the pointer is fine and hovers: a touch screen's
 chords, no Tab and no Escape, so the phone's bar has none. No word has a tooltip. In an open body
 the chords are the editor's, so only the way out has its key there, `done Esc`, or `done :q` with
 vim's keys, Escape being vim's alone. An open body's foot has the word `image` too, at every width,
-which opens the device's own picker of files, on a phone the camera and the photos. The foot is one
-line at every width, 3.25rem tall, and holds still (see "The foot holds still"): the words never
+which opens the device's own picker of files, on a phone the camera and the photos, and after it
+`export`, which saves the note as a tar of its markdown and its images (see "An open note is taken
+out as a tar, with its images beside it"). The foot is one line at every width, 3.25rem tall, and holds still (see "The foot holds still"): the words never
 wrap; the way back, Escape's next rung, `up` on a row, `clear` while the line has text, `back` in a
 place with the line empty or `done` in an open body, is the last word wherever there is one, as the
 terminal's footer ends with it, and follows the words and stays in sight when they do not fit; the
@@ -4662,6 +4665,42 @@ the app now does is described above; an entry repeats it only where the reason n
   after a review: the room is the relay's, but shared equally among the names it serves, the spaces
   at its root counting as one, since one room for every name let any member of any space fill it for
   good with a few megabytes of the smallest images, each counted as 16 KiB.
+
+- **An open note is taken out as a tar, with its images beside it.** Decided 2026-11-11, at Sam's
+  ask, who wanted a whole document taken out with its images where they belong and referred to in
+  its markdown. A note with its pictures is a document, and a document should leave fzn as plain
+  markdown that any editor or Obsidian reads, the pictures beside it, without fzn to read it; the
+  snapshot line carries an image's address and never its picture, and `fzn image fzn:…` takes
+  pictures out one at a time. In an open body the foot has the word `export` after `image`, at
+  every width, which saves `Boiler service.tar`: a directory named for the note, holding
+  `Boiler service.md` and, when any image went in, `images/`, a file an image. The markdown is the
+  note as it reads now, what is typed in the open body and not yet written included. Its head is
+  made a `# ` title, as the page shows an open note's head as its title, unless it is a heading
+  already, its box and labels kept as typed, `# [ ] Boiler service #house`; each image's address
+  outside code, exactly those the engine reads as images and by the same reading, becomes
+  `images/<file>`, and nothing else changes. An image's file is named by its alt text,
+  `radiator-valve.jpg`, or by its place among the note's images, `image-2.png`, a clash taking
+  `-2`, and one image referred to twice is one file both point to. The directory is named as
+  brackets name the head, without a heading's marks, its box and the labels that end it, made a
+  name Linux, macOS, Windows and iOS all take, and `note` where nothing is left. Every entry carries
+  the time of the note's last change, or now while what is typed is not yet written. An image this
+  device does not have yet does not stop it: its address is left as it was and the page says how
+  many were. The tar is POSIX ustar, written by the engine by hand, with no new dependency, and the
+  rule is the engine's, `bundle`, which takes the images opened from what the face holds, so a
+  terminal route would be one command over it. What it costs: a second way out beside the snapshot
+  line, which stays the way in and out for good, `fzn export` still every note and no argument; the
+  pictures and the text leave unsealed, to wherever the tar is saved, by your own hand as an export
+  does; the page holds the note's images and the tar in memory while it is made, a few
+  megabytes a photo; and an address left for a missing image means nothing outside fzn. Weighed: a
+  zip, which the iPhone's Files is reported to open as well, where a tar was asked for and is
+  native on Linux and macOS, and pictures already compressed gain nothing from compressing; a
+  terminal route, which waits for use to ask for it, the rule being in the engine for it; refusing
+  while an image is missing, which would leave a note whose picture never comes without a way out;
+  the head left exactly as typed, which would make the page's title a plain first line; and a
+  single `.md` with each image a `data:` address, one file but megabytes of base64 a picture that
+  no one can read as text and not every editor draws. The whole space as a directory of markdown is
+  still the possible second export it was (see Storage and sync), and would take a note out by this
+  rule.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

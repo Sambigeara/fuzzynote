@@ -3,14 +3,16 @@
 //! The engine is compiled to WebAssembly and the page drives it through [`Fzn`], which is the
 //! engine's [`Device`] with a text boundary round it. Everything crosses as text but an image going
 //! in: an action goes in as JSON and what the page has to do comes back as JSON, and so does the
-//! view. An image the page hands over, to keep, to open or to send, goes in as bytes, since it is
-//! not text, and an opened one comes back as bytes, to draw. A sealed image the page is to keep
-//! comes back as base64 inside the JSON it is told to act on, from `keep_image` and in a todo's
-//! `keep_images`, so that what to do stays one shape of text; that costs a third more and an
-//! encoding of a few MiB, and is paid only when an image is kept or fetched, never on a keystroke
-//! or a view. The page owns what only a page can: the keys, the painting, the socket to the
+//! view. An image the page hands over, to keep, to open, to send or to take out with its note, goes
+//! in as bytes, since it is not text, and an opened one comes back as bytes, to draw, as does a
+//! note taken out as a tar. A sealed image the page is to keep comes back as base64 inside the
+//! JSON it is told to act on, from `keep_image` and in a todo's `keep_images`, so that what to do
+//! stays one shape of text; that costs a third more and an encoding of a few MiB, and is paid only
+//! when an image is kept or fetched, never on a keystroke or a view. The page owns what only a page can: the keys, the painting, the socket to the
 //! relay, somewhere to keep lines and images between visits, making an image smaller, and the
 //! asking for a passphrase.
+
+use std::collections::HashMap;
 
 use fzn_engine::{Action, Device, Host, Key, Moment, Todo, Weights};
 use wasm_bindgen::prelude::*;
@@ -192,6 +194,64 @@ impl Fzn {
     /// An image the relay asked for, as the store holds it. What to do, as JSON.
     pub fn upload(&mut self, id: &str, sealed: &[u8]) -> String {
         json(&self.device.upload(id, sealed))
+    }
+
+    /// The images the note under the cursor refers to as it reads now, by id, for the page to
+    /// fetch from its store and give to `bundle`.
+    pub fn bundle_images(&self) -> Vec<String> {
+        self.device.bundle_images()
+    }
+
+    /// The note under the cursor as it reads now made into a tar with its images, given as the
+    /// store holds them: `sealed[n]` is kept under `ids[n]`, and an image not given is missing.
+    /// Undefined while the cursor is on no note.
+    pub fn bundle(&self, ids: Vec<String>, sealed: Vec<js_sys::Uint8Array>) -> Option<Bundle> {
+        let held: HashMap<String, js_sys::Uint8Array> = ids.into_iter().zip(sealed).collect();
+        let bundle = self
+            .device
+            .bundle(|id| held.get(id).map(js_sys::Uint8Array::to_vec))?;
+        Some(Bundle {
+            name: bundle.name,
+            tar: bundle.tar,
+            put: bundle.put,
+            missing: bundle.missing,
+        })
+    }
+}
+
+/// A note made into a tar, for the page to save as `<name>.tar`.
+#[wasm_bindgen]
+pub struct Bundle {
+    name: String,
+    tar: Vec<u8>,
+    put: usize,
+    missing: usize,
+}
+
+#[wasm_bindgen]
+impl Bundle {
+    /// What the note's directory and file are called, and so the tar.
+    #[wasm_bindgen(getter)]
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    /// The tar's bytes.
+    #[wasm_bindgen(getter)]
+    pub fn tar(&self) -> Vec<u8> {
+        self.tar.clone()
+    }
+
+    /// How many images went in.
+    #[wasm_bindgen(getter)]
+    pub fn put(&self) -> usize {
+        self.put
+    }
+
+    /// How many the note refers to that this device does not have, or that did not open.
+    #[wasm_bindgen(getter)]
+    pub fn missing(&self) -> usize {
+        self.missing
     }
 }
 

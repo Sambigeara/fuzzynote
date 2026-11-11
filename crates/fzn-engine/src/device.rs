@@ -43,12 +43,14 @@ use base64::engine::general_purpose::STANDARD;
 
 use serde::{Serialize, Serializer};
 
+use crate::bundle::{self, Bundle};
 use crate::image::{self, Images};
 use crate::record::{Notes, Read, Record};
 use crate::replica::{Header, Message, Out, Peer, Replica};
 use crate::score::Weights;
 use crate::seal::{Key, Opened, Seal, is_sealed};
 use crate::session::{Action, Caret, Effect, Given, Host, KeptStep, Session, View};
+use crate::text;
 use crate::time::Moment;
 
 /// The relay, as every face numbers it. Siblings on the same machine are 1, 2, and so on.
@@ -566,6 +568,25 @@ impl Device {
     /// An image's bytes as the face's store holds them, opened, if they open to that id.
     pub fn open_image(&self, id: &str, sealed: &[u8]) -> Option<Vec<u8>> {
         image::open(&self.seal, id, sealed)
+    }
+
+    /// The images the note under the cursor refers to as it reads now, by id, for the face to
+    /// fetch from its store before [`Device::bundle`].
+    pub fn bundle_images(&self) -> Vec<String> {
+        self.session
+            .writing()
+            .map(|(text, _)| text::facts(text).images)
+            .unwrap_or_default()
+    }
+
+    /// The note under the cursor as it reads now made into a tar with its images, which `sealed`
+    /// gives as the face's store holds them, by id; one that is not given, or does not open, is
+    /// counted missing. None while the cursor is on no note.
+    pub fn bundle(&self, mut sealed: impl FnMut(&str) -> Option<Vec<u8>>) -> Option<Bundle> {
+        let (text, changed) = self.session.writing()?;
+        Some(bundle::bundle(text, changed, |id| {
+            sealed(id).and_then(|kept| image::open(&self.seal, id, &kept))
+        }))
     }
 
     /// Images the face's store holds, by id: all of them once after `opened`, and any added there
@@ -2828,5 +2849,39 @@ mod tests {
             [image::Message::Images(ids[..1].to_vec())],
             "said again, and nothing asked of what the relay held before"
         );
+    }
+
+    #[test]
+    fn the_note_under_the_cursor_is_bundled_as_it_reads_now_with_the_images_the_store_opens() {
+        let ((valve, sealed), (plate, _)) = (picture(0), picture(1));
+        let mut device = device("dev-a");
+        let body = format!("Boiler\n![radiator valve](fzn:{valve}) ![](fzn:{plate})");
+        device.load("dev-x", vec![plain("x-1", &body, 100)]);
+        // The store holds the valve's sealed bytes under both ids, and the plate's do not open.
+        let store = |id: &str| (id == valve || id == plate).then(|| sealed.clone());
+        assert_eq!(device.bundle(store), None, "nothing under the cursor");
+        assert!(device.bundle_images().is_empty());
+
+        device.act(Action::Move(1));
+        let mut ids = vec![valve.clone(), plate.clone()];
+        ids.sort();
+        assert_eq!(device.bundle_images(), ids);
+        let bundle = device.bundle(store).unwrap();
+        assert_eq!(
+            (bundle.name.as_str(), bundle.put, bundle.missing),
+            ("Boiler", 1, 1)
+        );
+        let mtime = |tar: &[u8]| String::from_utf8(tar[136..147].to_vec()).unwrap();
+        assert_eq!(mtime(&bundle.tar), format!("{:011o}", 100));
+
+        device.act(Action::Open);
+        device.act(Action::Edited(format!("{body}\nbled")));
+        let bundle = device.bundle(store).unwrap();
+        assert_eq!(
+            mtime(&bundle.tar),
+            format!("{:011o}", 1_791_892_800),
+            "changed now, and not yet written"
+        );
+        assert!(bundle.tar.windows(4).any(|w| w == b"bled"));
     }
 }

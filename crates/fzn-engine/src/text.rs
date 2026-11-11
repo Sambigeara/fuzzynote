@@ -125,7 +125,21 @@ pub struct Facts {
 /// person straight after a `!` that starts a word is not one, since on the line that `!` leaves
 /// it out, and a note written from such a line should not carry what it was meant to leave out.
 pub fn facts(text: &str) -> Facts {
+    read(text).0
+}
+
+/// Where each image's address is in a text, in characters, `fzn:` and its digits, in the order
+/// they come, an image referred to twice being there twice: the addresses [`facts`] reads and no
+/// others, since it is the same reading.
+pub(crate) fn addresses(text: &str) -> Vec<std::ops::Range<usize>> {
+    read(text).1
+}
+
+/// The facts of a text, and where its images' addresses are, read in one pass, so that what is
+/// rewritten as an image's address is exactly what is read as one.
+fn read(text: &str) -> (Facts, Vec<std::ops::Range<usize>>) {
     let chars: Vec<char> = text.chars().collect();
+    let mut addresses = Vec::new();
     let code = code(&chars);
     let mut spans = code.iter().peekable();
     let mut f = Facts::default();
@@ -168,6 +182,7 @@ pub fn facts(text: &str) -> Facts {
         } else if c == '(' {
             take_image(&chars, i + 1).map(|(id, end)| {
                 f.images.push(id);
+                addresses.push(i + 1..end);
                 end
             })
         } else if boundary && c.is_ascii_digit() {
@@ -202,7 +217,7 @@ pub fn facts(text: &str) -> Facts {
     }
     f.dates.sort_unstable();
     f.dates.dedup();
-    f
+    (f, addresses)
 }
 
 /// The stretches of a text that are code, as character ranges, sorted and apart, with their

@@ -831,6 +831,15 @@ impl Session {
         self.status = status.into();
     }
 
+    /// The note under the cursor as it reads now, open or not, and when it last changed: when it
+    /// was last written, if it still reads so, and otherwise now, its change not yet written.
+    pub fn writing(&self) -> Option<(&str, Moment)> {
+        let field = self.field.as_ref()?;
+        let kept = self.notes.get(&field.id).filter(|r| r.text == field.text);
+        let changed = kept.and_then(|r| r.updated.or(r.stamp).or(r.created));
+        Some((&field.text, changed.unwrap_or_else(|| self.host.now())))
+    }
+
     /// Where you are, as a face keeps it across a reload: each step of the path, outermost
     /// first, to give back as [`Action::Restore`].
     pub fn steps(&self) -> Vec<KeptStep> {
