@@ -24,9 +24,14 @@
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   /* The column's width: 38rem, until a page is 100rem wide, and past that it takes a little of the
      spare room, to 50rem, since a row is one line and a narrow column cuts heads a wide monitor
-     could show. A head is not prose, but the cap keeps the prose of a body opened in the sheet
-     readable. */
+     could show. A head is not prose, but the cap, with the body beside the list's, bounds how far
+     the lines of an open body grow. */
   --measure: clamp(38rem, 38rem + (100vw - 100rem) * 0.3, 50rem);
+  /* An open body's lines: the column's measure, until a page is 100rem wide, and past that they
+     grow twice as fast as the page does, until they have the room the column and the body beside
+     it take together, as a table already has, since a whole note read on a wide monitor in the
+     column's measure left more of the page empty than it filled. */
+  --open: max(var(--measure), 38rem + (100vw - 100rem) * 2);
   /* The body beside the list grows with the page as the column does, and less, since it is prose. */
   --pane: clamp(30rem, 30rem + (100vw - 100rem) * 0.2, 38rem);
   --gutter: clamp(1rem, 4vw, 2rem);
@@ -558,10 +563,10 @@ body.resting .row .head a,
 /* A body open: a sheet over the page, which holds the whole note at its natural weight and scrolls
    on its own. Wider than a phone it is the page, from the top to the foot, edge to edge, with no
    card, shadow or dimming, its text starting at the column's left edge, so that nothing moves
-   sideways as it opens; a line keeps the column's measure, and a table drawn or being written takes
-   the room there is, no further than the column and the body beside it together. It is placed from the top and given its
-   height, never pinned to the foot of the screen, where iOS Safari misplaces what is pinned around
-   its keyboard. The words in the foot stay above the dimming, since they are about the note. The
+   sideways as it opens; a line keeps the column's measure, or more on a wide page, and a table
+   drawn or being written takes the room there is, no further than the column and the body beside
+   it together. It is placed from the top and given its height, never pinned to the foot of the
+   screen, where iOS Safari misplaces what is pinned around its keyboard. The words in the foot stay above the dimming, since they are about the note. The
    editor's text fills the sheet below the words, as a page does, so that a press there is the
    editor's and puts the caret on the last line: the editor hears only a press on its text, and one
    on its bare frame took the focus nowhere, which is leaving the body and closed it. */
@@ -601,11 +606,11 @@ body.resting .row .head a,
 .cm-editor .cm-scroller { overflow: visible; font: inherit; line-height: 1.5; }
 .cm-editor .cm-content { padding: 0; caret-color: transparent; }
 .cm-editor .cm-line { padding: 0; }
-/* The body's text keeps the column's measure, and a table drawn or being written reaches past it
-   to the editor's width. The text itself is held, not only its lines, since a selection across
-   lines is shaded to the edge of the text. */
+/* The body's text keeps the open body's measure, and a table drawn or being written reaches past it
+   to the editor's width, where on a wide enough page the text has caught it up. The text itself is
+   held, not only its lines, since a selection across lines is shaded to the edge of the text. */
 #sheet > .cm-editor { container-type: inline-size; }
-#sheet .cm-content { max-width: var(--measure); }
+#sheet .cm-content { max-width: var(--open); }
 #sheet :is(.cm-line.md-table, .md-table-read) { width: 100cqw; min-width: 0; }
 #sheet .cm-content.on-link { cursor: pointer; }
 /* A table drawn in the open body is as high as its source, as many lines as it has: the line the
@@ -673,7 +678,7 @@ body.resting .row .head a,
   .md-table-read tr:nth-child(2) td { padding-top: 0.375em; }
 }
 /* An image of the space's own is drawn under its line, in the open body and the body read beside
-   the list, held to the measure and the pane's width and to three fifths of the window's height,
+   the list, held to the lines' width and the pane's and to three fifths of the window's height,
    and never enlarged. One this device does not have yet, and the word an image with no alt text
    reads as in a head, are in the faint grey. The room round a picture is padding, which the editor
    counts in the picture's height, where a margin would put every line under it off by as much. */

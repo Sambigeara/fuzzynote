@@ -1354,9 +1354,10 @@ its scroll forgotten, as an address bar's is. At a phone's width the head wraps 
 does, and a head being written grows its row as it wraps. Enter opens a new row under it; Ctrl-O, or
 `body` in the foot, opens the whole note in the sheet, which is the page above the foot, top to
 foot and edge to edge, its text starting at the column's left edge and its lines held to the
-column's measure, but for a table's, which take the room there is (see "An open body is the page");
-it scrolls on its own, fading at its foot as the list does, and in it Enter is a line break, Tab
-indents and Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
+column's measure, wider on a page past 100rem (see "A wide page gives an open body its room"), but
+for a table's, which take the room there is (see "An open body is the page"); it scrolls on its
+own, fading at its foot as the list does, and in it Enter is a line break, Tab indents and
+Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
 the head. A press in its own margin, below or beside its text, which puts the caret on the line
 nearest, does not close it, and nor does leaving the window, though the tab going out of sight
 writes what it holds. The words in the foot stay, since they are about the note. There is no
@@ -1367,7 +1368,7 @@ columns aligned in the sheet's whole width and as high as its source, one wider 
 carrying a thin bar of its own, shown while a mouse is over it, and fading at the edge where more
 columns lie, a press on a cell or an arrow into it showing it as typed and a press on its bar
 scrolling it and leaving it drawn, an image of the space's own drawn under its line, no wider than
-the measure and never enlarged, its line reading as its alt text until the selection touches it, and
+its lines and never enlarged, its line reading as its alt text until the selection touches it, and
 `not here yet` there in the faint grey while this device has not got it; an image pasted or dropped
 there, or chosen with `image`, made smaller, kept and written on a line of its own, a link read
 followed by a press, an address in a tab of its own with the body left open and `[[Boiler]]` into
@@ -4318,7 +4319,8 @@ the app now does is described above; an entry repeats it only where the reason n
   from; and code across the whole width, a grey slab to the margin. Revised 2026-11-10 by "An
   open body's head is its title": its head is set as a first-level heading is. Revised 2026-11-10
   by "A wide table shows its own bar": a table wider than the room scrolls under a thin bar of
-  the page's own and fades where more columns lie.
+  the page's own and fades where more columns lie. Revised 2026-11-17 by "A wide page gives an
+  open body its room": past a page 100rem wide its lines grow past the column's measure.
 
 - **The open body keeps an editor's habits.** Decided 2026-10-29, at Sam's ask, revising "A wide
   line has the sheet's width" where it kept a selection shaded to the edge of the text. Four things the hands expect of any
@@ -4346,7 +4348,8 @@ the app now does is described above; an entry repeats it only where the reason n
   to each line's own end, which CodeMirror does not offer and the browser's own selection does not
   do either; a chord for a link, which on the
   page is Ctrl-K's already; and every register sent to the clipboard, vim's way in full, for the
-  reason given.
+  reason given. Revised 2026-11-17 by "A wide page gives an open body its room": past a page
+  100rem wide the text is held to a wider measure, and the shading stops there.
 
 - **Stepping back puts the cursor back on its row.** Decided 2026-10-31, at Sam's ask, revising
   "Zoom and places", where stepping back went one hop onto the line, as the spec had said since
@@ -4607,6 +4610,8 @@ the app now does is described above; an entry repeats it only where the reason n
   48 images of up to 2 MiB each as they are kept, are held for the visit. Weighed: a picture
   in place of its line, for the reason above; and a picture inline in its line, which would make
   the line as tall as the picture and move everything under it as the caret came.
+  Revised 2026-11-17 by "A wide page gives an open body its room": in the open body a picture is
+  held to its lines, which past a page 100rem wide are wider than the measure.
 
 - **A note holds an image by its address, and the image is sealed beside the logs.** Decided
   2026-11-10, at Sam's ask, who wanted images kept alongside a document so that a body read shows
@@ -4706,6 +4711,27 @@ the app now does is described above; an entry repeats it only where the reason n
   file but megabytes of base64 a picture that no one can read as text and not every editor draws.
   The whole space as a directory of markdown is still the possible second export it was (see Storage
   and sync), and would take a note out by this rule.
+- **A wide page gives an open body its room.** Decided 2026-11-17, at Sam's ask, revising the part
+  of "An open body is the page" (2026-10-29) that held its lines to the column's measure. On a
+  full-screen desktop browser a whole note read at the measure was squeezed into a strip: at 1920
+  pixels its text was 704 pixels wide with 811 empty to its right, at 2048 about 740 with more
+  empty than filled. Sam wanted the room used, keeping some padding, since a note opened is a
+  document and not a row. Now the open body's lines keep the column's measure until the page is
+  100rem wide, and past that grow twice as fast as the page does, until they have the room a
+  table already had, the column and the body beside it together: 928 pixels at 1760, 1248 at
+  1920, catching a table up at 1952, 1360 at 2048, and 1456 from 2240 on, where the column and
+  that body stop growing. The left edge
+  does not move, so nothing moves sideways as a body opens, and what is left on the right is the
+  padding, 253 pixels at 2048 and more past it. Prose, a block of code's band and a drawn table
+  share one right edge again once the lines have caught a table up, and a selection is still
+  shaded to the lines' edge. An image is drawn no wider than the lines, as before, and never
+  enlarged. Below 100rem nothing changes, so a laptop and a phone read at the measure as they did,
+  which is where the measure was decided on. What it costs: a line of prose on a wide monitor runs
+  to 160 to 180 letters, past what is usually called readable, which Sam chose over the empty half.
+  Weighed: the whole width at every page wide enough for the body beside the list, which would
+  give a laptop 135 letters a line, what "An open body is the page" turned down; a cap at a
+  reading measure, which leaves the page as empty as it was; and the text centred with equal room
+  each side, which moves it from the row it opened from.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is

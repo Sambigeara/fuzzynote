@@ -68,8 +68,8 @@ const oneLine = EditorState.transactionFilter.of((tr) => {
 
 // A block of code is set in the monospace a line at a time, fences and all, as far as the view
 // reaches. The highlighting cannot give it the face, since a language's own starts afresh inside
-// the block. A table's lines are marked too, whatever the caret does, since in the sheet they and
-// a block of code's take its whole width where a line of prose keeps the column's measure. A
+// the block. A table's lines are marked too, whatever the caret does, since in the sheet they
+// take its whole width where a line of prose keeps the open body's measure. A
 // fence of backticks is marked to be drawn where the code's letters stand (see the stylesheet); a
 // fence of tildes stands there already.
 const codeLine = Decoration.line({ class: 'hl-code' });
