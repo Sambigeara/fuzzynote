@@ -2375,34 +2375,86 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_want_naming_one_image_again_and_again_is_answered_once() {
+        let root = temp_dir();
+        let space = root.join("main");
+        let held = garden(0, 64);
+        kept(&space, &held);
+        let address = relay(&root);
+        let (mut raw, _) = Raw::entered(&address);
+        raw.say_image(&want(&vec![held.0.clone(); ANSWERED_MOST]));
+        raw.socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut came = 0;
+        while let Some(text) = raw.next_text() {
+            if let Some(image::Message::Image { id, .. }) = image::Message::decode(&text) {
+                assert_eq!(id, held.0);
+                came += 1;
+            }
+        }
+        assert_eq!(came, 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn a_device_that_asks_again_and_again_and_reads_nothing_has_one_image_waiting_at_a_time() {
         let root = temp_dir();
         let space = root.join("main");
         let big = garden(0, 2_000_000);
         kept(&space, &big);
-        let address = relay(&root);
-        let (mut raw, _) = Raw::entered(&address);
-        // Twenty wants of the one image, each naming it eight times, and nothing read.
+        let relay = Relay::bind(
+            root.clone(),
+            config_of(&root),
+            "127.0.0.1:0",
+            None,
+            512 << 20,
+        )
+        .unwrap();
+        // A device that asks and never reads, held open until the test is done with it.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (done, held_open) = mpsc::channel::<()>();
+        let device = thread::spawn(move || {
+            let stream = TcpStream::connect(address).unwrap();
+            let asked = format!("ws://{address}/");
+            let _socket = tungstenite::client(asked.as_str(), stream).unwrap();
+            let _ = held_open.recv();
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let mut wire = Wire::new(tungstenite::accept(Stream::plain(stream)).unwrap()).unwrap();
+        let mut images = Images {
+            hub: &relay.hub,
+            label: "main",
+            peer: 1,
+            dir: Some(space.join(IMAGES_DIR)),
+            offered: BTreeSet::new(),
+            wanted: BTreeMap::new(),
+            lapsed: BTreeSet::new(),
+            owed: VecDeque::new(),
+            full_said: false,
+            unread_said: false,
+            untaken_said: false,
+        };
+        // Asked for and sent until the sockets between hold no more, which is a handful on one
+        // machine and a dozen on another; the bound only stops a relay that never stops.
+        let mut sent = 0;
+        while wire.drained().unwrap() {
+            assert!(sent < 1000, "the wire never filled");
+            images.answer(vec![big.0.clone()]);
+            images.send_owed(&mut wire).unwrap();
+            sent += 1;
+        }
+        // From here every want is owed, once, and none is read from disk or said until the
+        // image before it has gone.
         for _ in 0..20 {
-            raw.say_image(&want(&vec![big.0.clone(); 8]));
+            images.answer(vec![big.0.clone(); ANSWERED_MOST]);
+            images.send_owed(&mut wire).unwrap();
         }
-        thread::sleep(Duration::from_secs(2));
-        raw.socket
-            .get_mut()
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let mut came = 0;
-        while let Some(text) = raw.next_text() {
-            if let Some(image::Message::Image { id, .. }) = image::Message::decode(&text) {
-                assert_eq!(id, big.0);
-                came += 1;
-            }
-        }
-        // Each want is owed once, and an image is sent only when the one before has gone, so
-        // only as many come as the sockets held while nothing was read. How many that is
-        // depends on the machine and what else runs on it, so the bound is the rule itself: at
-        // most the eight a device may be owed, and never the hundred and sixty asked for.
-        assert!((1..=ANSWERED_MOST).contains(&came), "{came} came");
+        assert_eq!(images.owed, std::slice::from_ref(&big.0));
+        done.send(()).unwrap();
+        device.join().unwrap();
         fs::remove_dir_all(&root).unwrap();
     }
 
