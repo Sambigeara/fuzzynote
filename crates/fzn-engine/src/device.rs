@@ -1544,8 +1544,8 @@ mod tests {
         write(&mut net.devices[3], "Order oil #house");
         net.act(3, Action::Select(None));
         net.connect(3);
-        for i in 0..3 {
-            assert_eq!(heads(&net.devices[i]), ["Order oil #house"], "tab {i}");
+        for (i, tab) in net.devices.iter().take(3).enumerate() {
+            assert_eq!(heads(tab), ["Order oil #house"], "tab {i}");
         }
         assert_eq!(net.devices[2].replica.lines("dev-z").len(), 1);
     }
