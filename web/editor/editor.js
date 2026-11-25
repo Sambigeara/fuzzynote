@@ -23,9 +23,9 @@
 
 import { Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, drawSelection, keymap, panels } from '@codemirror/view';
-import { history, indentWithTab, insertNewline, redo, standardKeymap, undo } from '@codemirror/commands';
+import { history, indentWithTab, redo, standardKeymap, undo } from '@codemirror/commands';
 import {
-  Language, ParseContext, StreamLanguage, defineLanguageFacet, syntaxHighlighting, syntaxTree,
+  Language, ParseContext, StreamLanguage, defineLanguageFacet, indentUnit, syntaxHighlighting, syntaxTree,
 } from '@codemirror/language';
 import { parseCode } from '@lezer/markdown';
 import { CodeMirror, Vim, getCM, vim } from '@replit/codemirror-vim';
@@ -45,7 +45,15 @@ const codeParser = (info) => {
   if (!streams.has(found)) streams.set(found, StreamLanguage.define(found).parser);
   return streams.get(found);
 };
-const note = new Language(defineLanguageFacet(), markdown.configure(parseCode({ codeParser })), [], 'markdown');
+// The head is read as a line alone, as the body beside the list is read without it, so that a list
+// or a rule straight under it is one, and not more of the head's paragraph or its underline.
+const headAlone = { parseBlock: [{ name: 'HeadAlone', endLeaf: (cx, line, leaf) => leaf.start === 0 }] };
+const note = new Language(
+  defineLanguageFacet(),
+  markdown.configure([parseCode({ codeParser }), headAlone]),
+  [],
+  'markdown',
+);
 // A head is read as a line alone, as its row reads it.
 const headLine = new Language(defineLanguageFacet(), line, [], 'markdown');
 
@@ -186,6 +194,95 @@ const breakPastLabels = (view) => {
     scrollIntoView: true,
     userEvent: 'input',
   });
+  return true;
+};
+
+// The mark of the innermost list item a line starts, if it starts one.
+const itemMark = (state, line) => {
+  let mark = null;
+  syntaxTree(state).iterate({
+    from: line.from,
+    to: line.to,
+    enter(ref) {
+      if (ref.name === 'ListMark') mark = ref.node;
+    },
+  });
+  return mark;
+};
+
+// An item's lead: where its words start on its line, the line's prefix read as spaces but for a
+// quote's marks, the lead of the item after it, the next number and an empty box, and the lead of
+// a line within it, out to the column markdown reads as the item's, which is before a task's box.
+const leadOf = (state, mark) => {
+  const line = state.doc.lineAt(mark.from);
+  const spaces = (from) => /^[ \t]*/.exec(state.sliceDoc(from, line.to))[0];
+  const text = state.sliceDoc(mark.from, mark.to);
+  const number = parseInt(text, 10);
+  const next = Number.isNaN(number) ? text : `${number + 1}${text.slice(-1)}`;
+  const box = mark.parent.getChild('Task')?.getChild('TaskMarker');
+  const gap = spaces(mark.to);
+  const prefix = state.sliceDoc(line.from, mark.from).replace(/[^>\s]/g, ' ');
+  return {
+    prefix,
+    next: prefix + next + (gap || ' ') + (box ? '[ ] ' : ''),
+    inside: prefix + (text + (gap || ' ')).replace(/\S/g, ' '),
+    end: box ? box.to + spaces(box.to).length : mark.to + gap.length,
+  };
+};
+
+// Enter on a list item's line, past its lead, starts the next item with the words after the
+// caret. An item with nothing in it and nothing under it ends instead: a nested one takes its
+// parent's lead, within the same quote, and a top one leaves the line empty but for a quote's
+// marks. The parse says what an item is, so that a line of code is never one; line 1 is the head.
+const continueList = (view) => {
+  const { state } = view;
+  const { main } = state.selection;
+  if (state.selection.ranges.length > 1 || !main.empty) return false;
+  const at = state.doc.lineAt(main.head);
+  const mark = at.number > 1 && itemMark(state, at);
+  if (!mark) return false;
+  const here = leadOf(state, mark);
+  if (main.head < here.end) return false;
+  const rest = state.sliceDoc(here.end, at.to).trim();
+  let change;
+  if ((!rest || /^\[[ xX]\]$/.test(rest)) && mark.parent.to <= at.to) {
+    let parent = mark.parent.parent;
+    while (parent && parent.name !== 'ListItem' && parent.name !== 'Blockquote') parent = parent.parent;
+    const insert =
+      parent?.name === 'ListItem'
+        ? leadOf(state, parent.getChild('ListMark')).next
+        : here.prefix.trimEnd().replace(/>$/, '> ');
+    change = { from: at.from, to: at.to, insert };
+  } else {
+    const kept = here.end + state.sliceDoc(here.end, main.head).trimEnd().length;
+    const after = main.head + /^[ \t]*/.exec(state.sliceDoc(main.head, at.to))[0].length;
+    change = { from: kept, to: after, insert: `\n${here.next}` };
+  }
+  view.dispatch({
+    changes: change,
+    selection: { anchor: change.from + change.insert.length },
+    scrollIntoView: true,
+    userEvent: 'input',
+  });
+  return true;
+};
+
+// A line break keeps the indent before the caret, so that code and a nested line stay where they
+// were, and one past an item's lead stays inside the item, its quote's marks and all.
+const breakLine = (view) => {
+  const { state } = view;
+  const changes = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    const mark = line.number > 1 && itemMark(state, line);
+    const lead = mark && leadOf(state, mark);
+    const before = /^[ \t]*/.exec(state.sliceDoc(line.from, range.from))[0];
+    const insert = `\n${lead && range.from >= lead.end ? lead.inside : before}`;
+    return {
+      changes: { from: range.from, to: range.to, insert },
+      range: EditorSelection.cursor(range.from + insert.length),
+    };
+  });
+  view.dispatch(changes, { scrollIntoView: true, userEvent: 'input' });
   return true;
 };
 
@@ -429,14 +526,15 @@ export function mount(hooks, foot) {
     }),
     EditorView.domEventHandlers({ blur: (event) => hooks.onBlur(event), focus: () => hooks.onFocus() }),
   ];
-  // A body wraps, and its keys are an editor's: Enter is a newline and no more, with or without
-  // Shift, but before the place's labels that end the head (see breakPastLabels). Ctrl-O does
-  // nothing here, so that it never reaches the browser's file dialog. Tab indents and Shift-Tab
-  // takes the indent back, as in any editor, rather than moving the focus off the page's text:
-  // Escape, `:q` or the word in the foot is the way out. A press on a link read follows it, and
-  // the caret stays where it was; one on a drawn table goes into its cell. Mod-B, Mod-I and Mod-E
-  // make bold, italic and code; in vim's normal mode away from a Mac those chords are vim's scrolls
-  // and jump, and vim has them first.
+  // A body wraps, and its keys are an editor's: Enter on a list item starts the next one (see
+  // continueList) and is otherwise a newline keeping the indent before the caret (see breakLine),
+  // as Shift-Enter always is, but before the place's labels that end the head (see
+  // breakPastLabels). Ctrl-O does nothing here, so that it never reaches the browser's file dialog.
+  // Tab indents four spaces and Shift-Tab takes the indent back, as in any editor, rather than
+  // moving the focus off the page's text: Escape, `:q` or the word in the foot is the way out. A
+  // press on a link read follows it, and the caret stays where it was; one on a drawn table goes
+  // into its cell. Mod-B, Mod-I and Mod-E make bold, italic and code; in vim's normal mode away from
+  // a Mac those chords are vim's scrolls and jump, and vim has them first.
   const body = (hidden) => [
     EditorView.domEventHandlers({
       mousedown(event, view) {
@@ -469,7 +567,8 @@ export function mount(hooks, foot) {
     vimSlot.of(vimKeys()),
     keymap.of([
       { key: 'Enter', run: breakPastLabels, shift: breakPastLabels },
-      { key: 'Enter', run: insertNewline, shift: insertNewline },
+      { key: 'Enter', run: continueList },
+      { key: 'Enter', run: breakLine, shift: breakLine },
       { key: 'Ctrl-o', run: () => true },
       indentWithTab,
       { key: 'Mod-z', run: undo },
@@ -482,6 +581,7 @@ export function mount(hooks, foot) {
     ]),
     history(),
     note,
+    indentUnit.of('    '),
     placeLabels.of(hidden),
     landBeforeLabels,
     panels({ bottomContainer: foot }),

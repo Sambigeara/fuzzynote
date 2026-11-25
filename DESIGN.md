@@ -1356,12 +1356,14 @@ does, and a head being written grows its row as it wraps. Enter opens a new row 
 foot and edge to edge, its text starting at the column's left edge and its lines held to the
 column's measure, wider on a page past 100rem (see "A wide page gives an open body its room"), but
 for a table's, which take the room there is (see "An open body is the page"); it scrolls on its
-own, fading at its foot as the list does, and in it Enter is a line break, Tab indents and
-Shift-Tab takes the indent back, the arrows move within it, and Esc closes it back onto
-the head. A press in its own margin, below or beside its text, which puts the caret on the line
-nearest, does not close it, and nor does leaving the window, though the tab going out of sight
-writes what it holds. The words in the foot stay, since they are about the note. There is no
-second editor: the editor goes from the row into the sheet as the body opens, for a long document
+own, fading at its foot as the list does, and in it Enter on a list item's line starts the next
+item and is otherwise a line break that keeps the indent before the caret, as Shift-Enter always
+is, Tab indents four spaces and Shift-Tab takes the indent back (see "Enter carries a list on,
+and Tab is four spaces"), the arrows move within it, and Esc closes it back onto the head. A
+press in its own margin, below or beside its text, which puts the caret on the line nearest,
+does not close it, and nor does leaving the window, though the tab going out of sight writes
+what it holds. The words in the foot stay, since they are about the note. There is no second
+editor: the editor goes from the row into the sheet as the body opens, for a long document
 too, and back into the row as it closes. In the sheet it holds the body read as the body beside the
 list reads, its marks hidden and a task's box drawn but never pressed, a table drawn with its
 columns aligned in the sheet's whole width and as high as its source, one wider than the room
@@ -4732,6 +4734,33 @@ the app now does is described above; an entry repeats it only where the reason n
   give a laptop 135 letters a line, what "An open body is the page" turned down; a cap at a
   reading measure, which leaves the page as empty as it was; and the text centred with equal room
   each side, which moves it from the row it opened from.
+- **Enter carries a list on, and Tab is four spaces.** Decided 2026-11-25, at Sam's ask. In the open
+  body Enter was a line break and no more, so every item of a list had its mark typed by hand, and
+  one Tab indented two spaces, about 0.55em in the page's font, where the body read beside the list
+  indents a nested list 1.25em: Sam found it too narrow to see. Lists are how a body is written, and
+  every editor the hand knows, SilverBullet, Obsidian, GitHub's, carries them on. Now Enter on a
+  list item's line, past its mark and any box, starts the next item with the words after the caret:
+  `- [ ] Bleed the radiators` gives `- [ ] `, a box always empty, even after a ticked one, `3.`
+  gives `4.`, and a bullet stays the bullet typed, indented as its item is and inside the same
+  quote. On an item with nothing in it, a bare box counting as nothing, and nothing under it, the
+  list ends instead: a nested one steps out a level, taking its parent's mark, and a top one leaves
+  the line empty, or `> ` in a quote. What an item is, is the parse's to say, so a `- ` line in a
+  block of code is never one, and the head is never a list: the open body reads the head as a line
+  alone, as the body beside the list does, so a list or a rule straight under it is one. Shift-Enter
+  is the plain line break, the way to break a line within an item, and Enter is one wherever it
+  starts no item: it keeps the indent before the caret, and past an item's lead goes on inside the
+  item, within its quote, at the column markdown reads as the item's. Tab indents four spaces, and
+  Shift-Tab takes four back. The text is changed rather than the drawing, since a line's lead shows
+  as typed while the caret touches it, and an indent drawn wider would move the line sideways each
+  time the caret came onto it; and four is markdown's own measure, a tab's four columns, where an
+  item nests under `1.` only from three spaces in. What it costs: the numbers after an item put in
+  among ordered ones are not renumbered, which markdown does not need, reading them from the first;
+  one Tab on a plain paragraph after an empty line makes a block of code, where it took two; lists
+  already indented by two stay as typed, and Shift-Tab takes them to the margin; and the terminal is
+  unchanged, since a body there is written in your editor, which has its own ways. Weighed:
+  CodeMirror's markdown package's command for it, which acts only in that package's own language,
+  where the note's is built here and shared with the page's reading of markdown, and would add a
+  dependency; and drawing the indent wider, for the reason above.
 
 ## Open questions
 - One CRDT document per note or one per space? Per note makes sharing a note trivial; per space is
